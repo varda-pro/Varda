@@ -79,8 +79,11 @@ are written in Phase 1, test-first. Design:
   convention to 0.1–0.2 m (median); the prior-art test reproduces the
   one-pixel label offset.
 - **Confidence:** high.
-- **Test:** `test_mtrdr.py::test_hdr_georeference_matches_de_backplanes`
-  *(planned; data-gated)*.
+- **Test:**
+  `src/varda/image_loading/data_sources/_tests/test_crism_data_source.py::test_hdr_georeference_matches_de_backplanes`
+  (data-gated; the median signed offset of 200 DE pixels is within 3 m, the
+  per-pixel scatter about 10 m), `::test_mtrdr_label_uses_hdr` and
+  `::test_mtrdr_round_trip_metadata`.
 
 ### Calibration
 

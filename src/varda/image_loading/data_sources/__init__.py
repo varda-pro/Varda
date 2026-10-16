@@ -3,6 +3,7 @@ from .data_source import DataSource
 from .array_data_source import ArrayDataSource
 from .rasterio_data_source import RasterioDataSource
 from .envi_data_source import ENVIDataSource
+from .crism_data_source import CrismMapLabelDataSource, CrismProductDataSource
 from .pds_data_source import PdsLabelDataSource
 from .hdf5_data_source import HDF5DataSource
 from .fits_data_source import FitsDataSource
@@ -13,6 +14,8 @@ __all__ = [
     "ArrayDataSource",
     "RasterioDataSource",
     "ENVIDataSource",
+    "CrismMapLabelDataSource",
+    "CrismProductDataSource",
     "PdsLabelDataSource",
     "HDF5DataSource",
     "FitsDataSource",
