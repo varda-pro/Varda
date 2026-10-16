@@ -56,14 +56,14 @@ def _productType(path: Path) -> str | None:
 
 
 def _isCrismLabel(path: Path) -> bool:
-    """A PDS3 label states ``INSTRUMENT_ID = CRISM``; a PDS4 label is told by its
-    name alone."""
-    if path.suffix.lower() == ".xml":
-        return True
+    """The label states ``INSTRUMENT_ID`` CRISM (PDS3 keyword, or the PDS4
+    instrument reference)."""
     try:
-        return readLabel(path).get("INSTRUMENT_ID") == "CRISM"
-    except (ValueError, KeyError, OSError):
+        label = readLabel(path)
+    except Exception:  # any parse failure of a corrupt label: not ours to open
+        logger.debug("%s: label unreadable", path.name, exc_info=True)
         return False
+    return label.get("INSTRUMENT_ID") == "CRISM"
 
 
 def _findCaseInsensitive(folder: Path, stem: str) -> Path | None:
@@ -210,7 +210,7 @@ class CrismProductDataSource(RasterioDataSource):
     def bandNames(self) -> list[str]:
         names = readLabel(self._labelPath).bandNames
         if len(names) == self.bandCount:
-            return list(names)
+            return [names[i] for i in self._fileOrder]
         return [f"Band {i + 1}" for i in range(self.bandCount)]
 
     @cached_property

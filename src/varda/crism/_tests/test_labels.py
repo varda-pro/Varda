@@ -5,6 +5,7 @@ import pytest
 from pvl.collections import Quantity
 
 from varda.crism.labels import _pointer, readLabel
+from varda.crism.readers import readTrr3
 
 
 def test_trr3_crop_label(cropDir: Path):
@@ -66,3 +67,32 @@ def test_unsupported_pointer_raises():
         _pointer(5)
     with pytest.raises(ValueError):
         _pointer(Quantity(5, "BYTES"))
+
+
+PDS4_KEYS = (
+    "MRO:WAVELENGTH_FILE_NAME",
+    "INSTRUMENT_ID",
+    "PIXEL_AVERAGING_WIDTH",
+    "SPACECRAFT_CLOCK_START_COUNT",
+    "PRODUCT_ID",
+    "START_TIME",
+)
+
+
+def test_pds4_keywords_match_pds3(demoData: Path):
+    base = demoData / "data-for-paper/FRT00005850/trdr/frt00005850_07_if167l_trr3"
+    if not base.with_suffix(".xml").exists():
+        raise pytest.skip.Exception("demo PDS4 TRR3 not found")
+    pds3, pds4 = (
+        readLabel(base.with_suffix(".lbl")),
+        readLabel(base.with_suffix(".xml")),
+    )
+    for key in PDS4_KEYS:
+        assert pds4.get(key) is not None, key
+        assert pds4.get(key) == pds3.get(key), key
+    a, b = readTrr3(base.with_suffix(".lbl")), readTrr3(base.with_suffix(".xml"))
+    assert (a.binning, a.sclk, a.wavelengthFileName) == (
+        b.binning,
+        b.sclk,
+        b.wavelengthFileName,
+    )

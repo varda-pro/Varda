@@ -172,6 +172,7 @@ def test_mtrdr_round_trip_metadata(demoMtrdr: Path) -> None:
     assert "fwhm" in source.extraMetadata
 
 
+@pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreferencedWarning")
 def test_sigma_companion_metadata(tmp_path: Path) -> None:
     cube = np.zeros((3, 4, 2), dtype=np.float32)
     header = tmp_path / "x_vmtr.hdr"
@@ -198,3 +199,40 @@ def test_sigma_companion_metadata(tmp_path: Path) -> None:
     plain = tmp_path / "plain.hdr"
     envi.save_image(str(plain), cube, dtype=np.float32, ext=".img", force=True)
     assert "sigma" not in openDataSource(str(plain)).extraMetadata
+
+
+def test_pds4_trr3_gets_wavelengths_from_the_wa_cdr(tmp_path: Path, demoMtrdr: Path):
+    demo = demoMtrdr.parents[2]
+    trdr = demo / "FRT00005850/trdr"
+    waName = "CDR410803692813_WA0000000L_3"
+    wa = demo / "CAT_v7_4_aux/aux_files/CDRs/WA"
+    if (
+        not (trdr / "frt00005850_07_if167l_trr3.xml").exists()
+        or not (wa / f"{waName}.IMG").exists()
+    ):
+        raise pytest.skip.Exception("demo PDS4 TRR3 or its WA CDR not found")
+    folder = tmp_path / "trdr"
+    folder.mkdir()
+    for suffix in (".xml", ".img"):
+        (folder / f"frt00005850_07_if167l_trr3{suffix}").symlink_to(
+            trdr / f"frt00005850_07_if167l_trr3{suffix}"
+        )
+    cdr = tmp_path / "CRISM_CDR" / "wa"
+    cdr.mkdir(parents=True)
+    for suffix in (".LBL", ".IMG"):
+        shutil.copy(wa / f"{waName}{suffix}", cdr)
+    source = openDataSource(str(folder / "frt00005850_07_if167l_trr3.xml"))
+    assert isinstance(source, CrismProductDataSource)
+    assert source.wavelengthUnits == "Nanometers"
+    assert np.all(np.diff(source.wavelengths) > 0)
+    assert source.wavelengths[0] == pytest.approx(1001, abs=5)
+    assert "crismColumnWavelengths" in source.extraMetadata
+
+
+def test_a_corrupt_label_is_not_opened(tmp_path: Path) -> None:
+    for name in (
+        f"{MTRDR.replace('if167j_mtr3', 'if167j_trr3')}.lbl",
+        "frs00031442_01_if168l_trr3.xml",
+    ):
+        (tmp_path / name).write_text("<<< not a label")
+        assert not CrismProductDataSource.canOpen(str(tmp_path / name))

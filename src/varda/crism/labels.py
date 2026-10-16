@@ -5,6 +5,7 @@ other files a label merely names are never opened.
 """
 
 import warnings
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from xml.etree import ElementTree
@@ -197,6 +198,58 @@ def _axes(array: ElementTree.Element) -> dict[str, int]:
     }
 
 
+def _number(text: str) -> LabelValue:
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return text
+
+
+def _pds4Keywords(root: ElementTree.Element) -> dict[str, LabelValue]:
+    """The PDS4 fields downstream code reads, under their PDS3 keyword names.
+
+    Mission-area leaves become ``PREFIX:NAME`` (``mro:wavelength_file_name`` is
+    ``MRO:WAVELENGTH_FILE_NAME``); the core fields that hold the PDS3 ones are
+    mapped explicitly, with the clock and time written as the PDS3 label has them.
+    """
+    keywords: dict[str, LabelValue] = {}
+    for element in root.iter():
+        namespace, _, name = element.tag.removeprefix("{").partition("}")
+        text = (element.text or "").strip()
+        if "/mission/" in namespace and len(element) == 0 and text:
+            prefix = namespace.split("/mission/")[1].split("/")[0].upper()
+            keywords[f"{prefix}:{name.upper()}"] = _number(text)
+    clock = keywords.get("MRO:SPACECRAFT_CLOCK_START_COUNT")
+    if isinstance(clock, str):
+        keywords["SPACECRAFT_CLOCK_START_COUNT"] = clock.replace(":", ".")
+    ident = _child(root, "Identification_Area")
+    if ident is not None:
+        alias = next(
+            (
+                e.text
+                for e in ident.iter()
+                if _local(e.tag) == "alternate_id" and e.text
+            ),
+            None,
+        )
+        logical = _text(ident, "logical_identifier").rsplit(":", 1)[-1].upper()
+        keywords["PRODUCT_ID"] = alias.strip() if alias else logical
+    for element in root.iter():
+        text = (element.text or "").strip()
+        tag = _local(element.tag)
+        if tag == "start_date_time" and text:
+            keywords["START_TIME"] = str(datetime.fromisoformat(text))
+        elif tag == "lid_reference" and ":instrument:" in text:
+            keywords["INSTRUMENT_ID"] = text.rsplit(":", 1)[-1].split(".")[0].upper()
+        elif tag == "Pixel_Averaging_Dimensions":
+            width = _child(element, "width_pixels")
+            if width is not None and width.text:
+                keywords["PIXEL_AVERAGING_WIDTH"] = int(width.text)
+    return keywords
+
+
 def _readPds4(path: Path) -> ProductLabel:
     root = ElementTree.parse(path).getroot()
     fileArea = next(
@@ -252,7 +305,7 @@ def _readPds4(path: Path) -> ProductLabel:
             other, "local_identifier"
         ):
             rownumOffset = int(_text(other, "offset"))
-    keywords: dict[str, LabelValue] = {}
+    keywords = _pds4Keywords(root)
     if missing is not None:
         keywords["MISSING_CONSTANT"] = float(missing)
     layout = ArrayLayout(
