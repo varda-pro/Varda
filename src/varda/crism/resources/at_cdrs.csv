@@ -1,5 +1,6 @@
 # PDS AT CDRs (sensor L) listed at https://pds-geosciences.wustl.edu/mro/mro-m-crism-2-edr-v1/mrocr_0001/cdr/at/ on 2026-10-16.
-# scan_id and the SCLK period come from each CDR's label (SOURCE_PRODUCT_ID, SPACECRAFT_CLOCK_START/STOP_COUNT);
+# scan_id and the SCLK period of EVERY row come from its own .lbl, fetched once from the same directory on 2026-10-16
+# (SOURCE_PRODUCT_ID, SPACECRAFT_CLOCK_START/STOP_COUNT; start and stop taken as min and max);
 # sha256 is of the .img where it was available locally (demo folder or CAT aux), else empty.
 name,scan_id,sclk_start,sclk_stop,sha256
 cdr420843667218_at0000000l_7,0A93E,843667218,845919018,341eac39d6550054515d344d20d25e00d8b37e91977af2be20407108bc56fa8c

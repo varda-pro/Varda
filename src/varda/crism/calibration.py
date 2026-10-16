@@ -74,10 +74,16 @@ class Transmission:
 
 @frozen
 class CalibrationFileStatus:
+    """A file the observation uses. ``required`` files block processing when
+    absent (a WA, and at least one AT); ``note`` says why this file was chosen,
+    or why it is not available."""
+
     name: str
     kind: str
     localPath: Path | None
     url: str | None
+    required: bool = True
+    note: str = ""
 
 
 class MissingCalibrationError(Exception):
@@ -85,7 +91,11 @@ class MissingCalibrationError(Exception):
 
     def __init__(self, files: list[CalibrationFileStatus]):
         self.files = files
-        lines = [f"  {f.kind} {f.name}: {f.url or 'no known source'}" for f in files]
+        lines = [
+            f"  {f.kind} {f.name}: {f.url or 'no known source'}"
+            + (f" ({f.note})" if f.note else "")
+            for f in files
+        ]
         super().__init__(
             "Missing CRISM calibration files (put them in a calibration folder "
             "or connect to the internet to fetch them):\n" + "\n".join(lines)
@@ -178,7 +188,7 @@ def _bpUrls(stem: str) -> list[str]:
     """Where a BP CDR may sit: PDS files them by acquisition day, in the volume
     for that year. The day is computed from the SCLK, so also try its neighbors."""
     day = _SCLK_EPOCH + timedelta(seconds=CdrId.parse(stem).sclk)
-    urls = []
+    urls: list[str] = []
     for offset in (0, -1, 1):
         date = day + timedelta(days=offset)
         for volume in _YEAR_VOLUMES.get(date.year, ()):
@@ -210,6 +220,7 @@ class CalibrationLibrary:
         self._cache = Path(cacheFolder)
         self._catAux = Path(catAuxFolder) if catAuxFolder is not None else None
         self._fetch: Fetcher = fetch or downloadTo
+        self._failures: dict[str, str] = {}
 
     def _searchFolders(self, kind: str) -> list[Path]:
         lowered = kind.lower()
@@ -227,12 +238,18 @@ class CalibrationLibrary:
                 return image
         return None
 
-    def _entry(self, kind: str, stem: str) -> CalibrationFileStatus:
+    def _entry(
+        self, kind: str, stem: str, required: bool = True, note: str = ""
+    ) -> CalibrationFileStatus:
+        urls = _candidateUrls(kind, stem.lower())
+        failure = self._failures.get(stem.lower())
         return CalibrationFileStatus(
             stem.lower(),
             kind,
             self._find(kind, stem),
-            _candidateUrls(kind, stem.lower())[0] + ".img",
+            urls[0] + ".img" if urls else None,
+            required,
+            "; ".join(n for n in (note, failure) if n),
         )
 
     def _atRows(self, trr3: Trr3) -> list[AtRow]:
@@ -246,37 +263,89 @@ class CalibrationLibrary:
             and cdr.wavelengthFilter == wavelengthFilter
         ]
 
-    def status(self, trr3: Trr3) -> list[CalibrationFileStatus]:
-        """Every file the observation needs (WA, its BPs, the PDS ATs) and where
-        each is, or would be fetched from."""
-        stems = [
-            ("WA", Path(trr3.wavelengthFileName).stem),
-            *(("BP", name) for name in _bpNames(trr3)),
-            *(("AT", row.name) for row in self._atRows(trr3)),
-        ]
-        return [self._entry(kind, stem) for kind, stem in stems]
+    @staticmethod
+    def _distance(row: AtRow, sclk: float) -> float:
+        """0 when the row's SCLK period holds ``sclk``, else the gap to it."""
+        return max(row.sclkStart - sclk, sclk - row.sclkStop, 0.0)
 
-    def ensure(self, trr3: Trr3) -> None:
-        """Fetch what ``status`` shows missing into the cache. Raises
-        ``MissingCalibrationError`` listing everything still missing."""
+    def _rowsByScan(self, trr3: Trr3) -> dict[str, list[AtRow]]:
+        """The AT rows of each scan, the best period for the observation first
+        (the one holding its SCLK, else the nearest, later start on ties)."""
+        sclk = trr3.sclk
+        rows = sorted(
+            self._atRows(trr3), key=lambda r: (self._distance(r, sclk), -r.sclkStart)
+        )
+        scans: dict[str, list[AtRow]] = {}
+        for row in rows:
+            scans.setdefault(row.scanId, []).append(row)
+        return scans
+
+    def status(self, trr3: Trr3) -> list[CalibrationFileStatus]:
+        """The files the observation uses and where each is, or would be
+        fetched from: its WA (required), one AT per volcano scan (at least one
+        is required) and its BPs (optional)."""
+        entries = [self._entry("WA", Path(trr3.wavelengthFileName).stem)]
+        scans = self._rowsByScan(trr3)
+        for rows in scans.values():
+            row = rows[0]
+            held = self._distance(row, trr3.sclk) == 0
+            note = (
+                f"scan {row.scanId}: period holds the observation's SCLK"
+                if held
+                else f"scan {row.scanId}: nearest period (SCLK outside it)"
+            )
+            entries.append(self._entry("AT", row.name, note=note))
+        if not scans:
+            entries.append(
+                CalibrationFileStatus(
+                    "(none)",
+                    "AT",
+                    None,
+                    None,
+                    note=f"no PDS AT CDRs for sensor {trr3.id.sensor} "
+                    "(atmospheric transmission CDRs are IR only)",
+                )
+            )
+        entries += [
+            self._entry("BP", name, False, "optional bad-pixel map")
+            for name in _bpNames(trr3)
+        ]
+        return entries
+
+    def ensure(self, trr3: Trr3) -> list[CalibrationFileStatus]:
+        """Fetch what ``status`` shows missing into the cache (BPs best effort)
+        and return the final status, with a note on each file that could not be
+        fetched. Raises ``MissingCalibrationError`` when the WA is missing or
+        no AT at all is available."""
         for entry in self.status(trr3):
             if entry.localPath is None:
                 self._download(entry)
-        missing = [e for e in self.status(trr3) if e.localPath is None]
+        entries = self.status(trr3)
+        wa = entries[0]
+        ats = [e for e in entries if e.kind == "AT"]
+        missing = [wa] if wa.localPath is None else []
+        if all(e.localPath is None for e in ats):
+            missing += ats
         if missing:
             raise MissingCalibrationError(missing)
+        return entries
 
     def _download(self, entry: CalibrationFileStatus) -> None:
+        if entry.url is None:
+            return
         folder = self._cache / entry.kind.lower()
+        error: OSError | None = None
         for base in _candidateUrls(entry.kind, entry.name):
             try:
                 for suffix in (".img", ".lbl"):
                     self._fetch(base + suffix, folder / (entry.name + suffix))
+                self._failures.pop(entry.name, None)
                 return
-            except OSError:
-                continue
+            except OSError as caught:
+                error = caught
+        self._failures[entry.name] = f"could not be fetched: {error}"
 
-    def _require(self, trr3: Trr3, kind: str, stem: str) -> Path:
+    def _require(self, kind: str, stem: str) -> Path:
         entry = self._entry(kind, stem)
         if entry.localPath is None:
             raise MissingCalibrationError([entry])
@@ -295,21 +364,21 @@ class CalibrationLibrary:
 
     def wavelengths(self, trr3: Trr3) -> np.ndarray:
         """``(sample, band)`` center wavelengths from the observation's WA CDR."""
-        path = self._require(trr3, "WA", Path(trr3.wavelengthFileName).stem)
+        path = self._require("WA", Path(trr3.wavelengthFileName).stem)
         return self._aligned(trr3, readDetectorFrame(path))
 
     def badPixels(self, trr3: Trr3) -> np.ndarray | None:
-        """``(sample, band)`` bool, True where any listed BP CDR flags the pixel
-        (nonzero or invalid); None when the label lists no BP CDR."""
-        names = _bpNames(trr3)
-        if not names:
-            return None
-        bad = np.zeros((trr3.shape[1], len(trr3.detectorRows)), dtype=bool)
-        for name in names:
-            values = self._aligned(
-                trr3, readDetectorFrame(self._require(trr3, "BP", name))
-            )
-            bad |= np.isnan(values) | (values != 0)
+        """``(sample, band)`` bool, True where any BP CDR found flags the pixel
+        (nonzero or invalid); None when the label lists none or none is
+        available (BPs are optional; ``status`` shows the skipped ones)."""
+        bad: np.ndarray | None = None
+        for name in _bpNames(trr3):
+            path = self._find("BP", name)
+            if path is None:
+                continue
+            values = self._aligned(trr3, readDetectorFrame(path))
+            flagged = np.isnan(values) | (values != 0)
+            bad = flagged if bad is None else bad | flagged
         return bad
 
     def transmissions(
@@ -329,17 +398,18 @@ class CalibrationLibrary:
         return list(unique.values())
 
     def _pdsTransmissions(self, trr3: Trr3) -> list[Transmission]:
+        """One transmission per scan: its best-ranked period that is local."""
         sclk = trr3.sclk
-
-        def distance(row: AtRow) -> float:
-            return max(row.sclkStart - sclk, sclk - row.sclkStop, 0.0)
-
-        rows = sorted(self._atRows(trr3), key=lambda r: (distance(r), -r.sclkStart))
-        local = [(row, self._find("AT", row.name)) for row in rows]
-        present = [(row, path) for row, path in local if path is not None]
-        extrapolated = all(distance(row) > 0 for row, _ in present)
+        chosen: list[tuple[AtRow, Path]] = []
+        for rows in self._rowsByScan(trr3).values():
+            local = ((row, self._find("AT", row.name)) for row in rows)
+            hit = next(((row, path) for row, path in local if path is not None), None)
+            if hit is not None:
+                chosen.append(hit)
+        chosen.sort(key=lambda c: (self._distance(c[0], sclk), -c[0].sclkStart))
+        extrapolated = all(self._distance(row, sclk) > 0 for row, _ in chosen)
         result = []
-        for row, path in present:
+        for row, path in chosen:
             values = self._aligned(trr3, readDetectorFrame(path))
             result.append(
                 Transmission(
@@ -357,8 +427,8 @@ class CalibrationLibrary:
 
     def _vsAdrTransmissions(self, trr3: Trr3) -> list[Transmission]:
         """CAT's volcano-scan ADRs for the cube's sensor, binning and wavelength
-        filter; the newest version of each scan. Windowed ADRs that don't cover
-        the cube's detector rows and columns are skipped."""
+        filter; the newest version of each scan. Windowed ADRs (fewer samples or
+        bands than the cube) are skipped; a same-size mismatch raises."""
         if self._catAux is None:
             return []
         folder = self._catAux / "ADR" / "VS"
@@ -383,11 +453,11 @@ class CalibrationLibrary:
         for adr, path in candidates:
             if adr.scanId in result:
                 continue
-            try:
-                frames = readVsAdr(path)
-                aligned = [self._aligned(trr3, frame) for frame in frames]
-            except ValueError:
-                continue
+            frames = readVsAdr(path)
+            samples, bands = frames[0].values.shape
+            if samples < trr3.shape[1] or bands < len(trr3.detectorRows):
+                continue  # a windowed ADR
+            aligned = [self._aligned(trr3, frame) for frame in frames]
             result[adr.scanId] = Transmission(
                 adr.scanId,
                 path.stem.upper(),

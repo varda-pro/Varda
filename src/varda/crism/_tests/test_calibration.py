@@ -102,17 +102,88 @@ def test_fetches_missing_wa(tmp_path: Path, trr3: Trr3):
     assert stem + ".lbl" in fetch.urls
 
 
+def scanOf(name: str) -> str:
+    return next(r.scanId for r in atTable() if r.name == name)
+
+
+class Selective(Recorder):
+    """Fails (OSError) for AT downloads of the given scans; records the rest."""
+
+    def __init__(self, failing: frozenset[str] = frozenset()):
+        super().__init__()
+        self.failing = failing
+
+    def __call__(self, url: str, target: Path) -> None:
+        self.urls.append(url)
+        stem = url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        if "/at/" in url and scanOf(stem) in self.failing:
+            raise OSError("not found")
+
+
 def test_missing_files_listed_before_processing(tmp_path: Path, trr3: Trr3):
     lib = library(tmp_path, Recorder(OSError("offline")))
     with pytest.raises(MissingCalibrationError) as caught:
         lib.ensure(trr3)
-    missing = {f.name.lower(): f for f in caught.value.files}
-    assert WA in missing
-    assert set(atNames(lib, trr3)) <= set(missing)
-    assert len(atNames(lib, trr3)) > 5
-    assert any(f.kind == "BP" for f in caught.value.files)
+    listed = {f.name: f for f in caught.value.files}
+    assert WA in listed
+    assert set(atNames(lib, trr3)) <= set(listed)
+    assert len(atNames(lib, trr3)) == 6  # one per scan
+    assert all(f.required for f in caught.value.files)
     assert all(f.url and f.localPath is None for f in caught.value.files)
     assert WA in str(caught.value).lower()
+    status = lib.status(trr3)
+    assert all(f.required for f in status if f.kind in ("WA", "AT"))
+    assert not any(f.required for f in status if f.kind == "BP")
+
+
+def test_one_fetch_per_scan(cropDir: Path, tmp_path: Path, trr3: Trr3):
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    fetch = Selective()
+    lib = library(tmp_path, fetch)
+    with pytest.raises(MissingCalibrationError):  # the fake writes nothing
+        lib.ensure(trr3)
+    atImages = [u for u in fetch.urls if "/at/" in u and u.endswith(".img")]
+    scans = [scanOf(u.rsplit("/", 1)[-1][:-4]) for u in atImages]
+    assert len(atImages) == 6 and len(set(scans)) == 6
+
+
+def test_unavailable_scans_are_noted_not_fatal(
+    cropDir: Path, tmp_path: Path, trr3: Trr3
+):
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    lib = library(tmp_path)
+    names = atNames(lib, trr3)
+    failing = {scanOf(n) for n in names[:2]}
+    for i, name in enumerate(names[2:]):  # four scans are already local
+        writeVariant(cropDir, AT, tmp_path / "cdr", name, 0.1 * (i + 1))
+    lib = library(tmp_path, Selective(frozenset(failing)))
+    status = lib.ensure(trr3)
+    assert len(lib.transmissions(trr3, TransmissionSource.PDS_AT)) == 4
+    noted = {f.name for f in status if "could not be fetched" in f.note}
+    assert noted == set(names[:2])
+
+
+def test_all_ats_failing_raises(cropDir: Path, tmp_path: Path, trr3: Trr3):
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    lib = library(tmp_path, Recorder(OSError("offline")))
+    with pytest.raises(MissingCalibrationError) as caught:
+        lib.ensure(trr3)
+    assert {f.kind for f in caught.value.files} == {"AT"}
+
+
+def test_missing_bad_pixels_do_not_block(cropDir: Path, tmp_path: Path, trr3: Trr3):
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    lib = library(tmp_path)
+    copyCdr(cropDir, AT, tmp_path / "cdr", atNames(lib, trr3)[0])
+    status = lib.ensure(trr3)  # the BPs are absent and the fake writes nothing
+    assert [f.localPath for f in status if f.kind == "BP"] == [None, None]
+    assert lib.badPixels(trr3) is None
+
+
+def test_sensor_s_has_no_pds_ats(cropDir: Path, tmp_path: Path, trr3: Trr3):
+    s3 = evolve(trr3, id=trr3.id.replace(sensor="S"))
+    ats = [f for f in library(tmp_path).status(s3) if f.kind == "AT"]
+    assert len(ats) == 1 and "IR only" in ats[0].note
 
 
 def test_ensure_passes_when_everything_is_local(
