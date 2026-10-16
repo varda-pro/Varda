@@ -478,16 +478,99 @@ are written in Phase 1, test-first. Design:
     2016 §2.1, CAT 7.2.1).
   - M7: the post-fit residual is shared across three FRSs (r = 0.75–0.93),
     and removing it takes 0.006–0.008 down to 0.003.
-- **Confidence:** medium.
-- **Tests:** `test_atmosphere.py::test_artifact_basis_leave_one_out` and
-  `::test_artifact_model_preserves_mineral_band` *(planned)*. If D3 allows,
-  a comparison with the VS ADR artifact spectra.
+- **Confidence:** medium for the 2014 FRSs; low for other periods until
+  more observations per scan are processed (FRT00005850 below).
+- **Implementation (Task 14):**
+  - **Basis** (`atmosphere.learnArtifactBasis`, `ArtifactBasis`): per
+    observation, the column spectra's part-A residual with one transmission
+    (`SelectionResult.fit.residuals`), high-passed (`highPass`: less its
+    least-squares cubic Legendre over the fit window, so a cubic is removed
+    exactly) and scaled to unit RMS over the score window; the median across
+    observations; a running median over 31 columns; high-passed again and
+    scaled to unit RMS over the score window (one scale for all columns, so
+    the variation across columns is kept). 0 outside the fit window and in
+    the hydration mask (no data there). One basis per transmission key
+    (`"061C4:AT"`; an AT and a VS ADR of one scan differ), stored as
+    `resources/artifacts/<scan>_<AT|VS>.npz` (`artifactFileName`: ':' becomes
+    '_') with a JSON metadata entry (key, source observations, Varda
+    version). `bundledArtifactBasis` returns None when there is none or the
+    column count differs (binned data). No basis is bundled yet (Task 23).
+  - **α ∝ β as a constraint:** α = c·β with one scene-level c, so the
+    per-pixel atmosphere is β (ln T_x(λ + δ_x) + c a_x), one linear term:
+    `AtmosphereModel(artifact=basis.spectra, artifactScale=c)`. c is
+    `artifactScale`: the column spectra fitted with α free (T and the
+    smoothed shift fixed), the median over columns of α / β, σ from the
+    MAD. A free α per pixel would be one more parameter for hydrated or
+    noisy pixels to bias. σ′ is propagated as before (a free α keeps its own
+    covariance; c's uncertainty is not propagated, a systematic term for the
+    S4.E Monte Carlo); with the true artifact tied the correction's reduced
+    χ² is 1.01 (fitted bands) and 1.04 (score window), as in A5.
+  - **Identifiability (synthetic):** the synthetic artifact, (ln T)²
+    high-passed, correlates −0.93 with the high-passed ln T, so the fit
+    reads about 93% of it as β (−3% at RMS 0.006, −10% at 0.02) and δ. Only
+    the rest, less its σ-weighted projection on the continuum, ln T and its
+    shift term, can be learned from residuals; at RMS 0.006 that part is
+    0.0016, below the stripes of column spectra. The part-C tests use RMS
+    0.02, whose learnable part (0.0055) is what M7 found the FRS fits leave
+    in common. The basis from four synthetic observations correlates 0.987
+    (median column; worst 0.975) with that part, 0.50 with the whole
+    artifact. Correcting with the biased β leaves a smooth 2 µm bowl of
+    about −3% that a high-passed basis cannot hold by design (S4.E.1).
+  - **Real data** (TRR3 ÷ cos i, instrument-noise σ, column spectra of all
+    lines; PDS ATs). Each observation's own choice: FRS00031442 061C4
+    (relative margin 0.006), FRS0002FE75 0A93E (0.026), FRS00031260 08608
+    (0.037), FRT00005850 06822 (0.42). So the bases are learned under one
+    fixed scan, 061C4:AT. The high-passed column-median residuals correlate
+    0.86–0.99 between the FRSs and 0.47–0.58 with FRT00005850. CO2 residual
+    (V1) with 061C4:AT, none → leave-one-out (basis from the other two FRSs)
+    → in-sample (all three), as column spectra / per-pixel median / scene
+    residual RMS:
+    - FRS00031442: 0.00611 / 0.00744 / 0.00523 → 0.00311 / 0.00476 /
+      0.00201 → 0.00243 / 0.00434 / 0.00131 (c = 0.0060, 0.0056);
+    - FRS0002FE75: 0.00834 / 0.00962 / 0.00756 → 0.00484 / 0.00622 /
+      0.00412 → 0.00420 / 0.00570 / 0.00350;
+    - FRS00031260: 0.00622 / 0.00755 / 0.00530 → 0.00267 / 0.00472 /
+      0.00160 → 0.00224 / 0.00445 / 0.00123.
+    - Adding FRT00005850 to the training set makes each FRS's leave-one-out
+      slightly worse (column 0.00336, 0.00500, 0.00328), and the three FRSs'
+      basis makes FRT00005850's own residual worse (0.00793 / 0.00810 /
+      0.00745 → 0.00848 / 0.00867 / 0.00773; c = 0.0047): a basis does not
+      carry across from 2014 to 2007 (another WA, and 061C4 is a poor fit
+      for it, 0.00886 against 06822's 0.00623).
+  - **Mineral bands:** on the library surface the model moves BD2290 by
+    0.00σ and BD1900_2 by 0.3–0.4σ (seeds 1–3; σ the unit's scatter), and
+    on a cube without the artifact (scene c ≈ −0.001, the basalt's
+    structure) by ≤ 0.15σ. Against the artifact-free run BD2290 is within
+    0.04σ, but BD1900_2 is 1.1–1.4σ off with the model and 0.7–1.0σ
+    without: the bowl above sits under R1985 and the artifact under the
+    hydration mask is never fitted. A learned basis cannot fix either
+    without learning the ubiquitous 1.9 µm hydration band too.
+  - **Surface leakage into c:** on a scene with no artifact the library
+    basalt's structure gives c = −0.0007…−0.0016 (4–10σ), 10–25% of the
+    injected 0.0063. c is a scene-level fit, so surface structure that
+    projects onto the basis biases it.
+- **Tests:** `test_atmosphere.py::test_artifact_basis_recovered`,
+  `::test_artifact_reduces_co2_residual` (the M7 column-median metric of
+  the atmosphere left, the corrected over the exactly corrected cube:
+  0.0049 without the model, 0.0011 with; on the corrected cube itself
+  0.0071 → 0.0060, the exact correction's 0.0059),
+  `::test_artifact_model_preserves_mineral_band`,
+  `::test_high_pass_removes_continuum`, `::test_round_trip_npz`,
+  `::test_bundled_basis_checks_columns`, `::test_learn_needs_one_scan_per_basis`,
+  `::test_artifact_basis_leave_one_out` (data-gated: the three FRSs under
+  061C4:AT, each held out reduced by ≥ 30%; completed in Task 23). If D3
+  allows, a comparison with the VS ADR artifact spectra (Task 23).
 
 **A7. A curve-of-growth term is not added.**
 - **Decision:** no γ (ln T)² term in Phase 1.
 - **Source:** M10: no gain under the selection metric (0.0104–0.0109 with
-  it).
-- **Confidence:** medium. To be revisited after A6 if a bowl remains.
+  it). Task 14 explains why: high-passed, (ln T)² correlates −0.93 with
+  ln T, so a γ term is nearly degenerate with β;
+  the learnable part of a curve-of-growth residual is what A6 models.
+- **Confidence:** medium. A6 leaves a smooth bowl on the synthetic (about
+  −3% at an artifact RMS of 0.02) that neither A6 nor a free γ can
+  separate from β and the continuum; revisit if V2/V3 show a 2 µm bowl
+  against the MTRDRs.
 - **Test:** none. This is a recorded negative result.
 
 ### Destripe

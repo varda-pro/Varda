@@ -2,6 +2,10 @@
 objective choice of transmission. Part B (``fitPixels``,
 ``fitElevationModel``, ``correct``): the per-pixel scale β with T and δ
 fixed, its elevation prior ln β ≈ a − z/H, and the correction with its σ.
+Part C (``highPass``, ``learnArtifactBasis``, ``artifactScale``): the
+residual (artifact) model that replaces CAT's volcano-scan patch, a
+high-passed spectrum per transmission learned across observations and scaled
+with the path, α = c·β.
 
 Over the fit window W = 1850–2200 nm, in log space,
 
@@ -33,15 +37,20 @@ objective restricted to that window (ledger A3). Candidates are scored after
 the shift fit (M10).
 """
 
+import json
 import math
+import warnings
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 from attrs import frozen
+from numpy.lib.stride_tricks import sliding_window_view
 from numpy.polynomial import legendre
 from scipy import ndimage
 
 from varda.crism.calibration import Transmission
+from varda.version import vardaVersion
 
 FIT_WINDOW_NM = (1850.0, 2200.0)
 SCORE_WINDOW_NM = (1947.0, 2066.0)
@@ -592,25 +601,39 @@ class AtmosphereModel:
     """Everything the per-pixel fit holds fixed: the chosen transmission
     (``Transmission.values`` ``(s, b)``), the smoothed per-column shift
     ``(s,)``, an optional artifact spectrum per column ``(s, b)`` in ln R
-    (its amplitude α is fitted per pixel; Task 14) and the elevation model,
-    which is the prior on β when accepted."""
+    (``ArtifactBasis.spectra``, 0 outside the fitted bands) and the
+    elevation model, which is the prior on β when accepted.
+
+    With ``artifactScale`` c the artifact is path-scaled, α = c·β (S4.E's
+    prior α ∝ β, taken as a constraint with one scene-level c from
+    ``artifactScale``): the atmosphere is β (ln T_x(λ + δ_x) + c a_x), still
+    one linear term per pixel. Without it, α is a free per-pixel amplitude
+    (``artifactScale`` fits the column spectra that way to find c)."""
 
     transmission: Transmission
     shiftNm: np.ndarray
     artifact: np.ndarray | None = None
     elevation: ElevationModel | None = None
+    artifactScale: float | None = None
+
+    @property
+    def freeArtifact(self) -> bool:
+        """An artifact whose amplitude is a parameter of its own."""
+        return self.artifact is not None and self.artifactScale is None
 
 
 @frozen(eq=False)
 class PixelFit:
     """The per-pixel fit, ``(l, s)`` per field but the last three.
 
-    ``artifactAmplitude`` is α (0 without an artifact). ``residualRms`` is
+    ``artifactAmplitude`` is α: fitted for a free artifact, c·β for a
+    path-scaled one, 0 without an artifact. ``residualRms`` is
     the σ-weighted RMS residual over the score window. Invalid pixels (too
     few bands, a singular fit, β ≤ 0) are NaN. For the σ of the correction:
     ``gain`` ``(l, s, q, k)`` is ∂(β[, α])/∂ln R at the bands ``fitBands``
     ``(k,)`` (0 where a band was not used), and ``covariance`` ``(l, s, q,
-    q)`` is the covariance of (β[, α]), prior included, both propagated from
+    q)`` is the covariance of (β[, α]) (α only when free; a path-scaled α
+    moves with β), prior included, both propagated from
     the data's σ (so ``betaSigma`` is that propagation, consistent with σ′).
     ``betaSigmaEmpirical`` is the honest uncertainty of β when a prior was
     used: the data part rescaled by ``ElevationModel.sigmaRatio``², plus the
@@ -629,11 +652,14 @@ class PixelFit:
 
 def _modelTerms(wavelengths: np.ndarray, model: AtmosphereModel) -> list[np.ndarray]:
     """The atmosphere's columns of the design, ``(s, b)`` each: ln T_x(λ + δ_x)
-    and the artifact, if any."""
+    and a free artifact, or ln T_x(λ + δ_x) + c a_x for a path-scaled one."""
     logT = shiftedLogTransmission(wavelengths, model.transmission.values, model.shiftNm)
     if model.artifact is None:
         return [logT]
-    return [logT, np.asarray(model.artifact, dtype=np.float64)]
+    artifact = np.asarray(model.artifact, dtype=np.float64)
+    if model.artifactScale is not None:
+        return [logT + model.artifactScale * artifact]
+    return [logT, artifact]
 
 
 def fitPixels(
@@ -775,11 +801,7 @@ def fitPixels(
         beta=masked(beta),
         betaSigma=masked(np.sqrt(covariance[..., b, b])),
         betaSigmaEmpirical=masked(np.sqrt(empiricalVariance)),
-        artifactAmplitude=masked(
-            coefficients[..., b + 1]
-            if model.artifact is not None
-            else np.zeros_like(beta)
-        ),
+        artifactAmplitude=masked(_artifactAmplitude(model, coefficients, b)),
         residualRms=masked(rms),
         valid=valid,
         fitBands=bands,
@@ -790,6 +812,16 @@ def fitPixels(
             np.nan,
         ),
     )
+
+
+def _artifactAmplitude(
+    model: AtmosphereModel, coefficients: np.ndarray, b: int
+) -> np.ndarray:
+    if model.freeArtifact:
+        return coefficients[..., b + 1]
+    if model.artifactScale is not None:
+        return model.artifactScale * coefficients[..., b]
+    return np.zeros_like(coefficients[..., b])
 
 
 def _biweight(standardized: np.ndarray) -> np.ndarray:
@@ -969,6 +1001,8 @@ def correct(
     fit: PixelFit,
 ) -> tuple[np.ndarray, np.ndarray]:
     """R′ = R / exp(β ln T_x(λ + δ_x) + α a_x) over all bands (S4.D), and σ′.
+    For a path-scaled artifact (α = c·β) that is one term, β (ln T + c a);
+    the uncertainty of c is not propagated (a systematic term, S4.E).
 
     In ln R′ = ln R − t·θ (t the atmosphere's terms, θ = (β[, α])), θ is
     itself linear in the data it was fitted to, θ = G ln R + (prior), so
@@ -986,7 +1020,7 @@ def correct(
     sigma = np.asarray(sigma, dtype=np.float64)
     terms = np.stack(_modelTerms(np.asarray(wavelengths, np.float64), model), axis=-1)
     amplitudes = np.stack(
-        [fit.beta] + ([fit.artifactAmplitude] if model.artifact is not None else []),
+        [fit.beta] + ([fit.artifactAmplitude] if model.freeArtifact else []),
         axis=-1,
     )
     path = np.einsum("sbq,lsq->lsb", terms, amplitudes)
@@ -1000,3 +1034,202 @@ def correct(
     corrected = np.where(fit.valid[..., None], corrected, np.nan)
     with np.errstate(invalid="ignore"):
         return corrected, corrected * np.sqrt(variance)
+
+
+# --- part C: the residual (artifact) model ------------------------------------------
+
+ARTIFACT_FOLDER = Path(__file__).parent / "resources" / "artifacts"
+_MAD_EFFICIENCY = math.sqrt(math.pi / 2)  # the σ of a median over that of a mean
+
+
+@frozen(eq=False)
+class ArtifactBasis:
+    """The residual a transmission leaves after the fit (S4.E, ledger A6), M =
+    1: what CAT's volcano-scan patch fixes (the 2 µm "bowl" and "hash", CO2
+    lines that no single exponent of one empirical transmission reproduces at
+    another path), learned across observations processed with it.
+
+    ``scanId`` is the transmission's key (``Transmission.key``,
+    ``"<scan>:<AT|VS>"``): an AT and a VS ADR of one scan leave different
+    residuals. ``spectra`` ``(s, b)`` is in ln R, in the cube's band order
+    (aligned to the detector rows, so column x is detector column x),
+    high-passed over the fit window and 0 outside it and wherever the fit
+    uses no data (the hydration mask). It has unit RMS over the score window,
+    one scale for every column it covers, so its variation across columns is
+    kept. ``createdWith`` is the Varda version that learned it."""
+
+    scanId: str
+    spectra: np.ndarray
+    sourceObservations: tuple[str, ...]
+    createdWith: str
+
+
+def highPass(
+    residuals: np.ndarray, wavelengths: np.ndarray, degree: int = CONTINUUM_DEGREE
+) -> np.ndarray:
+    """``residuals`` ``(..., b)`` less, row by row, their least-squares
+    Legendre polynomial of ``degree`` over the fit window (the fit's own
+    continuum, unweighted, on the row's finite bands there): what is left is
+    orthogonal to any smooth shape, and a cubic is removed exactly, so a
+    basis made of it never carries smooth mineral shape. NaN outside the fit
+    window, where the input is NaN, and in rows with fewer than 24 finite
+    bands in the window. ``wavelengths`` is like ``residuals`` or broadcasts
+    to it."""
+    residuals = np.asarray(residuals, dtype=np.float64)
+    wavelengths = np.broadcast_to(
+        np.asarray(wavelengths, dtype=np.float64), residuals.shape
+    )
+    used = np.isfinite(residuals) & _inside(wavelengths, FIT_WINDOW_NM)
+    low, high = FIT_WINDOW_NM
+    u = np.where(used, 2 * (wavelengths - low) / (high - low) - 1, 0.0)
+    basis = legendre.legvander(u, degree) * used[..., None]
+    enough = used.sum(axis=-1) >= _MIN_FIT_BANDS
+    gram = np.einsum("...bj,...bk->...jk", basis, basis)
+    gram = np.where(enough[..., None, None], gram, np.eye(degree + 1))
+    moments = np.einsum("...bj,...b->...j", basis, np.where(used, residuals, 0.0))
+    coefficients = np.linalg.solve(gram, moments[..., None])[..., 0]
+    smooth = np.einsum("...bj,...j->...b", basis, coefficients)
+    return np.where(used & enough[..., None], residuals - smooth, np.nan)
+
+
+def _nanMedian(values: np.ndarray, axis: int) -> np.ndarray:
+    """np.nanmedian, NaN without a warning where every value is NaN."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmedian(values, axis=axis)
+
+
+def _unitRms(values: np.ndarray, score: np.ndarray) -> np.ndarray:
+    """``values`` ``(s, b)`` over their RMS in the score window ``score``,
+    over the finite, nonzero rows (the columns it covers)."""
+    finite = np.isfinite(values)
+    covered = (finite & (values != 0)).any(axis=1, keepdims=True)
+    inside = score & finite & covered
+    rms = math.sqrt(float(np.mean(values[inside] ** 2))) if inside.any() else 0.0
+    return values / rms if rms > 0 else values
+
+
+def _runningMedian(values: np.ndarray, width: int) -> np.ndarray:
+    """The NaN-ignoring median of ``values`` ``(s, b)`` over ``width``
+    neighboring rows (columns) centered on each, band by band."""
+    before = width // 2
+    padded = np.pad(
+        values, ((before, width - 1 - before), (0, 0)), constant_values=np.nan
+    )
+    return _nanMedian(sliding_window_view(padded, width, axis=0), axis=-1)
+
+
+def learnArtifactBasis(
+    columnResiduals: Sequence[np.ndarray],
+    scanId: str,
+    observations: Sequence[str],
+    smoothColumns: int = 31,
+    *,
+    wavelengths: np.ndarray,
+) -> ArtifactBasis:
+    """The artifact basis of one transmission (``scanId``, its key) from
+    ``columnResiduals``, one ``(s, b)`` per observation in ``observations``:
+    the column spectra's ln R less the part-A fit with that transmission
+    (``SelectionResult.fit.residuals``), high-passed (``highPass``). All must
+    come from the same transmission: the residual is the transmission's, so
+    observations of different scans cannot be pooled. ``wavelengths`` ``(s,
+    b)`` are the columns' (any of the observations'; they differ by well
+    under a band).
+
+    Each residual is high-passed (again, harmlessly) and scaled to unit RMS
+    over the score window, so a scene with a longer path does not dominate;
+    then the median across observations, band by band; then a running median
+    across ``smoothColumns`` columns; then high-passed once more (a median
+    is not linear) and scaled to unit RMS. Bands without data are 0."""
+    residuals = [np.asarray(r, dtype=np.float64) for r in columnResiduals]
+    if not residuals or len(residuals) != len(observations):
+        raise ValueError(
+            f"{len(residuals)} residuals for {len(observations)} observations: "
+            "one per observation is needed"
+        )
+    wavelengths = np.asarray(wavelengths, dtype=np.float64)
+    shapes = sorted({r.shape for r in residuals})
+    if shapes != [wavelengths.shape]:
+        raise ValueError(
+            f"residuals of shape {shapes} for wavelengths of shape "
+            f"{wavelengths.shape}: every observation needs the scan's columns "
+            "and bands"
+        )
+    score = _inside(wavelengths, SCORE_WINDOW_NM)
+    scaled = np.stack([_unitRms(highPass(r, wavelengths), score) for r in residuals])
+    common = _runningMedian(_nanMedian(scaled, axis=0), smoothColumns)
+    spectra = np.nan_to_num(highPass(common, wavelengths))
+    return ArtifactBasis(
+        scanId, _unitRms(spectra, score), tuple(observations), vardaVersion()
+    )
+
+
+def artifactScale(
+    spectra: np.ndarray,
+    sigma: np.ndarray,
+    wavelengths: np.ndarray,
+    model: AtmosphereModel,
+) -> tuple[float, float]:
+    """The scene's c in α = c·β, and its σ: the column spectra ``(s, b)``
+    (``columnSpectra``) fitted with ``model.artifact`` as a free term (T and
+    the smoothed shift fixed, no prior), c the median over valid columns of
+    α / β and σ that median's (1.4826 · MAD · √(π/2) / √n). NaN with fewer
+    than 3 valid columns.
+
+    CAT scales its patch with the path in the same way; a free α per pixel
+    would be one more parameter for a hydrated or noisy pixel to bias."""
+    if model.artifact is None:
+        raise ValueError("the model has no artifact to scale")
+    free = AtmosphereModel(model.transmission, model.shiftNm, model.artifact)
+    fit = fitPixels(spectra[None], sigma[None], wavelengths, free)
+    ratio = (fit.artifactAmplitude / fit.beta)[fit.valid]
+    if ratio.size < 3:
+        return math.nan, math.nan
+    center = float(np.median(ratio))
+    spread = _MAD_TO_SIGMA * float(np.median(np.abs(ratio - center)))
+    return center, _MAD_EFFICIENCY * spread / math.sqrt(ratio.size)
+
+
+def saveArtifactBasis(basis: ArtifactBasis, path: Path) -> None:
+    """``path`` (.npz): the spectra and a JSON ``metadata`` entry."""
+    metadata = {
+        "scanId": basis.scanId,
+        "sourceObservations": list(basis.sourceObservations),
+        "createdWith": basis.createdWith,
+    }
+    with Path(path).open("wb") as file:
+        np.savez(
+            file,
+            spectra=np.asarray(basis.spectra, dtype=np.float64),
+            metadata=np.array(json.dumps(metadata)),
+        )
+
+
+def loadArtifactBasis(path: Path) -> ArtifactBasis:
+    with np.load(Path(path), allow_pickle=False) as data:
+        metadata = json.loads(str(data["metadata"]))
+        spectra = np.asarray(data["spectra"], dtype=np.float64)
+    return ArtifactBasis(
+        metadata["scanId"],
+        spectra,
+        tuple(metadata["sourceObservations"]),
+        metadata["createdWith"],
+    )
+
+
+def artifactFileName(scanId: str) -> str:
+    """The bundled file of a transmission key: ``"061C4:AT"`` is
+    ``061C4_AT.npz`` (':' is awkward in file names)."""
+    return scanId.replace(":", "_") + ".npz"
+
+
+def bundledArtifactBasis(scanId: str, samples: int) -> ArtifactBasis | None:
+    """The basis shipped for the transmission key ``scanId`` (in
+    ``resources/artifacts``, ``artifactFileName``), or None when there is
+    none or it has a different number of columns than the cube's
+    ``samples`` (a binned observation)."""
+    path = ARTIFACT_FOLDER / artifactFileName(scanId)
+    if not path.is_file():
+        return None
+    basis = loadArtifactBasis(path)
+    return basis if basis.spectra.shape[0] == samples else None

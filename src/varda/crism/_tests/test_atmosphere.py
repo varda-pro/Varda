@@ -1,5 +1,6 @@
 import math
 import time
+from functools import cache
 from pathlib import Path
 
 import attrs
@@ -12,14 +13,21 @@ from varda.crism import atmosphere, validation
 from varda.crism.atmosphere import (
     FIT_WINDOW_NM,
     HYDRATION_MASK_NM,
+    ArtifactBasis,
     AtmosphereModel,
     ElevationModel,
     PixelFit,
+    artifactScale,
+    bundledArtifactBasis,
     columnSpectra,
     correct,
     fitColumns,
     fitElevationModel,
     fitPixels,
+    highPass,
+    learnArtifactBasis,
+    loadArtifactBasis,
+    saveArtifactBasis,
     selectTransmission,
     shiftedLogTransmission,
     smoothShift,
@@ -796,3 +804,407 @@ def test_real_prior_spares_deviant_pixels(demoData: Path) -> None:
         return float(np.nanmedian(validation.co2Residual(perPixel, corrected[deviant])))
 
     assert residual(prior) <= 1.03 * residual(free)
+
+
+# --- part C: the residual (artifact) model -----------------------------------------
+
+_TRAINING_SEEDS = (10, 11, 12, 13)
+# The artifact's RMS for part C. The synthetic's default (0.006) is mostly the
+# shape of ln T itself (``_identifiable``): what a fit leaves of it is 0.0016,
+# below the stripes and the noise of column spectra. At 0.02 that part is about
+# 0.0055, what M7 found the FRS fits leave in common (0.006–0.008 down to 0.003).
+_ARTIFACT_RMS = 0.02
+
+
+def _residualOf(
+    cube: np.ndarray, sigma: np.ndarray, truth: SyntheticTruth
+) -> np.ndarray:
+    """The high-passed part-A residual of the column spectra, ``(s, b)``, with
+    the true AT as the only candidate (its shift fitted and smoothed)."""
+    wavelengths = truth.columnWavelengths
+    spectra, spread = columnSpectra(cube, sigma, wavelengths)
+    candidate = _candidate("truth", truth.transmission)
+    selection = selectTransmission(spectra, spread, wavelengths, [candidate])
+    return highPass(selection.fit.residuals, wavelengths)
+
+
+@cache
+def _syntheticBasis() -> ArtifactBasis:
+    """A basis learned from four synthetic observations (seeds 10–13: their
+    own units, albedo, stripes and noise; the same artifact) on the smooth
+    surface, which the model reaches, so the residual is the artifact (and
+    each one's stripes and noise). Spikes are off: despiking comes first."""
+    residuals, truth = [], None
+    for seed in _TRAINING_SEEDS:
+        raw, truth = makeSyntheticCube(
+            64, seed, spikeRate=0.0, artifactAmplitude=_ARTIFACT_RMS
+        )
+        residuals.append(_residualOf(*_smoothSurface(raw, truth), truth))
+    assert truth is not None
+    return learnArtifactBasis(
+        residuals,
+        "truth:AT",
+        [f"synthetic {seed}" for seed in _TRAINING_SEEDS],
+        wavelengths=truth.columnWavelengths,
+    )
+
+
+def _identifiable(truth: SyntheticTruth, weight: np.ndarray) -> np.ndarray:
+    """``(s, b)``: the injected artifact less its least-squares projection on
+    the part-A model, the cubic continuum, ln T_x(λ + δ_x) and its slope in
+    λ (the shift's term), weighted as the fit (``weight`` = 1/σ²_lnR of the
+    column spectra), over the fitted bands, then high-passed (0 elsewhere).
+    The rest, about 93% of it (its correlation with the high-passed ln T is
+    −0.93), has the atmosphere's own shape: the fit reads it as β (−10% at
+    an RMS of 0.02, −3% at the default 0.006) and δ, and no residual model
+    can tell it apart."""
+    wavelengths = truth.columnWavelengths
+    logT = shiftedLogTransmission(wavelengths, truth.transmission, truth.shiftNm)
+    slope = shiftedLogTransmission(
+        wavelengths, truth.transmission, truth.shiftNm + 0.05
+    ) - shiftedLogTransmission(wavelengths, truth.transmission, truth.shiftNm - 0.05)
+    fitted = (
+        (wavelengths >= FIT_WINDOW_NM[0])
+        & (wavelengths <= FIT_WINDOW_NM[1])
+        & ~(
+            (wavelengths >= HYDRATION_MASK_NM[0])
+            & (wavelengths <= HYDRATION_MASK_NM[1])
+        )
+    )
+    result = np.full(wavelengths.shape, np.nan)
+    for x in range(wavelengths.shape[0]):
+        k = fitted[x]
+        u = np.interp(wavelengths[x, k], FIT_WINDOW_NM, (-1, 1))
+        design = np.column_stack([legendre.legvander(u, 3), logT[x, k], slope[x, k]])
+        root = np.sqrt(weight[x, k])
+        a = truth.artifact[x, k]
+        fit = np.linalg.lstsq(design * root[:, None], a * root, rcond=None)[0]
+        result[x, k] = a - design @ fit
+    return np.nan_to_num(highPass(result, wavelengths))
+
+
+def _rowCorrelation(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Pearson r of each row of ``a`` and ``b`` over the bands where both
+    are nonzero."""
+    keep = (a != 0) & (b != 0)
+    count = keep.sum(1, keepdims=True)
+    da = np.where(keep, a - (a * keep).sum(1, keepdims=True) / count, 0.0)
+    db = np.where(keep, b - (b * keep).sum(1, keepdims=True) / count, 0.0)
+    return (da * db).sum(1) / np.sqrt((da**2).sum(1) * (db**2).sum(1))
+
+
+def test_high_pass_removes_continuum() -> None:
+    """A6: the high-pass removes any cubic over the fit window exactly (a
+    smooth mineral shape is never part of the basis) and leaves NaN outside
+    the window and where the input is NaN."""
+    _, truth = makeSyntheticCube(4, 0, **_CLEAN)
+    wavelengths = truth.columnWavelengths
+    u = (wavelengths - 2025.0) / 175.0
+    smooth = 0.02 - 0.03 * u + 0.05 * u**2 - 0.01 * u**3
+    wiggle = 0.001 * np.sin(wavelengths / 3.0)
+    values = smooth + wiggle
+    values[:, 100] = np.nan
+    result = highPass(values, wavelengths)
+    inside = (wavelengths >= FIT_WINDOW_NM[0]) & (wavelengths <= FIT_WINDOW_NM[1])
+    assert np.isnan(result[~inside]).all() and np.isnan(result[:, 100]).all()
+    np.testing.assert_allclose(highPass(smooth, wavelengths)[inside], 0, atol=1e-12)
+    keep = inside & np.isfinite(result)
+    assert np.std(result[keep]) == pytest.approx(np.std(wiggle[keep]), rel=0.1)
+
+
+def test_artifact_basis_recovered() -> None:
+    """A6: the basis learned across four synthetic observations (different
+    seeds and surfaces, one artifact) correlates at least 0.95 with the
+    injected artifact per column (median; measured 0.987, the worst column
+    0.975), against its identifiable part (``_identifiable``): the part of
+    a(x, λ) that is not the shape of ln T_x and its shift. Against the
+    whole artifact the correlation is 0.50: the fit absorbs the rest into β
+    and δ, where no residual model can separate it. At the synthetic's
+    default RMS (0.006) the median is 0.905: the identifiable part, 0.0016,
+    is then below each scene's stripes."""
+    basis = _syntheticBasis()
+    raw, truth = makeSyntheticCube(
+        64, 0, spikeRate=0.0, artifactAmplitude=_ARTIFACT_RMS
+    )
+    spectra, spread = columnSpectra(
+        *_smoothSurface(raw, truth), truth.columnWavelengths
+    )
+    assert basis.spectra.shape == truth.artifact.shape
+    assert basis.sourceObservations == tuple(f"synthetic {s}" for s in _TRAINING_SEEDS)
+    score = (truth.columnWavelengths >= atmosphere.SCORE_WINDOW_NM[0]) & (
+        truth.columnWavelengths <= atmosphere.SCORE_WINDOW_NM[1]
+    )
+    assert np.sqrt(np.mean(basis.spectra[score] ** 2)) == pytest.approx(1.0)
+    assert np.isfinite(basis.spectra).all()
+    correlation = _rowCorrelation(
+        basis.spectra, _identifiable(truth, (spectra / spread) ** 2)
+    )
+    assert np.median(correlation) >= 0.95
+
+
+def _corrected(
+    cube: np.ndarray,
+    truth: SyntheticTruth,
+    basis: ArtifactBasis | None,
+    significant: bool = True,
+) -> tuple[np.ndarray, AtmosphereModel]:
+    """The part-A selection (true AT), the scene's artifact scale with
+    ``basis`` (``significant``: at least 5σ from 0), the free per-pixel fit
+    and the correction."""
+    wavelengths = truth.columnWavelengths
+    sigma = truth.noiseSigma
+    spectra, spread = columnSpectra(cube, sigma, wavelengths)
+    candidate = _candidate("truth", truth.transmission)
+    selection = selectTransmission(spectra, spread, wavelengths, [candidate])
+    model = AtmosphereModel(selection.chosen, selection.fit.shiftNm)
+    if basis is not None:
+        free = attrs.evolve(model, artifact=basis.spectra)
+        scale, scaleSigma = artifactScale(spectra, spread, wavelengths, free)
+        assert scale > 5 * scaleSigma or not significant
+        model = attrs.evolve(free, artifactScale=scale)
+    fit = fitPixels(cube, sigma, wavelengths, model)
+    if basis is not None:
+        np.testing.assert_allclose(
+            fit.artifactAmplitude[fit.valid], model.artifactScale * fit.beta[fit.valid]
+        )
+    corrected, _ = correct(cube, sigma, wavelengths, model, fit)
+    return corrected, model
+
+
+def _exactlyCorrected(cube: np.ndarray, truth: SyntheticTruth) -> np.ndarray:
+    """The cube with its own atmosphere, β (ln T_x(λ + δ_x) + a_x), removed."""
+    logT = shiftedLogTransmission(
+        truth.columnWavelengths, truth.transmission, truth.shiftNm
+    )
+    return cube * np.exp(-truth.beta[..., None] * (logT + truth.artifact))
+
+
+def _columnMetric(truth: SyntheticTruth, values: np.ndarray) -> float:
+    """M7 on the column medians: the median over columns of their CO2 residual."""
+    medians = np.full(values.shape[1:], np.nan)
+    medians[:, :-1] = np.nanmedian(values[..., :-1], axis=0)  # not the placeholder
+    return float(np.median(validation.co2Residual(truth.columnWavelengths, medians)))
+
+
+def test_artifact_reduces_co2_residual() -> None:
+    """A6, V1: with the artifact injected (seed 0, not a training seed; the
+    smooth surface), the M7 column-median metric of the atmosphere the
+    correction leaves (the corrected cube over the exactly corrected one)
+    is more than twice as large without the residual model as with it
+    (measured 0.0049 against 0.0011).
+
+    On the corrected cube itself the metric also counts what is not
+    atmosphere, the same with or without the model: the surface's own
+    curvature, the stripes and the noise of column medians, 0.0059 here
+    (the exactly corrected cube). That M7 metric goes from 0.0071 to 0.0060,
+    within 2% of the exact correction's."""
+    raw, truth = makeSyntheticCube(
+        64, 0, spikeRate=0.0, artifactAmplitude=_ARTIFACT_RMS
+    )
+    cube, _ = _smoothSurface(raw, truth)
+    exact = _exactlyCorrected(cube, truth)
+    without, _ = _corrected(cube, truth, None)
+    with_, _ = _corrected(cube, truth, _syntheticBasis())
+    left = _columnMetric(truth, without / exact)
+    assert left > 2 * _columnMetric(truth, with_ / exact)
+    assert _columnMetric(truth, with_) < _columnMetric(truth, without)
+    assert _columnMetric(truth, with_) <= 1.02 * _columnMetric(truth, exact)
+
+
+def test_artifact_model_preserves_mineral_band() -> None:
+    """A6: the residual model does not touch mineral bands. On the library
+    surface (seed 1), BD2290 and BD1900_2 of the hydrated and smectite units
+    are compared, in units of σ, the parameter's scatter within the unit
+    (the units are uniform but for albedo, so that scatter is the noise):
+
+    - with the artifact injected, the model moves them by less than 1σ
+      (measured 0.00σ for BD2290, 0.3–0.4σ for BD1900_2, seeds 1–3);
+    - without the artifact, the model with its own scene scale (c about
+      −0.001, the basalt's structure) moves them by less than 1σ (≤ 0.15σ);
+    - BD2290 (outside the fit window) of the artifact cube corrected with
+      the model is within 1σ of the artifact-free truth run (0.04σ).
+
+    BD1900_2 of the artifact cube is not within 1σ of the artifact-free run,
+    with the model or without it (1.1–1.4σ with, 0.7–1.0σ without): about
+    93% of the synthetic artifact is the shape of ln T, which the fit reads
+    as β (−10%, −11% here with the basalt's own bias), and correcting with that β leaves a smooth 2 µm bowl
+    of about −3% (at 1985 nm, R1985 is 2–2.5% low). The bowl is smooth, so
+    the high-passed basis cannot hold it by design (S4.E.1), and BD1900_2's
+    R1985 sits on it. Removing the hash on top of the bowl is the 0.3–0.4σ
+    the model adds (ledger A6)."""
+    withArtifact, truth = makeSyntheticCube(
+        64, 1, spikeRate=0.0, artifactAmplitude=_ARTIFACT_RMS
+    )
+    clean, _ = makeSyntheticCube(64, 1, spikeRate=0.0, artifactAmplitude=0.0)
+    basis = _syntheticBasis()
+    corrected, model = _corrected(withArtifact, truth, basis)
+    assert model.artifactScale is not None
+    unmodeled, _ = _corrected(withArtifact, truth, None)
+    truthRun, _ = _corrected(clean, truth, None)
+    cleanModeled, cleanModel = _corrected(clean, truth, basis, significant=False)
+    assert cleanModel.artifactScale is not None
+    assert abs(cleanModel.artifactScale) < 0.5 * model.artifactScale
+    wavelengths = truth.columnWavelengths[60]
+    for unit in (HYDRATED_UNIT, 2):
+        pixels = truth.units == unit
+        assert pixels.sum() > 100
+        for name in ("BD2290", "BD1900_2"):
+
+            def parameter(cube: np.ndarray, name: str = name) -> np.ndarray:
+                return validation.summaryParameter(name, wavelengths, cube[pixels])
+
+            sigma = np.nanstd(parameter(truthRun))
+            ours = parameter(corrected)
+            assert abs(np.nanmean(ours - parameter(unmodeled))) < sigma, (unit, name)
+            cleanShift = parameter(cleanModeled) - parameter(truthRun)
+            assert abs(np.nanmean(cleanShift)) < sigma, (unit, name)
+            if name == "BD2290":
+                assert abs(np.nanmean(ours - parameter(truthRun))) < sigma, unit
+
+
+def test_round_trip_npz(tmp_path: Path) -> None:
+    """A6: a basis saved to .npz loads with equal fields; the bundled lookup
+    names files by the transmission key and returns None when the file is
+    absent or its column count differs from the cube's."""
+    basis = ArtifactBasis(
+        scanId="061C4:AT",
+        spectra=np.random.default_rng(0).normal(size=(12, 438)),
+        sourceObservations=("FRS00031442", "FRS0002FE75"),
+        createdWith="0.0.test",
+    )
+    path = tmp_path / "061C4_AT.npz"
+    saveArtifactBasis(basis, path)
+    loaded = loadArtifactBasis(path)
+    assert loaded.scanId == basis.scanId
+    assert loaded.sourceObservations == basis.sourceObservations
+    assert loaded.createdWith == basis.createdWith
+    np.testing.assert_array_equal(loaded.spectra, basis.spectra)
+    assert atmosphere.artifactFileName("061C4:AT") == "061C4_AT.npz"
+    assert bundledArtifactBasis("NOSCAN:AT", 640) is None
+
+
+def test_bundled_basis_checks_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    basis = ArtifactBasis("061C4:AT", np.zeros((640, 438)), ("A",), "0.0.test")
+    saveArtifactBasis(basis, tmp_path / atmosphere.artifactFileName(basis.scanId))
+    monkeypatch.setattr(atmosphere, "ARTIFACT_FOLDER", tmp_path)
+    found = bundledArtifactBasis("061C4:AT", 640)
+    assert found is not None and found.sourceObservations == ("A",)
+    assert bundledArtifactBasis("061C4:AT", 320) is None
+
+
+def test_learn_needs_one_scan_per_basis() -> None:
+    """Observations of different scans can't be pooled: every residual must
+    have the same shape, one per named observation."""
+    _, truth = makeSyntheticCube(4, 0, **_CLEAN)
+    wavelengths = truth.columnWavelengths
+    with pytest.raises(ValueError, match="observation"):
+        learnArtifactBasis(
+            [np.zeros(wavelengths.shape)], "x:AT", ["a", "b"], wavelengths=wavelengths
+        )
+    with pytest.raises(ValueError, match="shape"):
+        learnArtifactBasis(
+            [np.zeros(wavelengths.shape), np.zeros((3, 438))],
+            "x:AT",
+            ["a", "b"],
+            wavelengths=wavelengths,
+        )
+
+
+_REAL_ARTIFACT_SCAN = "061C4:AT"
+_REAL_ARTIFACT_OBSERVATIONS = {
+    "FRS00031442": "FRS00031442/trdr/frs00031442_01_if168l_trr3.lbl",
+    "FRS0002FE75": "FRS0002FE75/trdr/frs0002fe75_01_if168l_trr3.lbl",
+    "FRS00031260": "FRS00031260/trdr/frs00031260_01_if168l_trr3.lbl",
+}
+
+
+@attrs.frozen(eq=False)
+class _RealColumns:
+    spectra: np.ndarray
+    spread: np.ndarray
+    wavelengths: np.ndarray
+    selection: atmosphere.SelectionResult
+
+    @property
+    def residual(self) -> np.ndarray:
+        return highPass(self.selection.fit.residuals, self.wavelengths)
+
+    def co2Residual(self, basis: ArtifactBasis | None) -> float:
+        """M7 on the corrected column spectra: the median over columns."""
+        model = AtmosphereModel(self.selection.chosen, self.selection.fit.shiftNm)
+        if basis is not None:
+            free = attrs.evolve(model, artifact=basis.spectra)
+            scale, _ = artifactScale(self.spectra, self.spread, self.wavelengths, free)
+            model = attrs.evolve(free, artifactScale=scale)
+        spectra, spread = self.spectra[None], self.spread[None]
+        fit = fitPixels(spectra, spread, self.wavelengths, model)
+        corrected, _ = correct(spectra, spread, self.wavelengths, model, fit)
+        window = (self.wavelengths > 1940) & (self.wavelengths < 2100)
+        columns = window.sum(axis=1) >= 4  # not the empty edge columns
+        return float(
+            np.nanmedian(
+                validation.co2Residual(self.wavelengths[columns], corrected[0, columns])
+            )
+        )
+
+
+def _realColumns(folder: Path, trr3Path: str) -> _RealColumns:
+    """An observation's column spectra (TRR3 ÷ cos i, the instrument-noise σ)
+    and its part-A fit with the artifact scan."""
+    trr3 = readTrr3(folder / trr3Path)
+    ddrPath = trr3Path.replace("trdr", "ddr").replace("_if1", "_de1")
+    ddr = readDdr(folder / ddrPath.replace("_trr3", "_ddr1"))
+    library = CalibrationLibrary(
+        [folder / "ATO0004EC45"], folder.parent / "missing-cache", fetch=_noDownload
+    )
+    wavelengths = library.wavelengths(trr3)
+    incidence = np.radians(ddr.band(DdrBand.INCIDENCE_AREOID))
+    cube = trr3.lines(slice(0, trr3.shape[0])) / np.cos(incidence)[..., None]
+    sigma = estimateNoise(cube).sigma(cube)
+    candidates = [
+        c
+        for c in library.transmissions(trr3, TransmissionSource.PDS_AT)
+        if c.key == _REAL_ARTIFACT_SCAN
+    ]
+    spectra, spread = columnSpectra(cube, sigma, wavelengths)
+    selection = selectTransmission(spectra, spread, wavelengths, candidates)
+    return _RealColumns(spectra, spread, wavelengths, selection)
+
+
+def test_artifact_basis_leave_one_out(demoData: Path) -> None:
+    """A6 (data-gated): a basis learned without observation k reduces k's
+    CO2 residual (M7 on the corrected column spectra) by at least 30%
+    against no basis.
+
+    The three 2014 FRSs choose different scans on their own (061C4, 0A93E
+    and 08608; FRT00005850 chooses 06822), and a basis belongs to one
+    transmission, so they are pooled under one fixed scan, 061C4:AT
+    (FRS00031442's choice, FRS00031260's second). Measured, none → leave-one-out (and
+    in-sample with all three): FRS00031442 0.00611 → 0.00311 (0.00243),
+    FRS0002FE75 0.00834 → 0.00484 (0.00420), FRS00031260 0.00622 → 0.00267
+    (0.00224). FRT00005850 (2007, another WA) is not in the set: the FRSs'
+    basis makes its residual 7% worse (0.00793 → 0.00848); Task 23 decides
+    what a basis spans."""
+    folder = demoData / "data-for-paper"
+    present = {
+        name: path
+        for name, path in _REAL_ARTIFACT_OBSERVATIONS.items()
+        if (folder / path).is_file()
+    }
+    if len(present) < 3:
+        raise pytest.skip.Exception(
+            f"needs 3 TRR3s fitted with {_REAL_ARTIFACT_SCAN}; found {sorted(present)}"
+        )
+    observations = {name: _realColumns(folder, path) for name, path in present.items()}
+    for name, held in observations.items():
+        others = [n for n in observations if n != name]
+        basis = learnArtifactBasis(
+            [observations[n].residual for n in others],
+            _REAL_ARTIFACT_SCAN,
+            others,
+            wavelengths=observations[others[0]].wavelengths,
+        )
+        without = held.co2Residual(None)
+        assert held.co2Residual(basis) <= 0.7 * without, name
