@@ -490,9 +490,10 @@ def test_elevation_prior_uses_empirical_sigma() -> None:
     second differences of β), not the formal one. With σ overstated 2× the
     formal σ_β is twice too large (z std 0.5); the ratio comes back as 0.5,
     τ as the true 0.01, and the fit with the prior is the same as with the
-    right σ, to rounding. On FRS00031442 the ratio is 0.17: the TRR3's
-    along-track noise is 96% common to the fit-window bands (achromatic,
-    which the continuum absorbs)."""
+    right σ, to rounding. On FRS00031442 the ratio is 0.17 with σ from plain
+    along-track differences (96% of them common to the fit-window bands:
+    achromatic texture, which the continuum absorbs) and 1.84 with the
+    instrument-noise σ."""
     raw, truth = makeSyntheticCube(64, 0, betaScatter=0.01, **_CLEAN)
     cube, sigma = _smoothSurface(raw, truth)
     _, right, prior = _withPrior(cube, sigma, truth, _model(truth))
@@ -755,7 +756,7 @@ def test_real_prior_spares_deviant_pixels(demoData: Path) -> None:
     to the law. Their median per-pixel CO2 residual with the prior is within
     3% of the free fit's (measured 0.00691 against 0.00694; with the formal
     σ_β, τ was 0 and it got 18% worse). The scan chosen is 061C4:AT, and
-    the empirical σ_β is about 0.17 of the formal one."""
+    the empirical σ_β is about 1.84 times the formal one."""
     folder = demoData / "data-for-paper"
     trr3 = readTrr3(folder / "FRS00031442/trdr/frs00031442_01_if168l_trr3.lbl")
     ddr = readDdr(folder / "FRS00031442/ddr/frs00031442_01_de168l_ddr1.lbl")
@@ -777,7 +778,10 @@ def test_real_prior_spares_deviant_pixels(demoData: Path) -> None:
     free = fitPixels(cube, sigma, wavelengths, model)
     elevation = fitElevationModel(free.beta, free.betaSigma, elevationM)
     assert elevation.accepted
-    assert elevation.sigmaRatio == pytest.approx(0.17, abs=0.03)
+    # With σ the instrument noise (Task 9b) the ratio is 1.84, not the 0.17 it
+    # had with a σ inflated by achromatic texture: β varies along track more
+    # than the formal noise propagation says (real coherent structure).
+    assert elevation.sigmaRatio == pytest.approx(1.84, abs=0.2)
     withPrior = attrs.evolve(model, elevation=elevation)
     prior = fitPixels(cube, sigma, wavelengths, withPrior, elevationM)
     law, _ = elevation.prior(elevationM)

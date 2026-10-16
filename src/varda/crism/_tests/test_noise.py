@@ -86,3 +86,91 @@ def test_real_chunk_sigma_is_finite_where_data_are(demoData):
     cube, _ = realChunk(demoData)
     sigma = estimateNoise(cube).sigma(cube)
     assert np.isfinite(sigma[np.isfinite(cube)]).all()
+
+
+def test_texture_does_not_inflate_sigma():
+    """An achromatic per-pixel factor (2% RMS) is surface texture, not noise:
+    the plain along-track second difference would read it as σ (about 3x the
+    injected 1% there); the brightness-normalized one does not."""
+    for window in ((1000.0, 2600.0), (1950.0, 2070.0)):
+        assert abs(_ratio(window, textureAmplitude=0.02) - 1.0) < 0.03
+
+
+def test_texture_inflates_the_plain_second_difference():
+    cube, truth = makeSyntheticCube(lines=128, spikeRate=0.0, textureAmplitude=0.02)
+    band = int(
+        np.argmin(np.abs(np.median(truth.columnWavelengths[:, :-1], axis=0) - 1500.0))
+    )
+    plain = cube[1:-1, :, band] - 0.5 * (cube[:-2, :, band] + cube[2:, :, band])
+    injected = np.median(truth.noiseSigma[:, :, band])
+    assert 1.4826 * np.median(np.abs(plain)) / np.sqrt(1.5) > 2 * injected
+
+
+def test_achromatic_fraction_flags_texture():
+    cube, truth = makeSyntheticCube(lines=128, spikeRate=0.0, textureAmplitude=0.05)
+    model = estimateNoise(cube)
+    window = _nearInfrared(truth)
+    assert np.nanmedian(model.achromaticFraction[window]) > 0.8
+    clean = estimateNoise(makeSyntheticCube(lines=128, spikeRate=0.0)[0])
+    assert np.nanmedian(clean.achromaticFraction[window]) < 0.3
+
+
+def test_white_noise_calibration():
+    """On pure white noise over a flat spectrum σ comes back to within 3%."""
+    rng = np.random.default_rng(1)
+    cube = 0.1 + 0.001 * rng.standard_normal((128, 64, 100))
+    model = estimateNoise(cube)
+    assert abs(np.median(model.sigma(cube)) / 0.001 - 1.0) < 0.03
+
+
+def _window(wavelengths: np.ndarray, low: float, high: float) -> np.ndarray:
+    middle = np.nanmedian(wavelengths[:, :-1], axis=0)
+    middle = np.append(middle, np.nan)
+    return (middle >= low) & (middle <= high)
+
+
+def realNoiseNumbers(demoData):
+    """(new σ median, chromatic residual σ of the plain differences, achromatic
+    fraction median) over 1850–2200 nm of FRS00031442 lines 0–63, in the pixels
+    whose spectra are valid in all those bands."""
+    cube, wavelengths = realChunk(demoData)
+    model = estimateNoise(
+        cube, wavelengths=np.append(np.nanmedian(wavelengths[:, :-1], axis=0), np.nan)
+    )
+    bands = _window(wavelengths, 1850.0, 2200.0)
+    window = cube[:, :, bands]
+    d0 = window[1:-1] - 0.5 * (window[:-2] + window[2:])
+    spectrum = window[1:-1]
+    ok = np.isfinite(d0).all(axis=2) & np.isfinite(spectrum).all(axis=2)
+    brightness = np.where(ok, spectrum.mean(axis=2), np.nan)
+    gradient = np.hypot(*np.gradient(brightness))
+    ok &= gradient <= np.nanmedian(gradient)  # the quiet half
+    d0, spectrum = d0[ok], spectrum[ok]
+    # the achromatic part of the differences is their first principal component
+    _, _, components = np.linalg.svd(d0 - d0.mean(axis=0), full_matrices=False)
+    residual = d0 - (d0 @ components[0])[:, None] * components[0]
+    chromatic = 1.4826 * np.median(np.abs(residual)) / np.sqrt(1.5)
+    sigma = model.sigma(cube)[:, :, bands][1:-1][ok]
+    return (
+        float(np.median(sigma)),
+        float(chromatic),
+        float(np.nanmedian(model.achromaticFraction[bands])),
+    )
+
+
+# The reviewer's measurement of the chromatic residual of the along-track
+# differences on these lines (quiet pixels, 1850-2200 nm): 0.175 of the plain
+# estimator's σ of 5.57e-4 I/F.
+REVIEWED_CHROMATIC_SIGMA = 0.175 * 5.57e-4
+
+
+def test_real_sigma_is_the_chromatic_noise(demoData):
+    """On FRS00031442 lines 0-63 the plain second differences over 1850-2200 nm
+    are mostly one achromatic component (texture); σ is what is left once it is
+    removed. Measured: σ 1.08e-4 (0.20 of the plain estimator's), the PCA
+    residual 1.57e-4 (it also holds chromatic texture, so it bounds σ above),
+    achromatic fraction 0.92."""
+    sigma, chromatic, fraction = realNoiseNumbers(demoData)
+    assert abs(sigma / REVIEWED_CHROMATIC_SIGMA - 1.0) < 0.3
+    assert sigma < chromatic
+    assert fraction > 0.8

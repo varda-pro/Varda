@@ -142,8 +142,11 @@ are written in Phase 1, test-first. Design:
 
 **N1. Noise estimator.**
 - **Decision:** σ0 comes from along-track second differences (the same
-  detector element, so stripes cancel), using MAD, over low-gradient pixels.
-  Then a σ² = a + bR fit per band.
+  detector element, so stripes cancel) of brightness-normalized spectra (so
+  achromatic surface texture cancels; Task 9b), using MAD, over low-gradient
+  pixels. Then a σ² = a + bR fit per band. On FRS00031442 the plain
+  differences were 92-97% one achromatic component; σ fell to 0.20 of the
+  plain estimate.
 - **Source:** Green 1988 shift-difference (standard); Kreisch 2017 App. A
   (var ∝ μ, a Poisson-like model).
 - **What we know so far:** a horizontal shift-difference gives an upper
@@ -153,7 +156,9 @@ are written in Phase 1, test-first. Design:
 - **Test:** `test_noise.py::test_recovers_injected_sigma` (synthetic,
   within 3%), `test_noise.py::test_stripes_do_not_inflate_sigma`,
   `test_noise.py::test_shot_noise_slope` (within 10%), and
-  `test_noise.py::test_all_nan_band_is_nan_without_warnings`; the end-to-end
+  `test_noise.py::test_all_nan_band_is_nan_without_warnings`,
+  `test_noise.py::test_texture_does_not_inflate_sigma` and
+  `test_noise.py::test_real_sigma_is_the_chromatic_noise` (data-gated); the end-to-end
   χ² check (V1) *(planned)*.
 
 **N2. Random and systematic uncertainty are kept apart.**

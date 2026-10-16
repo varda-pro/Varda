@@ -231,9 +231,13 @@ def makeSyntheticCube(
     spikeRate: float = 1e-4,
     artifactAmplitude: float = 0.006,
     betaScatter: float = 0.0,
+    textureAmplitude: float = 0.0,
 ) -> tuple[np.ndarray, SyntheticTruth]:
     """The observed cube ``(lines, 120, 438)`` (float64, NaN only in the
     placeholder band) and its truth; the module docstring gives the model.
+    ``textureAmplitude`` (opt-in) multiplies the signal by a spatially white,
+    achromatic factor 1 + N(0, amplitude) per pixel, the albedo texture that a
+    noise estimate must not mistake for noise.
     The same arguments always give the same arrays."""
     rng = np.random.default_rng(seed)
     wavelengths, logT = _detector()
@@ -278,6 +282,11 @@ def makeSyntheticCube(
 
     # signal, noise and spikes
     signal = surface * np.exp(beta[..., None] * (shiftedLogT + artifact)) * stripes
+    if textureAmplitude > 0:  # its own stream: the default cubes stay as they were
+        texture = 1 + np.random.default_rng([seed, 1]).normal(
+            0.0, textureAmplitude, (lines, samples)
+        )
+        signal = signal * texture[..., None]
     sigma0 = 0.1 / snr
     readVariance = READ_NOISE_FRACTION * sigma0**2
     shotVariance = (1 - READ_NOISE_FRACTION) * sigma0**2 / 0.1
