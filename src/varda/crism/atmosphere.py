@@ -39,6 +39,7 @@ from collections.abc import Sequence
 import numpy as np
 from attrs import frozen
 from numpy.polynomial import legendre
+from scipy import ndimage
 
 from varda.crism.calibration import Transmission
 
@@ -531,8 +532,10 @@ def selectTransmission(
 
 SCALE_HEIGHT_RANGE_KM = (5.0, 20.0)
 _ELEVATION_SIGNIFICANCE = 3.0  # |slope| / σ_slope for H to count as determined
-_MEDIAN_CHI2_1 = 0.6744897501960817**2  # the median of χ² with one degree of freedom
+_TUKEY_MEAN_SQUARE = 0.8280730033893929  # E[w z²] / E[w], z ~ N(0, 1), c = 4.685
 _BISECTIONS = 50
+_COHERENT_BOX = 7  # pixels: the window of the spatially coherent part of ln β
+_MIN_TRIPLETS = 10
 
 
 @frozen(eq=False)
@@ -541,13 +544,21 @@ class ElevationModel:
     ``scaleHeightKm`` (S4.C, ledger A5): β is the ratio of the pixel's CO2
     column to the scan's, which scales with surface pressure.
 
+    ``sigmaRatio`` is the pixels' empirical σ_β (from along-track second
+    differences of β) over the fit's formal σ_β; every σ_β the model uses,
+    and the free fit's σ_β when ``fitPixels`` shrinks toward the model, is
+    the formal one times it. On TRR3 data the noise is spectrally
+    correlated (the IKF filter) and the formal σ_β is about twice too large.
+
     ``scatter`` is the robust std of ln β about the line (1.4826 · MAD);
-    ``intrinsicScatter`` τ is what is left of it beyond the pixels' own
-    σ_β/β, the part topography does not explain. The reference elevation is
-    the fit's weighted mean, so ``lnBeta0`` and the slope are uncorrelated and
-    ``lnBeta0Sigma`` and ``scaleHeightSigmaKm`` are their formal σ (spatially
-    correlated residuals make them optimistic). ``accepted``: H lies in
-    5–20 km and the slope differs from 0 by at least 3σ."""
+    ``intrinsicScatter`` τ is what is left of it beyond the pixels'
+    (empirical) σ_β/β, the part topography does not explain, and at least
+    its spatially coherent part (``_coherentVariance``). The reference
+    elevation is the fit's weighted mean, so ``lnBeta0`` and the slope are
+    uncorrelated and ``lnBeta0Sigma`` and ``scaleHeightSigmaKm`` are their
+    formal σ (spatially correlated residuals make them optimistic).
+    ``accepted``: H lies in 5–20 km and the slope differs from 0 by at least
+    3σ."""
 
     lnBeta0: float
     scaleHeightKm: float
@@ -557,6 +568,7 @@ class ElevationModel:
     lnBeta0Sigma: float
     scaleHeightSigmaKm: float
     intrinsicScatter: float
+    sigmaRatio: float
 
     def prior(self, elevationM: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """The prior mean of β at ``elevationM`` and its σ: τ and the line's
@@ -639,8 +651,10 @@ def fitPixels(
     augmented least squares (the data plus one row for the prior) is solved
     in closed form, as a scalar update of the free fit: β moves toward the
     prior mean by V / (V + s²), V the free fit's variance of β and s² the
-    prior's, and every coefficient with it by its covariance with β. A pixel
-    whose elevation is invalid keeps the free fit."""
+    prior's, and every coefficient with it by its covariance with β. V and
+    the covariance are the formal ones times ``sigmaRatio``² (the empirical
+    σ_β), here and in the result. A pixel whose elevation is invalid keeps
+    the free fit (its covariance is still rescaled)."""
     elevation = model.elevation
     if elevation is not None and not elevation.accepted:
         elevation = None  # out of range or undetermined: per-pixel β (A5)
@@ -701,6 +715,8 @@ def fitPixels(
     covariance = (gain * variance[:, :, None, :]) @ gain.swapaxes(-1, -2)
     b = CONTINUUM_DEGREE + 1  # the index of β
     if elevation is not None and elevationM is not None:
+        # the free fit's σ is the empirical one when it meets the prior
+        covariance = covariance * elevation.sigmaRatio**2
         mean, spread = elevation.prior(elevationM)
         informed = np.isfinite(mean) & np.isfinite(spread) & (spread > 0)
         denominator = covariance[..., b, b] + np.where(informed, spread**2, np.inf)
@@ -748,79 +764,172 @@ def fitPixels(
     )
 
 
-def _tukeyWeights(standardized: np.ndarray) -> np.ndarray:
-    scale = _MAD_TO_SIGMA * np.median(np.abs(standardized))
-    if scale == 0:
-        return np.ones_like(standardized)
-    z = standardized / (_TUKEY_C * scale)
+def _biweight(standardized: np.ndarray) -> np.ndarray:
+    """Tukey's biweight (c = 4.685) of residuals already on a unit scale."""
+    z = standardized / _TUKEY_C
     return np.where(np.abs(z) < 1, (1 - z**2) ** 2, 0.0)
 
 
-def _excessVariance(residuals: np.ndarray, variance: np.ndarray) -> float:
-    """τ² ≥ 0 such that the median of r² / (σ² + τ²) is that of χ² with one
-    degree of freedom: the scatter beyond each value's own σ, robustly
-    (bisection; the median is decreasing in τ²)."""
+def _excessVariance(
+    residuals: np.ndarray, variance: np.ndarray, weights: np.ndarray
+) -> float:
+    """τ² ≥ 0 such that the biweight-weighted mean of r² / (σ² + τ²) is what it
+    is for unit Gaussian residuals (0.828 at c = 4.685): the scatter beyond
+    each value's own σ, with the same weights as the line (bisection; the
+    mean is decreasing in τ²)."""
     squared = residuals**2
+    total = float(weights.sum())
 
-    def median(tau2: float) -> float:
-        return float(np.median(squared / (variance + tau2)))
+    def meanSquare(tau2: float) -> float:
+        return float(np.sum(weights * squared / (variance + tau2))) / total
 
-    if median(0.0) <= _MEDIAN_CHI2_1:
+    if total <= 0 or meanSquare(0.0) <= _TUKEY_MEAN_SQUARE:
         return 0.0
-    low, high = 0.0, float(squared.max()) / _MEDIAN_CHI2_1
+    low, high = 0.0, float(squared.max()) / _TUKEY_MEAN_SQUARE
     for _ in range(_BISECTIONS):
         middle = 0.5 * (low + high)
-        low, high = (middle, high) if median(middle) > _MEDIAN_CHI2_1 else (low, middle)
+        if meanSquare(middle) > _TUKEY_MEAN_SQUARE:
+            low = middle
+        else:
+            high = middle
     return 0.5 * (low + high)
 
 
-def fitElevationModel(fit: PixelFit, elevationM: np.ndarray) -> ElevationModel:
-    """The robust line of ln β against z over the valid pixels (S4.C, A5).
+def _coherentVariance(deviation: np.ndarray, variance: np.ndarray) -> float:
+    """The variance of the spatially coherent part of ``deviation`` ``(l, s)``
+    (NaN where unused): the robust variance (1.4826 · MAD)² of its 7 × 7
+    means, less what the pixels' own ``variance`` puts into them. Departures
+    from the elevation law that persist over many pixels are real (aerosol,
+    weather, or surface structure the fit reads as β), not noise, so τ is at
+    least this; 0 when too few windows are half full."""
+    used = np.isfinite(deviation)
+    area = _COHERENT_BOX**2
 
-    Iteratively reweighted least squares: each pixel is weighted by 1 / (its
-    σ_lnβ² + τ²) times a Tukey biweight (c = 4.685) of its standardized
-    residual, so hydrated units and spikes, whose β the 1.9 µm band or the
-    spike has biased, lose their weight. τ² is re-estimated each step from
-    the median of the standardized residuals (``_excessVariance``). With
-    fewer than 3 usable pixels the model is NaN and not accepted."""
+    def windowSum(values: np.ndarray) -> np.ndarray:
+        filtered = ndimage.uniform_filter(
+            np.where(used, values, 0.0), _COHERENT_BOX, mode="constant"
+        )
+        return filtered * area
+
+    count = windowSum(np.ones_like(deviation))
+    full = used & (count >= area / 2)
+    if full.sum() < 3:
+        return 0.0
+    means = windowSum(deviation)[full] / count[full]
+    noise = float(np.mean(windowSum(variance)[full] / count[full] ** 2))
+    spread = _MAD_TO_SIGMA * float(np.median(np.abs(means - np.median(means))))
+    return max(0.0, spread**2 - noise)
+
+
+def _alongTrackRatio(logBeta: np.ndarray, variance: np.ndarray) -> float:
+    """The empirical σ of ln β over its formal σ: 1.4826 · MAD of the
+    along-track second differences ln β_t − ½(ln β_t−1 + ln β_t+1) of each
+    column, each over its formal σ (``variance`` ``(l, s)``). Neighboring
+    lines see the same atmosphere and nearly the same ground, so the
+    difference is the noise; 1 with fewer than 10 complete triplets."""
+    if logBeta.shape[0] < 3:
+        return 1.0
+    difference = logBeta[1:-1] - 0.5 * (logBeta[:-2] + logBeta[2:])
+    expected = variance[1:-1] + 0.25 * (variance[:-2] + variance[2:])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        z = difference / np.sqrt(expected)
+    z = z[np.isfinite(z)]
+    if z.size < _MIN_TRIPLETS:
+        return 1.0
+    return _MAD_TO_SIGMA * float(np.median(np.abs(z - np.median(z))))
+
+
+@frozen(eq=False)
+class _Line:
+    reference: float
+    intercept: float
+    slope: float
+    residuals: np.ndarray
+
+
+def _weightedLine(y: np.ndarray, z: np.ndarray, weights: np.ndarray) -> _Line:
+    """Weighted least squares y = intercept + slope (z − reference), the
+    reference the weighted mean of z."""
+    total = float(np.sum(weights))
+    reference = float(np.sum(weights * z)) / total
+    offset = z - reference
+    intercept = float(np.sum(weights * y)) / total
+    slope = float(np.sum(weights * offset * y) / np.sum(weights * offset**2))
+    return _Line(reference, intercept, slope, y - intercept - slope * offset)
+
+
+def fitElevationModel(
+    beta: np.ndarray, betaSigma: np.ndarray, elevationM: np.ndarray
+) -> ElevationModel:
+    """The robust line of ln β against z (S4.C, A5). ``beta`` and
+    ``betaSigma`` are a free ``fitPixels``'s, NaN where invalid, and
+    ``elevationM`` is the DDR's; all ``(l, s)`` with the lines in along-track
+    order (a subset of lines, e.g. Pass A's, is enough).
+
+    The pixels' formal σ_β is first rescaled to their empirical σ
+    (``_alongTrackRatio``). Then, iteratively reweighted least squares: each
+    pixel is weighted by 1 / (σ²_lnβ + τ²) times a Tukey biweight (c = 4.685)
+    of its residual over √(σ²_lnβ + τ²), so hydrated units and spikes, whose
+    β the 1.9 µm band or the spike has biased, lose weight. Each step
+    re-estimates τ² with the same biweights (``_excessVariance``), floored by
+    the coherent part of the residuals (``_coherentVariance``). The line and
+    its σ come from the final weights and τ². With fewer than 3 usable
+    pixels the model is NaN and not accepted."""
+    beta = np.asarray(beta, dtype=np.float64)
     elevationM = np.asarray(elevationM, dtype=np.float64)
-    keep = fit.valid & np.isfinite(elevationM) & (fit.beta > 0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        logBeta = np.log(beta)
+        variance = (np.asarray(betaSigma, dtype=np.float64) / beta) ** 2
+    keep = (
+        np.isfinite(logBeta)
+        & np.isfinite(variance)
+        & (variance > 0)
+        & np.isfinite(elevationM)
+    )
     if keep.sum() < 3:
         nan = math.nan
-        return ElevationModel(nan, nan, nan, nan, False, nan, nan, nan)
-    y = np.log(fit.beta[keep])
-    variance = (fit.betaSigma[keep] / fit.beta[keep]) ** 2
-    z = elevationM[keep]
+        return ElevationModel(nan, nan, nan, nan, False, nan, nan, nan, nan)
+    ratio = _alongTrackRatio(np.where(keep, logBeta, np.nan), variance)
+    variance = np.where(keep, ratio**2 * variance, np.nan)
+    y, v, z = logBeta[keep], variance[keep], elevationM[keep]
+    deviation = np.full(keep.shape, np.nan)
     robust = np.ones_like(y)
     tau2 = 0.0
     for _ in range(_IRLS_ITERATIONS):
-        w = robust / (variance + tau2)
-        reference = float(np.sum(w * z) / np.sum(w))
-        offset = z - reference
-        intercept = float(np.sum(w * y) / np.sum(w))
-        slope = float(np.sum(w * offset * y) / np.sum(w * offset**2))
-        residuals = y - intercept - slope * offset
-        tau2 = _excessVariance(residuals, variance)
-        standardized = residuals / np.sqrt(variance + tau2)
-        updated = _tukeyWeights(standardized)
-        if np.allclose(updated, robust, atol=1e-6):
+        line = _weightedLine(y, z, robust / (v + tau2))
+        deviation[keep] = line.residuals
+        updatedTau2 = max(
+            _excessVariance(line.residuals, v, robust),
+            _coherentVariance(deviation, variance),
+        )
+        updated = _biweight(line.residuals / np.sqrt(v + updatedTau2))
+        settled = np.allclose(updated, robust, atol=1e-6) and math.isclose(
+            updatedTau2, tau2, rel_tol=1e-6, abs_tol=1e-12
+        )
+        robust, tau2 = updated, updatedTau2
+        if settled:
             break
-        robust = updated
-    w = robust / (variance + tau2)
-    scale = _MAD_TO_SIGMA * float(np.median(np.abs(standardized)))
-    slopeSigma = scale / math.sqrt(float(np.sum(w * offset**2)))
+    weights = robust / (v + tau2)
+    line = _weightedLine(y, z, weights)
+    offset = z - line.reference
+    standardized = line.residuals / np.sqrt(v + tau2)
+    meanSquare = float(np.sum(robust * standardized**2) / np.sum(robust))
+    scale = max(1.0, math.sqrt(meanSquare / _TUKEY_MEAN_SQUARE))
+    slope = line.slope
+    slopeSigma = scale / math.sqrt(float(np.sum(weights * offset**2)))
     heightKm = -1.0 / (1000.0 * slope) if slope != 0 else math.inf
     determined = slope < 0 and -slope >= _ELEVATION_SIGNIFICANCE * slopeSigma
     low, high = SCALE_HEIGHT_RANGE_KM
     return ElevationModel(
-        lnBeta0=intercept,
+        lnBeta0=line.intercept,
         scaleHeightKm=heightKm,
-        referenceElevationM=reference,
-        scatter=_MAD_TO_SIGMA * float(np.median(np.abs(residuals))),
+        referenceElevationM=line.reference,
+        scatter=_MAD_TO_SIGMA * float(np.median(np.abs(line.residuals))),
         accepted=bool(determined and low <= heightKm <= high),
-        lnBeta0Sigma=scale / math.sqrt(float(np.sum(w))),
+        lnBeta0Sigma=scale / math.sqrt(float(np.sum(weights))),
         scaleHeightSigmaKm=slopeSigma / (1000.0 * slope**2) if slope != 0 else math.inf,
         intrinsicScatter=math.sqrt(tau2),
+        sigmaRatio=ratio,
     )
 
 
@@ -841,7 +950,10 @@ def correct(
     C the covariance of θ; the middle term (the fitted bands only) is the
     covariance of θ with ln R. Neglecting it, as σ²_lnR + tᵀ C t, overstates
     σ′ in the fitted CO2 bands (``test_correct_sigma_chi2``). Invalid pixels
-    are NaN."""
+    are NaN.
+
+    Peak memory is about five float64 copies of ``cube`` beyond its input:
+    call it per chunk (64 lines), as the pipeline does."""
     cube = np.asarray(cube, dtype=np.float64)
     sigma = np.asarray(sigma, dtype=np.float64)
     terms = np.stack(_modelTerms(np.asarray(wavelengths, np.float64), model), axis=-1)

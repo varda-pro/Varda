@@ -5,6 +5,7 @@ import attrs
 import numpy as np
 import pytest
 from numpy.polynomial import legendre
+from scipy import ndimage
 
 from varda.crism import atmosphere, validation
 from varda.crism.atmosphere import (
@@ -397,7 +398,7 @@ def _withPrior(
     with that model as the prior."""
     wavelengths = truth.columnWavelengths
     free = fitPixels(cube, sigma, wavelengths, model)
-    elevation = fitElevationModel(free, truth.elevationM)
+    elevation = fitElevationModel(free.beta, free.betaSigma, truth.elevationM)
     prior = fitPixels(
         cube,
         sigma,
@@ -416,34 +417,99 @@ def _atmosphere(truth: SyntheticTruth) -> np.ndarray:
     return truth.beta[..., None] * logT
 
 
+def _correlatedNoiseCube(
+    truth: SyntheticTruth, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """The smooth-surface cube (no stripes, spikes or artifact) with its noise
+    replaced by noise of the same σ per band but correlated across bands
+    (white noise smoothed by a Gaussian of 1.5 bands), and that σ: the
+    noise model is right band by band, but the fit's band-independent σ_β
+    is not."""
+    factor = _smoothFactor(truth)
+    logT = shiftedLogTransmission(
+        truth.columnWavelengths, truth.transmission, truth.shiftNm
+    )
+    signal = truth.surface * factor * np.exp(truth.beta[..., None] * logT)
+    white = np.random.default_rng(seed).standard_normal(signal.shape)
+    correlated = ndimage.gaussian_filter1d(white, 1.5, axis=-1)
+    correlated /= correlated[..., :-1].std()
+    sigma = truth.noiseSigma * factor
+    return signal + correlated * sigma, sigma
+
+
+def _zScores(fit: PixelFit, truth: SyntheticTruth) -> np.ndarray:
+    return ((fit.beta - truth.beta) / fit.betaSigma)[fit.valid]
+
+
 @pytest.mark.parametrize("seed", [0, 1])
 def test_pixel_beta_recovery(seed: int) -> None:
     """A5, S4.B–C: per pixel, β and its σ are honest with the elevation prior
     on and off.
 
-    The synthetic's β follows z exactly unless given its own scatter, and
+    The synthetic's β follows z exactly unless given its own departure, and
     then the prior's σ would have nothing to be tested against; here ln β
-    scatters by 0.01 about the elevation law (``betaScatter``), about half a
-    pixel's own σ_β/β (≈ 0.018), so the prior moves each β about 80% of the
-    way to the elevation law and σ_β drops to τ / √(τ² + σ²) ≈ 0.45 of the
-    free fit's. The surface is the smooth one (``_smoothSurface``), which the model
-    reaches."""
+    departs from the elevation law by a coherent field of std 0.01
+    (``betaScatter``), about half a pixel's own σ_β/β (≈ 0.018), so the prior
+    moves each β about 80% of the way to the law and σ_β drops to
+    τ / √(τ² + σ²) ≈ 0.45 of the free fit's. τ is estimated to 10–15% (the
+    field has few independent patches), so the prior's z-scores scatter by
+    1.0–1.12. The surface is the smooth one (``_smoothSurface``), which the
+    model reaches."""
     raw, truth = makeSyntheticCube(64, seed, betaScatter=0.01, **_CLEAN)
     cube, sigma = _smoothSurface(raw, truth)
     free, elevation, prior = _withPrior(cube, sigma, truth, _model(truth))
     assert elevation.accepted
     assert elevation.intrinsicScatter == pytest.approx(0.01, rel=0.2)
-    for fit in (free, prior):
+    assert elevation.sigmaRatio == pytest.approx(1.0, abs=0.1)
+    for fit, (low, high) in ((free, (0.9, 1.1)), (prior, (0.85, 1.2))):
         assert fit.valid.mean() >= 0.99
-        z = ((fit.beta - truth.beta) / fit.betaSigma)[fit.valid]
+        z = _zScores(fit, truth)
         assert abs(np.mean(z)) < 0.1
-        assert 0.9 <= np.std(z) <= 1.1
+        assert low <= np.std(z) <= high
     # the prior adds information: σ_β shrinks as the prior's τ predicts
-    relative = free.betaSigma / free.beta
+    relative = elevation.sigmaRatio * free.betaSigma / free.beta
     tau = elevation.intrinsicScatter
     predicted = np.median(tau / np.sqrt(tau**2 + relative**2))
-    ratio = np.median(prior.betaSigma / free.betaSigma)
+    ratio = np.median(prior.betaSigma / (elevation.sigmaRatio * free.betaSigma))
     assert 0.35 < ratio < 0.6 and ratio == pytest.approx(predicted, rel=0.05)
+
+
+def test_elevation_prior_uses_empirical_sigma() -> None:
+    """A5: τ and the prior's weight come from the empirical σ_β (along-track
+    second differences of β), not the formal one. With σ overstated 2× the
+    formal σ_β is twice too large (z std 0.5); the ratio comes back as 0.5,
+    τ as the true 0.01, and the fit with the prior is the same as with the
+    right σ, to rounding. On FRS00031442 the ratio is 0.17: the TRR3's
+    along-track noise is 96% common to the fit-window bands (achromatic,
+    which the continuum absorbs)."""
+    raw, truth = makeSyntheticCube(64, 0, betaScatter=0.01, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    _, right, prior = _withPrior(cube, sigma, truth, _model(truth))
+    free, overstated, priorOverstated = _withPrior(
+        cube, 2 * sigma, truth, _model(truth)
+    )
+    assert np.std(_zScores(free, truth)) == pytest.approx(0.5, abs=0.05)
+    assert overstated.sigmaRatio == pytest.approx(0.5, rel=0.1)
+    assert overstated.sigmaRatio == pytest.approx(right.sigmaRatio / 2, rel=1e-9)
+    assert overstated.intrinsicScatter == pytest.approx(0.01, rel=0.3)
+    np.testing.assert_allclose(priorOverstated.beta, prior.beta, rtol=1e-9)
+    assert 0.85 <= np.std(_zScores(priorOverstated, truth)) <= 1.2
+
+
+def test_prior_with_spectrally_correlated_noise() -> None:
+    """A5: with noise correlated across bands (``_correlatedNoiseCube``) the
+    formal σ_β is wrong (here 1.4× too small); the empirical σ_β finds it,
+    and the prior is not over-confident."""
+    raw, truth = makeSyntheticCube(64, 0, betaScatter=0.01, **_CLEAN)
+    cube, sigma = _correlatedNoiseCube(truth, 10)
+    free, elevation, prior = _withPrior(cube, sigma, truth, _model(truth))
+    assert np.std(_zScores(free, truth)) > 1.25
+    assert elevation.sigmaRatio > 1.25
+    assert np.std(_zScores(free, truth) / elevation.sigmaRatio) == pytest.approx(
+        1.0, abs=0.1
+    )
+    z = _zScores(prior, truth)
+    assert abs(np.mean(z)) < 0.15 and 0.8 <= np.std(z) <= 1.2
 
 
 @pytest.mark.parametrize("scaleHeightKm", [11.0, 30.0])
@@ -454,7 +520,7 @@ def test_elevation_model_recovers_H(scaleHeightKm: float) -> None:
     raw, truth = makeSyntheticCube(64, 0, scaleHeightKm=scaleHeightKm, **_CLEAN)
     cube, sigma = _smoothSurface(raw, truth)
     free = fitPixels(cube, sigma, truth.columnWavelengths, _model(truth))
-    elevation = fitElevationModel(free, truth.elevationM)
+    elevation = fitElevationModel(free.beta, free.betaSigma, truth.elevationM)
     assert abs(elevation.scaleHeightKm - scaleHeightKm) <= (
         3 * elevation.scaleHeightSigmaKm
     )
@@ -466,28 +532,29 @@ def test_elevation_model_recovers_H(scaleHeightKm: float) -> None:
     assert elevation.scatter == pytest.approx(relative, rel=0.15)
     assert elevation.intrinsicScatter < 0.3 * relative
     shuffled = np.random.default_rng(2).permutation(truth.elevationM.ravel())
-    unrelated = fitElevationModel(free, shuffled.reshape(truth.elevationM.shape))
+    unrelated = fitElevationModel(
+        free.beta, free.betaSigma, shuffled.reshape(truth.elevationM.shape)
+    )
     assert not unrelated.accepted
 
 
 def test_beta_regularization_resists_h2o_band() -> None:
     """A5: the elevation prior protects β in the hydrated unit (the opal
-    mixture's 1.9 µm band).
+    mixture's 1.9 µm band), but on the library surface only partly.
 
-    The scene is the one A5 is about: every other pixel follows the model
-    (its surface replaced by its own continuum, ``_smoothFactor``) and the
-    hydrated unit keeps its library spectrum. Even with the hydration mask
-    the band's wing past 1945 nm biases that unit's free β by −3.6 to −3.8%
-    (seeds 0–3), 2.0–2.2σ_β; the prior takes it to −0.5 to −0.7%. Both
-    biases are in units of the free fit's σ_β, the pixel's own measurement
-    σ: the prior's σ_β is about a third of it (τ ≈ 0.006) and what is left
-    of the bias is 0.9–1.0 times that, so the prior's own σ only just covers
-    it.
+    On the library surface (structure in the window in every unit) the
+    hydrated unit's free β is biased by −3.6…−3.8% (2.0–2.2σ_β, seeds 0–3)
+    and the prior leaves −1.9…−2.3%, still 2.0–2.1 times the prior fit's own
+    σ_β: the elevation law inherits the scene-wide surface bias (−1% on the
+    basalt) and τ (0.010–0.015, the units' coherent departures) keeps the
+    prior weak. So the target of the brief, a bias under the prior's σ_β,
+    is not met there (a known limitation, ledger A5); the test asserts that
+    the prior at least cuts the bias to 0.6 of the free one (0.49 on seed 1).
 
-    On the full library surface (structure in the window in every unit) the
-    elevation law inherits the scene-wide bias (−1% on the basalt) and the
-    prior only halves the hydrated unit's bias (−3.6…−3.8% to
-    −1.8…−2.1%)."""
+    On the scene A5 is about, where every other pixel follows the model (its
+    surface replaced by its own continuum, ``_smoothFactor``) and the
+    hydrated unit keeps its library spectrum, the prior takes the bias to
+    −0.5…−0.8%: under the free fit's σ_β, and 0.9–1.1 times its own."""
     raw, truth = makeSyntheticCube(64, 1, **_CLEAN)
     hydrated = truth.units == HYDRATED_UNIT
     assert hydrated.sum() > 200
@@ -510,6 +577,7 @@ def test_beta_regularization_resists_h2o_band() -> None:
     assert abs(bias(prior)) < sigmaOf(free)
     assert abs(bias(prior)) < 1.5 * sigmaOf(prior)
     free, _, prior = _withPrior(raw, truth.noiseSigma, truth, model)
+    assert bias(free) < -2 * sigmaOf(free)
     assert abs(bias(prior)) < 0.6 * abs(bias(free))
 
 
@@ -535,6 +603,7 @@ def test_correct_sigma_chi2() -> None:
         corrected, correctedSigma = correct(
             cube, sigma, wavelengths, _model(truth), fit
         )
+        assert np.isfinite(correctedSigma[np.isfinite(corrected)]).all()
         chi = (corrected - expected) / correctedSigma
         groups = {
             "below the window": (1000.0, 1850.0),
@@ -600,6 +669,7 @@ def test_pixels_with_missing_bands() -> None:
     assert abs(np.mean(z)) < 0.1 and 0.9 <= np.std(z) <= 1.1
     corrected, correctedSigma = correct(cube, sigma, wavelengths, _model(truth), fit)
     assert np.isnan(corrected[3, 7]).all() and np.isnan(correctedSigma[3, 7]).all()
+    assert np.isfinite(correctedSigma[np.isfinite(corrected)]).all()
     assert np.isfinite(corrected[fit.valid & np.isfinite(cube[..., 100])][:, 100]).all()
 
 
@@ -611,7 +681,9 @@ def test_rejected_elevation_model_is_not_a_prior() -> None:
     wavelengths = truth.columnWavelengths
     free = fitPixels(cube, sigma, wavelengths, _model(truth))
     rejected = attrs.evolve(
-        fitElevationModel(free, truth.elevationM), scaleHeightKm=40.0, accepted=False
+        fitElevationModel(free.beta, free.betaSigma, truth.elevationM),
+        scaleHeightKm=40.0,
+        accepted=False,
     )
     again = fitPixels(
         cube, sigma, wavelengths, _model(truth, elevation=rejected), truth.elevationM

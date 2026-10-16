@@ -394,7 +394,10 @@ in (c_p, β_p).
   near 10–11 km; out-of-range values fall back to per-pixel β, and this is
   recorded.
 - Shrink each β_p toward the elevation model in proportion to its σ_β
-  (empirical Bayes).
+  (empirical Bayes). σ_β is the empirical one (along-track second
+  differences of β; the formal σ assumes independent bands, and TRR3 noise
+  is mostly common to them), and the prior's τ is at least the spatially
+  coherent part of the departures from the model.
 - Why: hydrated minerals put a strong 1.9 µm band inside W, which biases a
   free per-pixel β. Topography can't. The H estimate and the β-versus-z
   scatter are physical sanity checks reported in the provenance.

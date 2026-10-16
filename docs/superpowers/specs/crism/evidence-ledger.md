@@ -374,51 +374,77 @@ are written in Phase 1, test-first. Design:
     missing bands are solved on their own. The covariance comes from each
     pixel's own σ. A 64 × 120 × 438 chunk takes about 0.01 s, the whole
     FRS00031442 (190 × 640) 0.16 s.
-  - **Elevation model** (`fitElevationModel`): IRLS on ln β against z,
-    weights 1 / (σ²_lnβ + τ²) times a Tukey biweight (c = 4.685) of the
-    standardized residual; τ, the scatter beyond the pixels' own σ, makes
-    the median standardized residual that of χ²₁. `accepted` needs H in
-    5–20 km and the slope ≥ 3σ from 0. The formal σ of H ignores spatially
-    correlated residuals and is optimistic.
+  - **Elevation model** (`fitElevationModel(beta, betaSigma, elevationM)`):
+    the pixels' formal σ_β is first rescaled to their empirical σ, from
+    robust along-track second differences of ln β per column
+    (`ElevationModel.sigmaRatio`, recorded for provenance). Then IRLS on
+    ln β against z, weights 1 / (σ²_lnβ + τ²) times a Tukey biweight
+    (c = 4.685) of the standardized residual. τ² is re-estimated with the
+    same biweights (their weighted mean square that of unit Gaussian
+    residuals, 0.828) and floored by the spatially coherent part of the
+    residuals (the robust variance of their 7 × 7 means less the noise
+    share). The final line and its σ come from the final weights.
+    `accepted` needs H in 5–20 km and the slope ≥ 3σ from 0. The formal σ
+    of H ignores spatially correlated residuals and is optimistic.
   - **The prior** is Gaussian in β with σ² from τ² and the line's own
-    uncertainty (empirical Bayes). The augmented least squares is solved in
-    closed form, a scalar update of the free fit, so the column operator is
-    kept.
+    uncertainty (empirical Bayes); the free fit's σ_β it is weighed against
+    is the empirical one. The augmented least squares is solved in closed
+    form, a scalar update of the free fit, so the column operator is kept.
+  - **Why empirical σ (fix round 1):** with the formal σ, τ collapsed to 0
+    on FRS00031442 (the ln β scatter about the law, 0.014, is below the
+    formal σ_β/β, 0.017) and the prior pinned β to the law to 0.005%, while
+    the real departures are coherent at 1–3% (7 × 7 means: std 0.0123
+    against 0.0025 from noise). The 5% most deviant pixels' CO2 residual
+    then got 18% worse (0.00686 → 0.00812), the 5% most coherently deviant
+    17% (0.00585 → 0.00684). The TRR3's along-track noise is 96% common to
+    the 53 fit-window bands (achromatic, absorbed by the continuum), so the
+    empirical σ_β is 0.17 of the formal one, not 2× too small as the
+    residual RMS (0.5 of σ_lnR) suggested.
   - **σ of the correction** (`correct`): ln R′ = (I − G) ln R for the fit's
     gain G, so σ′ includes the covariance of β with the data it corrects.
     Neglecting it gives a reduced χ² of 0.97–0.98 over the fitted bands and
     0.95–0.96 over the CO2 score window (the free fit); with it, 1.01–1.03
-    (stripes on).
+    (stripes on). `correct` peaks at about five copies of its input and runs
+    per chunk.
   - **Synthetic results:** H 11.02 ± 0.04 (true 11); 30 km is found and
-    rejected; shuffled elevations are rejected. With ln β scattered by 0.01
-    about the law, τ comes back as 0.0093 and the β z-scores have std
-    0.99–1.06 with and without the prior. With the hydration mask, a
-    hydrated unit in an otherwise model-following scene has a free β bias
-    of −3.6…−3.8% (2.0–2.2σ_β), −0.5…−0.7% with the prior (0.9–1.0 of the
-    prior's own σ_β, which is a third of the free one). On the full library
-    surface the elevation law inherits the scene-wide surface bias (−1% on
-    the basalt), and the prior only halves the hydrated unit's bias
-    (seed 1: −3.8% to −1.9%).
+    rejected; shuffled elevations are rejected. With ln β departing from
+    the law by a coherent field of std 0.01 (`betaScatter`, Gaussian of
+    4 pixels), τ comes back as 0.0087–0.0101 and the β z-scores have std
+    0.98–1.01 free and 0.98–1.12 with the prior. With σ overstated 2× the
+    ratio is 0.49–0.52, τ unchanged and the prior fit identical. With noise
+    correlated across bands (1.5 bands) the formal σ_β is 1.4× too small;
+    the ratio finds it (1.39–1.44) and the prior's z std is 0.89–1.19.
+    With the hydration mask, a hydrated unit in an otherwise
+    model-following scene has a free β bias of −3.6…−3.8% (2.0–2.2σ_β) and
+    −0.5…−0.8% with the prior (0.9–1.1 of the prior's own σ_β).
+  - **Known limitation (hydrated units on realistic surfaces):** on the
+    full library surface the prior leaves the hydrated unit at −1.9…−2.3%,
+    2.0–2.1 times the prior fit's own σ_β (the target was under 1): the
+    elevation law inherits the scene-wide surface bias (−1% on the basalt)
+    and τ (0.010–0.015, the units' coherent departures) keeps the prior
+    weak. The prior cuts the bias to 0.49–0.64 of the free one. A6 and the
+    continuum, not A5, have to remove a bias every unit shares.
   - **FRS00031442** (TRR3 ÷ cos i, `estimateNoise` σ; despiking changes
     nothing measurable; z from DDR ELEVATION, −2560…−1790 m, most pixels
-    within 500 m; 92.8% of pixels valid): H = 10.82 ± 0.04 km with 061C4:AT
-    (accepted), 9.14 with 08608:AT, 14.2 with 2815C:VS and 16.8 with
-    32AFC:VS (no artifact term yet). H depends on the scan, so its formal σ
-    is far too small. The ln β scatter about the line (0.013–0.015) is below
-    the pixels' own σ_β/β (0.017), so τ = 0 and the prior pins β to the
-    elevation law. After the pixel correction with 061C4:AT, the CO2
-    residual of the column spectra is 0.00616 (0.00620 with the prior),
-    the same as Task 12's column-level 0.00616 and Phase 0's 0.0054–0.0060;
-    per pixel the median is 0.0075 (0.0076), the scene residual RMS 0.0053
-    (0.0051). With 08608:AT 0.00597 / 0.0071 / 0.0048; with 2815C:VS
-    0.00573 / 0.0069 / 0.0044.
-- **Confidence:** medium on the synthetic; low on real scenes until the
-  scan dependence of H and the noise model's σ in the CO2 bands (the
-  real pixel residuals are half the modeled σ_lnR in the score window) are
-  understood.
+    within 500 m; 92.8% of pixels valid): H = 10.61 ± 0.04 km with
+    061C4:AT (accepted), 9.03 with 08608:AT, 13.98 with 2815C:VS and 16.45
+    with 32AFC:VS (no artifact term yet), so H depends on the scan and its
+    formal σ is far too small. σ ratio 0.16–0.17; τ = 0.013–0.015, the
+    coherent departures, so the prior moves β by about 4% of its departure
+    from the law: on this scene it is nearly inert, as it should be. CO2
+    residual with 061C4:AT, free / prior: column spectra 0.00616 / 0.00615
+    (Task 12's column-level 0.00616, Phase 0's 0.0054–0.0060), per pixel
+    0.00746 / 0.00745, scene residual RMS 0.00529 / 0.00528; the 5% most
+    deviant pixels 0.00694 / 0.00691, the 5% most coherently deviant
+    0.00586 / 0.00582. With 08608:AT 0.00597 / 0.0071 / 0.0048 (column /
+    pixel / scene); with 2815C:VS 0.00573 / 0.0069 / 0.0044.
+- **Confidence:** medium on the synthetic; low-medium on real scenes until
+  the scan dependence of H is understood and more scenes are measured.
 - **Test:** `test_atmosphere.py::test_beta_regularization_resists_h2o_band`
   (a strong 1.9 µm band unit), `::test_pixel_beta_recovery`,
-  `::test_elevation_model_recovers_H`, `::test_correct_sigma_chi2`,
+  `::test_elevation_model_recovers_H`,
+  `::test_elevation_prior_uses_empirical_sigma`,
+  `::test_prior_with_spectrally_correlated_noise`, `::test_correct_sigma_chi2`,
   `::test_co2_window_flat_after_correction`,
   `::test_pixels_with_missing_bands`,
   `::test_rejected_elevation_model_is_not_a_prior`,

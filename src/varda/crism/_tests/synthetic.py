@@ -20,10 +20,11 @@ then spikes are added, where
   smooth function of the column;
 - β = exp(−(z − z₀) / H + η), with z the elevation (a smooth field of
   ±1.5 km plus small scatter, z₀ its base), H the scale height and η an
-  optional per-pixel scatter in ln β (``betaScatter``, 0 by default: β follows
-  z exactly; drawn from its own generator, so the rest of the cube does not
-  change with it), standing in for what topography does not explain (aerosol,
-  weather);
+  optional departure of ln β from the elevation law (``betaScatter``, its
+  std; 0 by default: β follows z exactly). η is spatially coherent, white
+  noise smoothed by a Gaussian of 4 pixels, as aerosol and weather vary
+  over many pixels; it is drawn from its own generator, so the rest of the
+  cube does not change with it;
 - a is the CO2 artifact: the curve-of-growth term (ln T)², high-passed over
   the fit window (orthogonal to a degree-3 Legendre continuum there, zero
   outside 1850–2200 nm), scaled per column to an RMS of
@@ -63,6 +64,7 @@ INCIDENCE_RANGE_DEG = (50.0, 55.0)
 READ_NOISE_FRACTION = 0.2  # of the variance at I/F 0.1
 SPIKE_SIGMAS = (5.0, 20.0)
 ALBEDO_VARIATION = 0.05
+_BETA_SCATTER_PIXELS = 4.0  # σ of the Gaussian that makes η coherent
 _SMOOTH_BANDS = 1.0  # σ of the library-spectrum smoothing, in bands
 
 # The units: (library spectrum, fraction mixed with basalt, I/F at 1300–1700 nm)
@@ -258,8 +260,9 @@ def makeSyntheticCube(
     )
     beta = np.exp(-(elevation - BASE_ELEVATION_M) / (scaleHeightKm * 1000.0))
     if betaScatter > 0:
-        scatter = np.random.default_rng((seed, 1)).normal(size=beta.shape)
-        beta = beta * np.exp(betaScatter * scatter)
+        white = np.random.default_rng((seed, 1)).normal(size=beta.shape)
+        departure = ndimage.gaussian_filter(white, _BETA_SCATTER_PIXELS)
+        beta = beta * np.exp(betaScatter * departure / departure.std())
     artifact = _artifact(wavelengths, logT, artifactAmplitude)
 
     # stripes
