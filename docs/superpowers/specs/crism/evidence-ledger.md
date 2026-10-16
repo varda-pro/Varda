@@ -597,23 +597,48 @@ are written in Phase 1, test-first. Design:
 
 **S1. Residual destriping after ATM.**
 - **Decision:** destripe after ATM, as residual cleanup, because TRR3 I/F
-  is already RSC-filtered.
+  is already RSC-filtered. The cross-track model is a per-line LAD Legendre
+  fit of degree 5 (IRLS, refitted to the destriped data, outliers beyond 5
+  robust spreads set aside); ln f is the median over bland lines of
+  ln R − ln R̃, kept only at the column scale (less a Gaussian-smoothed
+  15-column running median, the scale M11 measures). The ±1-column ratio
+  accumulation (4 profiles) is not used: with medians the profiles are one
+  up to constants, and its random walk doubled the synthetic error (0.46%
+  against 0.28% at 64 lines, SNR 100).
 - **Source:** DPSIS App. N (the TRR3 filter chain) and App. P1 §3 (RSC
   after ATM in TER); M11 (0.43–0.76% residual column scatter, an upper
-  bound).
-- **Confidence:** high.
-- **Test:** `test_destripe.py::test_removes_injected_stripes` *(planned)*.
+  bound). Task 15 on FRS00031442 (lines 0–189, PHT + ATM with 061C4:AT):
+  the column-scale pattern of the column medians does not persist between
+  the two halves of the lines (achromatic: correlation −0.05 to 0.13;
+  band-to-band: −0.35 to 0.11), so M11 there is scene, not detector.
+  Without the column-scale step the degree-5 model left persistent scene in
+  the frame and raised M11 from 0.51% to 0.72%; with it, 0.51% → 0.52%
+  (cross-validated, frame from lines 0–94 applied to 95–189: 0.69% → 0.72%).
+- **Confidence:** high for the order; medium for the model (one real scene).
+- **Test:** `test_destripe.py::test_removes_injected_stripes` (M11 metric
+  against the truth: 0.56% → 0.045%, bar 0.05%).
 
 **S2. Protecting geology.**
-- **Decision:** remove the high-frequency-in-λ part of the column factor
-  always. Remove the smooth part only if it is consistent across split
-  halves. Estimate from bland pixels.
+- **Decision:** estimate from bland pixels only (the lowest 50% of the
+  column's continuum-removed variance, no 1.9/2.3/2.5 µm band depth above
+  3σ); a column without 8 bland lines gets no factor. Split ln f into a
+  per-column cubic in λ within each filter segment (s) and the rest (h).
+  Remove s where present (RMS s/σ_s ≥ 3) and the same in both halves of the
+  lines (RMS (s₁ − s₂)/σ ≤ 2); remove h per element where |h| > 3σ_h and
+  |h₁ − h₂| ≤ 3σ. σ is a moving-block bootstrap over lines (50 resamples,
+  16-line blocks, within each half). The spec's "h always" is gated because
+  on FRS00031442 h is not persistent: removing it everywhere raised the
+  cross-validated M11 to 0.75%.
 - **Source:** Parente 2008 (robust low-pass in the cross-track–spectral
   plane; masking vertical edges); our inference that detector-element
-  factors are independent in λ while geology is smooth in λ.
-- **Confidence:** low-medium.
+  factors are independent in λ while geology is smooth in λ; Task 15's
+  split-half analysis of FRS00031442.
+- **Confidence:** low-medium. Known limit: geology that spans the whole
+  strip with a width under ~15 columns and no band depth (an achromatic
+  albedo streak) looks like a detector pattern; a synthetic 2% bump of σ = 6
+  columns is altered by up to 0.55%.
 - **Test:** `test_destripe.py::test_preserves_column_aligned_unit` (≥ 95%
-  of band depth) *(planned)*.
+  of band depth), `test_destripe.py::test_smooth_part_needs_split_half`.
 
 ### Smile
 

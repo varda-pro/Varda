@@ -1,0 +1,171 @@
+from functools import cache
+from pathlib import Path
+
+import numpy as np
+from scipy import ndimage
+
+from varda.crism import validation
+from varda.crism._tests.synthetic import SyntheticTruth, makeSyntheticCube
+from varda.crism.atmosphere import shiftedLogTransmission
+from varda.crism.destripe import (
+    StripeFrame,
+    applyStripes,
+    blandMask,
+    estimateStripes,
+)
+from varda.crism.noise import estimateNoise
+
+_STRIPES = 0.005  # the synthetic default stripeAmplitude
+_METRIC_NM = (1000.0, 2600.0)
+
+
+def _atmosphere(truth: SyntheticTruth) -> np.ndarray:
+    """The truth atmosphere and artifact factor ``(l, s, b)``."""
+    logT = shiftedLogTransmission(
+        truth.columnWavelengths, truth.transmission, truth.shiftNm
+    )
+    return np.exp(truth.beta[..., None] * (logT + truth.artifact))
+
+
+def _afterAtmosphere(
+    lines: int, snr: float = 1000.0
+) -> tuple[np.ndarray, np.ndarray, SyntheticTruth]:
+    """A synthetic cube after a truth-based atmosphere removal (surface ×
+    stripes + noise) and its truth σ."""
+    cube, truth = makeSyntheticCube(lines=lines, snr=snr)
+    atmosphere = _atmosphere(truth)
+    return cube / atmosphere, truth.noiseSigma / atmosphere, truth
+
+
+@cache
+def _scene() -> tuple[np.ndarray, np.ndarray, SyntheticTruth, np.ndarray, StripeFrame]:
+    """192 lines at SNR 1000, so the column medians' own noise (about
+    1.25 σ/√l) stays well under the 0.05% bar; σ from the noise model."""
+    cube, _, truth = _afterAtmosphere(192)
+    sigma = estimateNoise(
+        cube, wavelengths=np.median(truth.columnWavelengths, axis=0)
+    ).sigma(cube)
+    bland = blandMask(cube, truth.columnWavelengths)
+    frame = estimateStripes(cube, sigma, truth.columnWavelengths, bland)
+    return cube, sigma, truth, bland, frame
+
+
+def _stripeRms(cube: np.ndarray, truth: SyntheticTruth, columns: np.ndarray) -> float:
+    """The M11 stripe metric against the truth: over ``columns`` and the
+    1.0–2.6 µm bands, the RMS of ln(column median of cube ÷ truth surface)
+    less its 15-column running median per band. Structure wider than that is
+    scene to a cross-track model, not stripe."""
+    ratio = np.log(np.median(cube / truth.surface, axis=0))  # (s, b)
+    wavelengths = np.median(truth.columnWavelengths, axis=0)
+    bands = (wavelengths >= _METRIC_NM[0]) & (wavelengths <= _METRIC_NM[1])
+    values = ratio[columns][:, bands]
+    running = ndimage.median_filter(values, size=(15, 1), mode="nearest")
+    return float(np.sqrt(np.mean((values - running) ** 2)))
+
+
+def _unitColumns(truth: SyntheticTruth) -> np.ndarray:
+    return np.all(truth.columnUnitMask, axis=0)
+
+
+def test_bland_mask_excludes_absorbers() -> None:
+    _, _, truth, bland, _ = _scene()
+    assert bland.shape == truth.units.shape
+    for unit in (1, 3):  # the 1.9 µm hydrated phase and the carbonate
+        assert not bland[truth.units == unit].any()
+    assert bland[truth.units == 0].mean() > 0.4
+
+
+def test_removes_injected_stripes() -> None:
+    # S1: after a truth-based atmosphere removal, the column stripes drop to
+    # at most a tenth of the injected 0.5% (columns that have bland pixels;
+    # the column-aligned unit has none and is left alone, S2)
+    cube, sigma, truth, _, frame = _scene()
+    columns = ~_unitColumns(truth)
+    before = _stripeRms(cube, truth, columns)
+    corrected, _ = applyStripes(cube, sigma, frame)
+    after = _stripeRms(corrected, truth, columns)
+    assert before > 0.8 * _STRIPES
+    assert after <= 0.1 * _STRIPES
+    assert frame.smoothAccepted[columns].mean() > 0.9
+
+
+def test_preserves_column_aligned_unit() -> None:
+    # S2: the carbonate unit spans every line; its 2.3 µm band depth keeps at
+    # least 95% of the truth after the correction
+    cube, sigma, truth, _, frame = _scene()
+    corrected, _ = applyStripes(cube, sigma, frame)
+    unit = truth.columnUnitMask
+    wavelengths = np.median(truth.columnWavelengths, axis=0)
+    depth = np.median(validation.bd2310(wavelengths, corrected[unit]))
+    truthDepth = np.median(validation.bd2310(wavelengths, truth.surface[unit]))
+    assert truthDepth > 0.03
+    assert depth >= 0.95 * truthDepth
+    # its columns carry no factor: nothing about them came from geology
+    assert np.all(frame.factors[_unitColumns(truth)] == 1.0)
+
+
+def test_smooth_part_needs_split_half() -> None:
+    # A 3% offset in one column over the first half of the lines only: real
+    # geology, not a detector element, so the smooth part stays
+    cube, sigma, truth = _afterAtmosphere(128)
+    clean = np.nonzero((truth.units[:64] == 0).all(axis=0))[0]
+    column = int(clean[np.argmin(np.abs(clean - 60))])  # away from the edges
+    cube[:64, column] *= 1.03
+    sigma[:64, column] *= 1.03
+    bland = blandMask(cube, truth.columnWavelengths)
+    frame = estimateStripes(cube, sigma, truth.columnWavelengths, bland)
+    assert not frame.smoothAccepted[column]
+    others = ~_unitColumns(truth)
+    others[column] = False
+    assert frame.smoothAccepted[others].mean() > 0.9
+    corrected, _ = applyStripes(cube, sigma, frame)
+    kept = np.median((corrected / truth.surface)[:64, column, :-1])
+    assert kept > 1.02
+    # without the split-half test, the offset counts as a detector's
+    loose = estimateStripes(
+        cube, sigma, truth.columnWavelengths, bland, splitHalf=False
+    )
+    assert loose.smoothAccepted[column]
+
+
+def test_sigma_includes_frame_uncertainty() -> None:
+    # σ′² = (σ/f)² + (R σ_f / f²)²: relative to the corrected signal, σ′ is
+    # never below the input's relative σ, and it is at least σ/f
+    cube, sigma, _, _, frame = _scene()
+    corrected, sigmaOut = applyStripes(cube, sigma, frame)
+    valid = np.isfinite(cube) & np.isfinite(sigma)
+    assert np.isfinite(sigmaOut[valid]).all()
+    assert np.isnan(corrected[~np.isfinite(cube)]).all()
+    relativeIn = (sigma / np.abs(cube))[valid]
+    relativeOut = (sigmaOut / np.abs(corrected))[valid]
+    assert np.all(relativeOut >= relativeIn * (1 - 1e-12))
+    assert np.all(sigmaOut[valid] >= (sigma / frame.factors)[valid] * (1 - 1e-12))
+    estimated = frame.sigma > 0
+    assert estimated.mean() > 0.8
+    assert np.all(frame.sigma >= 0) and np.isfinite(frame.sigma).all()
+
+
+def test_memmap_input_matches(tmp_path: Path) -> None:
+    cube, sigma, truth = _afterAtmosphere(32)
+    bland = blandMask(cube, truth.columnWavelengths)
+    stored = np.memmap(
+        tmp_path / "cube.f32", dtype=np.float32, mode="w+", shape=cube.shape
+    )
+    stored[:] = cube
+    storedSigma = np.memmap(
+        tmp_path / "sigma.f32", dtype=np.float32, mode="w+", shape=cube.shape
+    )
+    storedSigma[:] = sigma
+    fromMemory = estimateStripes(
+        cube.astype(np.float32),
+        sigma.astype(np.float32),
+        truth.columnWavelengths,
+        bland,
+    )
+    fromDisk = estimateStripes(stored, storedSigma, truth.columnWavelengths, bland)
+    np.testing.assert_array_equal(fromMemory.factors, fromDisk.factors)
+
+    np.testing.assert_array_equal(
+        blandMask(stored, truth.columnWavelengths),
+        blandMask(cube.astype(np.float32), truth.columnWavelengths),
+    )
