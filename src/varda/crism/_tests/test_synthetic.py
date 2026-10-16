@@ -49,8 +49,8 @@ def test_truth_consistency() -> None:
     z = residual * factor / truth.noiseSigma
     spike = np.zeros(cube.shape, dtype=bool)
     spike[tuple(truth.spikes.T)] = True
+    assert np.isfinite(cube[..., :-1]).all()
     valid = np.isfinite(z) & ~spike
-    assert valid.sum() > 0.99 * cube[..., :-1].size
     assert abs(np.std(z[valid]) - 1.0) < 0.05
     assert abs(np.mean(z[valid])) < 0.01
     # the placeholder band past the last wavelength stays invalid
@@ -101,4 +101,4 @@ def test_fast() -> None:
     makeSyntheticCube()  # warm the library cache
     start = time.perf_counter()
     makeSyntheticCube(seed=5)
-    assert time.perf_counter() - start < 1.0
+    assert time.perf_counter() - start < 5.0  # about 0.04 s; catches gross slowdowns

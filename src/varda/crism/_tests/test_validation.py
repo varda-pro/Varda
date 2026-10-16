@@ -103,6 +103,34 @@ def test_co2_metric_reproduces_m7(demoData: Path) -> None:
     valid = np.all((spectra != 65535) & (spectra > 0), axis=-1)
     scores = co2Residual(wavelengths[selected], spectra[valid])
     assert float(np.median(scores)) == pytest.approx(0.0082, abs=0.0003)
+    # the same numbers as the M7 measurement script, to its printed precision
+    assert float(np.median(scores)) == pytest.approx(0.008237, abs=1e-6)
+    scene = sceneResidualRms(wavelengths[selected], spectra[valid])
+    assert scene == pytest.approx(0.008033, abs=1e-6)
+
+
+def test_co2_metric_independent_of_band_grid() -> None:
+    # Native bands, no interpolation: white noise scores the same on the
+    # MTRDR grid and on that grid shifted by half a band
+    grid = _mtrdrWavelengths()
+    rng = np.random.default_rng(4)
+    noise = 0.2 + rng.normal(0.0, 0.002, (4000, grid.size))
+    onGrid = np.median(co2Residual(grid, noise))
+    shifted = np.median(co2Residual(grid + 3.3, noise))
+    assert shifted == pytest.approx(onGrid, rel=0.03)
+
+
+def test_co2_metric_per_spectrum_wavelengths(cropDir: Path) -> None:
+    wavelengths, shape = _co2Shape(cropDir)
+    rng = np.random.default_rng(5)
+    offsets = rng.uniform(-1.0, 1.0, (6, 1))
+    perSpectrum = wavelengths + offsets
+    spectra = 0.2 * (1.0 + 0.01 * shape) + rng.normal(0, 0.001, perSpectrum.shape)
+    expected = [co2Residual(w, y) for w, y in zip(perSpectrum, spectra)]
+    np.testing.assert_allclose(co2Residual(perSpectrum, spectra), expected)
+    assert np.isfinite(sceneResidualRms(perSpectrum, spectra))
+    with pytest.raises(ValueError, match="wavelengths"):
+        co2Residual(perSpectrum[:3], spectra)
 
 
 def test_geolocation_offset() -> None:
@@ -131,6 +159,19 @@ def test_compare_maps() -> None:
     assert comparison.n == 600 - 8
     assert comparison.pearson == pytest.approx(1.0)
     assert comparison.medianBias == pytest.approx(0.003)
+
+
+@pytest.mark.filterwarnings("error")
+def test_compare_maps_constant_and_infinite() -> None:
+    constant = compareMaps(np.full((4, 4), 0.01), np.linspace(0, 1, 16).reshape(4, 4))
+    assert np.isnan(constant.pearson) and constant.n == 16
+    # ±inf counts as missing in the medians as well
+    wavelengths = _mtrdrWavelengths()
+    reference = np.full((3, wavelengths.size), 0.2)
+    ours = reference.copy()
+    ours[0, 400] = np.inf
+    ours[1, 400] = -np.inf
+    assert shapeRatio(ours, reference, wavelengths)[400] == pytest.approx(1.0)
 
 
 def test_shape_ratio() -> None:

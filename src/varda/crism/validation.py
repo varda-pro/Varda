@@ -13,17 +13,7 @@ from attrs import frozen
 
 from varda.mosaicking.matching import refineShift, tileShift
 
-# The M7 metric's grid: the 25 MTRDR band centers between 1940 and 2100 nm
-# (the MTRDR IR standard vector), so an MTRDR scores exactly as the M7
-# measurement did and a per-column TRR3 is interpolated onto the same points.
-CO2_GRID_NM = np.array(
-    [
-        1941.25, 1947.85, 1954.44, 1961.04, 1967.64, 1974.24, 1980.84, 1987.43,
-        1994.03, 2000.63, 2007.23, 2013.83, 2020.43, 2027.03, 2033.63, 2040.24,
-        2046.84, 2053.44, 2060.04, 2066.64, 2073.25, 2079.85, 2086.45, 2093.06,
-        2099.66,
-    ]
-)  # fmt: skip
+CO2_WINDOW_NM = (1940.0, 2100.0)  # exclusive, as in M7
 _CO2_CENTER_NM = 2020.0
 _CO2_HALF_WIDTH_NM = 100.0
 SHAPE_WINDOW_NM = (1300.0, 1700.0)
@@ -42,7 +32,9 @@ def _nanMean(values: np.ndarray, axis: int = -1) -> np.ndarray:
 
 
 def _nanMedian(values: np.ndarray, axis: int = -1) -> np.ndarray:
-    """np.nanmedian, but NaN (not a warning) where every value is NaN."""
+    """np.nanmedian with ±inf also missing, and NaN (not a warning) where
+    every value is missing."""
+    values = np.where(np.isfinite(values), values, np.nan)
     ordered = np.sort(np.moveaxis(values, axis, -1), axis=-1)  # NaN sorts last
     count = np.isfinite(ordered).sum(axis=-1)
     lower = np.maximum((count - 1) // 2, 0)[..., None]
@@ -60,45 +52,69 @@ def _nanMedian(values: np.ndarray, axis: int = -1) -> np.ndarray:
 # --- the CO2 residual (V1, measurement M7) -----------------------------------------
 
 
-def _co2Residuals(wavelengths: np.ndarray, spectra: np.ndarray) -> np.ndarray:
-    """``(..., 25)``: each spectrum, linearly interpolated onto ``CO2_GRID_NM``,
-    divided by its least-squares quadratic in (λ − 2020 nm) / 100 nm, minus 1."""
+def _co2Residuals(
+    wavelengths: np.ndarray, spectra: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Each spectrum ÷ its least-squares quadratic in (λ − 2020 nm) / 100 nm,
+    minus 1, on its own bands inside 1940–2100 nm: ``(..., b)`` residuals (0
+    outside the window, NaN where a band inside it is invalid) and the
+    window mask, ``(b,)`` or ``(..., b)`` like ``wavelengths``."""
     wavelengths = np.asarray(wavelengths, dtype=np.float64)
     spectra = np.asarray(spectra, dtype=np.float64)
-    finite = np.nonzero(np.isfinite(wavelengths))[0]
-    order = finite[np.argsort(wavelengths[finite])]
-    x = wavelengths[order]
-    if x.size < 2 or x[0] > CO2_GRID_NM[0] or x[-1] < CO2_GRID_NM[-1]:
+    if wavelengths.shape not in (spectra.shape[-1:], spectra.shape):
         raise ValueError(
-            f"the CO2 residual needs bands from {CO2_GRID_NM[0]} to {CO2_GRID_NM[-1]} nm"
+            f"wavelengths {wavelengths.shape} fit neither one spectrum nor all "
+            f"of {spectra.shape}"
         )
-    upper = np.clip(np.searchsorted(x, CO2_GRID_NM), 1, x.size - 1)
-    lower = upper - 1
-    weight = (CO2_GRID_NM - x[lower]) / (x[upper] - x[lower])
-    resampled = (
-        spectra[..., order[lower]] * (1.0 - weight)
-        + spectra[..., order[upper]] * weight
-    )
-    u = (CO2_GRID_NM - _CO2_CENTER_NM) / _CO2_HALF_WIDTH_NM
-    basis = np.vander(u, 3, increasing=True)  # (25, 3)
-    fit = resampled @ (basis @ np.linalg.pinv(basis)).T
+    with np.errstate(invalid="ignore"):  # NaN wavelengths are outside
+        inside = (wavelengths > CO2_WINDOW_NM[0]) & (wavelengths < CO2_WINDOW_NM[1])
+    if (inside.sum(axis=-1) < 4).any():
+        raise ValueError(
+            f"the CO2 residual needs bands inside {CO2_WINDOW_NM[0]}–"
+            f"{CO2_WINDOW_NM[1]} nm"
+        )
+    u = np.where(inside, (wavelengths - _CO2_CENTER_NM) / _CO2_HALF_WIDTH_NM, 0.0)
+    basis = np.stack([np.ones_like(u), u, u**2], axis=-1)  # (..., b, 3)
+    masked = basis * inside[..., None]
+    gram = np.einsum("...bj,...bk->...jk", masked, masked)
+    moments = np.einsum("...bj,...b->...j", masked, np.where(inside, spectra, 0.0))
+    coefficients = np.einsum("...jk,...k->...j", np.linalg.inv(gram), moments)
+    fit = np.einsum("...bj,...j->...b", basis, coefficients)
     with np.errstate(invalid="ignore", divide="ignore"):
-        return resampled / fit - 1.0
+        return np.where(inside, spectra / fit - 1.0, 0.0), inside
 
 
 def co2Residual(wavelengths: np.ndarray, spectra: np.ndarray) -> np.ndarray:
     """The M7 CO2 residual of each spectrum, ``(...)`` for ``(..., b)``: the
-    RMS of the spectrum ÷ its quadratic fit over 1940–2100 nm, on the 25 MTRDR
-    band centers there (``CO2_GRID_NM``; other band sets are interpolated)."""
-    residuals = _co2Residuals(wavelengths, spectra)
-    return np.sqrt(np.mean(residuals**2, axis=-1))
+    RMS of the spectrum ÷ its quadratic fit, over its own bands inside
+    1940–2100 nm (no interpolation, so white noise scores the same on any
+    band grid). ``wavelengths`` is one ``(b,)`` vector shared by every
+    spectrum, or ``(..., b)`` like ``spectra`` (e.g. sensor-space columns,
+    each with its own wavelengths). NaN where a band in the window is invalid."""
+    residuals, inside = _co2Residuals(wavelengths, spectra)
+    return np.sqrt(np.sum(residuals**2, axis=-1) / np.sum(inside, axis=-1))
 
 
 def sceneResidualRms(wavelengths: np.ndarray, spectra: np.ndarray) -> float:
     """The RMS of the scene's median residual spectrum: the part of the CO2
-    residual every pixel shares (M7's "scene-median residual")."""
-    residuals = _co2Residuals(wavelengths, spectra).reshape(-1, CO2_GRID_NM.size)
-    return float(np.sqrt(np.mean(_nanMedian(residuals, axis=0) ** 2)))
+    residual every pixel shares (M7's "scene-median residual"). The median is
+    taken band by band over the valid spectra (those with a finite
+    ``co2Residual``). With one shared wavelength vector that is the median
+    residual on those bands. With per-spectrum wavelengths it is still taken
+    per band index (the same detector row for sensor-space columns, whose
+    wavelengths differ by about 1 nm), each spectrum counting only where that
+    band is inside its window."""
+    residuals, inside = _co2Residuals(wavelengths, spectra)
+    bands = residuals.shape[-1]
+    residuals = residuals.reshape(-1, bands)
+    inside = np.broadcast_to(inside, (*np.shape(spectra)[:-1], bands)).reshape(
+        -1, bands
+    )
+    valid = np.isfinite(residuals).all(axis=-1)
+    if not valid.any():
+        return float("nan")
+    median = _nanMedian(np.where(inside, residuals, np.nan)[valid], axis=0)
+    return float(np.sqrt(_nanMean(median**2)))
 
 
 # --- spectral shape and maps -------------------------------------------------------
@@ -135,11 +151,12 @@ def compareMaps(ours: np.ndarray, reference: np.ndarray) -> MapComparison:
     a, b = np.asarray(ours, np.float64), np.asarray(reference, np.float64)
     both = np.isfinite(a) & np.isfinite(b)
     a, b = a[both], b[both]
-    if a.size < 2:
-        return MapComparison(np.nan, np.nan, int(a.size))
-    return MapComparison(
-        float(np.corrcoef(a, b)[0, 1]), float(np.median(a - b)), int(a.size)
-    )
+    if a.size == 0:
+        return MapComparison(np.nan, np.nan, 0)
+    da, db = a - a.mean(), b - b.mean()
+    scale = np.sqrt((da @ da) * (db @ db))
+    pearson = float(da @ db / scale) if scale > 0 else np.nan  # NaN if constant
+    return MapComparison(pearson, float(np.median(a - b)), int(a.size))
 
 
 def _albedo(image: np.ndarray) -> np.ndarray:
@@ -190,7 +207,7 @@ def bd2310(wavelengths: np.ndarray, cube: np.ndarray) -> np.ndarray:
 
 
 class _Bands:
-    """Median-kernel band values of one cube (Viviano-Beck 2014 §2)."""
+    """Median-kernel band values of one cube (Viviano-Beck 2014 §4.5)."""
 
     def __init__(self, wavelengths: np.ndarray, cube: np.ndarray) -> None:
         self.wavelengths = np.asarray(wavelengths, dtype=np.float64)
@@ -246,7 +263,7 @@ def _olindex3(s: _Bands) -> np.ndarray:
     total = np.zeros(s.cube.shape[:-1])
     for target, weight in _OLINDEX3_WEIGHTS.items():
         continuum = s.continuum(1750, 2400, target, 7, 7)
-        total = total + weight * (continuum - s.R(target, 7)) / np.abs(continuum)
+        total = total + weight * (1 - s.R(target, 7) / continuum)
     return total
 
 
@@ -273,19 +290,22 @@ def summaryParameter(
       (R2120/RC2120 + R2170/RC2170 + R2210/RC2210), RC the line from R1815 (5)
       to R2530 (5); R2290, R2320, R2330 (3); R2120, R2170, R2210 (5).
     - ``BD2290`` = 1 − R2290 / RC2290, RC from R2250 (5) to R2350 (5); R2290 (5).
-    - ``BD1900_2`` = ½(1 − R1930/RC1930) + ½(1 − R1985/RC1985), RC from R1850
-      (5) to R2067 (5); R1930, R1985 (5). The long anchor is R2067, as in the
-      table's kernel list and CAT; the R2046 in the table's formula is a typo.
-    - ``OLINDEX3`` = Σ w_λ (RC_λ − R_λ) / |RC_λ| over the 11 terms 1080, 1152,
-      1210, 1250 (0.03 each), 1263, 1276 (0.07), 1330, 1368 (0.12), 1395
+    - ``BD1900_2`` = ½·RB1930 + ½·RB1985 (RB_λ = 1 − R_λ/RC_λ), RC from R1850
+      (5) to R2067 (5); R1930, R1985 (5). This is VB2014's form, with the R2067
+      anchor (ruling P2). CAT's hyperspectral BD1900_2 uses RB1930 alone.
+    - ``OLINDEX3`` = Σ w_λ·RB_λ (RB_λ = 1 − R_λ/RC_λ) over the 11 terms 1080,
+      1152, 1210, 1250 (0.03 each), 1263, 1276 (0.07), 1330, 1368 (0.12), 1395
       (0.14), 1427, 1470 (0.18); RC from R1750 (7) to R2400 (7); all R (7).
-      This is the 11-term form CAT computes, not the 5-term 1210–1330 one.
+      This is the VB2014 / DPSIS form (ruling P2). CAT and the delivered
+      TER/MTRDR SU products use the 5-term form instead: RB1210·0.1 +
+      RB1250·0.1 + RB1263·0.2 + RB1276·0.2 + RB1330·0.4, its continuum
+      extrapolated from R1750 and R1862.
     - ``BD2310``: the prototype's definition (``bd2310``; 5-band means, nominal
       continuum weight).
 
     The same code scores ours and the MTRDR's I/F, so these variant choices
-    cannot bias a comparison; absolute values may differ slightly from CAT's
-    SU products.
+    cannot bias a comparison; absolute values differ from CAT's SU products
+    where the variants differ (BD1900_2, OLINDEX3).
     """
     if name not in SUMMARY_PARAMETERS:
         raise ValueError(

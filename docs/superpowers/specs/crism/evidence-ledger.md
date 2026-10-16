@@ -334,12 +334,14 @@ are written in Phase 1, test-first. Design:
 - **Source:** M7 (MTRDR values: 0.0035–0.0103).
 - **Confidence:** medium. A template-projection variant, the signed
   coefficient on the high-passed ln T, will be added as a secondary metric.
-- **Grid:** the 25 MTRDR band centers in 1940–2100 nm; other band sets
-  (per-column TRR3 wavelengths) are linearly interpolated onto them, so an
-  MTRDR scores exactly as M7 measured it.
+- **Bands:** each spectrum's own bands inside 1940–2100 nm, with no
+  interpolation, so white noise scores the same on any band grid; sensor-space
+  columns pass their own wavelengths. An MTRDR scores exactly as M7 measured
+  it.
 - **Test:** `src/varda/crism/_tests/test_validation.py::test_co2_metric_on_synthetic`;
   `test_validation.py::test_co2_metric_reproduces_m7` (data-gated:
-  FRT00005850 MTRDR, 2× subsample, per-pixel median 0.0082).
+  FRT00005850 MTRDR, 2× subsample, per-pixel median 0.008237, scene-median
+  residual 0.008033); `test_validation.py::test_co2_metric_independent_of_band_grid`.
 
 **V2. "BD2300".**
 - **Decision:** the prototype's "BD2300" is 1 − R2310 / continuum(2160,
