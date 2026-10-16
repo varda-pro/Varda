@@ -168,15 +168,46 @@ are written in Phase 1, test-first. Design:
 ### Despike
 
 **K1. Spike test.**
-- **Decision:** flag a sample when |R − R̂| / √(σ0² + σ_p²) > 5 **and** it
-  is a local extremum in λ. Replace it with R̂ and record a mask.
+- **Decision:** a sample is replaced and recorded when all of these hold
+  (k = 5):
+  1. **Prediction.** R̂ is the inverse-variance combination of two
+     estimators: the median of the 8 spatial neighbors (scaled by the ratio of
+     medians over the whole spectrum, and moved to the pixel's column
+     wavelengths along each neighbor's own slope) and the median of the 4
+     other bands of a 5-band window (center excluded). Each error is its
+     1.4826·MAD scatter, floored at the sample's σ.
+  2. **σ_p** is the combined error, widened by the part of the gap between
+     the two estimators beyond 3 combined errors (when they disagree, one is
+     wrong: a unit boundary, a spectral cliff).
+  3. **Score.** |R − R̂| / √(σ² + σ_p²) > k.
+  4. **Extremum.** The residual R − R̂ (not R, so a spike on a ramp counts) is
+     a strict local extremum in λ, and each band neighbor's residual is under
+     0.4 of its own (a 3-band feature or a prediction wrong everywhere is not
+     a spike).
+  5. **Transient.** The sample stands out from the same detector element on
+     the lines before and after by at least k/2 errors (a column defect that
+     persists down the lines is for destriping, not a spike).
+  - **Filter boundaries** (`FILTER_BOUNDARIES_NM`: the 1.65 µm and 2.7 µm
+    joins, where spectra step per column): the spectral median never
+    straddles one (the two bands either side take the spatial predictor only)
+    and the extremum test does not compare across it.
+  - The replacement is R̂ with σ = σ_p; a report holds per-pixel counts, a
+    sparse (line, sample, band) table with absolute lines, and the Leask
+    count (1850–2150 nm). Chunks need a 1-line halo (`halo`, `haloBelow` at
+    scene edges) and give identical results.
 - **Source:** Parente 2008 (the BPS extremum criterion); Plebani 2022 §5.1
   (5σ cascaded medians); Leask 2018 (residual IKF artifacts, column
-  clustered).
-- **Confidence:** medium.
+  clustered). The combination, the disagreement widening, the isolation and
+  transient tests and the filter boundaries are ours, found by measuring (the
+  plain average and raw-R extremum gave ~10³ false flags on synthetic units
+  and 2e-4 on FRS00031442; see the Task 11 report).
+- **Confidence:** medium. On the synthetic cube, recall at ≥ 8σ is
+  0.95–0.98 and false flags 0–1e-6; on FRS00031442 lines 0–63 the overall
+  flag rate is 1.6e-5. Not validated against known real spikes.
 - **Test:** `test_despike.py::test_recall_and_false_rate` (≥ 95% recall at
   ≥ 8σ; ≤ 1e-5 false flags), `test_preserves_narrow_real_feature`,
-  `test_chunk_halo_equivalence`, `test_leask_count`.
+  `test_chunk_halo_equivalence`, `test_leask_count`,
+  `test_real_chunk_has_no_hot_bands` (data-gated).
 
 ### Atmospheric correction
 

@@ -131,6 +131,19 @@ def _fitFloor(
     return np.where(total > 0, np.maximum(floor, 0.0), np.nan)
 
 
+def _fillNearest(values: np.ndarray, axis: int) -> np.ndarray:
+    """NaN entries take the value of the nearest finite entry along ``axis``
+    (unchanged where a lane has none)."""
+    moved = np.moveaxis(values, axis, -1).copy()
+    index = np.arange(moved.shape[-1])
+    for lane in moved.reshape(-1, moved.shape[-1]):  # views into ``moved``
+        known = np.isfinite(lane)
+        if known.any() and not known.all():
+            nearest = np.abs(index[:, None] - index[known][None, :]).argmin(axis=1)
+            lane[:] = lane[known][nearest]
+    return np.moveaxis(moved, -1, axis)
+
+
 def _blockStatistics(
     block: np.ndarray, columnGroups: np.ndarray, groupCount: int, quietFraction: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -174,7 +187,9 @@ def estimateNoise(
 ) -> NoiseModel:
     """Estimate the noise model of a ``(line, sample, band)`` reflectance cube.
 
-    NaN samples are ignored; a band with no usable data gets NaN. The first and
+    NaN samples are ignored; a band with no data at all gets NaN. Elsewhere σ is
+    finite: a band too sparse for a shot slope takes the nearest band's, a column
+    group with no quiet pixels the nearest group's floor. The first and
     last columns have no pair of neighbors, so they add no data but get the
     floor of their column group. At least 3 lines are needed (``ValueError``).
     Bands are processed in blocks, so memory stays near the size of one block
@@ -196,8 +211,16 @@ def estimateNoise(
         count[sl], meanR[sl], var[sl] = _blockStatistics(
             block, columnGroups, groupCount, quietFraction
         )
-    shot = np.maximum(_shotSlopes(count, meanR, var), 0.0)
+    # Bands too sparse for a slope take the nearest band's, a column group with
+    # no quiet pixels (invalid edge columns) the nearest group's floor, and
+    # what is still missing the nearest band's: σ is finite wherever the data
+    # are, in every band that has any.
+    shot = np.maximum(_fillNearest(_shotSlopes(count, meanR, var), 0), 0.0)
     floorGroups = np.stack(
         [_fitFloor(count[i], meanR[i], var[i], shot[i]) for i in range(bands)], axis=1
     )
+    floorGroups = _fillNearest(_fillNearest(floorGroups, 0), 1)
+    empty = ~np.isfinite(cube).any(axis=(0, 1))  # a band with no data stays NaN
+    shot[empty] = np.nan
+    floorGroups[:, empty] = np.nan
     return NoiseModel(floor=floorGroups[columnGroups], shot=shot)

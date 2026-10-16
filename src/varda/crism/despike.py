@@ -11,13 +11,19 @@ neighbors. σ_p is that combined error, widened by whatever part of the gap
 between the two predictors exceeds 3 combined errors (when they disagree, one
 is wrong: a pixel on a unit boundary, a cliff in the spectrum). A sample is a
 spike when ``|R - R̂| / √(σ² + σ_p²) > k`` and its residual ``R - R̂`` is a
-strict local extremum in λ (Parente 2008) that also stands more than k errors
-above the mean residual of its band neighbors. The extremum is taken on the
-residual, not on R, so a spike on a steep ramp counts, and the contrast
-separates a spike from a prediction that is wrong across the whole spectrum.
-Real features at least three bands wide, shared by the neighbors, leave no
+strict local extremum in λ (Parente 2008) that is isolated: each band
+neighbor's residual is under ``_ISOLATION`` of its own. The extremum is taken
+on the residual, not on R, so a spike on a steep ramp counts, and isolation
+separates a spike from a prediction that is wrong across the whole spectrum
+or a feature three bands wide. Real features shared by the neighbors leave no
 residual. Flagged samples are replaced by R̂ with σ set to σ_p, and every
 replacement is reported, including those in the Leask window (1850–2150 nm).
+
+The IR detector's order-sorting filters join at ``FILTER_BOUNDARIES_NM``, where
+spectra step per column. Bands on either side are separate segments: the
+spectral median never reaches across a boundary (so within two bands of one
+only the spatial predictor is used) and the extremum and isolation tests do not
+compare across it.
 
 NaN samples are never flagged and are never evidence for their neighbors.
 """
@@ -31,9 +37,19 @@ from attrs import frozen
 
 _MAD_TO_SIGMA = 1.4826
 _LEASK_WINDOW_NM = (1850.0, 2150.0)
-_BAND_BLOCK = 48
+# Where the IR detector's order-sorting filters join: spectra step there, per
+# column, between the bands either side. 1656 nm falls between 1653 and 1660 nm
+# (the 1.65 µm join); 2730 nm is mid-gap of the ≈2700 nm cliff, where the
+# detector rows 173–193 are missing (2701 → 2761 nm).
+FILTER_BOUNDARIES_NM = (1656.0, 2730.0)
+_BAND_BLOCK = 16
 _DISAGREEMENT = 3.0  # σ of the predictors' gap that is still noise
+_ISOLATION = 0.4  # a spike's band neighbors keep under this share of its residual
+_TRANSIENT = (
+    0.5  # a spike differs from its own line neighbors by this share of k errors
+)
 _MIN_NEIGHBORS = 3  # fewer valid spatial neighbors: only the spectral median
+_LEVEL_LINES = 8  # lines per step of the level ratio, to bound its temporaries
 _NEIGHBOR_OFFSETS = [o for o in product(range(3), repeat=2) if o != (1, 1)]
 
 
@@ -105,63 +121,112 @@ def _spatialStack(
     return np.stack(stack)
 
 
-def _spectralMedian(block: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _segments(wavelengths: np.ndarray) -> np.ndarray:
+    """The filter segment of each band ``(b,)``, from the columns' median
+    wavelengths (the same for every column: the join is a detector row)."""
+    middle = _nanMedian(wavelengths)
+    return np.searchsorted(FILTER_BOUNDARIES_NM, np.nan_to_num(middle, nan=np.inf))
+
+
+def _sameSegment(segment: np.ndarray, offset: int) -> np.ndarray:
+    """Whether the band ``offset`` away is in the same segment ``(b,)``;
+    False past the ends."""
+    other = np.full(segment.shape, -1)
+    if offset > 0:
+        other[:-offset] = segment[offset:]
+    else:
+        other[-offset:] = segment[:offset]
+    return other == segment
+
+
+def _spectralMedian(
+    block: np.ndarray, segment: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """The median of the 4 other bands of the 5-band window along the last
     axis (the center is left out: a spike on a ramp would be its own median),
-    and 1.4826 · MAD of those 4 (NaN unless all 4 exist)."""
-    padded = np.pad(block, ((0, 0), (0, 0), (2, 2)), constant_values=np.nan)
+    and 1.4826 · MAD of those 4. NaN unless all 4 exist in the band's filter
+    segment: a one-sided window is biased by any slope, which its scatter does
+    not show."""
     bands = block.shape[2]
-    window = np.stack([padded[:, :, k : k + bands] for k in (0, 1, 3, 4)])
+    padded = np.pad(block, ((0, 0), (0, 0), (2, 2)), constant_values=np.nan)
+    window = []
+    for k in (0, 1, 3, 4):
+        values = padded[:, :, k : k + bands].copy()
+        values[:, :, ~_sameSegment(segment, k - 2)] = np.nan
+        window.append(values)
+    window = np.stack(window)
     middle = _nanMedian(window)
     scatter = _MAD_TO_SIGMA * _nanMedian(np.abs(window - middle))
-    # a one-sided window is biased by any slope, which its scatter does not show
     whole = np.isfinite(window).all(axis=0)
     return np.where(whole, middle, np.nan), scatter
 
 
 def _levelRatio(block: np.ndarray, neighborMedian: np.ndarray) -> np.ndarray:
     """Per pixel ratio of the medians over the whole spectrum, ``(l, s, 1)``."""
-    both = np.isfinite(block) & np.isfinite(neighborMedian)
-    own = np.where(both, block, np.nan)
-    ref = np.where(both, neighborMedian, np.nan)
-    own = _nanMedian(np.moveaxis(own, 2, 0))
-    ref = _nanMedian(np.moveaxis(ref, 2, 0))
-    with np.errstate(all="ignore"):
-        ratio = own / ref
-    return np.where(np.isfinite(ratio) & (ref > 0), ratio, 1.0)[..., None]
+    ratio = np.ones(block.shape[:2])
+    for i in range(0, block.shape[0], _LEVEL_LINES):
+        lines = slice(i, i + _LEVEL_LINES)
+        both = np.isfinite(block[lines]) & np.isfinite(neighborMedian[lines])
+        own = _nanMedian(np.moveaxis(np.where(both, block[lines], np.nan), 2, 0))
+        ref = _nanMedian(
+            np.moveaxis(np.where(both, neighborMedian[lines], np.nan), 2, 0)
+        )
+        with np.errstate(all="ignore"):
+            level = own / ref
+        ratio[lines] = np.where(np.isfinite(level) & (ref > 0), level, 1.0)
+    return ratio[..., None]
 
 
-def _strictExtremum(block: np.ndarray) -> np.ndarray:
-    """A sample above, or below, both band neighbors. A missing (edge or NaN)
-    neighbor does not count against it, but one valid neighbor is required.
-    Applied to the residual ``R - R̂``, not to R: a spike on a steep ramp is
-    not an extremum of R, but it is of the residual, while a real feature the
-    prediction misses is a plateau or a smooth lobe there only if it is at
-    least 3 bands wide."""
-    before = np.pad(block, ((0, 0), (0, 0), (1, 0)), constant_values=np.nan)[:, :, :-1]
-    after = np.pad(block, ((0, 0), (0, 0), (0, 1)), constant_values=np.nan)[:, :, 1:]
-    haveBefore = np.isfinite(before)
-    haveAfter = np.isfinite(after)
-    with np.errstate(invalid="ignore"):
-        peak = (~haveBefore | (block > before)) & (~haveAfter | (block > after))
-        trough = (~haveBefore | (block < before)) & (~haveAfter | (block < after))
-    return (peak | trough) & (haveBefore | haveAfter)
-
-
-def _contrast(residual: np.ndarray) -> np.ndarray:
-    """The residual minus the mean of its valid band neighbors. A spike stands
-    out from them; a prediction that is wrong across the whole spectrum (a
-    pixel on a unit boundary) does not."""
+def _bandNeighbors(
+    residual: np.ndarray, segment: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The residual of the band before and after, NaN past an end of the
+    spectrum or a filter boundary."""
     nan = np.full(residual.shape[:2] + (1,), np.nan)
     before = np.concatenate([nan, residual[:, :, :-1]], axis=2)
     after = np.concatenate([residual[:, :, 1:], nan], axis=2)
-    both = np.stack([before, after])
-    count = np.isfinite(both).sum(axis=0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return residual - np.where(count > 0, np.nansum(both, axis=0) / count, np.nan)
+    before[:, :, ~_sameSegment(segment, -1)] = np.nan
+    after[:, :, ~_sameSegment(segment, 1)] = np.nan
+    return before, after
 
 
-def _despikeBlock(
+def _isolatedExtremum(
+    residual: np.ndarray, before: np.ndarray, after: np.ndarray
+) -> np.ndarray:
+    """A residual strictly above, or below, both band neighbors, and at least
+    ``1 / _ISOLATION`` times larger than each. A missing neighbor does not
+    count against it, but one is required. Taken on the residual, not on R: a
+    spike on a steep ramp is not an extremum of R, but it is of the residual."""
+    haveBefore, haveAfter = np.isfinite(before), np.isfinite(after)
+    with np.errstate(invalid="ignore"):
+        peak = (~haveBefore | (residual > before)) & (~haveAfter | (residual > after))
+        trough = (~haveBefore | (residual < before)) & (~haveAfter | (residual < after))
+        small = _ISOLATION * np.abs(residual)
+        isolated = (~haveBefore | (np.abs(before) < small)) & (
+            ~haveAfter | (np.abs(after) < small)
+        )
+    return (peak | trough) & isolated & (haveBefore | haveAfter)
+
+
+def _transient(
+    block: np.ndarray,
+    above: np.ndarray,
+    below: np.ndarray,
+    residual: np.ndarray,
+    limit: np.ndarray,
+) -> np.ndarray:
+    """A spike is not a column defect: the sample also stands out, in the
+    direction of its residual, from the same detector element on the lines
+    before and after (a missing line does not count against it). A defect
+    that persists down the lines agrees with them."""
+    direction = np.sign(residual)
+    with np.errstate(invalid="ignore"):
+        return (np.isnan(above) | ((block - above) * direction > limit)) & (
+            np.isnan(below) | ((block - below) * direction > limit)
+        )
+
+
+def _predict(
     block: np.ndarray,
     sigma: np.ndarray,
     spatial: np.ndarray,
@@ -169,17 +234,17 @@ def _despikeBlock(
     spectral: np.ndarray,
     spectralScatter: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``√(σ² + σ_p²)``, and the prediction and σ_p, of one band block, given
-    both predictions and their scatter."""
+    """The combined prediction and its error σ_p for one band block, given both
+    predictions and their scatter."""
     # Each predictor's error: its scatter, never below the sample's own noise.
     spatialError = np.fmax(scatter, sigma)
     spectralError = np.fmax(spectralScatter, sigma)
     haveSpatial = np.isfinite(spatial) & np.isfinite(spatialError)
     haveSpectral = np.isfinite(spectral) & np.isfinite(spectralError)
-    weightSpatial = np.where(haveSpatial, 1.0 / spatialError**2, 0.0)
-    weightSpectral = np.where(haveSpectral, 1.0 / spectralError**2, 0.0)
-    total = weightSpatial + weightSpectral
     with np.errstate(invalid="ignore", divide="ignore"):
+        weightSpatial = np.where(haveSpatial, 1.0 / spatialError**2, 0.0)
+        weightSpectral = np.where(haveSpectral, 1.0 / spectralError**2, 0.0)
+        total = weightSpatial + weightSpectral
         prediction = (
             np.where(haveSpatial, spatial, 0.0) * weightSpatial
             + np.where(haveSpectral, spectral, 0.0) * weightSpectral
@@ -195,8 +260,7 @@ def _despikeBlock(
         sigmaP = np.sqrt(
             1.0 / total + np.where(haveSpatial & haveSpectral, gap, 0.0) ** 2
         )
-        error = np.sqrt(sigma**2 + sigmaP**2)
-    return error, np.stack([prediction, sigmaP])
+    return prediction, sigmaP
 
 
 def despike(
@@ -214,32 +278,39 @@ def despike(
     above and ``haloBelow`` below (default: the same; pass fewer, down to 0,
     at the first and last chunk of a scene). Only the 8 spatial neighbors are
     used, so ``halo = 1`` makes chunked output identical to a whole-scene run.
+    Negative halos, or no line left between them, raise ``ValueError``.
     ``wavelengths`` is the ``(s, b)`` per-column map in nm (bands ascending;
-    NaN for unused bands) and places the Leask window. ``firstLine`` is the
-    absolute number of the first output line.
+    NaN for unused bands); it places the Leask window and the filter segments.
+    ``firstLine`` is the absolute number of the first output line. Peak memory
+    is about five copies of the cube beyond its input; the rest is per block.
     """
-    below = halo if haloBelow is None else haloBelow
-    stop = cube.shape[0] - below
+    haloAfter = halo if haloBelow is None else haloBelow
+    if halo < 0 or haloAfter < 0:
+        raise ValueError(f"The halos must not be negative, got {halo} and {haloAfter}.")
+    stop = cube.shape[0] - haloAfter
     outLines = stop - halo
+    if outLines < 1:
+        raise ValueError(
+            f"{cube.shape[0]} lines leave none between halos of {halo} and {haloAfter}."
+        )
+    if sigma.shape != cube.shape:
+        raise ValueError(f"sigma {sigma.shape} must match the cube {cube.shape}.")
     samples, bands = cube.shape[1:]
-    # one NaN line/column of padding around the output lines, filled from the halo
+    segment = _segments(wavelengths)
+    blocks = [slice(i, i + _BAND_BLOCK) for i in range(0, bands, _BAND_BLOCK)]
+
+    outCube = cube[halo:stop].astype(np.float64, copy=True)
+    # First pass: the spatial neighbors' median and scatter. One NaN line/column
+    # of padding surrounds the output lines, filled from the halo.
     padded = np.full((outLines + 2, samples + 2, bands), np.nan)
     first, last = max(halo - 1, 0), min(stop + 1, cube.shape[0])
     padded[first - halo + 1 : last - halo + 1, 1:-1] = cube[first:last]
-    centerSigma = sigma[halo:stop]
     padWavelengths = np.full((samples + 2, bands), np.nan)
     padWavelengths[1:-1] = wavelengths
     slope = _slope(padded, padWavelengths)
-
-    outCube = cube[halo:stop].astype(np.float64, copy=True)
-    outSigma = centerSigma.astype(np.float64, copy=True)
-
-    # the spatial prediction needs the pixel's level over the whole spectrum,
-    # so its neighbor statistics come from a first pass over the band blocks
-    blocks = [slice(i, i + _BAND_BLOCK) for i in range(0, bands, _BAND_BLOCK)]
-    neighborMedian = np.empty(outCube.shape)
-    neighborScatter = np.empty(outCube.shape)
-    enough = np.empty(outCube.shape, dtype=bool)
+    # these two arrays become the prediction and σ_p, block by block, below
+    prediction = np.empty(outCube.shape)
+    sigmaP = np.empty(outCube.shape)
     for sel in blocks:
         neighbors = _spatialStack(
             padded[:, :, sel],
@@ -248,45 +319,66 @@ def despike(
             wavelengths[:, sel],
         )
         middle = _nanMedian(neighbors)
-        neighborMedian[:, :, sel] = middle
-        neighborScatter[:, :, sel] = _MAD_TO_SIGMA * _nanMedian(
-            np.abs(neighbors - middle)
-        )
-        enough[:, :, sel] = np.isfinite(neighbors).sum(axis=0) >= _MIN_NEIGHBORS
-    ratio = _levelRatio(outCube, neighborMedian)
-    spatial = np.where(enough, neighborMedian * ratio, np.nan)
-    scatter = neighborScatter * ratio
+        enough = np.isfinite(neighbors).sum(axis=0) >= _MIN_NEIGHBORS
+        prediction[:, :, sel] = np.where(enough, middle, np.nan)
+        sigmaP[:, :, sel] = _MAD_TO_SIGMA * _nanMedian(np.abs(neighbors - middle))
+    del padded, slope
+    ratio = _levelRatio(outCube, prediction)
 
-    spectral = np.empty(outCube.shape)
-    spectralScatter = np.empty(outCube.shape)
-    for sel in blocks:  # the window reaches 2 bands past the block
+    # Second pass: both predictions, their combination and the residual.
+    residual = np.full(outCube.shape, np.nan)
+    for sel in blocks:  # the spectral window reaches 2 bands past the block
         wide = slice(max(sel.start - 2, 0), min(sel.stop + 2, bands))
         skip = sel.start - wide.start
-        middle, spread = _spectralMedian(outCube[:, :, wide])
-        spectral[:, :, sel] = middle[:, :, skip : skip + _BAND_BLOCK]
-        spectralScatter[:, :, sel] = spread[:, :, skip : skip + _BAND_BLOCK]
-
-    error = np.empty(outCube.shape)
-    residual = np.full(outCube.shape, np.nan)
-    replacement = np.empty((2, *outCube.shape))
-    for sel in blocks:
+        middle, spread = _spectralMedian(outCube[:, :, wide], segment[wide])
+        keep = slice(skip, skip + outCube[:, :, sel].shape[2])
         block = outCube[:, :, sel]
-        error[:, :, sel], replacement[:, :, :, sel] = _despikeBlock(
+        prediction[:, :, sel], sigmaP[:, :, sel] = _predict(
             block,
-            centerSigma[:, :, sel],
-            spatial[:, :, sel],
-            scatter[:, :, sel],
-            spectral[:, :, sel],
-            spectralScatter[:, :, sel],
+            sigma[halo:stop, :, sel],
+            prediction[:, :, sel] * ratio,
+            sigmaP[:, :, sel] * ratio,
+            middle[:, :, keep],
+            spread[:, :, keep],
         )
-        residual[:, :, sel] = block - replacement[0, :, :, sel]
-    flags = (
-        (np.abs(residual) > threshold * error)
-        & _strictExtremum(residual)
-        & (np.abs(_contrast(residual)) > threshold * error)
-    )
-    outCube[flags] = replacement[0][flags]
-    outSigma[flags] = replacement[1][flags]
+        residual[:, :, sel] = block - prediction[:, :, sel]
+
+    # Third pass: flag, a band block at a time (the neighbor test reaches 1 band).
+    flags = np.zeros(outCube.shape, dtype=bool)
+    for sel in blocks:
+        wide = slice(max(sel.start - 1, 0), min(sel.stop + 1, bands))
+        skip = sel.start - wide.start
+        before, after = _bandNeighbors(residual[:, :, wide], segment[wide])
+        keep = slice(skip, skip + residual[:, :, sel].shape[2])
+        error = np.hypot(sigma[halo:stop, :, sel], sigmaP[:, :, sel])
+        with np.errstate(invalid="ignore"):
+            over = np.abs(residual[:, :, sel]) > threshold * error
+        above = np.full(error.shape, np.nan)  # the same element, a line earlier/later
+        below = np.full(error.shape, np.nan)
+        if halo > 0:
+            above[:] = cube[halo - 1 : stop - 1, :, sel]
+        else:
+            above[1:] = cube[: stop - 1, :, sel]
+        if haloAfter > 0:
+            below[:] = cube[halo + 1 : stop + 1, :, sel]
+        else:
+            below[:-1] = cube[halo + 1 : stop, :, sel]
+        flags[:, :, sel] = (
+            over
+            & _isolatedExtremum(
+                residual[:, :, sel], before[:, :, keep], after[:, :, keep]
+            )
+            & _transient(
+                outCube[:, :, sel],
+                above,
+                below,
+                residual[:, :, sel],
+                _TRANSIENT * threshold * error,
+            )
+        )
+    outSigma = sigma[halo:stop].astype(np.float64, copy=True)
+    outCube[flags] = prediction[flags]
+    outSigma[flags] = sigmaP[flags]
 
     low, high = _LEASK_WINDOW_NM
     with np.errstate(invalid="ignore"):

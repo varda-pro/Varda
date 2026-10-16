@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from varda.crism._tests.real_data import realChunk
 from varda.crism._tests.synthetic import makeSyntheticCube
 from varda.crism.noise import estimateNoise
 
@@ -68,3 +69,20 @@ def test_edges_get_group_floor_and_short_cube_raises():
     assert np.array_equal(model.floor[0], model.floor[1], equal_nan=True)
     with pytest.raises(ValueError, match="at least 3 lines"):
         estimateNoise(cube[:2])
+
+
+def test_sparse_column_group_gets_a_finite_sigma():
+    original, _ = makeSyntheticCube(lines=64, spikeRate=0.0)
+    cube = original.copy()
+    cube[:, 32:48] = np.nan  # column group 2 keeps a few pixels only
+    cube[::16, 32:48:6] = original[::16, 32:48:6]
+    sigma = estimateNoise(cube).sigma(cube)
+    assert np.isfinite(sigma[np.isfinite(cube)]).all()
+    cube[:, 32:48] = np.nan  # none at all: the nearest group's floor
+    assert np.isfinite(estimateNoise(cube).floor[32:48, :-1]).all()
+
+
+def test_real_chunk_sigma_is_finite_where_data_are(demoData):
+    cube, _ = realChunk(demoData)
+    sigma = estimateNoise(cube).sigma(cube)
+    assert np.isfinite(sigma[np.isfinite(cube)]).all()
