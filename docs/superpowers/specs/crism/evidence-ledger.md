@@ -236,9 +236,27 @@ are written in Phase 1, test-first. Design:
 - **Source:** McGuire 2009 Eq. 1 (the model I/F = A cos i T^β); the
   linearized shift is our extension. Wiseman 2016 §3.3 explains why one
   exponent can't fix everything, and the residual model (A6) handles that.
+- **Implementation (Task 12):** the linearized shift is a Gauss–Newton
+  step, repeated about the shift found so far with ln T re-interpolated
+  (linearly in ln T) at λ + δ until the step is below 1e-4 nm. One step is
+  not enough: on the synthetic cube at δ = 0.8 nm it leaves residuals about
+  twice the noise and the column β a median 12σ off; iterated, residuals
+  are at the noise and β and δ have z-scores of mean ≈ 0, std ≈ 1. The
+  column spectrum is the mean of ln R over lines (a geometric mean), not
+  the median: the model is linear in ln R, so the mean of lines with
+  different β is the same model with the mean β, while the median takes
+  each band from a different line (residuals 1.4–1.8× the noise, column β
+  a median 5–11σ and up to 37σ off, with β varying ±14% down a column).
 - **Confidence:** medium-high; M10 shows it beats the two-wavelength
   scaling.
-- **Test:** `test_atmosphere.py::test_recovers_beta_and_shift` *(planned)*.
+- **Test:** `test_atmosphere.py::test_recovers_beta_and_shift` (three
+  seeds, smooth ±0.8 nm δ, the synthetic's surface replaced by its own
+  continuum over the window) and
+  `::test_shifted_log_transmission_matches_interp`. On the synthetic's raw
+  surface (library spectra with a 1.9 µm water band and about 3%
+  band-to-band structure at 2.1–2.2 µm), β is biased by −4 to −5% and δ by
+  +0.12 to +0.15 nm, residuals are 14× the noise, and the deep decoy of
+  `test_selects_injected_transmission` wins; that is the A5/A6 problem.
 
 **A2. Fitting β across the window, not at two wavelengths.**
 - **Decision:** β is a least-squares fit over the window, not the ratio at
@@ -249,7 +267,8 @@ are written in Phase 1, test-first. Design:
   the fit.
 - **Confidence:** high.
 - **Test:** `test_atmosphere.py::test_beta_sigma_below_two_wavelength`
-  *(planned)*.
+  (synthetic pixels at SNR 100: σ_β 0.015 for the window fit, as its
+  covariance predicts, against 0.038–0.042 for 1980/2007 nm).
 
 **A3. Transmission selection.**
 - **Decision:** score every candidate after the shift fit. The score is
@@ -260,8 +279,23 @@ are written in Phase 1, test-first. Design:
   wins after the shift fit but scores 0.018 without it, so selection must
   be joint and must use the same quantity as the fit.
 - **Confidence:** high.
-- **Test:** `test_atmosphere.py::test_selects_injected_transmission`
-  *(planned)*.
+- **Score (Task 12):** per column, √(Σ w r² / Σ w) over the score-window
+  bands, w = 1/σ_lnR², the fit's weighted objective restricted to the
+  window (in ln R units, comparable to M7), from the fit with a free
+  per-column shift; the median over valid columns.
+- **Phase 1 measurement (FRS00031442, 6 PDS scans, mean-of-ln column
+  spectra, all 190 lines):** with the shift, 061C4 0.00612, 08608 0.00632,
+  06822 0.00874, 094B5 0.01036, 09E04 0.01181, 0A93E 0.01265; 061C4 is
+  chosen by a margin of 0.0002 (central 64 lines: 0.00646 against 0.00656).
+  Without the shift, 0A93E wins (0.01306) and 08608 and 061C4 are among the
+  worst (0.0190, 0.0197), the M10 pattern. Under the M7 metric 08608 edges
+  out 061C4 (0.0062 against 0.0063): the two scans are a near tie. Their
+  fitted shifts are −0.85 and −0.93 nm.
+- **Test:** `test_atmosphere.py::test_selects_injected_transmission` (true
+  AT against copies shifted 1.5 nm and scaled in depth, 1 − k(1 − T) with
+  k = 0.9, 1.1; a power T^k is no decoy, since β absorbs k exactly) and
+  `::test_selection_requires_shift_fit` (a decoy pre-shifted by 0.9 δ_x with
+  a 0.4% band pattern wins without the shift term and loses with it).
 
 **A4. A smooth per-column shift.**
 - **Decision:** fit δ_x per column, then smooth it with a robust low-order
@@ -270,8 +304,13 @@ are written in Phase 1, test-first. Design:
   §5.4 (TER selects "by fitted position of the 2000-nm CO2 triplet"). The
   fitted shifts on the FRSs are small: −0.5 to 0 nm (M7).
 - **Confidence:** medium.
-- **Test:** `test_atmosphere.py::test_shift_recovery` (±0.8 nm injected,
-  within 3σ) *(planned)*.
+- **Implementation (Task 12):** Tukey biweight IRLS (c = 4.685, MAD scale),
+  degree 3 in the column index. On the synthetic's ±0.8 nm half-sine the
+  cubic's own error reaches about 3σ of a column's δ at the edges.
+- **Test:** `test_atmosphere.py::test_recovers_beta_and_shift` (±0.8 nm
+  injected; the smoothed δ within 3σ in ≥ 99% of columns) and
+  `::test_smooth_shift_resists_outliers`. The FRS00031442 shifts depend on
+  the scan: −0.06 to −1.06 nm (median per scan), not just −0.5 to 0 nm.
 
 **A5. Elevation-regularized β (default).**
 - **Decision:** fit ln β = a − z/H to the scene, then shrink each pixel's β
