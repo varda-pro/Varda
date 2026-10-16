@@ -209,6 +209,13 @@ are written in Phase 1, test-first. Design:
   0.94–0.98 and false flags 0–1e-6; 1–3 line trains of 10–20σ are caught at
   0.87–0.98 per sample; on FRS00031442 lines 0–63 the overall flag rate is
   5.2e-5. Not validated against known real spikes.
+- **Expected on FRS00031442 lines 0–63:** three bands exceed 10× the overall
+  rate, all clustered detector-element defects that the despiker should
+  replace (not structure being eaten, which would spread over many columns):
+  band 27 (1180 nm, 28 flags in 15 columns, mostly 58–64), band 210 (2386 nm,
+  26 flags in 14 columns, 248–250 and 281–287) and band 189 (2247 nm, 24 flags
+  in 7 columns, 10 in column 116). `test_real_chunk_has_no_hot_bands` fails a
+  band only above 10× overall with flags in 20 or more columns.
 - **Known limits:** the isolation test rejects a spike hitting two adjacent
   bands; single-spike recall inside the CO₂ band (1950–2080 nm) is about 0.94;
   the onset and end of a long element offset look like a train and are

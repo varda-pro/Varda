@@ -201,13 +201,14 @@ def _train(cube, truth, profile, seed, low=12.0, count=30):
 
 @pytest.mark.parametrize(
     "profile",
-    [(1.0, 1.0), (1.0, 1.0, 1.0), (0.55, 1.0, 0.7), (1.0, 0.6)],
+    [(1.0, 1.0, 10.0), (1.0, 1.0, 1.0, 10.0), (0.55, 1.0, 0.7, 18.0), (1.0, 0.6, 18.0)],
     ids=["flat2", "flat3", "rise-decay", "decay"],
 )
 def test_short_trains_are_spikes(profile):
+    *profile, low = profile
     cube, truth = _quietCube()
-    # every sample of every train is 10-20 sigma
-    spiked, hits = _train(cube, truth, profile, seed=5, low=18.0)
+    # flat trains cover 10-20 sigma; the shaped ones keep every sample above 10
+    spiked, hits = _train(cube, truth, tuple(profile), seed=5, low=low)
     _, _, report = _whole(spiked, truth.noiseSigma, truth.columnWavelengths)
     found = np.zeros(cube.shape, dtype=bool)
     found[tuple(report.positions.T)] = True
@@ -255,9 +256,19 @@ def test_real_chunk_has_no_hot_bands(demoData):
     samples = valid.sum(axis=(0, 1))
     rate = perBand / np.maximum(samples, 1)
     median = np.median(rate[samples > 0])
-    # a band holding a handful of flags is Poisson noise, not a pile-up
-    crowded = perBand >= 30
-    assert (rate[crowded] <= 10 * max(median, overall)).all()
+    # A band is hot when it exceeds 10x the overall rate and its flags spread
+    # over 20 or more columns: instrument or atmospheric structure being eaten.
+    # Clustered detector-element defects are what the despiker should replace;
+    # at this chunk they are band 27 (1180 nm, columns 58-64), band 210 (2386 nm,
+    # columns 248-250 and 281-287) and band 189 (2247 nm, 10 flags in column 116).
+    columns = np.array(
+        [
+            np.unique(report.positions[report.positions[:, 2] == b][:, 1]).size
+            for b in range(cube.shape[2])
+        ]
+    )
+    hot = (perBand >= 20) & (rate > 10 * max(median, overall)) & (columns >= 20)
+    assert not hot.any(), np.nonzero(hot)[0]
     for low, high in [(1640.0, 1660.0), (2690.0, 2800.0)]:
         near = (_nanMedian(wavelengths) >= low) & (_nanMedian(wavelengths) < high)
         assert flagged[:, :, near].sum() / valid[:, :, near].sum() <= 10 * overall
