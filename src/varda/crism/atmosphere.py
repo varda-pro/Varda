@@ -44,7 +44,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
-from attrs import frozen
+from attrs import Attribute, field, frozen
 from numpy.lib.stride_tricks import sliding_window_view
 from numpy.polynomial import legendre
 from scipy import ndimage
@@ -596,6 +596,16 @@ class ElevationModel:
         return mean, mean * np.sqrt(logVariance)
 
 
+def _finiteOrNone(
+    instance: object, attribute: "Attribute[float | None]", value: float | None
+) -> None:
+    if value is not None and not math.isfinite(value):
+        raise ValueError(
+            f"{attribute.name} must be finite, not {value}; without a usable "
+            "scale (artifactScale gives NaN), correct without the basis"
+        )
+
+
 @frozen(eq=False)
 class AtmosphereModel:
     """Everything the per-pixel fit holds fixed: the chosen transmission
@@ -607,14 +617,17 @@ class AtmosphereModel:
     With ``artifactScale`` c the artifact is path-scaled, α = c·β (S4.E's
     prior α ∝ β, taken as a constraint with one scene-level c from
     ``artifactScale``): the atmosphere is β (ln T_x(λ + δ_x) + c a_x), still
-    one linear term per pixel. Without it, α is a free per-pixel amplitude
-    (``artifactScale`` fits the column spectra that way to find c)."""
+    one linear term per pixel; ``PixelFit.artifactAmplitude`` (the IN
+    band's artifact amplitude) is then c·β, not a fitted α. Without it, α is
+    a free per-pixel amplitude (``artifactScale`` fits the column spectra
+    that way to find c). A non-finite scale raises: when ``artifactScale``
+    gives NaN, the caller corrects without the basis."""
 
     transmission: Transmission
     shiftNm: np.ndarray
     artifact: np.ndarray | None = None
     elevation: ElevationModel | None = None
-    artifactScale: float | None = None
+    artifactScale: float | None = field(default=None, validator=_finiteOrNone)
 
     @property
     def freeArtifact(self) -> bool:
@@ -1039,6 +1052,8 @@ def correct(
 # --- part C: the residual (artifact) model ------------------------------------------
 
 ARTIFACT_FOLDER = Path(__file__).parent / "resources" / "artifacts"
+# A basis serves observations within 180 days of its training span (SCLK seconds)
+ARTIFACT_EPOCH_MARGIN_SCLK = 180 * 86400.0
 _MAD_EFFICIENCY = math.sqrt(math.pi / 2)  # the σ of a median over that of a mean
 
 
@@ -1049,19 +1064,32 @@ class ArtifactBasis:
     lines that no single exponent of one empirical transmission reproduces at
     another path), learned across observations processed with it.
 
-    ``scanId`` is the transmission's key (``Transmission.key``,
-    ``"<scan>:<AT|VS>"``): an AT and a VS ADR of one scan leave different
-    residuals. ``spectra`` ``(s, b)`` is in ln R, in the cube's band order
-    (aligned to the detector rows, so column x is detector column x),
-    high-passed over the fit window and 0 outside it and wherever the fit
-    uses no data (the hydration mask). It has unit RMS over the score window,
-    one scale for every column it covers, so its variation across columns is
-    kept. ``createdWith`` is the Varda version that learned it."""
+    ``transmissionKey`` is ``Transmission.key`` (``"<scan>:<AT|VS>"``): an
+    AT and a VS ADR of one scan leave different residuals. ``spectra`` ``(s,
+    b)`` is in ln R, in the cube's band order (aligned to the detector rows,
+    so column x is detector column x), high-passed over the fit window and 0
+    outside it and wherever the fit uses no data (the hydration mask). It has
+    unit RMS over the score window, one scale for every column it covers, so
+    its variation across columns is kept. ``sclkSpan`` is the first and last
+    SCLK of the training observations: a basis does not carry across epochs
+    (the 2014 FRSs' basis makes FRT00005850, 2007, worse), so
+    ``bundledArtifactBasis`` serves only observations near it.
+    ``createdWith`` is the Varda version that learned it."""
 
-    scanId: str
+    transmissionKey: str
     spectra: np.ndarray
     sourceObservations: tuple[str, ...]
+    sclkSpan: tuple[float, float]
     createdWith: str
+
+
+@frozen
+class BasisLookup:
+    """The outcome of ``bundledArtifactBasis``: the basis, or None and why
+    (for the provenance)."""
+
+    basis: ArtifactBasis | None
+    reason: str
 
 
 def highPass(
@@ -1099,13 +1127,17 @@ def _nanMedian(values: np.ndarray, axis: int) -> np.ndarray:
         return np.nanmedian(values, axis=axis)
 
 
-def _unitRms(values: np.ndarray, score: np.ndarray) -> np.ndarray:
-    """``values`` ``(s, b)`` over their RMS in the score window ``score``,
-    over the finite, nonzero rows (the columns it covers)."""
+def _scoreRms(values: np.ndarray, score: np.ndarray) -> float:
+    """The RMS of ``values`` ``(s, b)`` in the score window ``score``, over
+    the finite, nonzero rows (the columns it covers); 0 when there are none."""
     finite = np.isfinite(values)
     covered = (finite & (values != 0)).any(axis=1, keepdims=True)
     inside = score & finite & covered
-    rms = math.sqrt(float(np.mean(values[inside] ** 2))) if inside.any() else 0.0
+    return math.sqrt(float(np.mean(values[inside] ** 2))) if inside.any() else 0.0
+
+
+def _unitRms(values: np.ndarray, score: np.ndarray) -> np.ndarray:
+    rms = _scoreRms(values, score)
     return values / rms if rms > 0 else values
 
 
@@ -1121,31 +1153,33 @@ def _runningMedian(values: np.ndarray, width: int) -> np.ndarray:
 
 def learnArtifactBasis(
     columnResiduals: Sequence[np.ndarray],
-    scanId: str,
+    transmissionKey: str,
     observations: Sequence[str],
     smoothColumns: int = 31,
     *,
     wavelengths: np.ndarray,
+    sclks: Sequence[float],
 ) -> ArtifactBasis:
-    """The artifact basis of one transmission (``scanId``, its key) from
-    ``columnResiduals``, one ``(s, b)`` per observation in ``observations``:
-    the column spectra's ln R less the part-A fit with that transmission
-    (``SelectionResult.fit.residuals``), high-passed (``highPass``). All must
-    come from the same transmission: the residual is the transmission's, so
-    observations of different scans cannot be pooled. ``wavelengths`` ``(s,
-    b)`` are the columns' (any of the observations'; they differ by well
-    under a band).
+    """The artifact basis of one transmission (``transmissionKey``) from
+    ``columnResiduals``, one ``(s, b)`` per observation in ``observations``
+    (``sclks`` their SCLKs): the column spectra's ln R less the part-A fit
+    with that transmission (``SelectionResult.fit.residuals``), high-passed
+    (``highPass``). All must come from the same transmission: the residual
+    is the transmission's, so observations of different scans cannot be
+    pooled. ``wavelengths`` ``(s, b)`` are the columns' (any of the
+    observations'; they differ by well under a band).
 
     Each residual is high-passed (again, harmlessly) and scaled to unit RMS
     over the score window, so a scene with a longer path does not dominate;
     then the median across observations, band by band; then a running median
     across ``smoothColumns`` columns; then high-passed once more (a median
-    is not linear) and scaled to unit RMS. Bands without data are 0."""
+    is not linear) and scaled to unit RMS. Bands without data are 0. A basis
+    with nothing left (zero RMS over the score window) raises."""
     residuals = [np.asarray(r, dtype=np.float64) for r in columnResiduals]
-    if not residuals or len(residuals) != len(observations):
+    if not residuals or not len(residuals) == len(observations) == len(sclks):
         raise ValueError(
-            f"{len(residuals)} residuals for {len(observations)} observations: "
-            "one per observation is needed"
+            f"{len(residuals)} residuals for {len(observations)} observations "
+            f"and {len(sclks)} SCLKs: one each per observation is needed"
         )
     wavelengths = np.asarray(wavelengths, dtype=np.float64)
     shapes = sorted({r.shape for r in residuals})
@@ -1159,8 +1193,16 @@ def learnArtifactBasis(
     scaled = np.stack([_unitRms(highPass(r, wavelengths), score) for r in residuals])
     common = _runningMedian(_nanMedian(scaled, axis=0), smoothColumns)
     spectra = np.nan_to_num(highPass(common, wavelengths))
+    if _scoreRms(spectra, score) == 0:
+        raise ValueError(
+            f"the {transmissionKey} residuals leave no artifact in the score window"
+        )
     return ArtifactBasis(
-        scanId, _unitRms(spectra, score), tuple(observations), vardaVersion()
+        transmissionKey,
+        _unitRms(spectra, score),
+        tuple(observations),
+        (float(min(sclks)), float(max(sclks))),
+        vardaVersion(),
     )
 
 
@@ -1173,8 +1215,14 @@ def artifactScale(
     """The scene's c in α = c·β, and its σ: the column spectra ``(s, b)``
     (``columnSpectra``) fitted with ``model.artifact`` as a free term (T and
     the smoothed shift fixed, no prior), c the median over valid columns of
-    α / β and σ that median's (1.4826 · MAD · √(π/2) / √n). NaN with fewer
-    than 3 valid columns.
+    α / β. NaN with fewer than 3 valid columns: the caller then corrects
+    without the basis (``AtmosphereModel`` rejects a NaN scale).
+
+    σ is the median's as if the columns were independent (1.4826 · MAD ·
+    √(π/2) / √n), a noise-only lower bound: neighboring columns share the
+    basis's 31-column smoothing and the smoothed shift, and c differs
+    between scenes about 100 times more (0.0052–0.0060 on the FRSs, σ
+    2–3·10⁻⁵).
 
     CAT scales its patch with the path in the same way; a free α per pixel
     would be one more parameter for a hydrated or noisy pixel to bias."""
@@ -1193,8 +1241,9 @@ def artifactScale(
 def saveArtifactBasis(basis: ArtifactBasis, path: Path) -> None:
     """``path`` (.npz): the spectra and a JSON ``metadata`` entry."""
     metadata = {
-        "scanId": basis.scanId,
+        "transmissionKey": basis.transmissionKey,
         "sourceObservations": list(basis.sourceObservations),
+        "sclkSpan": list(basis.sclkSpan),
         "createdWith": basis.createdWith,
     }
     with Path(path).open("wb") as file:
@@ -1209,27 +1258,54 @@ def loadArtifactBasis(path: Path) -> ArtifactBasis:
     with np.load(Path(path), allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata"]))
         spectra = np.asarray(data["spectra"], dtype=np.float64)
+    first, last = metadata["sclkSpan"]
     return ArtifactBasis(
-        metadata["scanId"],
+        metadata["transmissionKey"],
         spectra,
         tuple(metadata["sourceObservations"]),
+        (float(first), float(last)),
         metadata["createdWith"],
     )
 
 
-def artifactFileName(scanId: str) -> str:
+def artifactFileName(transmissionKey: str) -> str:
     """The bundled file of a transmission key: ``"061C4:AT"`` is
     ``061C4_AT.npz`` (':' is awkward in file names)."""
-    return scanId.replace(":", "_") + ".npz"
+    return transmissionKey.replace(":", "_") + ".npz"
 
 
-def bundledArtifactBasis(scanId: str, samples: int) -> ArtifactBasis | None:
-    """The basis shipped for the transmission key ``scanId`` (in
-    ``resources/artifacts``, ``artifactFileName``), or None when there is
-    none or it has a different number of columns than the cube's
-    ``samples`` (a binned observation)."""
-    path = ARTIFACT_FOLDER / artifactFileName(scanId)
+def bundledArtifactBasis(
+    transmissionKey: str, samples: int, bands: int, sclk: float
+) -> BasisLookup:
+    """The basis shipped for ``transmissionKey`` (in ``resources/artifacts``,
+    ``artifactFileName``) for a cube of ``samples`` columns and ``bands``
+    bands observed at ``sclk``. It is given only when the file's key is the
+    transmission's, its shape is the cube's (not, e.g., a binned
+    observation's) and ``sclk`` lies within its training span ± 180 days
+    (``ARTIFACT_EPOCH_MARGIN_SCLK``); otherwise the basis is None and the
+    reason says why."""
+    path = ARTIFACT_FOLDER / artifactFileName(transmissionKey)
     if not path.is_file():
-        return None
+        return BasisLookup(None, f"no artifact basis is bundled for {transmissionKey}")
     basis = loadArtifactBasis(path)
-    return basis if basis.spectra.shape[0] == samples else None
+    if basis.transmissionKey != transmissionKey:
+        return BasisLookup(
+            None,
+            f"{path.name} holds the basis of {basis.transmissionKey}, "
+            f"not {transmissionKey}",
+        )
+    if basis.spectra.shape != (samples, bands):
+        return BasisLookup(
+            None,
+            f"the {transmissionKey} basis is {basis.spectra.shape[0]} columns × "
+            f"{basis.spectra.shape[1]} bands; the cube is {samples} × {bands}",
+        )
+    first, last = basis.sclkSpan
+    margin = ARTIFACT_EPOCH_MARGIN_SCLK
+    if not first - margin <= sclk <= last + margin:
+        return BasisLookup(
+            None,
+            f"SCLK {sclk:.0f} is more than 180 days from the {transmissionKey} "
+            f"basis's training span {first:.0f}–{last:.0f}",
+        )
+    return BasisLookup(basis, f"the bundled {transmissionKey} basis")

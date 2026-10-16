@@ -846,6 +846,7 @@ def _syntheticBasis() -> ArtifactBasis:
         "truth:AT",
         [f"synthetic {seed}" for seed in _TRAINING_SEEDS],
         wavelengths=truth.columnWavelengths,
+        sclks=[1.09e9 + seed for seed in _TRAINING_SEEDS],
     )
 
 
@@ -1017,10 +1018,10 @@ def test_artifact_model_preserves_mineral_band() -> None:
     are compared, in units of σ, the parameter's scatter within the unit
     (the units are uniform but for albedo, so that scatter is the noise):
 
-    - with the artifact injected, the model moves them by less than 1σ
-      (measured 0.00σ for BD2290, 0.3–0.4σ for BD1900_2, seeds 1–3);
+    - with the artifact injected, the model moves them by at most 0.5σ
+      (measured 0.00σ for BD2290, 0.29–0.40σ for BD1900_2, seeds 1–3);
     - without the artifact, the model with its own scene scale (c about
-      −0.001, the basalt's structure) moves them by less than 1σ (≤ 0.15σ);
+      −0.001, the basalt's structure) moves them by under 0.25σ (≤ 0.15σ);
     - BD2290 (outside the fit window) of the artifact cube corrected with
       the model is within 1σ of the artifact-free truth run (0.04σ).
 
@@ -1055,61 +1056,120 @@ def test_artifact_model_preserves_mineral_band() -> None:
 
             sigma = np.nanstd(parameter(truthRun))
             ours = parameter(corrected)
-            assert abs(np.nanmean(ours - parameter(unmodeled))) < sigma, (unit, name)
+            ownEffect = np.nanmean(ours - parameter(unmodeled))
+            assert abs(ownEffect) <= 0.5 * sigma, (unit, name)
             cleanShift = parameter(cleanModeled) - parameter(truthRun)
-            assert abs(np.nanmean(cleanShift)) < sigma, (unit, name)
+            assert abs(np.nanmean(cleanShift)) < 0.25 * sigma, (unit, name)
             if name == "BD2290":
                 assert abs(np.nanmean(ours - parameter(truthRun))) < sigma, unit
 
 
-def test_round_trip_npz(tmp_path: Path) -> None:
-    """A6: a basis saved to .npz loads with equal fields; the bundled lookup
-    names files by the transmission key and returns None when the file is
-    absent or its column count differs from the cube's."""
-    basis = ArtifactBasis(
-        scanId="061C4:AT",
-        spectra=np.random.default_rng(0).normal(size=(12, 438)),
+_SCLK_2014 = 1.09e9  # FRS00031442 is at 1090233681
+
+
+def _basis(
+    key: str = "061C4:AT",
+    shape: tuple[int, int] = (640, 438),
+    span: tuple[float, float] = (_SCLK_2014, _SCLK_2014 + 5e6),
+) -> ArtifactBasis:
+    return ArtifactBasis(
+        transmissionKey=key,
+        spectra=np.random.default_rng(0).normal(size=shape),
         sourceObservations=("FRS00031442", "FRS0002FE75"),
+        sclkSpan=span,
         createdWith="0.0.test",
     )
+
+
+def test_round_trip_npz(tmp_path: Path) -> None:
+    """A6: a basis saved to .npz loads with equal fields; files are named by
+    the transmission key."""
+    basis = _basis(shape=(12, 438))
     path = tmp_path / "061C4_AT.npz"
     saveArtifactBasis(basis, path)
     loaded = loadArtifactBasis(path)
-    assert loaded.scanId == basis.scanId
+    assert loaded.transmissionKey == basis.transmissionKey
     assert loaded.sourceObservations == basis.sourceObservations
+    assert loaded.sclkSpan == basis.sclkSpan
     assert loaded.createdWith == basis.createdWith
     np.testing.assert_array_equal(loaded.spectra, basis.spectra)
     assert atmosphere.artifactFileName("061C4:AT") == "061C4_AT.npz"
-    assert bundledArtifactBasis("NOSCAN:AT", 640) is None
 
 
-def test_bundled_basis_checks_columns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    basis = ArtifactBasis("061C4:AT", np.zeros((640, 438)), ("A",), "0.0.test")
-    saveArtifactBasis(basis, tmp_path / atmosphere.artifactFileName(basis.scanId))
+def test_bundled_basis_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A6: the bundled basis serves a cube only with the same transmission
+    key, columns and bands, and an SCLK within its training span ± 180 days;
+    otherwise None, with the reason for the provenance."""
     monkeypatch.setattr(atmosphere, "ARTIFACT_FOLDER", tmp_path)
-    found = bundledArtifactBasis("061C4:AT", 640)
-    assert found is not None and found.sourceObservations == ("A",)
-    assert bundledArtifactBasis("061C4:AT", 320) is None
+    basis = _basis()
+    saveArtifactBasis(basis, tmp_path / atmosphere.artifactFileName("061C4:AT"))
+    # a file under one key holding another key's basis
+    saveArtifactBasis(
+        _basis(key="08608:AT"), tmp_path / atmosphere.artifactFileName("0A93E:AT")
+    )
+    first, last = basis.sclkSpan
+    margin = atmosphere.ARTIFACT_EPOCH_MARGIN_SCLK
+    assert margin == pytest.approx(15.55e6, rel=1e-3)
+    for sclk in (first, last, first - 0.99 * margin, last + 0.99 * margin):
+        found = bundledArtifactBasis("061C4:AT", 640, 438, sclk)
+        assert found.basis is not None, found.reason
+        assert found.basis.sourceObservations == basis.sourceObservations
+    cases = {
+        "180 days": ("061C4:AT", 640, 438, last + 1.01 * margin),
+        "training span": ("061C4:AT", 640, 438, first - 1.01 * margin),
+        "320 × 438": ("061C4:AT", 320, 438, first),
+        "640 × 437": ("061C4:AT", 640, 437, first),
+        "08608:AT, not 0A93E:AT": ("0A93E:AT", 640, 438, first),
+        "no artifact basis": ("094B5:AT", 640, 438, first),
+    }
+    for reason, arguments in cases.items():
+        lookup = bundledArtifactBasis(*arguments)
+        assert lookup.basis is None and reason in lookup.reason, lookup.reason
 
 
-def test_learn_needs_one_scan_per_basis() -> None:
-    """Observations of different scans can't be pooled: every residual must
-    have the same shape, one per named observation."""
+def test_learn_rejects_mismatched_inputs() -> None:
+    """One residual and one SCLK per named observation, all of the scan's
+    shape, and a basis that is not all zero."""
     _, truth = makeSyntheticCube(4, 0, **_CLEAN)
     wavelengths = truth.columnWavelengths
+    zeros = np.zeros(wavelengths.shape)
     with pytest.raises(ValueError, match="observation"):
         learnArtifactBasis(
-            [np.zeros(wavelengths.shape)], "x:AT", ["a", "b"], wavelengths=wavelengths
+            [zeros], "x:AT", ["a", "b"], wavelengths=wavelengths, sclks=[1.0, 2.0]
+        )
+    with pytest.raises(ValueError, match="SCLK"):
+        learnArtifactBasis(
+            [zeros, zeros], "x:AT", ["a", "b"], wavelengths=wavelengths, sclks=[1.0]
         )
     with pytest.raises(ValueError, match="shape"):
         learnArtifactBasis(
-            [np.zeros(wavelengths.shape), np.zeros((3, 438))],
+            [zeros, np.zeros((3, 438))],
             "x:AT",
             ["a", "b"],
             wavelengths=wavelengths,
+            sclks=[1.0, 2.0],
         )
+    with pytest.raises(ValueError, match="no artifact"):
+        learnArtifactBasis(
+            [zeros, zeros],
+            "x:AT",
+            ["a", "b"],
+            wavelengths=wavelengths,
+            sclks=[1.0, 2.0],
+        )
+
+
+def test_artifact_scale_must_be_finite() -> None:
+    """A NaN scale (``artifactScale`` with too few columns) is rejected: the
+    caller corrects without the basis instead."""
+    _, truth = makeSyntheticCube(4, 0, **_CLEAN)
+    model = _model(truth)
+    with pytest.raises(ValueError, match="without the basis"):
+        attrs.evolve(model, artifact=truth.artifact, artifactScale=math.nan)
+    assert (
+        attrs.evolve(model, artifact=truth.artifact, artifactScale=0.0).artifactScale
+        == 0.0
+    )
 
 
 _REAL_ARTIFACT_SCAN = "061C4:AT"
@@ -1126,6 +1186,7 @@ class _RealColumns:
     spread: np.ndarray
     wavelengths: np.ndarray
     selection: atmosphere.SelectionResult
+    sclk: float
 
     @property
     def residual(self) -> np.ndarray:
@@ -1170,7 +1231,7 @@ def _realColumns(folder: Path, trr3Path: str) -> _RealColumns:
     ]
     spectra, spread = columnSpectra(cube, sigma, wavelengths)
     selection = selectTransmission(spectra, spread, wavelengths, candidates)
-    return _RealColumns(spectra, spread, wavelengths, selection)
+    return _RealColumns(spectra, spread, wavelengths, selection, trr3.sclk)
 
 
 def test_artifact_basis_leave_one_out(demoData: Path) -> None:
@@ -1205,6 +1266,7 @@ def test_artifact_basis_leave_one_out(demoData: Path) -> None:
             _REAL_ARTIFACT_SCAN,
             others,
             wavelengths=observations[others[0]].wavelengths,
+            sclks=[observations[n].sclk for n in others],
         )
         without = held.co2Residual(None)
         assert held.co2Residual(basis) <= 0.7 * without, name

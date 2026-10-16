@@ -342,6 +342,12 @@ are written in Phase 1, test-first. Design:
   0.00616). Their fitted shifts are −0.83 and −0.91 nm. With both sources
   (23 candidates) a VS ADR wins: 2815C:VS 0.00525 against 32AFC:VS 0.00530
   (relative margin 0.008, win fraction 0.585).
+- **Scored without the artifact basis (Task 14 ruling).** Selection fits
+  and scores each candidate without A6's basis. With each candidate's basis
+  the gap between scans compresses (in the Task 14 review 0A93E went from
+  worst to near-best, and FRS00031260 would flip from 08608 to 061C4), so
+  the score would mostly measure how well each basis was learned, not the
+  transmission.
 - **Test:** `test_atmosphere.py::test_selects_injected_transmission` (true
   AT against copies shifted 1.5 nm and scaled in depth, 1 − k(1 − T) with
   k = 0.9, 1.1; a power T^k is no decoy, since β absorbs k exactly) and
@@ -490,17 +496,29 @@ are written in Phase 1, test-first. Design:
     scaled to unit RMS over the score window (one scale for all columns, so
     the variation across columns is kept). 0 outside the fit window and in
     the hydration mask (no data there). One basis per transmission key
-    (`"061C4:AT"`; an AT and a VS ADR of one scan differ), stored as
-    `resources/artifacts/<scan>_<AT|VS>.npz` (`artifactFileName`: ':' becomes
-    '_') with a JSON metadata entry (key, source observations, Varda
-    version). `bundledArtifactBasis` returns None when there is none or the
-    column count differs (binned data). No basis is bundled yet (Task 23).
+    (`ArtifactBasis.transmissionKey`, `"061C4:AT"`; an AT and a VS ADR of
+    one scan differ), stored as `resources/artifacts/<scan>_<AT|VS>.npz`
+    (`artifactFileName`: ':' becomes '_') with a JSON metadata entry (key,
+    source observations, the training SCLK span, Varda version). No basis is
+    bundled yet (Task 23).
+  - **Epoch gate (fix round 1):** `bundledArtifactBasis(key, samples,
+    bands, sclk)` returns a `BasisLookup(basis, reason)`: the basis only
+    when the file's key is the transmission's, its columns and bands are the
+    cube's, and the SCLK is within the training span ± 180 days
+    (`ARTIFACT_EPOCH_MARGIN_SCLK` = 15.55·10⁶ s); otherwise None and the
+    reason, for the provenance. The 2014 FRS basis made FRT00005850 (2007)
+    worse (below), so a basis does not carry across epochs.
   - **α ∝ β as a constraint:** α = c·β with one scene-level c, so the
     per-pixel atmosphere is β (ln T_x(λ + δ_x) + c a_x), one linear term:
     `AtmosphereModel(artifact=basis.spectra, artifactScale=c)`. c is
     `artifactScale`: the column spectra fitted with α free (T and the
     smoothed shift fixed), the median over columns of α / β, σ from the
-    MAD. A free α per pixel would be one more parameter for hydrated or
+    MAD as if the columns were independent, a noise-only lower bound (the
+    31-column smoothing and the smoothed shift correlate them; c differs
+    between the FRSs, 0.0052–0.0060, about 100× that σ). A NaN c (under 3
+    valid columns) is rejected by `AtmosphereModel`: correct without the
+    basis. The IN band's "artifact amplitude" is then c·β
+    (`PixelFit.artifactAmplitude`), not a fitted α. A free α per pixel would be one more parameter for hydrated or
     noisy pixels to bias. σ′ is propagated as before (a free α keeps its own
     covariance; c's uncertainty is not propagated, a systematic term for the
     S4.E Monte Carlo); with the true artifact tied the correction's reduced
@@ -538,9 +556,10 @@ are written in Phase 1, test-first. Design:
       carry across from 2014 to 2007 (another WA, and 061C4 is a poor fit
       for it, 0.00886 against 06822's 0.00623).
   - **Mineral bands:** on the library surface the model moves BD2290 by
-    0.00σ and BD1900_2 by 0.3–0.4σ (seeds 1–3; σ the unit's scatter), and
-    on a cube without the artifact (scene c ≈ −0.001, the basalt's
-    structure) by ≤ 0.15σ. Against the artifact-free run BD2290 is within
+    0.00σ and BD1900_2 by 0.29–0.40σ (seeds 1–3; σ the unit's scatter;
+    the test requires ≤ 0.5σ), and on a cube without the artifact (scene
+    c ≈ −0.001, the basalt's structure) by ≤ 0.15σ (required < 0.25σ). The
+    review confirmed the real basis is CO2 hash, not mineralogy. Against the artifact-free run BD2290 is within
     0.04σ, but BD1900_2 is 1.1–1.4σ off with the model and 0.7–1.0σ
     without: the bowl above sits under R1985 and the artifact under the
     hydration mask is never fitted. A learned basis cannot fix either
@@ -556,7 +575,8 @@ are written in Phase 1, test-first. Design:
   0.0071 → 0.0060, the exact correction's 0.0059),
   `::test_artifact_model_preserves_mineral_band`,
   `::test_high_pass_removes_continuum`, `::test_round_trip_npz`,
-  `::test_bundled_basis_checks_columns`, `::test_learn_needs_one_scan_per_basis`,
+  `::test_bundled_basis_lookup`, `::test_learn_rejects_mismatched_inputs`,
+  `::test_artifact_scale_must_be_finite`,
   `::test_artifact_basis_leave_one_out` (data-gated: the three FRSs under
   061C4:AT, each held out reduced by ≥ 30%; completed in Task 23). If D3
   allows, a comparison with the VS ADR artifact spectra (Task 23).
