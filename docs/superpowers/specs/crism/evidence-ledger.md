@@ -151,7 +151,10 @@ are written in Phase 1, test-first. Design:
 - **Confidence:** medium, because TRR3 IKF filtering may alter the noise
   statistics.
 - **Test:** `test_noise.py::test_recovers_injected_sigma` (synthetic,
-  within 3%) and the end-to-end χ² check (V1) *(planned)*.
+  within 3%), `test_noise.py::test_stripes_do_not_inflate_sigma`,
+  `test_noise.py::test_shot_noise_slope` (within 10%), and
+  `test_noise.py::test_all_nan_band_is_nan_without_warnings`; the end-to-end
+  χ² check (V1) *(planned)*.
 
 **N2. Random and systematic uncertainty are kept apart.**
 - **Decision:** σ holds random uncertainty only. The systematic terms
