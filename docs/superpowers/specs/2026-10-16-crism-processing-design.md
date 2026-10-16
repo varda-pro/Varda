@@ -1,8 +1,9 @@
 # CRISM processing: from TRR3 I/F to MTRDR-consistent products — Design
 
-Status: draft for Michael's review (2026-10-16). Phase 0 of the CRISM work:
-research and design only, no product code. Decisions marked **(D1)–(D8)** need
-Michael's call; see "Decisions for Michael" at the end.
+Status: approved 2026-10-16, with the recommended option for every decision
+D1–D8 (see "Decisions for Michael" at the end). FRT00005850's TRR3 + DDR and
+CAT 7.4's aux files are downloaded for comparison (D3, D6). The Phase 1 plan
+is `../plans/2026-10-16-crism-processing-phase1.md`.
 
 Companion files:
 - `crism/evidence-ledger.md`: one entry per algorithmic decision (source,
@@ -495,8 +496,8 @@ bands.
 - `bbl = 0` for the MTRDR bad-band rows (already excluded from the vector),
   for bands above 2600 nm (no thermal correction in Phase 1), and for any
   band whose valid-sample fraction is below 50%.
-- `fwhm` comes from the SB CDR at the sweet spot; the MTRDR wv table is the
-  fallback.
+- `fwhm` comes from the MTRDR wv table, the target vector's own values,
+  so the output carries the same FWHM as MTRDR.
 
 ### S8. Map projection
 
@@ -554,7 +555,7 @@ product type:
 |---|---|---|
 | WA CDR (L) | wavelengths, smile | PDS EDR volume `mrocr_0001/cdr/wa/`; already local for the TRR3s' WA 490947778566 |
 | AT CDR (L) | ATM | PDS `mrocr_0001/cdr/at/` (6 distinct scans; all local) |
-| SW, SB CDRs | target vector check, FWHM | PDS `cdr/sw`, `cdr/sb` |
+| SW CDR | target vector check | PDS `cdr/sw` |
 | BP CDR | bad elements | PDS `cdr/bp` (named in the TRR3 SOURCE_PRODUCT_ID) |
 | VS ADRs (17 scans + artifact spectra) | optional ATM candidates, comparison | CAT 7.4 aux zip (513 MB; not on PDS) — **D3** |
 | CAT `obs_info` (precomputed VS choices) | comparison only | CAT aux zip — **D3** |
