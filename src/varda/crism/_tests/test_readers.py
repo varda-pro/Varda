@@ -40,6 +40,23 @@ def test_trr3_layout_and_nodata(cropDir: Path) -> None:
     np.testing.assert_array_equal(trr3.lines(slice(3, 5)), cube[3:5])
 
 
+@pytest.mark.filterwarnings("ignore:All-NaN slice:RuntimeWarning")
+def test_pixel_order_matches_wavelengths(cropDir: Path) -> None:
+    trr3 = readTrr3(cropDir / TRR3)
+    cube = trr3.lines(slice(0, 16))
+    raw = np.fromfile(cropDir / "frs00031442_01_if168l_trr3.img", dtype="<f4")
+    raw = raw[: 16 * 438 * 120].reshape(16, 438, 120).astype(np.float64)
+    raw[(raw == 65535) | (raw < 1e-6)] = np.nan
+    for line, sample in [(0, 0), (5, 60), (15, 119)]:
+        np.testing.assert_array_equal(cube[line, sample], raw[line, :, sample][::-1])
+    wa = readDetectorFrame(cropDir / WA).alignedTo(trr3.detectorRows)
+    wavelengths = np.nanmedian(wa, axis=0)
+    spectrum = np.nanmedian(cube, axis=(0, 1))
+    window = (wavelengths >= 1950) & (wavelengths <= 2100)
+    deepest = wavelengths[window][np.nanargmin(spectrum[window])]
+    assert 2000 <= deepest <= 2015
+
+
 def test_rownum_table(cropDir: Path) -> None:
     rows = readTrr3(cropDir / TRR3).detectorRows
     assert rows.shape == (438,)
@@ -99,6 +116,16 @@ def test_usable_lines_drops_slew(tmp_path: Path) -> None:
     assert usable.shape == (41,)
     assert not usable[:5].any()
     assert usable[5:].all()
+
+
+def test_usable_lines_without_positions(tmp_path: Path) -> None:
+    ddr = _syntheticDdr(tmp_path, np.full(9, np.nan))
+    assert usableLines(ddr).all()
+
+
+def test_detector_frame_line_out_of_range(cropDir: Path) -> None:
+    with pytest.raises(ValueError, match="1 line"):
+        readDetectorFrame(cropDir / WA, line=1)
 
 
 def test_vs_adr_layout(demoData: Path, cropDir: Path) -> None:

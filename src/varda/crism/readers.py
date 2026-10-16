@@ -5,6 +5,7 @@ Pixels come from the label's memory-mapped layout; only the rows asked for are
 copied. Invalid samples (65535, below 1e-6, non-finite) become NaN in memory.
 """
 
+import warnings
 from enum import IntEnum
 from pathlib import Path
 
@@ -25,14 +26,8 @@ def _labelFor(path: Path) -> ProductLabel:
     """Read the label of ``path``, which may be the ``.IMG`` it describes."""
     path = Path(path)
     if path.suffix.lower() == ".img":
-        path = next(
-            (
-                p
-                for p in path.parent.glob("*")
-                if p.stem == path.stem and p.suffix.lower() in (".lbl", ".xml")
-            ),
-            path.with_suffix(".lbl"),
-        )
+        candidates = [path.with_suffix(s) for s in (".LBL", ".lbl", ".xml", ".XML")]
+        path = next((c for c in candidates if c.exists()), candidates[0])
     return readLabel(path)
 
 
@@ -79,7 +74,7 @@ class Trr3:
     id: ProductId
     label: ProductLabel
     detectorRows: np.ndarray
-    reversed: bool = False  # the file stores wavelength descending
+    flipped: bool = False  # the file stores wavelength descending
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -107,7 +102,7 @@ class Trr3:
         invalid samples. Only the requested lines are read from disk."""
         chunk = self.label.image.memmap()[rows]  # (l, band, sample)
         cube = _nodataToNan(chunk, _FLOOR).transpose(0, 2, 1)
-        return cube[:, :, ::-1] if self.reversed else cube
+        return cube[:, :, ::-1] if self.flipped else cube
 
 
 def readTrr3(path: Path) -> Trr3:
@@ -174,6 +169,11 @@ class DetectorFrame:
 def readDetectorFrame(path: Path, line: int = 0) -> DetectorFrame:
     """Line ``line`` of a WA, AT, BP or SB CDR (one line) or a VS ADR."""
     label = _labelFor(path)
+    lineCount = label.image.lines
+    if not 0 <= line < lineCount:
+        raise ValueError(
+            f"{Path(path).stem.upper()}: line {line} is outside its {lineCount} line(s)"
+        )
     frame = label.image.memmap()[line]  # (band, sample)
     return DetectorFrame(
         Path(path).stem.upper(), _nodataToNan(frame.T), _detectorRows(label.image)
@@ -198,8 +198,9 @@ def _alongTrackSteps(ddr: Ddr) -> np.ndarray:
         + np.cos(lat[1:]) * np.cos(lat[:-1]) * np.sin(dLon / 2) ** 2
     )
     step = 2 * _MARS_RADIUS_M * np.arcsin(np.sqrt(a))
-    with np.errstate(all="ignore"):
-        medians = np.nanmedian(step, axis=1)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        medians = np.nanmedian(step, axis=1)  # all-NaN rows give NaN
     return np.concatenate(([medians[0]], medians))
 
 
@@ -214,7 +215,12 @@ def usableLines(ddr: Ddr) -> np.ndarray:
     implementation is written independently.
     """
     steps = _alongTrackSteps(ddr)
-    good = np.isfinite(steps) & (steps <= _SLEW_FACTOR * np.nanmedian(steps))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN slice
+        scene = np.nanmedian(steps)
+    if not scene > 0:  # constant or all-invalid positions: nothing to judge
+        return np.ones(len(steps), dtype=bool)
+    good = np.isfinite(steps) & (steps <= _SLEW_FACTOR * scene)
     usable = np.zeros_like(good)
     bestStart = bestLength = start = 0
     for i, ok in enumerate([*good, False]):
