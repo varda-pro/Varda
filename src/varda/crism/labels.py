@@ -4,6 +4,7 @@ Only the data file holding the image (and its row-number table) is described;
 other files a label merely names are never opened.
 """
 
+import warnings
 from pathlib import Path
 from typing import Literal
 from xml.etree import ElementTree
@@ -109,15 +110,31 @@ def _normalize(value: object) -> LabelValue:
     return str(value)
 
 
-def _pointer(value: LabelValue) -> tuple[str, int]:
-    """A PDS3 ``^`` pointer as (file name, 0-based record); a bare name is record 0."""
-    if isinstance(value, list):
-        return str(value[0]), int(value[1]) - 1  # ty: ignore[invalid-argument-type]
-    return str(value), 0
+def _pointer(value: object) -> tuple[str, int]:
+    """A PDS3 ``^`` pointer as (file name, 0-based record).
+
+    Supports ``"FILE"`` and ``("FILE", record)``; other forms raise ValueError.
+    """
+    if isinstance(value, str):
+        return value, 0
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], int)
+        and not isinstance(value[1], bool)
+    ):
+        return value[0], value[1] - 1
+    raise ValueError(f"unsupported PDS3 pointer: {value!r}")
 
 
 def _readPds3(path: Path) -> ProductLabel:
-    label = pvl.load(path)
+    with warnings.catch_warnings():
+        # pvl itself builds its deprecated Units object when decoding <UNIT> values.
+        warnings.filterwarnings(
+            "ignore", message="The pvl.collections.Units object is deprecated"
+        )
+        label = pvl.load(path)
     fileObject = next(
         (obj for name, obj in label.items() if name == "FILE" and "^IMAGE" in obj),
         None,
@@ -126,12 +143,10 @@ def _readPds3(path: Path) -> ProductLabel:
         raise ValueError(f"{path.name}: no FILE object holds an IMAGE")
     image = fileObject["IMAGE"]
     recordBytes = int(fileObject.get("RECORD_BYTES", 0))
-    dataName, imageRecord = _pointer(_normalize(fileObject["^IMAGE"]))
+    dataName, imageRecord = _pointer(fileObject["^IMAGE"])
     rownumOffset: int | None = None
     if "^ROWNUM_TABLE" in fileObject:
-        rownumOffset = (
-            _pointer(_normalize(fileObject["^ROWNUM_TABLE"]))[1] * recordBytes
-        )
+        rownumOffset = _pointer(fileObject["^ROWNUM_TABLE"])[1] * recordBytes
     kind = _PDS3_DTYPES[str(image["SAMPLE_TYPE"])]
     dtype = np.dtype(f"{kind}{int(image['SAMPLE_BITS']) // 8}")
     names = _normalize(image.get("BAND_NAME"))

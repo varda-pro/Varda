@@ -111,7 +111,10 @@ markers = [
     "qa_env(**variables): environment variables for a QA persona's own process",
 ]
 # Varda must not use its own deprecated APIs (varda.common.deprecation)
-filterwarnings = ["error::varda.common.deprecation.VardaDeprecationWarning"]
+filterwarnings = [
+    "error::varda.common.deprecation.VardaDeprecationWarning",
+    "ignore:The pvl.collections.Units object is deprecated:PendingDeprecationWarning",
+]
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]

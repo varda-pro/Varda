@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
+from pvl.collections import Quantity
 
-from varda.crism.labels import readLabel
+from varda.crism.labels import _pointer, readLabel
 
 
 def test_trr3_crop_label(cropDir: Path):
@@ -31,6 +33,7 @@ def test_cdr_label(cropDir: Path):
     image = readLabel(cropDir / "cdr490947778566_wa0000000l_3.lbl").image
     assert image.lines == 1
     assert image.bands == 438
+    assert image.rownumOffset == 438 * 120 * 4
 
 
 def test_source_products_list(cropDir: Path):
@@ -56,3 +59,10 @@ def test_pds4_ddr_bands(demoData: Path):
     pds3 = readLabel(folder / "frt00005850_07_de167l_ddr1.lbl")
     assert xml.image.bands == pds3.image.bands == len(xml.bandNames)
     assert xml.image.interleave == "BSQ"
+
+
+def test_unsupported_pointer_raises():
+    with pytest.raises(ValueError):
+        _pointer(5)
+    with pytest.raises(ValueError):
+        _pointer(Quantity(5, "BYTES"))

@@ -19,5 +19,5 @@ def demoData() -> Path:
         os.environ.get("VARDA_DEMO_DATA", REPO_ROOT.parent / "varda-demo-data")
     )
     if not (folder / "data-for-paper").is_dir():
-        pytest.skip(f"demo data not found at {folder}")
+        raise pytest.skip.Exception(f"demo data not found at {folder}")
     return folder
