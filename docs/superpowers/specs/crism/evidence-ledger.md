@@ -184,17 +184,21 @@ are written in Phase 1, test-first. Design:
      a strict local extremum in λ, and each band neighbor's residual is under
      0.4 of its own (a 3-band feature or a prediction wrong everywhere is not
      a spike).
-  5. **Transient.** The sample stands out from the same detector element on
-     the lines before and after by at least k/2 errors (a column defect that
-     persists down the lines is for destriping, not a spike).
+  5. **Transient (persistence).** The sample stands out, by at least 0.7 k
+     errors in the direction of its residual, from the median of the same
+     detector element on the lines 2 to 4 before and after (not the adjacent
+     lines, which a spike train shares). A spike train of 1 to 3 lines is
+     transient; an offset lasting 5 or more lines is a detector offset for
+     destriping, not a spike. Chunks therefore need `ALONG_TRACK_HALO = 4`
+     halo lines.
   - **Filter boundaries** (`FILTER_BOUNDARIES_NM`: the 1.65 µm and 2.7 µm
     joins, where spectra step per column): the spectral median never
     straddles one (the two bands either side take the spatial predictor only)
     and the extremum test does not compare across it.
   - The replacement is R̂ with σ = σ_p; a report holds per-pixel counts, a
     sparse (line, sample, band) table with absolute lines, and the Leask
-    count (1850–2150 nm). Chunks need a 1-line halo (`halo`, `haloBelow` at
-    scene edges) and give identical results.
+    count (1850–2150 nm). With `halo` = 4 lines (`haloBelow` at scene edges)
+    chunks give identical results.
 - **Source:** Parente 2008 (the BPS extremum criterion); Plebani 2022 §5.1
   (5σ cascaded medians); Leask 2018 (residual IKF artifacts, column
   clustered). The combination, the disagreement widening, the isolation and
@@ -202,11 +206,19 @@ are written in Phase 1, test-first. Design:
   plain average and raw-R extremum gave ~10³ false flags on synthetic units
   and 2e-4 on FRS00031442; see the Task 11 report).
 - **Confidence:** medium. On the synthetic cube, recall at ≥ 8σ is
-  0.95–0.98 and false flags 0–1e-6; on FRS00031442 lines 0–63 the overall
-  flag rate is 1.6e-5. Not validated against known real spikes.
+  0.94–0.98 and false flags 0–1e-6; 1–3 line trains of 10–20σ are caught at
+  0.87–0.98 per sample; on FRS00031442 lines 0–63 the overall flag rate is
+  5.2e-5. Not validated against known real spikes.
+- **Known limits:** the isolation test rejects a spike hitting two adjacent
+  bands; single-spike recall inside the CO₂ band (1950–2080 nm) is about 0.94;
+  the onset and end of a long element offset look like a train and are
+  flagged; the two bands either side of a filter join rely on the spatial
+  predictor alone (a one-sided spectral window was tried and flagged bands 99
+  and 100 80 and 50 times in 64 lines).
 - **Test:** `test_despike.py::test_recall_and_false_rate` (≥ 95% recall at
   ≥ 8σ; ≤ 1e-5 false flags), `test_preserves_narrow_real_feature`,
   `test_chunk_halo_equivalence`, `test_leask_count`,
+  `test_short_trains_are_spikes`, `test_a_long_element_offset_is_not_a_spike`,
   `test_real_chunk_has_no_hot_bands` (data-gated).
 
 ### Atmospheric correction

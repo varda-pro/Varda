@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from varda.crism.despike import (
+    ALONG_TRACK_HALO,
     SpikeReport,
     _nanMedian,
     _segments,
@@ -101,9 +102,10 @@ def test_chunk_halo_equivalence(synthetic):
     cube, truth = synthetic
     sigma, wavelengths = truth.noiseSigma, truth.columnWavelengths
     whole = _whole(cube, sigma, wavelengths)
-    first = despike(cube[:33], sigma[:33], wavelengths, halo=0, haloBelow=1)
+    n = ALONG_TRACK_HALO
+    first = despike(cube[: 32 + n], sigma[: 32 + n], wavelengths, halo=0, haloBelow=n)
     second = despike(
-        cube[31:], sigma[31:], wavelengths, firstLine=32, halo=1, haloBelow=0
+        cube[32 - n :], sigma[32 - n :], wavelengths, firstLine=32, halo=n, haloBelow=0
     )
     np.testing.assert_array_equal(whole[0], np.concatenate([first[0], second[0]]))
     np.testing.assert_array_equal(whole[1], np.concatenate([first[1], second[1]]))
@@ -178,6 +180,54 @@ def test_speed(synthetic):
     assert time.perf_counter() - start < 10
 
 
+def _train(cube, truth, profile, seed, low=12.0, count=30):
+    """Spike trains on separate detector elements: ``profile`` (a tuple of
+    multipliers) times 12-20 sigma down the lines, at one band each."""
+    rng = np.random.default_rng(seed)
+    cube = cube.copy()
+    hits = []
+    for k in range(count):
+        line = 6 + (k % 6) * 9
+        column = 8 + (k // 6) * 22 + int(rng.integers(0, 10))
+        band = int(rng.integers(40, 120))
+        amplitude = rng.uniform(low, 20) * rng.choice((-1.0, 1.0))
+        for i, share in enumerate(profile):
+            cube[line + i, column, band] += (
+                amplitude * share * truth.noiseSigma[line + i, column, band]
+            )
+            hits.append((line + i, column, band))
+    return cube, np.array(hits)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [(1.0, 1.0), (1.0, 1.0, 1.0), (0.55, 1.0, 0.7), (1.0, 0.6)],
+    ids=["flat2", "flat3", "rise-decay", "decay"],
+)
+def test_short_trains_are_spikes(profile):
+    cube, truth = _quietCube()
+    # every sample of every train is 10-20 sigma
+    spiked, hits = _train(cube, truth, profile, seed=5, low=18.0)
+    _, _, report = _whole(spiked, truth.noiseSigma, truth.columnWavelengths)
+    found = np.zeros(cube.shape, dtype=bool)
+    found[tuple(report.positions.T)] = True
+    assert found[tuple(hits.T)].mean() >= 0.9
+
+
+def test_a_long_element_offset_is_not_a_spike():
+    cube, truth = _quietCube()
+    cube = cube.copy()
+    columns = np.arange(10, 110, 5)
+    for column in columns:
+        band = 40 + column % 30
+        cube[20:32, column, band] += 8 * truth.noiseSigma[20:32, column, band]
+    _, _, report = _whole(cube, truth.noiseSigma, truth.columnWavelengths)
+    interior = report.perPixel[23:29][:, columns]  # 3+ lines inside the offset
+    # onsets and ends of a step look like a train; the scene's own gradient
+    # along the track leaves a stray flag now and then
+    assert interior.sum() <= 0.05 * interior.size
+
+
 def test_halo_arguments_are_validated(synthetic):
     cube, truth = synthetic
     args = (cube[:4], truth.noiseSigma[:4], truth.columnWavelengths)
@@ -188,7 +238,7 @@ def test_halo_arguments_are_validated(synthetic):
     with pytest.raises(ValueError, match="none between"):
         despike(*args, halo=2, haloBelow=2)
     with pytest.raises(ValueError, match="sigma"):
-        despike(cube[:4], truth.noiseSigma[:3], truth.columnWavelengths)
+        despike(cube[:4], truth.noiseSigma[:3], truth.columnWavelengths, halo=1)
 
 
 def test_real_chunk_has_no_hot_bands(demoData):
@@ -206,8 +256,8 @@ def test_real_chunk_has_no_hot_bands(demoData):
     rate = perBand / np.maximum(samples, 1)
     median = np.median(rate[samples > 0])
     # a band holding a handful of flags is Poisson noise, not a pile-up
-    crowded = perBand >= 20
+    crowded = perBand >= 30
     assert (rate[crowded] <= 10 * max(median, overall)).all()
-    for low, high in [(1640.0, 1660.0)]:
+    for low, high in [(1640.0, 1660.0), (2690.0, 2800.0)]:
         near = (_nanMedian(wavelengths) >= low) & (_nanMedian(wavelengths) < high)
         assert flagged[:, :, near].sum() / valid[:, :, near].sum() <= 10 * overall

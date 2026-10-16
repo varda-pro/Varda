@@ -21,8 +21,8 @@ replacement is reported, including those in the Leask window (1850–2150 nm).
 
 The IR detector's order-sorting filters join at ``FILTER_BOUNDARIES_NM``, where
 spectra step per column. Bands on either side are separate segments: the
-spectral median never reaches across a boundary (so within two bands of one
-only the spatial predictor is used) and the extremum and isolation tests do not
+spectral median never reaches across a boundary (within two bands of one only
+the spatial predictor is used) and the extremum and isolation tests do not
 compare across it.
 
 NaN samples are never flagged and are never evidence for their neighbors.
@@ -45,9 +45,12 @@ FILTER_BOUNDARIES_NM = (1656.0, 2730.0)
 _BAND_BLOCK = 16
 _DISAGREEMENT = 3.0  # σ of the predictors' gap that is still noise
 _ISOLATION = 0.4  # a spike's band neighbors keep under this share of its residual
-_TRANSIENT = (
-    0.5  # a spike differs from its own line neighbors by this share of k errors
-)
+# A spike lasts 1-3 lines; a detector offset lasts far longer. A sample counts
+# as persistent when the same element, 2 to ALONG_TRACK_HALO lines away (not the
+# adjacent lines, which a train of spikes shares), explains it. Chunks need this
+# many halo lines to match a whole-scene run.
+ALONG_TRACK_HALO = 4
+_TRANSIENT = 0.7  # a spike differs from its element's other lines by this many k errors
 _MIN_NEIGHBORS = 3  # fewer valid spatial neighbors: only the spectral median
 _LEVEL_LINES = 8  # lines per step of the level ratio, to bound its temporaries
 _NEIGHBOR_OFFSETS = [o for o in product(range(3), repeat=2) if o != (1, 1)]
@@ -146,7 +149,8 @@ def _spectralMedian(
     axis (the center is left out: a spike on a ramp would be its own median),
     and 1.4826 · MAD of those 4. NaN unless all 4 exist in the band's filter
     segment: a one-sided window is biased by any slope, which its scatter does
-    not show."""
+    not show, and the bands next to a join do not follow their own side (real
+    FRS00031442: one-sided windows flagged bands 99 and 100 80 and 50 times)."""
     bands = block.shape[2]
     padded = np.pad(block, ((0, 0), (0, 0), (2, 2)), constant_values=np.nan)
     window = []
@@ -208,22 +212,30 @@ def _isolatedExtremum(
     return (peak | trough) & isolated & (haveBefore | haveAfter)
 
 
+def _elementLevel(cube: np.ndarray, halo: int, stop: int, sel: slice) -> np.ndarray:
+    """The median of the same detector element 2 to ``ALONG_TRACK_HALO`` lines
+    before and after each output line, ``(l, s, nb)`` (NaN where none exists)."""
+    outLines = stop - halo
+    lines = np.arange(outLines) + halo
+    shifted = []
+    for offset in (*range(-ALONG_TRACK_HALO, -1), *range(2, ALONG_TRACK_HALO + 1)):
+        at = lines + offset
+        inside = (at >= 0) & (at < cube.shape[0])
+        values = np.full((outLines, *cube[0, :, sel].shape), np.nan)
+        values[inside] = cube[at[inside], :, sel]
+        shifted.append(values)
+    return _nanMedian(np.stack(shifted))
+
+
 def _transient(
-    block: np.ndarray,
-    above: np.ndarray,
-    below: np.ndarray,
-    residual: np.ndarray,
-    limit: np.ndarray,
+    block: np.ndarray, level: np.ndarray, residual: np.ndarray, limit: np.ndarray
 ) -> np.ndarray:
-    """A spike is not a column defect: the sample also stands out, in the
-    direction of its residual, from the same detector element on the lines
-    before and after (a missing line does not count against it). A defect
-    that persists down the lines agrees with them."""
-    direction = np.sign(residual)
+    """A spike is not a detector offset: the sample also stands out, in the
+    direction of its residual, from the same element a few lines away (no such
+    line does not count against it). An offset that persists agrees with them,
+    a train of 1 to 3 spiked lines does not."""
     with np.errstate(invalid="ignore"):
-        return (np.isnan(above) | ((block - above) * direction > limit)) & (
-            np.isnan(below) | ((block - below) * direction > limit)
-        )
+        return np.isnan(level) | ((block - level) * np.sign(residual) > limit)
 
 
 def _predict(
@@ -269,15 +281,17 @@ def despike(
     wavelengths: np.ndarray,
     threshold: float = 5.0,
     firstLine: int = 0,
-    halo: int = 1,
+    halo: int = ALONG_TRACK_HALO,
     haloBelow: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, SpikeReport]:
     """Despike a chunk: ``(cube, sigma, report)`` without the halo lines.
 
     ``cube`` and ``sigma`` ``(lines, s, b)`` carry ``halo`` neighbor lines
     above and ``haloBelow`` below (default: the same; pass fewer, down to 0,
-    at the first and last chunk of a scene). Only the 8 spatial neighbors are
-    used, so ``halo = 1`` makes chunked output identical to a whole-scene run.
+    at the first and last chunk of a scene). The spatial neighbors need 1 line,
+    the persistence test ``ALONG_TRACK_HALO``: with that many halo lines a
+    chunked run is identical to a whole-scene run (fewer only change the
+    samples near the chunk edge).
     Negative halos, or no line left between them, raise ``ValueError``.
     ``wavelengths`` is the ``(s, b)`` per-column map in nm (bands ascending;
     NaN for unused bands); it places the Leask window and the filter segments.
@@ -353,16 +367,6 @@ def despike(
         error = np.hypot(sigma[halo:stop, :, sel], sigmaP[:, :, sel])
         with np.errstate(invalid="ignore"):
             over = np.abs(residual[:, :, sel]) > threshold * error
-        above = np.full(error.shape, np.nan)  # the same element, a line earlier/later
-        below = np.full(error.shape, np.nan)
-        if halo > 0:
-            above[:] = cube[halo - 1 : stop - 1, :, sel]
-        else:
-            above[1:] = cube[: stop - 1, :, sel]
-        if haloAfter > 0:
-            below[:] = cube[halo + 1 : stop + 1, :, sel]
-        else:
-            below[:-1] = cube[halo + 1 : stop, :, sel]
         flags[:, :, sel] = (
             over
             & _isolatedExtremum(
@@ -370,8 +374,7 @@ def despike(
             )
             & _transient(
                 outCube[:, :, sel],
-                above,
-                below,
+                _elementLevel(cube, halo, stop, sel),
                 residual[:, :, sel],
                 _TRANSIENT * threshold * error,
             )
