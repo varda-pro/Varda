@@ -67,3 +67,41 @@ def test_demo_frt00005850(demoData: Path):
     assert obs.vnirDdr is not None and obs.vnirDdr.name.startswith(
         "frt00005850_07_de167s_ddr"
     )
+
+
+def _fake(cropDir: Path, root: Path, observation: str, withDdr: bool = True) -> None:
+    (root / "trdr").mkdir(parents=True, exist_ok=True)
+    (root / "ddr").mkdir(exist_ok=True)
+    shutil.copy(
+        cropDir / (CUBE + ".lbl"),
+        root / "trdr" / f"{CUBE.replace('frs00031442', observation)}.lbl",
+    )
+    if withDdr:
+        shutil.copy(
+            cropDir / (DDR + ".lbl"),
+            root / "ddr" / f"{DDR.replace('frs00031442', observation)}.lbl",
+        )
+
+
+def test_several_observations(cropDir: Path, tmp_path: Path):
+    _fake(cropDir, tmp_path / "a", "frs00031442")
+    _fake(cropDir, tmp_path / "b", "frs0002fe75")
+    _fake(cropDir, tmp_path / "c", "frs00031260", withDdr=False)
+    with pytest.raises(ValueError, match="FRS0002FE75.*FRS00031260.*FRS00031442"):
+        CrismObservation.fromFolder(tmp_path)
+    found = CrismObservation.discover(tmp_path)
+    assert [o.name for o in found] == ["FRS0002FE75", "FRS00031442"]
+    assert CrismObservation.fromFolder(tmp_path / "a").name == "FRS00031442"
+
+
+def test_from_files_explicit_ddr(cropDir: Path):
+    obs = CrismObservation.fromFiles(
+        cropDir / (CUBE + ".lbl"), cropDir / (DDR + ".lbl")
+    )
+    assert obs.irDdr == cropDir / (DDR + ".lbl")
+    assert obs.vnirCube is None
+
+
+def test_demo_discover(demoData: Path):
+    names = {o.name for o in CrismObservation.discover(demoData / "data-for-paper")}
+    assert {"FRS00031442", "FRS0002FE75", "FRS00031260", "FRT00005850"} <= names

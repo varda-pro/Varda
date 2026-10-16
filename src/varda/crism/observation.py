@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import logging
 from pathlib import Path
-from typing import Self
 
 from attrs import frozen
 
@@ -12,17 +11,20 @@ from varda.crism.labels import readLabel
 from varda.crism.products import ProductId
 from varda.crism.readers import Ddr, Trr3, readDdr, readTrr3
 
+_log = logging.getLogger(__name__)
 _LABEL_SUFFIXES = (".xml", ".lbl")  # in order of preference
 
 
-def _products(
-    folder: Path, activity: str, productType: str, recursive: bool
-) -> list[tuple[Path, ProductId]]:
-    """The label of each product in ``folder`` with this activity and type,
-    preferring ``.xml`` to ``.lbl`` for the same product, sorted by name."""
-    files = folder.rglob("*") if recursive else folder.glob("*")
+Found = list[tuple[Path, ProductId]]
+
+
+def _scan(folder: Path, recursive: bool) -> Found:
+    """Every IF (TRR) and DE (DDR) product label in ``folder``, preferring
+    ``.xml`` to ``.lbl`` for the same product, sorted by name."""
+    if not folder.is_dir():
+        return []
     best: dict[tuple[Path, str], tuple[Path, ProductId]] = {}
-    for path in sorted(files):
+    for path in folder.rglob("*") if recursive else folder.glob("*"):
         suffix = path.suffix.lower()
         if suffix not in _LABEL_SUFFIXES:
             continue
@@ -30,40 +32,52 @@ def _products(
             product = ProductId.parse(path)
         except ValueError:
             continue
-        if product.activity != activity or product.productType != productType:
+        if (product.activity, product.productType) not in (
+            ("IF", "TRR"),
+            ("DE", "DDR"),
+        ):
             continue
         key = (path.parent, path.stem.lower())
         held = best.get(key)
         if held is None or suffix == _LABEL_SUFFIXES[0]:
             best[key] = (path, product)
-    return sorted(best.values(), key=lambda item: item[0].name.lower())
+    return sorted(best.values(), key=lambda item: str(item[0]).lower())
 
 
-def _matching(
-    candidates: Iterable[tuple[Path, ProductId]], cube: ProductId, sensor: str
-) -> Path | None:
-    """The first candidate of the cube's observation, counter and macro."""
-    for path, product in candidates:
+def _find(found: Found, cube: ProductId, activity: str, sensor: str) -> Path | None:
+    """The first product of the cube's observation, counter and macro."""
+    for path, product in found:
         if (
-            product.observationId == cube.observationId
+            product.activity == activity
+            and product.sensor == sensor
             and product.classType == cube.classType
+            and product.observationId == cube.observationId
             and product.counter == cube.counter
             and product.macro == cube.macro
-            and product.sensor == sensor
         ):
             return path
     return None
 
 
-def _findDdr(cube: ProductId, folders: Iterable[Path], recursive: bool) -> Path | None:
-    for folder in folders:
-        if folder.is_dir():
-            found = _matching(
-                _products(folder, "DE", "DDR", recursive), cube, cube.sensor
-            )
-            if found is not None:
-                return found
-    return None
+def _build(found: Found, path: Path, product: ProductId) -> CrismObservation | None:
+    """The observation of an IR cube, or None when it has no IR DDR."""
+    irDdr = _find(found, product, "DE", "L")
+    if irDdr is None:
+        return None
+    vnir = _find(found, product, "IF", "S")
+    vnirDdr = _find(found, product, "DE", "S") if vnir is not None else None
+    return CrismObservation(
+        product.observationName, product.counter, path, irDdr, vnir, vnirDdr
+    )
+
+
+def _irCubes(found: Found) -> Found:
+    return [(p, i) for p, i in found if i.activity == "IF" and i.sensor == "L"]
+
+
+def _central(cubes: Found) -> tuple[Path, ProductId]:
+    """The cube with the most lines (labels only, no pixels)."""
+    return max(cubes, key=lambda item: readLabel(item[0]).image.lines)
 
 
 @frozen
@@ -78,67 +92,73 @@ class CrismObservation:
     vnirDdr: Path | None = None
 
     @classmethod
-    def fromFolder(cls, folder: Path, counter: int | None = None) -> Self:
-        """Search ``folder`` recursively for ``*_if*l_trr3``. Without a
-        ``counter``, take the one whose IR cube has the most lines (the
-        central one: FRT 07, FRS 01)."""
+    def fromFolder(cls, folder: Path, counter: int | None = None) -> CrismObservation:
+        """The one observation under ``folder`` (searched recursively). Without
+        a ``counter``, the one whose IR cube has the most lines (the central
+        one: FRT 07, FRS 01). A folder of several observations is an error:
+        use ``discover``."""
         folder = Path(folder)
-        found = [
-            (path, product)
-            for path, product in _products(folder, "IF", "TRR", recursive=True)
-            if product.sensor == "L"
-        ]
-        if not found:
+        found = _scan(folder, recursive=True)
+        cubes = _irCubes(found)
+        if not cubes:
             raise FileNotFoundError(f"No IR TRR3 cube (*_if*l_trr3) under {folder}")
+        names = sorted({i.observationName for _, i in cubes})
+        if len(names) > 1:
+            raise ValueError(
+                f"{folder} holds {len(names)} observations ({', '.join(names)}); "
+                "use CrismObservation.discover to get them all"
+            )
         if counter is not None:
-            found = [item for item in found if item[1].counter == counter]
-            if not found:
+            cubes = [item for item in cubes if item[1].counter == counter]
+            if not cubes:
                 raise FileNotFoundError(
                     f"No IR TRR3 cube with counter {counter:02d} under {folder}"
                 )
-        # Labels only: the line count needs no pixels.
-        path, product = max(found, key=lambda item: readLabel(item[0]).image.lines)
-        ddr = _findDdr(product, [folder], recursive=True)
-        if ddr is None:
+        path, product = _central(cubes)
+        observation = _build(found, path, product)
+        if observation is None:
             raise FileNotFoundError(
                 f"No IR DDR (*_de*l_ddr*) for {path.name} under {folder}"
             )
-        vnir = _matching(_products(folder, "IF", "TRR", True), product, "S")
-        vnirDdr = _findDdr(product.replace(sensor="S"), [folder], recursive=True)
-        return cls(
-            product.observationName,
-            product.counter,
-            path,
-            ddr,
-            vnir,
-            vnirDdr if vnir is not None else None,
-        )
+        return observation
 
     @classmethod
-    def fromFiles(cls, irCube: Path, irDdr: Path | None = None) -> Self:
+    def discover(cls, folder: Path) -> list[CrismObservation]:
+        """One observation (its central counter) per observation under
+        ``folder``, sorted by name. Observations without an IR DDR are
+        skipped; VNIR-only ones have no IR cube and are not found."""
+        found = _scan(Path(folder), recursive=True)
+        byObservation: dict[str, Found] = {}
+        for path, product in _irCubes(found):
+            byObservation.setdefault(product.observationName, []).append(
+                (path, product)
+            )
+        observations: list[CrismObservation] = []
+        for name in sorted(byObservation):
+            path, product = _central(byObservation[name])
+            observation = _build(found, path, product)
+            if observation is None:
+                _log.info("Skipping %s: no IR DDR for %s", name, path.name)
+            else:
+                observations.append(observation)
+        return observations
+
+    @classmethod
+    def fromFiles(cls, irCube: Path, irDdr: Path | None = None) -> CrismObservation:
         """An observation from its IR cube; the DDR is found by name beside
         the cube or in a sibling ``ddr`` folder when not given."""
         irCube = Path(irCube)
         product = ProductId.parse(irCube)
-        here = irCube.parent
-        siblings = [here, here.parent / "ddr"]
+        found = _scan(irCube.parent, False) + _scan(irCube.parent.parent / "ddr", False)
+        observation = _build(found, irCube, product)
         if irDdr is None:
-            irDdr = _findDdr(product, siblings, recursive=False)
-            if irDdr is None:
+            if observation is None:
                 raise FileNotFoundError(f"No IR DDR found for {irCube.name}")
-        vnirProduct = product.replace(sensor="S")
-        vnir = _matching(
-            [p for f in (here,) for p in _products(f, "IF", "TRR", False)],
-            product,
-            "S",
-        )
+            return observation
+        vnir = _find(found, product, "IF", "S")
+        vnirDdr = _find(found, product, "DE", "S") if vnir is not None else None
         return cls(
-            product.observationName,
-            product.counter,
-            irCube,
-            Path(irDdr),
-            vnir,
-            _findDdr(vnirProduct, siblings, recursive=False) if vnir else None,
+            product.observationName, product.counter, irCube, Path(irDdr), vnir, vnirDdr
         )
 
     def readIr(self) -> tuple[Trr3, Ddr]:
