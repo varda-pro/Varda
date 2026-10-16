@@ -93,7 +93,7 @@ are written in Phase 1, test-first. Design:
   are the median over IR columns 270–369.
 - **Source:** DPSIS Table 3-20 (SW/CT sweet-spot columns); M4.
 - **Confidence:** high.
-- **Test:** `test_calibration.py::test_wa_lookup` *(planned)*.
+- **Test:** `test_calibration.py::test_finds_local_cdr_folder`.
 
 **C2. AT transmission.**
 - **Decision:** AT CDRs are used per detector element (scene column x ↔ AT
@@ -109,7 +109,8 @@ are written in Phase 1, test-first. Design:
   CAT VS ADRs (D3). Deduplicate by content hash, since the 20 local files
   hold 6 scans (M5).
 - **Confidence:** high.
-- **Test:** `test_calibration.py::test_dedupe_transmissions` *(planned)*.
+- **Test:** `test_calibration.py::test_dedupe_transmissions` and
+  `::test_cat_aux_vs_adrs` (17 CAT scans).
 
 **C4. Validity period.**
 - **Decision:** select the AT by SCLK validity. Past the last period (the
@@ -117,8 +118,8 @@ are written in Phase 1, test-first. Design:
   (A3) makes the final choice.
 - **Source:** AT labels (M5).
 - **Confidence:** medium.
-- **Test:** `test_calibration.py::test_period_extrapolation_recorded`
-  *(planned)*.
+- **Test:** `test_calibration.py::test_period_extrapolation_recorded` and
+  `::test_period_containing_sclk_first`.
 
 ### Photometry
 
