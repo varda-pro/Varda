@@ -401,7 +401,9 @@ in (c_p, β_p).
 
 **D. Correction.** R' = R / exp(β_p ln T_x(λ + δ_x)), over all bands, with
 ln T_x(λ + δ_x) from `shiftedLogTransmission` and δ_x the smoothed shift
-(not the one-step Taylor form).
+(not the one-step Taylor form). σ′ propagates σ and the covariance of β
+(and α) through ln R′ = (I − G) ln R, G the fit's gain, including the
+covariance of β with the data it corrects (`atmosphere.correct`).
 
 **E. Residual (artifact) model, in place of the opaque patch.**
 - **What CAT's patch fixes** (Morgan 2011; Wiseman 2016 §2.1): the

@@ -1,5 +1,7 @@
-"""Atmospheric correction (spec S4), part A: the per-column fit and the
-objective choice of transmission.
+"""Atmospheric correction (spec S4). Part A: the per-column fit and the
+objective choice of transmission. Part B (``fitPixels``,
+``fitElevationModel``, ``correct``): the per-pixel scale β with T and δ
+fixed, its elevation prior ln β ≈ a − z/H, and the correction with its σ.
 
 Over the fit window W = 1850–2200 nm, in log space,
 
@@ -268,6 +270,34 @@ def shiftedLogTransmission(
 
 
 @frozen(eq=False)
+class _Normal:
+    """The weighted least-squares solution operator of each row."""
+
+    covariance: np.ndarray  # (n, p, p) (AᵀWA)⁻¹
+    gain: np.ndarray  # (n, p, b) (AᵀWA)⁻¹AᵀW: coefficients = gain @ target
+    valid: np.ndarray  # (n,)
+
+
+def _normal(design: np.ndarray, weight: np.ndarray) -> _Normal:
+    """``design`` ``(n, b, p)`` and ``weight`` ``(n, b)`` (1/σ, a zero weight
+    dropping a band). Normal equations, equilibrated by the diagonal; rows
+    whose matrix is singular are invalid."""
+    used = weight > 0
+    weighted = np.where(used[..., None], design, 0.0) * weight[..., None]
+    gram = np.einsum("nbj,nbk->njk", weighted, weighted)
+    diagonal = np.einsum("njj->nj", gram)
+    valid = (diagonal > 0).all(axis=1)
+    scale = np.sqrt(np.where(diagonal > 0, diagonal, 1.0))
+    outer = scale[:, :, None] * scale[:, None, :]
+    equilibrated = np.where(valid[:, None, None], gram / outer, np.eye(gram.shape[1]))
+    valid &= np.linalg.cond(equilibrated) < 1e12
+    equilibrated[~valid] = np.eye(gram.shape[1])
+    covariance = np.linalg.inv(equilibrated) / outer
+    gain = covariance @ (weighted * weight[..., None]).swapaxes(1, 2)
+    return _Normal(covariance, gain, valid)
+
+
+@frozen(eq=False)
 class _Solution:
     coefficients: np.ndarray  # (n, p)
     covariance: np.ndarray  # (n, p, p)
@@ -277,21 +307,11 @@ class _Solution:
 
 def _solve(design: np.ndarray, target: np.ndarray, weight: np.ndarray) -> _Solution:
     """Weighted least squares per row: ``design`` ``(n, b, p)``, ``target`` and
-    ``weight`` ``(n, b)``, a zero weight dropping a band. Normal equations,
-    equilibrated by the diagonal; rows whose matrix is singular are invalid."""
+    ``weight`` ``(n, b)``, a zero weight dropping a band (``_normal``)."""
     used = weight > 0
-    weighted = np.where(used[..., None], design, 0.0) * weight[..., None]
-    gram = np.einsum("nbj,nbk->njk", weighted, weighted)
-    moments = np.einsum("nbj,nb->nj", weighted, np.where(used, target, 0.0) * weight)
-    diagonal = np.einsum("njj->nj", gram)
-    valid = (diagonal > 0).all(axis=1)
-    scale = np.sqrt(np.where(diagonal > 0, diagonal, 1.0))
-    outer = scale[:, :, None] * scale[:, None, :]
-    equilibrated = np.where(valid[:, None, None], gram / outer, np.eye(gram.shape[1]))
-    valid &= np.linalg.cond(equilibrated) < 1e12
-    equilibrated[~valid] = np.eye(gram.shape[1])
-    covariance = np.linalg.inv(equilibrated) / outer
-    coefficients = np.einsum("njk,nk->nj", covariance, moments)
+    normal = _normal(design, weight)
+    covariance, valid = normal.covariance, normal.valid
+    coefficients = np.einsum("njb,nb->nj", normal.gain, np.where(used, target, 0.0))
     model = np.einsum(
         "nbj,nj->nb", np.where(used[..., None], design, 0.0), coefficients
     )
@@ -505,3 +525,338 @@ def selectTransmission(
         spectra, sigma, wavelengths, chosen.values, fitShift=False, shiftNm=shift
     )
     return SelectionResult(chosen, scores, margin, relativeMargin, winFraction, fit)
+
+
+# --- part B: the per-pixel scale, the elevation prior and the correction -----------
+
+SCALE_HEIGHT_RANGE_KM = (5.0, 20.0)
+_ELEVATION_SIGNIFICANCE = 3.0  # |slope| / σ_slope for H to count as determined
+_MEDIAN_CHI2_1 = 0.6744897501960817**2  # the median of χ² with one degree of freedom
+_BISECTIONS = 50
+
+
+@frozen(eq=False)
+class ElevationModel:
+    """ln β = ``lnBeta0`` − (z − ``referenceElevationM``) / H, H =
+    ``scaleHeightKm`` (S4.C, ledger A5): β is the ratio of the pixel's CO2
+    column to the scan's, which scales with surface pressure.
+
+    ``scatter`` is the robust std of ln β about the line (1.4826 · MAD);
+    ``intrinsicScatter`` τ is what is left of it beyond the pixels' own
+    σ_β/β, the part topography does not explain. The reference elevation is
+    the fit's weighted mean, so ``lnBeta0`` and the slope are uncorrelated and
+    ``lnBeta0Sigma`` and ``scaleHeightSigmaKm`` are their formal σ (spatially
+    correlated residuals make them optimistic). ``accepted``: H lies in
+    5–20 km and the slope differs from 0 by at least 3σ."""
+
+    lnBeta0: float
+    scaleHeightKm: float
+    referenceElevationM: float
+    scatter: float
+    accepted: bool
+    lnBeta0Sigma: float
+    scaleHeightSigmaKm: float
+    intrinsicScatter: float
+
+    def prior(self, elevationM: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """The prior mean of β at ``elevationM`` and its σ: τ and the line's
+        own uncertainty at that elevation, in ln β, times β."""
+        offset = np.asarray(elevationM, dtype=np.float64) - self.referenceElevationM
+        heightM = 1000.0 * self.scaleHeightKm
+        slopeSigma = 1000.0 * self.scaleHeightSigmaKm / heightM**2
+        logMean = self.lnBeta0 - offset / heightM
+        logVariance = (
+            self.intrinsicScatter**2 + self.lnBeta0Sigma**2 + (slopeSigma * offset) ** 2
+        )
+        mean = np.exp(logMean)
+        return mean, mean * np.sqrt(logVariance)
+
+
+@frozen(eq=False)
+class AtmosphereModel:
+    """Everything the per-pixel fit holds fixed: the chosen transmission
+    (``Transmission.values`` ``(s, b)``), the smoothed per-column shift
+    ``(s,)``, an optional artifact spectrum per column ``(s, b)`` in ln R
+    (its amplitude α is fitted per pixel; Task 14) and the elevation model,
+    which is the prior on β when accepted."""
+
+    transmission: Transmission
+    shiftNm: np.ndarray
+    artifact: np.ndarray | None = None
+    elevation: ElevationModel | None = None
+
+
+@frozen(eq=False)
+class PixelFit:
+    """The per-pixel fit, ``(l, s)`` per field but the last three.
+
+    ``artifactAmplitude`` is α (0 without an artifact). ``residualRms`` is
+    the σ-weighted RMS residual over the score window. Invalid pixels (too
+    few bands, a singular fit, β ≤ 0) are NaN. For the σ of the correction:
+    ``gain`` ``(l, s, q, k)`` is ∂(β[, α])/∂ln R at the bands ``fitBands``
+    ``(k,)`` (0 where a band was not used), and ``covariance`` ``(l, s, q,
+    q)`` is the covariance of (β[, α]), prior included."""
+
+    beta: np.ndarray
+    betaSigma: np.ndarray
+    artifactAmplitude: np.ndarray
+    residualRms: np.ndarray
+    valid: np.ndarray
+    fitBands: np.ndarray
+    gain: np.ndarray
+    covariance: np.ndarray
+
+
+def _modelTerms(wavelengths: np.ndarray, model: AtmosphereModel) -> list[np.ndarray]:
+    """The atmosphere's columns of the design, ``(s, b)`` each: ln T_x(λ + δ_x)
+    and the artifact, if any."""
+    logT = shiftedLogTransmission(wavelengths, model.transmission.values, model.shiftNm)
+    if model.artifact is None:
+        return [logT]
+    return [logT, np.asarray(model.artifact, dtype=np.float64)]
+
+
+def fitPixels(
+    cube: np.ndarray,
+    sigma: np.ndarray,
+    wavelengths: np.ndarray,
+    model: AtmosphereModel,
+    elevationM: np.ndarray | None = None,
+) -> PixelFit:
+    """Fit every pixel of ``cube`` ``(l, s, b)`` (I/F, with ``sigma``;
+    ``wavelengths`` ``(s, b)``) over the fit window, with T and δ fixed
+    (S4.B): ln R = Σ c_k P_k + β ln T_x(λ + δ_x) [+ α a_x], the same
+    continuum and hydration mask as ``fitColumns``.
+
+    The model is linear, so each column's solution operator (AᵀWA)⁻¹AᵀW is
+    computed once, with the column's mean σ_lnR² as weights, and applied to
+    all its complete lines; a pixel missing some of the column's fitted
+    bands is solved on its own bands with its own weights. Either way the
+    covariance is propagated from the pixel's own σ.
+
+    With an accepted elevation model (it then needs ``elevationM`` ``(l,
+    s)``), β has the Gaussian prior ``model.elevation.prior(z)``. The
+    augmented least squares (the data plus one row for the prior) is solved
+    in closed form, as a scalar update of the free fit: β moves toward the
+    prior mean by V / (V + s²), V the free fit's variance of β and s² the
+    prior's, and every coefficient with it by its covariance with β. A pixel
+    whose elevation is invalid keeps the free fit."""
+    elevation = model.elevation
+    if elevation is not None and not elevation.accepted:
+        elevation = None  # out of range or undetermined: per-pixel β (A5)
+    if elevation is not None and elevationM is None:
+        raise ValueError("an accepted elevation model needs elevationM")
+    cube = np.asarray(cube, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    wavelengths = np.asarray(wavelengths, dtype=np.float64)
+    terms = _modelTerms(wavelengths, model)
+    fitted = _inside(wavelengths, FIT_WINDOW_NM) & ~_inside(
+        wavelengths, HYDRATION_MASK_NM
+    )
+    for term in terms:
+        fitted &= np.isfinite(term)
+    bands = np.nonzero(fitted.any(axis=0))[0]
+    fitted = fitted[:, bands]
+    window = wavelengths[:, bands]
+    u = np.where(
+        fitted,
+        2 * (window - FIT_WINDOW_NM[0]) / (FIT_WINDOW_NM[1] - FIT_WINDOW_NM[0]) - 1,
+        0.0,
+    )
+    design = np.concatenate(
+        [legendre.legvander(u, CONTINUUM_DEGREE)]
+        + [np.nan_to_num(term[:, bands])[..., None] for term in terms],
+        axis=-1,
+    )
+    design = np.where(fitted[..., None], design, 0.0)  # (s, k, p)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        logR = np.log(cube[..., bands])
+        weight = cube[..., bands] / sigma[..., bands]  # 1 / σ_lnR
+    usable = fitted[None] & np.isfinite(logR) & np.isfinite(weight) & (weight > 0)
+    weight = np.where(usable, weight, 0.0)
+    logR = np.where(usable, logR, 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        variance = np.where(usable, 1.0 / weight**2, 0.0)  # σ_lnR²
+
+    # one solution per column for its complete lines
+    complete = (usable == fitted[None]).all(axis=2) & fitted.any(axis=1)[None]
+    count = complete.sum(axis=0)[:, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        meanVariance = np.where(complete[..., None], variance, 0.0).sum(axis=0) / count
+        columnWeight = np.where(fitted & (count > 0), 1.0 / np.sqrt(meanVariance), 0.0)
+    columns = _normal(design, np.nan_to_num(columnWeight))
+    gain = np.broadcast_to(columns.gain, (cube.shape[0], *columns.gain.shape)).copy()
+    solvable = complete & columns.valid[None]
+
+    # pixels missing some of the column's bands: solved on their own
+    partial = ~complete & usable.any(axis=2)
+    if partial.any():
+        t, x = np.nonzero(partial)
+        own = _normal(design[x], weight[t, x])
+        gain[t, x] = own.gain
+        solvable[t, x] = own.valid
+    gain[~solvable] = 0.0
+
+    coefficients = np.einsum("lspk,lsk->lsp", gain, logR)
+    covariance = (gain * variance[:, :, None, :]) @ gain.swapaxes(-1, -2)
+    b = CONTINUUM_DEGREE + 1  # the index of β
+    if elevation is not None and elevationM is not None:
+        mean, spread = elevation.prior(elevationM)
+        informed = np.isfinite(mean) & np.isfinite(spread) & (spread > 0)
+        denominator = covariance[..., b, b] + np.where(informed, spread**2, np.inf)
+        withBeta = covariance[..., :, b]  # (l, s, p)
+        step = (np.where(informed, mean, 0.0) - coefficients[..., b]) / denominator
+        coefficients = coefficients + withBeta * step[..., None]
+        update = withBeta / denominator[..., None]
+        gain = gain - update[..., :, None] * gain[..., b : b + 1, :]
+        covariance = covariance - update[..., :, None] * withBeta[..., None, :]
+
+    residuals = logR - np.einsum("skp,lsp->lsk", design, coefficients)
+    scored = usable & _inside(window, SCORE_WINDOW_NM)[None]
+    w2 = np.where(scored, weight, 0.0) ** 2
+    beta = coefficients[..., b]
+    valid = (
+        solvable
+        & (usable.sum(axis=2) >= _MIN_FIT_BANDS)
+        & (scored.sum(axis=2) >= _MIN_SCORE_BANDS)
+        & (beta > 0)
+    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        rms = np.sqrt((w2 * residuals**2).sum(axis=2) / w2.sum(axis=2))
+    atmospheric = list(range(b, design.shape[-1]))
+
+    def masked(values: np.ndarray) -> np.ndarray:
+        return np.where(valid, values, np.nan)
+
+    return PixelFit(
+        beta=masked(beta),
+        betaSigma=masked(np.sqrt(covariance[..., b, b])),
+        artifactAmplitude=masked(
+            coefficients[..., b + 1]
+            if model.artifact is not None
+            else np.zeros_like(beta)
+        ),
+        residualRms=masked(rms),
+        valid=valid,
+        fitBands=bands,
+        gain=np.where(valid[..., None, None], gain[..., atmospheric, :], 0.0),
+        covariance=np.where(
+            valid[..., None, None],
+            covariance[..., atmospheric, :][..., :, atmospheric],
+            np.nan,
+        ),
+    )
+
+
+def _tukeyWeights(standardized: np.ndarray) -> np.ndarray:
+    scale = _MAD_TO_SIGMA * np.median(np.abs(standardized))
+    if scale == 0:
+        return np.ones_like(standardized)
+    z = standardized / (_TUKEY_C * scale)
+    return np.where(np.abs(z) < 1, (1 - z**2) ** 2, 0.0)
+
+
+def _excessVariance(residuals: np.ndarray, variance: np.ndarray) -> float:
+    """τ² ≥ 0 such that the median of r² / (σ² + τ²) is that of χ² with one
+    degree of freedom: the scatter beyond each value's own σ, robustly
+    (bisection; the median is decreasing in τ²)."""
+    squared = residuals**2
+
+    def median(tau2: float) -> float:
+        return float(np.median(squared / (variance + tau2)))
+
+    if median(0.0) <= _MEDIAN_CHI2_1:
+        return 0.0
+    low, high = 0.0, float(squared.max()) / _MEDIAN_CHI2_1
+    for _ in range(_BISECTIONS):
+        middle = 0.5 * (low + high)
+        low, high = (middle, high) if median(middle) > _MEDIAN_CHI2_1 else (low, middle)
+    return 0.5 * (low + high)
+
+
+def fitElevationModel(fit: PixelFit, elevationM: np.ndarray) -> ElevationModel:
+    """The robust line of ln β against z over the valid pixels (S4.C, A5).
+
+    Iteratively reweighted least squares: each pixel is weighted by 1 / (its
+    σ_lnβ² + τ²) times a Tukey biweight (c = 4.685) of its standardized
+    residual, so hydrated units and spikes, whose β the 1.9 µm band or the
+    spike has biased, lose their weight. τ² is re-estimated each step from
+    the median of the standardized residuals (``_excessVariance``). With
+    fewer than 3 usable pixels the model is NaN and not accepted."""
+    elevationM = np.asarray(elevationM, dtype=np.float64)
+    keep = fit.valid & np.isfinite(elevationM) & (fit.beta > 0)
+    if keep.sum() < 3:
+        nan = math.nan
+        return ElevationModel(nan, nan, nan, nan, False, nan, nan, nan)
+    y = np.log(fit.beta[keep])
+    variance = (fit.betaSigma[keep] / fit.beta[keep]) ** 2
+    z = elevationM[keep]
+    robust = np.ones_like(y)
+    tau2 = 0.0
+    for _ in range(_IRLS_ITERATIONS):
+        w = robust / (variance + tau2)
+        reference = float(np.sum(w * z) / np.sum(w))
+        offset = z - reference
+        intercept = float(np.sum(w * y) / np.sum(w))
+        slope = float(np.sum(w * offset * y) / np.sum(w * offset**2))
+        residuals = y - intercept - slope * offset
+        tau2 = _excessVariance(residuals, variance)
+        standardized = residuals / np.sqrt(variance + tau2)
+        updated = _tukeyWeights(standardized)
+        if np.allclose(updated, robust, atol=1e-6):
+            break
+        robust = updated
+    w = robust / (variance + tau2)
+    scale = _MAD_TO_SIGMA * float(np.median(np.abs(standardized)))
+    slopeSigma = scale / math.sqrt(float(np.sum(w * offset**2)))
+    heightKm = -1.0 / (1000.0 * slope) if slope != 0 else math.inf
+    determined = slope < 0 and -slope >= _ELEVATION_SIGNIFICANCE * slopeSigma
+    low, high = SCALE_HEIGHT_RANGE_KM
+    return ElevationModel(
+        lnBeta0=intercept,
+        scaleHeightKm=heightKm,
+        referenceElevationM=reference,
+        scatter=_MAD_TO_SIGMA * float(np.median(np.abs(residuals))),
+        accepted=bool(determined and low <= heightKm <= high),
+        lnBeta0Sigma=scale / math.sqrt(float(np.sum(w))),
+        scaleHeightSigmaKm=slopeSigma / (1000.0 * slope**2) if slope != 0 else math.inf,
+        intrinsicScatter=math.sqrt(tau2),
+    )
+
+
+def correct(
+    cube: np.ndarray,
+    sigma: np.ndarray,
+    wavelengths: np.ndarray,
+    model: AtmosphereModel,
+    fit: PixelFit,
+) -> tuple[np.ndarray, np.ndarray]:
+    """R′ = R / exp(β ln T_x(λ + δ_x) + α a_x) over all bands (S4.D), and σ′.
+
+    In ln R′ = ln R − t·θ (t the atmosphere's terms, θ = (β[, α])), θ is
+    itself linear in the data it was fitted to, θ = G ln R + (prior), so
+
+        σ²_lnR′ = σ²_lnR − 2 σ²_lnR Σ_q t_q G_q + tᵀ C t,
+
+    C the covariance of θ; the middle term (the fitted bands only) is the
+    covariance of θ with ln R. Neglecting it, as σ²_lnR + tᵀ C t, overstates
+    σ′ in the fitted CO2 bands (``test_correct_sigma_chi2``). Invalid pixels
+    are NaN."""
+    cube = np.asarray(cube, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    terms = np.stack(_modelTerms(np.asarray(wavelengths, np.float64), model), axis=-1)
+    amplitudes = np.stack(
+        [fit.beta] + ([fit.artifactAmplitude] if model.artifact is not None else []),
+        axis=-1,
+    )
+    path = np.einsum("sbq,lsq->lsb", terms, amplitudes)
+    with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+        corrected = cube * np.exp(-path)
+        relative = (sigma / cube) ** 2
+    variance = relative + np.einsum("sbq,lsqr,sbr->lsb", terms, fit.covariance, terms)
+    k = fit.fitBands
+    withData = np.einsum("skq,lsqk->lsk", terms[:, k], fit.gain) * relative[..., k]
+    variance[..., k] -= 2 * withData
+    corrected = np.where(fit.valid[..., None], corrected, np.nan)
+    with np.errstate(invalid="ignore"):
+        return corrected, corrected * np.sqrt(variance)

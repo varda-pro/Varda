@@ -18,8 +18,12 @@ then spikes are added, where
   files multiplies the cube (and σ) by cos i;
 - ln T_x(λ + δ) is interpolated along column x's own wavelengths; δ_x is a
   smooth function of the column;
-- β = exp(−(z − z₀) / H), with z the elevation (a smooth field of ±1.5 km
-  plus small scatter, z₀ its base) and H the scale height: β follows z exactly;
+- β = exp(−(z − z₀) / H + η), with z the elevation (a smooth field of
+  ±1.5 km plus small scatter, z₀ its base), H the scale height and η an
+  optional per-pixel scatter in ln β (``betaScatter``, 0 by default: β follows
+  z exactly; drawn from its own generator, so the rest of the cube does not
+  change with it), standing in for what topography does not explain (aerosol,
+  weather);
 - a is the CO2 artifact: the curve-of-growth term (ln T)², high-passed over
   the fit window (orthogonal to a degree-3 Legendre continuum there, zero
   outside 1850–2200 nm), scaled per column to an RMS of
@@ -69,6 +73,7 @@ _UNITS = (
     ("Nontronite_NG-1.a_BECKb_AREF", 0.5, 0.14),  # 2: an Fe/Mg smectite
     ("Magnesite_Hydromag_HS47.3B_BECKa_AREF", 0.5, 0.18),  # 3: carbonate
 )
+HYDRATED_UNIT = 1  # the opal mixture: a strong 1.9 µm band
 _COLUMN_UNIT = 3  # spans every line, a few columns wide
 _COLUMN_UNIT_WIDTH = 6
 _BLOBS_PER_UNIT = 2
@@ -92,6 +97,9 @@ class SyntheticTruth:
     transmission: np.ndarray  # (s, b) T_x(λ) at the column's own wavelengths
     artifact: np.ndarray  # (s, b) a(x, λ), high-pass, in ln R
     columnUnitMask: np.ndarray  # (l, s) the column-aligned unit
+    units: (
+        np.ndarray
+    )  # (l, s) int: 0 basalt, 1 hydrated (1.9 µm), 2 smectite, 3 carbonate
 
 
 @cache
@@ -220,6 +228,7 @@ def makeSyntheticCube(
     stripeAmplitude: float = 0.005,
     spikeRate: float = 1e-4,
     artifactAmplitude: float = 0.006,
+    betaScatter: float = 0.0,
 ) -> tuple[np.ndarray, SyntheticTruth]:
     """The observed cube ``(lines, 120, 438)`` (float64, NaN only in the
     placeholder band) and its truth; the module docstring gives the model.
@@ -248,6 +257,9 @@ def makeSyntheticCube(
         + rng.normal(0.0, ELEVATION_SCATTER_M, (lines, samples))
     )
     beta = np.exp(-(elevation - BASE_ELEVATION_M) / (scaleHeightKm * 1000.0))
+    if betaScatter > 0:
+        scatter = np.random.default_rng((seed, 1)).normal(size=beta.shape)
+        beta = beta * np.exp(betaScatter * scatter)
     artifact = _artifact(wavelengths, logT, artifactAmplitude)
 
     # stripes
@@ -297,4 +309,5 @@ def makeSyntheticCube(
         transmission=np.exp(logT),
         artifact=artifact,
         columnUnitMask=units == _COLUMN_UNIT,
+        units=units,
     )

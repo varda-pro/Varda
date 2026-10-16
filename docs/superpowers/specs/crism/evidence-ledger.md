@@ -232,7 +232,10 @@ are written in Phase 1, test-first. Design:
 
 **A1. Model.**
 - **Decision:** a log-linear Beer–Lambert model over 1850–2200 nm,
-  ln R = Σ c_k P_k(λ) + β [ln T_x + δ_x ∂ln T_x/∂λ].
+  ln R = Σ c_k P_k(λ) + β ln T_x(λ + δ_x), with ln T_x(λ + δ_x) ln T
+  interpolated along the column's wavelengths
+  (`atmosphere.shiftedLogTransmission`) and δ_x fitted by iterated
+  Gauss–Newton steps (the Taylor term η ∂ln T_x/∂λ only inside each step).
 - **Source:** McGuire 2009 Eq. 1 (the model I/F = A cos i T^β); the
   linearized shift is our extension. Wiseman 2016 §3.3 explains why one
   exponent can't fix everything, and the residual model (A6) handles that.
@@ -280,8 +283,13 @@ are written in Phase 1, test-first. Design:
   CO2 bands, not band-to-band roughness (smoothing the library spectra by a
   one-band Gaussian took their second-difference RMS from 0.013 to 0.005 in
   ln but δ only from +0.19…+0.22 to +0.16…+0.18 nm; even three bands leave
-  +0.06 nm). `ColumnFit.reducedChiSquare` reports it, and
-  σ · √max(1, χ²_ν) is the honest uncertainty.
+  +0.06 nm). `ColumnFit.reducedChiSquare` reports it. σ · √max(1, χ²_ν)
+  is a Birge-ratio scaling (it assumes the misfit acts like extra white
+  noise), not an error bar: the bias is systematic.
+- **Known limitation:** on library-like surfaces δ is biased by about
+  +0.17 nm (`test_raw_surface` pins |median bias| ≤ 0.25 nm); on the M7
+  metric that costs about 0.003 of residual. Real surfaces with broad
+  structure under the CO2 bands may carry the same bias.
 
 **A2. Fitting β across the window, not at two wavelengths.**
 - **Decision:** β is a least-squares fit over the window, not the ratio at
@@ -357,10 +365,64 @@ are written in Phase 1, test-first. Design:
 - **Source:** our inference from physics: the CO2 column scales with
   surface pressure, and the Mars scale height is about 11 km. The aim is to
   protect β from the 1.9 µm hydration bands inside the window.
-- **Confidence:** low until tested.
+- **Implementation (Task 13):**
+  - **Per-pixel fit** (`atmosphere.fitPixels`): the column fit's design
+    (cubic Legendre, β ln T_x(λ + δ_x) at the smoothed shift, the hydration
+    mask, an artifact column when given) with T and δ fixed, so it is
+    linear. Each column's solution operator is computed once, weighted by
+    the column's mean σ_lnR², and applied to all its complete lines; pixels
+    missing bands are solved on their own. The covariance comes from each
+    pixel's own σ. A 64 × 120 × 438 chunk takes about 0.01 s, the whole
+    FRS00031442 (190 × 640) 0.16 s.
+  - **Elevation model** (`fitElevationModel`): IRLS on ln β against z,
+    weights 1 / (σ²_lnβ + τ²) times a Tukey biweight (c = 4.685) of the
+    standardized residual; τ, the scatter beyond the pixels' own σ, makes
+    the median standardized residual that of χ²₁. `accepted` needs H in
+    5–20 km and the slope ≥ 3σ from 0. The formal σ of H ignores spatially
+    correlated residuals and is optimistic.
+  - **The prior** is Gaussian in β with σ² from τ² and the line's own
+    uncertainty (empirical Bayes). The augmented least squares is solved in
+    closed form, a scalar update of the free fit, so the column operator is
+    kept.
+  - **σ of the correction** (`correct`): ln R′ = (I − G) ln R for the fit's
+    gain G, so σ′ includes the covariance of β with the data it corrects.
+    Neglecting it gives a reduced χ² of 0.97–0.98 over the fitted bands and
+    0.95–0.96 over the CO2 score window (the free fit); with it, 1.01–1.03
+    (stripes on).
+  - **Synthetic results:** H 11.02 ± 0.04 (true 11); 30 km is found and
+    rejected; shuffled elevations are rejected. With ln β scattered by 0.01
+    about the law, τ comes back as 0.0093 and the β z-scores have std
+    0.99–1.06 with and without the prior. With the hydration mask, a
+    hydrated unit in an otherwise model-following scene has a free β bias
+    of −3.6…−3.8% (2.0–2.2σ_β), −0.5…−0.7% with the prior (0.9–1.0 of the
+    prior's own σ_β, which is a third of the free one). On the full library
+    surface the elevation law inherits the scene-wide surface bias (−1% on
+    the basalt), and the prior only halves the hydrated unit's bias
+    (seed 1: −3.8% to −1.9%).
+  - **FRS00031442** (TRR3 ÷ cos i, `estimateNoise` σ; despiking changes
+    nothing measurable; z from DDR ELEVATION, −2560…−1790 m, most pixels
+    within 500 m; 92.8% of pixels valid): H = 10.82 ± 0.04 km with 061C4:AT
+    (accepted), 9.14 with 08608:AT, 14.2 with 2815C:VS and 16.8 with
+    32AFC:VS (no artifact term yet). H depends on the scan, so its formal σ
+    is far too small. The ln β scatter about the line (0.013–0.015) is below
+    the pixels' own σ_β/β (0.017), so τ = 0 and the prior pins β to the
+    elevation law. After the pixel correction with 061C4:AT, the CO2
+    residual of the column spectra is 0.00616 (0.00620 with the prior),
+    the same as Task 12's column-level 0.00616 and Phase 0's 0.0054–0.0060;
+    per pixel the median is 0.0075 (0.0076), the scene residual RMS 0.0053
+    (0.0051). With 08608:AT 0.00597 / 0.0071 / 0.0048; with 2815C:VS
+    0.00573 / 0.0069 / 0.0044.
+- **Confidence:** medium on the synthetic; low on real scenes until the
+  scan dependence of H and the noise model's σ in the CO2 bands (the
+  real pixel residuals are half the modeled σ_lnR in the score window) are
+  understood.
 - **Test:** `test_atmosphere.py::test_beta_regularization_resists_h2o_band`
-  (synthetic, a strong 1.9 µm band unit) *(planned)*, plus the V2/V3 CO2
-  residuals.
+  (a strong 1.9 µm band unit), `::test_pixel_beta_recovery`,
+  `::test_elevation_model_recovers_H`, `::test_correct_sigma_chi2`,
+  `::test_co2_window_flat_after_correction`,
+  `::test_pixels_with_missing_bands`,
+  `::test_rejected_elevation_model_is_not_a_prior`,
+  `::test_fit_pixels_is_fast`; plus the V2/V3 CO2 residuals.
 
 **A6. Residual (artifact) model.**
 - **Decision:** a high-pass, per-transmission artifact basis (M = 1),

@@ -1,38 +1,40 @@
 import math
+import time
 
+import attrs
 import numpy as np
 import pytest
 from numpy.polynomial import legendre
 
-from varda.crism import atmosphere
+from varda.crism import atmosphere, validation
 from varda.crism.atmosphere import (
     FIT_WINDOW_NM,
     HYDRATION_MASK_NM,
+    AtmosphereModel,
+    ElevationModel,
+    PixelFit,
     columnSpectra,
+    correct,
     fitColumns,
+    fitElevationModel,
+    fitPixels,
     selectTransmission,
     shiftedLogTransmission,
     smoothShift,
 )
 from varda.crism.calibration import Transmission
-from varda.crism._tests.synthetic import SyntheticTruth, makeSyntheticCube
+from varda.crism._tests.synthetic import (
+    HYDRATED_UNIT,
+    SyntheticTruth,
+    makeSyntheticCube,
+)
 
 _CLEAN = dict(artifactAmplitude=0.0, spikeRate=0.0, stripeAmplitude=0.0)
 
 
-def _smoothSurface(
-    cube: np.ndarray, truth: SyntheticTruth
-) -> tuple[np.ndarray, np.ndarray]:
-    """The cube and σ with each pixel's surface replaced, over the fit window,
-    by its own cubic continuum in ln R (Legendre, as the fit's).
-
-    The library spectra under the synthetic surface keep broad structure in
-    the window that no cubic follows: the wing of the 1.9 µm water band past
-    the hydration mask and a 1–2% bump at 2020–2040 nm, under the deepest
-    CO2 bands. On the raw cube that leaves residuals about 10× the noise and
-    biases δ by +0.16 to +0.18 nm (``test_raw_surface``); the tests that
-    check the fit's own σ need a surface the model can reach. Here the
-    atmosphere, the shift and the noise are the synthetic's own."""
+def _smoothFactor(truth: SyntheticTruth) -> np.ndarray:
+    """``(l, s, b)``: each pixel's own cubic continuum in ln R over the fit
+    window (Legendre, as the fit's) divided by its surface; 1 elsewhere."""
     smooth = truth.surface.copy()
     for x, wavelengths in enumerate(truth.columnWavelengths):
         inside = (wavelengths >= FIT_WINDOW_NM[0]) & (wavelengths <= FIT_WINDOW_NM[1])
@@ -42,7 +44,23 @@ def _smoothSurface(
         logS = np.log(truth.surface[:, x, inside]).T
         coefficients = np.linalg.lstsq(basis, logS, rcond=None)[0]
         smooth[:, x, inside] = np.exp(basis @ coefficients).T
-    factor = smooth / truth.surface
+    return smooth / truth.surface
+
+
+def _smoothSurface(
+    cube: np.ndarray, truth: SyntheticTruth
+) -> tuple[np.ndarray, np.ndarray]:
+    """The cube and σ with each pixel's surface replaced, over the fit window,
+    by its own cubic continuum in ln R (``_smoothFactor``).
+
+    The library spectra under the synthetic surface keep broad structure in
+    the window that no cubic follows: the wing of the 1.9 µm water band past
+    the hydration mask and a 1–2% bump at 2020–2040 nm, under the deepest
+    CO2 bands. On the raw cube that leaves residuals about 10× the noise and
+    biases δ by +0.16 to +0.18 nm (``test_raw_surface``); the tests that
+    check the fit's own σ need a surface the model can reach. Here the
+    atmosphere, the shift and the noise are the synthetic's own."""
+    factor = _smoothFactor(truth)
     return cube * factor, truth.noiseSigma * factor
 
 
@@ -156,6 +174,7 @@ def test_raw_surface(seed: int) -> None:
     smooth = smoothShift(fit.shiftNm, fit.valid)
     scaled = fit.shiftSigma * np.sqrt(np.maximum(1.0, fit.reducedChiSquare))
     assert np.mean(np.abs(smooth - truth.shiftNm) <= 3 * scaled) >= 0.99
+    assert abs(np.median(smooth - truth.shiftNm)) <= 0.25  # the bias itself, nm
     candidates = _decoys(wavelengths, truth.transmission)
     result = selectTransmission(spectra, sigma, wavelengths, candidates)
     assert result.chosen.scanId == "truth"
@@ -318,12 +337,33 @@ def test_column_spectra_use_complete_lines() -> None:
     assert spectra[0, 0] == pytest.approx(np.exp((np.log(0.8) + 8 * np.log(0.2)) / 9))
     assert spectra[0, 1] == pytest.approx(np.exp((np.log(0.8) + 8 * np.log(0.1)) / 9))
     assert spectra[0, 2] == pytest.approx(np.exp((np.log(0.8) + 7 * np.log(0.2)) / 8))
-    # with fewer than 8 complete lines every finite sample counts
-    cube[2:5, 0, 0] = np.nan
-    spectra, _ = columnSpectra(cube, np.full(cube.shape, 0.01), wavelengths)
-    assert spectra[0, 0] == pytest.approx(
-        np.exp((np.log(0.8) + np.log(0.9) + 5 * np.log(0.2)) / 7)
+
+
+def test_column_spectra_fill_sparse_columns() -> None:
+    """With fewer than 8 complete lines (10% of samples missing at random),
+    the missing fit-window samples are filled from a rank-2 model of the
+    column: on lines that differ by an offset and a multiple of one band
+    shape, the filled mean is the mean of the complete data, where a plain
+    per-band mean of the finite samples is not."""
+    rng = np.random.default_rng(0)
+    lines, bands = 40, 20
+    wavelengths = np.append(np.linspace(1900.0, 2150.0, bands), 2500.0)[None]
+    shape = np.append(-0.4 * np.sin(np.linspace(0, np.pi, bands)) ** 2, 0.0)
+    logR = (
+        np.log(np.linspace(0.2, 0.15, bands + 1))
+        + rng.normal(0, 0.1, (lines, 1))
+        + (1 + rng.normal(0, 0.15, (lines, 1))) * shape
     )
+    cube = np.exp(logR)[:, None, :]
+    missing = rng.random(cube.shape) < 0.1
+    missing[..., -1] = False
+    cube[missing] = np.nan
+    assert np.isfinite(cube).all(axis=2).sum() < 8
+    spectra, _ = columnSpectra(cube, np.full(cube.shape, 0.01), wavelengths)
+    truth = logR.mean(axis=0)[:-1]
+    plain = np.nanmean(np.log(cube[:, 0, :-1]), axis=0)
+    assert np.abs(plain - truth).max() > 5e-3  # the fill has work to do
+    np.testing.assert_allclose(np.log(spectra[0, :-1]), truth, atol=1e-4)
 
 
 def test_unconverged_shift_is_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -332,3 +372,263 @@ def test_unconverged_shift_is_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
     fit = fitColumns(spectra, sigma, truth.columnWavelengths, truth.transmission)
     moved = np.abs(truth.shiftNm) > 0.2  # one step leaves these unconverged
     assert moved.any() and not fit.valid[moved].any()
+
+
+# --- part B: per-pixel scale, elevation prior, correction --------------------------
+
+
+def _model(
+    truth: SyntheticTruth,
+    shiftNm: np.ndarray | None = None,
+    elevation: ElevationModel | None = None,
+) -> AtmosphereModel:
+    return AtmosphereModel(
+        transmission=_candidate("truth", truth.transmission),
+        shiftNm=truth.shiftNm if shiftNm is None else shiftNm,
+        artifact=None,
+        elevation=elevation,
+    )
+
+
+def _withPrior(
+    cube: np.ndarray, sigma: np.ndarray, truth: SyntheticTruth, model: AtmosphereModel
+) -> tuple[PixelFit, ElevationModel, PixelFit]:
+    """The free per-pixel fit, the elevation model fitted to it and the fit
+    with that model as the prior."""
+    wavelengths = truth.columnWavelengths
+    free = fitPixels(cube, sigma, wavelengths, model)
+    elevation = fitElevationModel(free, truth.elevationM)
+    prior = fitPixels(
+        cube,
+        sigma,
+        wavelengths,
+        attrs.evolve(model, elevation=elevation),
+        truth.elevationM,
+    )
+    return free, elevation, prior
+
+
+def _atmosphere(truth: SyntheticTruth) -> np.ndarray:
+    """``(l, s, b)``: the synthetic's own β · ln T_x(λ + δ_x)."""
+    logT = shiftedLogTransmission(
+        truth.columnWavelengths, truth.transmission, truth.shiftNm
+    )
+    return truth.beta[..., None] * logT
+
+
+@pytest.mark.parametrize("seed", [0, 1])
+def test_pixel_beta_recovery(seed: int) -> None:
+    """A5, S4.B–C: per pixel, β and its σ are honest with the elevation prior
+    on and off.
+
+    The synthetic's β follows z exactly unless given its own scatter, and
+    then the prior's σ would have nothing to be tested against; here ln β
+    scatters by 0.01 about the elevation law (``betaScatter``), about half a
+    pixel's own σ_β/β (≈ 0.018), so the prior moves each β about 80% of the
+    way to the elevation law and σ_β drops to τ / √(τ² + σ²) ≈ 0.45 of the
+    free fit's. The surface is the smooth one (``_smoothSurface``), which the model
+    reaches."""
+    raw, truth = makeSyntheticCube(64, seed, betaScatter=0.01, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    free, elevation, prior = _withPrior(cube, sigma, truth, _model(truth))
+    assert elevation.accepted
+    assert elevation.intrinsicScatter == pytest.approx(0.01, rel=0.2)
+    for fit in (free, prior):
+        assert fit.valid.mean() >= 0.99
+        z = ((fit.beta - truth.beta) / fit.betaSigma)[fit.valid]
+        assert abs(np.mean(z)) < 0.1
+        assert 0.9 <= np.std(z) <= 1.1
+    # the prior adds information: σ_β shrinks as the prior's τ predicts
+    relative = free.betaSigma / free.beta
+    tau = elevation.intrinsicScatter
+    predicted = np.median(tau / np.sqrt(tau**2 + relative**2))
+    ratio = np.median(prior.betaSigma / free.betaSigma)
+    assert 0.35 < ratio < 0.6 and ratio == pytest.approx(predicted, rel=0.05)
+
+
+@pytest.mark.parametrize("scaleHeightKm", [11.0, 30.0])
+def test_elevation_model_recovers_H(scaleHeightKm: float) -> None:
+    """A5: the robust line of ln β against z gives H within 3σ, accepted only
+    inside 5–20 km. With β independent of z (the elevations shuffled) H is
+    undetermined and the model is rejected."""
+    raw, truth = makeSyntheticCube(64, 0, scaleHeightKm=scaleHeightKm, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    free = fitPixels(cube, sigma, truth.columnWavelengths, _model(truth))
+    elevation = fitElevationModel(free, truth.elevationM)
+    assert abs(elevation.scaleHeightKm - scaleHeightKm) <= (
+        3 * elevation.scaleHeightSigmaKm
+    )
+    assert elevation.accepted == (scaleHeightKm == 11.0)
+    # ln β at the reference elevation, and the scatter of the pixels' own σ
+    expected = -(elevation.referenceElevationM + 2500.0) / (scaleHeightKm * 1000.0)
+    assert abs(elevation.lnBeta0 - expected) <= 3 * elevation.lnBeta0Sigma + 1e-4
+    relative = np.median((free.betaSigma / free.beta)[free.valid])
+    assert elevation.scatter == pytest.approx(relative, rel=0.15)
+    assert elevation.intrinsicScatter < 0.3 * relative
+    shuffled = np.random.default_rng(2).permutation(truth.elevationM.ravel())
+    unrelated = fitElevationModel(free, shuffled.reshape(truth.elevationM.shape))
+    assert not unrelated.accepted
+
+
+def test_beta_regularization_resists_h2o_band() -> None:
+    """A5: the elevation prior protects β in the hydrated unit (the opal
+    mixture's 1.9 µm band).
+
+    The scene is the one A5 is about: every other pixel follows the model
+    (its surface replaced by its own continuum, ``_smoothFactor``) and the
+    hydrated unit keeps its library spectrum. Even with the hydration mask
+    the band's wing past 1945 nm biases that unit's free β by −3.6 to −3.8%
+    (seeds 0–3), 2.0–2.2σ_β; the prior takes it to −0.5 to −0.7%. Both
+    biases are in units of the free fit's σ_β, the pixel's own measurement
+    σ: the prior's σ_β is about a third of it (τ ≈ 0.006) and what is left
+    of the bias is 0.9–1.0 times that, so the prior's own σ only just covers
+    it.
+
+    On the full library surface (structure in the window in every unit) the
+    elevation law inherits the scene-wide bias (−1% on the basalt) and the
+    prior only halves the hydrated unit's bias (−3.6…−3.8% to
+    −1.8…−2.1%)."""
+    raw, truth = makeSyntheticCube(64, 1, **_CLEAN)
+    hydrated = truth.units == HYDRATED_UNIT
+    assert hydrated.sum() > 200
+    factor = _smoothFactor(truth)
+    factor[hydrated] = 1.0
+    model = _model(truth)
+
+    def bias(fit: PixelFit) -> float:
+        keep = hydrated & fit.valid
+        return float(np.mean(fit.beta[keep] - truth.beta[keep]))
+
+    def sigmaOf(fit: PixelFit) -> float:
+        return float(np.mean(fit.betaSigma[hydrated & fit.valid]))
+
+    free, elevation, prior = _withPrior(
+        raw * factor, truth.noiseSigma * factor, truth, model
+    )
+    assert elevation.accepted
+    assert bias(free) < -2 * sigmaOf(free)
+    assert abs(bias(prior)) < sigmaOf(free)
+    assert abs(bias(prior)) < 1.5 * sigmaOf(prior)
+    free, _, prior = _withPrior(raw, truth.noiseSigma, truth, model)
+    assert abs(bias(prior)) < 0.6 * abs(bias(free))
+
+
+def test_correct_sigma_chi2() -> None:
+    """S4.D: after the correction, (R′ − surface · stripes) / σ′ has a reduced
+    χ² of 1.00 ± 0.05 in every band group over 1.0–2.6 µm.
+
+    The fitted β is correlated with the data it corrects: inside the fit
+    window σ′ includes that covariance (ln R′ = (I − G) ln R for the fit's
+    gain G). Neglecting it (σ′² = σ² + (ln T′ σ_β)² R′²) gives 0.97–0.98 over
+    the fitted bands and 0.95–0.96 over the CO2 score window for the free
+    fit; with it, 1.01 and 1.03 (the stripes, which the model does not
+    contain, bias each column's β a little). Both fits, free and with the
+    prior, are checked. The surface is the smooth one, so the model reaches
+    the noise; spikes and the artifact are off, stripes on."""
+    raw, truth = makeSyntheticCube(64, 2, spikeRate=0.0, artifactAmplitude=0.0)
+    factor = _smoothFactor(truth)
+    cube, sigma = raw * factor, truth.noiseSigma * factor
+    expected = truth.surface * factor * truth.stripes
+    wavelengths = truth.columnWavelengths
+    free, _, prior = _withPrior(cube, sigma, truth, _model(truth))
+    for fit in (free, prior):
+        corrected, correctedSigma = correct(
+            cube, sigma, wavelengths, _model(truth), fit
+        )
+        chi = (corrected - expected) / correctedSigma
+        groups = {
+            "below the window": (1000.0, 1850.0),
+            "hydration mask": HYDRATION_MASK_NM,
+            "fitted": FIT_WINDOW_NM,
+            "CO2 score window": atmosphere.SCORE_WINDOW_NM,
+            "above the window": (2200.0, 2600.0),
+        }
+        for name, (low, high) in groups.items():
+            band = (wavelengths >= low) & (wavelengths <= high)
+            if name == "fitted":
+                band &= ~(
+                    (wavelengths >= HYDRATION_MASK_NM[0])
+                    & (wavelengths <= HYDRATION_MASK_NM[1])
+                )
+            values = chi[np.broadcast_to(band, chi.shape) & fit.valid[..., None]]
+            assert abs(np.mean(values**2) - 1.0) <= 0.05, name
+
+
+def test_co2_window_flat_after_correction() -> None:
+    """V1 on the full chain (selection among the decoys, the smoothed shift,
+    the free fit, the elevation model and the prior) on the library surface:
+    the CO2 residual of the corrected column medians is at most 1.5 times
+    that of the cube with its own atmosphere removed exactly (the noise-only
+    truth, which keeps the surface and the stripes)."""
+    cube, truth = makeSyntheticCube(64, 0, artifactAmplitude=0.0, spikeRate=0.0)
+    wavelengths = truth.columnWavelengths
+    spectra, spread = columnSpectra(cube, truth.noiseSigma, wavelengths)
+    candidates = _decoys(wavelengths, truth.transmission)
+    selection = selectTransmission(spectra, spread, wavelengths, candidates)
+    model = AtmosphereModel(
+        transmission=selection.chosen,
+        shiftNm=selection.fit.shiftNm,
+        artifact=None,
+        elevation=None,
+    )
+    _, _, fit = _withPrior(cube, truth.noiseSigma, truth, model)
+    corrected, _ = correct(cube, truth.noiseSigma, wavelengths, model, fit)
+    exact = cube * np.exp(-_atmosphere(truth))
+
+    def residual(values: np.ndarray) -> float:
+        medians = np.full(values.shape[1:], np.nan)
+        medians[:, :-1] = np.nanmedian(values[..., :-1], axis=0)  # not the placeholder
+        return float(np.median(validation.co2Residual(wavelengths, medians)))
+
+    assert residual(corrected) <= 1.5 * residual(exact)
+
+
+def test_pixels_with_missing_bands() -> None:
+    """Pixels missing fit-window samples are solved on their own bands (10%
+    invalid at random, so nearly every pixel); too few bands make a pixel
+    invalid, NaN in the corrected cube."""
+    raw, truth = makeSyntheticCube(32, 0, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    cube[np.random.default_rng(5).random(cube.shape) < 0.1] = np.nan
+    inside = (truth.columnWavelengths >= 1850) & (truth.columnWavelengths <= 2200)
+    cube[3, 7, inside[7]] = np.nan
+    wavelengths = truth.columnWavelengths
+    fit = fitPixels(cube, sigma, wavelengths, _model(truth))
+    assert not fit.valid[3, 7] and np.isnan(fit.beta[3, 7])
+    assert fit.valid.mean() > 0.99
+    z = ((fit.beta - truth.beta) / fit.betaSigma)[fit.valid]
+    assert abs(np.mean(z)) < 0.1 and 0.9 <= np.std(z) <= 1.1
+    corrected, correctedSigma = correct(cube, sigma, wavelengths, _model(truth), fit)
+    assert np.isnan(corrected[3, 7]).all() and np.isnan(correctedSigma[3, 7]).all()
+    assert np.isfinite(corrected[fit.valid & np.isfinite(cube[..., 100])][:, 100]).all()
+
+
+def test_rejected_elevation_model_is_not_a_prior() -> None:
+    """An elevation model outside 5–20 km leaves the per-pixel fit free; an
+    accepted one needs the elevations."""
+    raw, truth = makeSyntheticCube(16, 0, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    wavelengths = truth.columnWavelengths
+    free = fitPixels(cube, sigma, wavelengths, _model(truth))
+    rejected = attrs.evolve(
+        fitElevationModel(free, truth.elevationM), scaleHeightKm=40.0, accepted=False
+    )
+    again = fitPixels(
+        cube, sigma, wavelengths, _model(truth, elevation=rejected), truth.elevationM
+    )
+    np.testing.assert_array_equal(again.beta, free.beta)
+    accepted = attrs.evolve(rejected, scaleHeightKm=11.0, accepted=True)
+    with pytest.raises(ValueError, match="elevation"):
+        fitPixels(cube, sigma, wavelengths, _model(truth, elevation=accepted))
+
+
+def test_fit_pixels_is_fast() -> None:
+    """One precomputed solve per column serves every complete line: a
+    64 × 120 × 438 chunk fits and corrects in well under a few seconds."""
+    raw, truth = makeSyntheticCube(64, 0, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    model = _model(truth)
+    start = time.perf_counter()
+    fit = fitPixels(cube, sigma, truth.columnWavelengths, model)
+    correct(cube, sigma, truth.columnWavelengths, model, fit)
+    assert time.perf_counter() - start < 2.0
