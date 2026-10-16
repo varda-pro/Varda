@@ -614,6 +614,10 @@ are written in Phase 1, test-first. Design:
   Without the column-scale step the degree-5 model left persistent scene in
   the frame and raised M11 from 0.51% to 0.72%; with it, 0.51% → 0.52%
   (cross-validated, frame from lines 0–94 applied to 95–189: 0.69% → 0.72%).
+- **Default:** off for TRR3 I/F input (`DestripeStep.enabled = False`,
+  controller ruling after Task 15), available as an option: on FRS00031442
+  M11 0.514% → 0.524%, cross-validated 0.693% → 0.720%; the method as first
+  specified, 0.51% → 0.75%, cross-validated 0.69% → 1.32%.
 - **Confidence:** high for the order; medium for the model (one real scene).
 - **Test:** `test_destripe.py::test_removes_injected_stripes` (M11 metric
   against the truth: 0.56% → 0.045%, bar 0.05%).

@@ -459,33 +459,59 @@ covariance of β with the data it corrects (`atmosphere.correct`).
 
 ### S5. Destripe (RSC-like, after ATM as in TER)
 
-- **What's left to fix.** TRR3 I/F is already RSC-filtered, so this
-  removes residual striping. FRS column-median ratios against a 15-column
+- **Off by default for TRR3 I/F input** (`DestripeStep.enabled = False`),
+  available as an option. TRR3 I/F is already RSC-filtered, and on
+  FRS00031442 (lines 0–189, after PHT + ATM with 061C4:AT) no persistent
+  column pattern is left to remove:
+  - the column-scale pattern of the column medians does not persist from one
+    half of the lines to the other (achromatic: correlation −0.05 to 0.13;
+    band to band: −0.35 to 0.11);
+  - this method changes M11 from 0.514% to 0.524%, and cross-validated (frame
+    from lines 0–94, applied to 95–189) from 0.693% to 0.720%;
+  - the method as first specified here (no column-scale step, h always
+    removed) raised M11 from 0.51% to 0.75%, cross-validated from 0.69% to
+    1.32%.
+- **What's left to fix.** FRS column-median ratios against a 15-column
   running median scatter by 0.43–0.76% (M11); that is an upper bound,
-  because it includes geology.
-- **Bland pixels.** Low continuum-removed spectral variance and no
-  significant band depths in 1.0–2.6 µm; Plebani's blandness score in
-  Phase 2.
-- **Column factors.** In continuum-normalized space, the factor is
-  f(x, λ) = median over bland lines of R(x, t, λ) / R̃(x, t, λ). Here R̃
-  is a cross-track LAD Legendre fit (degree 5), the TER RSC model, with
-  ±1-column ratio accumulation in both directions, averaged.
-- **Protecting geology.** Split ln f into a part that is smooth in λ, s,
-  fitted per column with a low-order polynomial, and a high-frequency part,
-  h.
-  - **h** is detector-element-specific (pixel-to-pixel independent in λ).
-    It is always removed.
-  - **s** is removed only where it passes a split-half test: the same
-    column offset is present, within its σ, in both the first and second
-    halves of the lines. Real geology aligned with columns rarely spans the
-    whole strip with the same spectral shape. That's checked
-    synthetically with an injected column-aligned unit.
-- **Records and σ.** The factor frame is written to the sidecar. The frame's
-  bootstrap σ (over lines) is added in quadrature to σ, multiplicatively.
+  because it includes geology (above: on FRS00031442 it is all scene).
+- **Bland pixels.** The lowest 50% of each column's continuum-removed
+  spectral variance over 1.0–2.6 µm (R/L, L from `brightness.py`, divided by
+  the column's mean so its own stripes cancel), and no band depth at 1.9, 2.3
+  or 2.5 µm more than 3σ above the bland median. A column with fewer than 8
+  bland lines gets no factor. Plebani's blandness score in Phase 2.
+- **Column factors.** ln f(x, λ) = median over bland lines of ln R − ln R̃.
+  R̃ is a per-line cross-track LAD Legendre fit (degree 5, IRLS), the TER
+  RSC model, refitted to the destriped data with outliers set aside.
+  - **Column scale.** Only ln f less its smooth cross-track part (a
+    15-column running median smoothed by a Gaussian of σ = 5 columns, the
+    scale M11 measures) is kept. A degree-5 polynomial cannot follow a real
+    scene across 640 columns; without this step persistent scene entered the
+    frame on FRS00031442 (M11 0.51% → 0.72%).
+  - **No ±1-column ratio accumulation.** With medians the 4 profiles (±1
+    neighbor, ±x) are one profile up to constants, and the accumulation is a
+    random walk: its error was twice the median residual's on the synthetic
+    cube (0.46% against 0.28% at 64 lines, SNR 100), and it raised the
+    cross-validated M11 of FRS00031442 from 0.69% to 0.82%.
+- **Protecting geology.** Split ln f into a part that is smooth in λ, s (a
+  cubic per column within each filter segment), and a high-frequency part,
+  h. Each is removed only where it is significant and passes a split-half
+  test (the same in the first and second halves of the lines):
+  - **h**, per element: |h| > 3σ_h and |h₁ − h₂| ≤ 3σ(h₁ − h₂). Removing h
+    everywhere raised the cross-validated M11 to 0.75% on FRS00031442 (0.72%
+    with the test).
+  - **s**, per column: RMS of s/σ_s ≥ 3 and RMS of (s₁ − s₂)/σ(s₁ − s₂) ≤ 2.
+    Real geology aligned with columns rarely spans the whole strip with the
+    same spectral shape; that's checked synthetically with an injected
+    column-aligned unit. Known limit: achromatic geology narrower than about
+    15 columns spanning the whole strip passes as a detector pattern.
+- **Records and σ.** The factor frame is written to the sidecar. σ is a
+  moving-block bootstrap over lines (50 resamples of 16-line blocks, drawn
+  within each half, so the same resamples give σ of the halves' difference);
+  the frame's σ is added in quadrature to σ, multiplicatively.
 - **Improvement over CAT:** CAT's RST and CIRRUS destripe remove column
   means indiscriminately (the 2008 destriper subtracted column median −
   global median). Ours separates detector from geology, uses only bland
-  pixels and reports what it removed.
+  pixels, removes only what persists and reports what it removed.
 
 ### S6. Smile (ESC-style)
 

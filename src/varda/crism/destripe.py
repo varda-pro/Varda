@@ -550,9 +550,11 @@ def estimateStripes(
     docstring gives the method. ``wavelengths`` is ``(s, b)`` or ``(b,)`` in
     nm. ``splitHalf`` False removes the smooth part wherever it was
     estimated (where present). Bands are read ``_BAND_BLOCK`` at a time, so
-    ``cube`` and ``sigma`` may be memmaps; memory beyond them is a few
-    ``(l, s)`` planes per band plus two bootstrap frames
-    ``(BOOTSTRAP_RESAMPLES, s, b)`` in float32 (110 MB at 640 columns). The
+    ``cube`` and ``sigma`` may be memmaps: that is about b/8 passes over a
+    C-ordered ``(l, s, b)`` file, each reading a strided slab of every line.
+    Memory beyond the inputs is a few float64 ``(l, s)`` planes per band of a
+    block, two bootstrap frames ``(BOOTSTRAP_RESAMPLES, s, b)`` in float32
+    (110 MB at 640 columns) and, per column, ``(103, b)`` float64 targets. The
     bootstrap is seeded, so the same input gives the same frame. About 30 s
     for 190 × 640 × 438."""
     lines, samples, bands = cube.shape
@@ -583,21 +585,22 @@ def estimateStripes(
                 bootDifference[:, :, k],
             ) = _columnMedians(residual, firstHalf, resamples)
 
-    sigmaLogF = _std(boot.astype(np.float64), axis=0)  # (s, b)
     highFrequency = np.zeros((samples, bands))
     smooth = np.zeros((samples, bands))
     sigmaApplied = np.zeros((samples, bands))
     accepted = np.zeros(samples, dtype=bool)
     kept = np.zeros((samples, bands), dtype=bool)
     for x in range(samples):
-        known = np.isfinite(logF[x]) & np.isfinite(sigmaLogF[x]) & (noise[x] > 0)
+        resampledLogF = boot[:, x].astype(np.float64)
+        known = np.isfinite(logF[x]) & np.isfinite(_std(resampledLogF, 0))
+        known &= noise[x] > 0
         if not known.any():
             continue
         # The instrument σ weighs the bands: the bootstrap σ of one band's
         # median is itself too noisy, and a few bands would carry the fit.
         weight = np.where(known, 1.0 / np.where(known, noise[x], 1.0) ** 2, 0.0)
         # a resample or half missing a band takes the whole-scene value there
-        targets = np.vstack([logF[x], halves[:, x], boot[:, x]])
+        targets = np.vstack([logF[x], halves[:, x], resampledLogF])
         targets = np.where(np.isfinite(targets), targets, logF[x])
         targets = np.where(known, np.vstack([targets, bootDifference[:, x]]), 0.0)
         parts = _smoothParts(targets, columnWavelengths[x], weight)
