@@ -11,6 +11,7 @@ CROPS = [
 ]
 
 
+@pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreferencedWarning")
 @pytest.mark.parametrize(("name", "shape"), CROPS)
 def test_crop_shape(cropDir: Path, name: str, shape: tuple[int, int, int]) -> None:
     with rasterio.open(cropDir / name) as dataset:

@@ -134,6 +134,9 @@ def _readPds3(path: Path) -> ProductLabel:
         warnings.filterwarnings(
             "ignore", message="The pvl.collections.Units object is deprecated"
         )
+        warnings.filterwarnings(
+            "ignore", message=r"the \(type, exc, tb\) signature of throw\(\)"
+        )
         label = pvl.load(path)
     fileObject = next(
         (obj for name, obj in label.items() if name == "FILE" and "^IMAGE" in obj),

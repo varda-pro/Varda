@@ -40,8 +40,8 @@ are written in Phase 1, test-first. Design:
   driver gets layout and nodata right. But GDAL reports nodata as -3.4e38
   for PDS3, gives no wavelengths and gives no DDR band names.
 - **Confidence:** high.
-- **Test:** `test_readers.py::test_trr3_layout_and_nodata` and
-  `::test_ddr_band_names` *(planned)*, on a checked-in crop.
+- **Test:** `src/varda/crism/_tests/test_readers.py::test_trr3_layout_and_nodata` and
+  `::test_ddr_band_names`, on a checked-in crop.
 
 **R2. TRR3 layout.**
 - **Decision:** BIL (line, band, sample), float32 LE. A ROWNUM table follows
@@ -51,15 +51,16 @@ are written in Phase 1, test-first. Design:
 - **Source:** DPSIS §3.4.1 and App. C2; M3; CAT v6 User's Guide
   ("Wavelength Flipped").
 - **Confidence:** high.
-- **Test:** `test_readers.py::test_rownum_table` and
-  `::test_ascending_wavelengths` *(planned)*.
+- **Test:** `src/varda/crism/_tests/test_readers.py::test_rownum_table` and
+  `::test_ascending_wavelengths`.
 
 **R3. Invalid samples.**
 - **Decision:** 65535 (DPSIS App. L §2.2); values below 1e-6 (denormals
   such as 1.5e-44 occur, M3); columns outside the WA-valid range (29–632 for
   WA 490947778566, M4); elements flagged in the BP CDR.
 - **Confidence:** high for 65535 and WA; medium for the 1e-6 floor.
-- **Test:** `test_readers.py::test_invalid_mask` *(planned)*.
+- **Test:** `src/varda/crism/_tests/test_readers.py::test_trr3_layout_and_nodata` (65535, below 1e-6 and non-finite
+  samples; the WA column range and BP flags are applied in later tasks).
 
 **R4. DDR.**
 - **Decision:** 14 bands, BSQ, in label order: INA areoid, EMA areoid,
@@ -68,7 +69,7 @@ are written in Phase 1, test-first. Design:
 - **Source:** DPSIS §3.2.1 and App. B; the local DDR labels. jezero's
   "band 14 = altitude" is wrong (the label says Spare).
 - **Confidence:** high.
-- **Test:** `test_readers.py::test_ddr_band_names` *(planned)*.
+- **Test:** `src/varda/crism/_tests/test_readers.py::test_ddr_band_names`.
 
 **R5. MTRDR/TER.**
 - **Decision:** read the ENVI `.hdr` (nodata, wavelengths, fwhm, bbl, CRS).
