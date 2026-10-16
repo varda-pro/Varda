@@ -1,5 +1,6 @@
 import math
 import time
+from pathlib import Path
 
 import attrs
 import numpy as np
@@ -23,7 +24,13 @@ from varda.crism.atmosphere import (
     shiftedLogTransmission,
     smoothShift,
 )
-from varda.crism.calibration import Transmission
+from varda.crism.calibration import (
+    CalibrationLibrary,
+    Transmission,
+    TransmissionSource,
+)
+from varda.crism.noise import estimateNoise
+from varda.crism.readers import DdrBand, readDdr, readDetectorFrame, readTrr3
 from varda.crism._tests.synthetic import (
     HYDRATED_UNIT,
     SyntheticTruth,
@@ -438,10 +445,11 @@ def _correlatedNoiseCube(
 
 
 def _zScores(fit: PixelFit, truth: SyntheticTruth) -> np.ndarray:
-    return ((fit.beta - truth.beta) / fit.betaSigma)[fit.valid]
+    """β's z-scores against its honest σ (the empirical one with a prior)."""
+    return ((fit.beta - truth.beta) / fit.betaSigmaEmpirical)[fit.valid]
 
 
-@pytest.mark.parametrize("seed", [0, 1])
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
 def test_pixel_beta_recovery(seed: int) -> None:
     """A5, S4.B–C: per pixel, β and its σ are honest with the elevation prior
     on and off.
@@ -451,26 +459,29 @@ def test_pixel_beta_recovery(seed: int) -> None:
     departs from the elevation law by a coherent field of std 0.01
     (``betaScatter``), about half a pixel's own σ_β/β (≈ 0.018), so the prior
     moves each β about 80% of the way to the law and σ_β drops to
-    τ / √(τ² + σ²) ≈ 0.45 of the free fit's. τ is estimated to 10–15% (the
-    field has few independent patches), so the prior's z-scores scatter by
-    1.0–1.12. The surface is the smooth one (``_smoothSurface``), which the
-    model reaches."""
-    raw, truth = makeSyntheticCube(64, seed, betaScatter=0.01, **_CLEAN)
+    τ / √(τ² + σ²) ≈ 0.45 of the free fit's. The field has few independent
+    patches, so the cube has 128 lines: τ then comes back to 4% (0.0096–
+    0.0097) and the prior's z-scores scatter by 1.02–1.03 (at 64 lines τ is
+    off by up to 13% and the scatter reaches 1.12). The surface is the
+    smooth one (``_smoothSurface``), which the model reaches."""
+    raw, truth = makeSyntheticCube(128, seed, betaScatter=0.01, **_CLEAN)
     cube, sigma = _smoothSurface(raw, truth)
     free, elevation, prior = _withPrior(cube, sigma, truth, _model(truth))
     assert elevation.accepted
     assert elevation.intrinsicScatter == pytest.approx(0.01, rel=0.2)
     assert elevation.sigmaRatio == pytest.approx(1.0, abs=0.1)
-    for fit, (low, high) in ((free, (0.9, 1.1)), (prior, (0.85, 1.2))):
+    for fit in (free, prior):
         assert fit.valid.mean() >= 0.99
         z = _zScores(fit, truth)
         assert abs(np.mean(z)) < 0.1
-        assert low <= np.std(z) <= high
+        assert 0.9 <= np.std(z) <= 1.1
     # the prior adds information: σ_β shrinks as the prior's τ predicts
     relative = elevation.sigmaRatio * free.betaSigma / free.beta
     tau = elevation.intrinsicScatter
     predicted = np.median(tau / np.sqrt(tau**2 + relative**2))
-    ratio = np.median(prior.betaSigma / (elevation.sigmaRatio * free.betaSigma))
+    ratio = np.median(
+        prior.betaSigmaEmpirical / (elevation.sigmaRatio * free.betaSigma)
+    )
     assert 0.35 < ratio < 0.6 and ratio == pytest.approx(predicted, rel=0.05)
 
 
@@ -567,7 +578,7 @@ def test_beta_regularization_resists_h2o_band() -> None:
         return float(np.mean(fit.beta[keep] - truth.beta[keep]))
 
     def sigmaOf(fit: PixelFit) -> float:
-        return float(np.mean(fit.betaSigma[hydrated & fit.valid]))
+        return float(np.mean(fit.betaSigmaEmpirical[hydrated & fit.valid]))
 
     free, elevation, prior = _withPrior(
         raw * factor, truth.noiseSigma * factor, truth, model
@@ -621,6 +632,33 @@ def test_correct_sigma_chi2() -> None:
                 )
             values = chi[np.broadcast_to(band, chi.shape) & fit.valid[..., None]]
             assert abs(np.mean(values**2) - 1.0) <= 0.05, name
+
+
+def test_correct_sigma_is_consistent_with_the_prior() -> None:
+    """S4.D: σ′ is propagated from the data's σ through the fit's linear
+    operator, with or without the prior; the empirical σ ratio only sets how
+    far the prior moves β. With σ overstated 2× (ratio 0.49) and a weak
+    prior (τ = 0.05 ≫ σ_β), β moves by under 1% and σ′ / σ at the deepest
+    CO2 band stays within 3% of the free fit's (1.85 against 1.82). Scaling
+    the propagated covariance by the ratio², as round 1 did, gave 1.37."""
+    raw, truth = makeSyntheticCube(64, 0, betaScatter=0.05, **_CLEAN)
+    cube, sigma = _smoothSurface(raw, truth)
+    sigma = 2 * sigma
+    free, elevation, prior = _withPrior(cube, sigma, truth, _model(truth))
+    assert elevation.sigmaRatio == pytest.approx(0.5, rel=0.1)
+    assert np.nanmedian(np.abs(prior.beta / free.beta - 1)) < 0.01
+    wavelengths = truth.columnWavelengths
+    logT = shiftedLogTransmission(wavelengths, truth.transmission, truth.shiftNm)
+    inside = (wavelengths > FIT_WINDOW_NM[0]) & (wavelengths < FIT_WINDOW_NM[1])
+    deepest = np.argmin(np.where(inside, logT, np.inf), axis=1)
+    columns = np.arange(wavelengths.shape[0])
+
+    def relative(fit: PixelFit) -> float:
+        _, correctedSigma = correct(cube, sigma, wavelengths, _model(truth), fit)
+        ratio = correctedSigma[:, columns, deepest] / sigma[:, columns, deepest]
+        return float(np.median(ratio[fit.valid]))
+
+    assert relative(prior) == pytest.approx(relative(free), rel=0.03)
 
 
 def test_co2_window_flat_after_correction() -> None:
@@ -704,3 +742,53 @@ def test_fit_pixels_is_fast() -> None:
     fit = fitPixels(cube, sigma, truth.columnWavelengths, model)
     correct(cube, sigma, truth.columnWavelengths, model, fit)
     assert time.perf_counter() - start < 2.0
+
+
+def _noDownload(url: str, target: Path) -> None:
+    raise AssertionError(f"no download expected: {url}")
+
+
+def test_real_prior_spares_deviant_pixels(demoData: Path) -> None:
+    """A5 on FRS00031442 (data-gated): the pixels whose free β departs most
+    from the elevation law (the top 5% of |ln β − law|, about 2.9% and more)
+    are real coherent departures, not noise, so the prior must not drag them
+    to the law. Their median per-pixel CO2 residual with the prior is within
+    3% of the free fit's (measured 0.00691 against 0.00694; with the formal
+    σ_β, τ was 0 and it got 18% worse). The scan chosen is 061C4:AT, and
+    the empirical σ_β is about 0.17 of the formal one."""
+    folder = demoData / "data-for-paper"
+    trr3 = readTrr3(folder / "FRS00031442/trdr/frs00031442_01_if168l_trr3.lbl")
+    ddr = readDdr(folder / "FRS00031442/ddr/frs00031442_01_de168l_ddr1.lbl")
+    wavelengths = readDetectorFrame(
+        folder / "ATO0004EC45/CRISM_CDR/wa/cdr490947778566_wa0000000l_3.lbl"
+    ).alignedTo(trr3.detectorRows)
+    incidence = np.radians(ddr.band(DdrBand.INCIDENCE_AREOID))
+    cube = trr3.lines(slice(0, trr3.shape[0])) / np.cos(incidence)[..., None]
+    elevationM = ddr.band(DdrBand.ELEVATION)
+    sigma = estimateNoise(cube).sigma(cube)
+    library = CalibrationLibrary(
+        [folder / "ATO0004EC45"], folder.parent / "missing-cache", fetch=_noDownload
+    )
+    candidates = library.transmissions(trr3, TransmissionSource.PDS_AT)
+    spectra, spread = columnSpectra(cube, sigma, wavelengths)
+    selection = selectTransmission(spectra, spread, wavelengths, candidates)
+    assert selection.chosen.key == "061C4:AT"
+    model = AtmosphereModel(selection.chosen, selection.fit.shiftNm)
+    free = fitPixels(cube, sigma, wavelengths, model)
+    elevation = fitElevationModel(free.beta, free.betaSigma, elevationM)
+    assert elevation.accepted
+    assert elevation.sigmaRatio == pytest.approx(0.17, abs=0.03)
+    withPrior = attrs.evolve(model, elevation=elevation)
+    prior = fitPixels(cube, sigma, wavelengths, withPrior, elevationM)
+    law, _ = elevation.prior(elevationM)
+    both = free.valid & prior.valid & np.isfinite(elevationM)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        departure = np.abs(np.log(free.beta / law))
+    deviant = both & (departure > np.percentile(departure[both], 95))
+    perPixel = np.broadcast_to(wavelengths, cube.shape)[deviant]
+
+    def residual(fit: PixelFit) -> float:
+        corrected, _ = correct(cube, sigma, wavelengths, model, fit)
+        return float(np.nanmedian(validation.co2Residual(perPixel, corrected[deviant])))
+
+    assert residual(prior) <= 1.03 * residual(free)

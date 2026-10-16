@@ -546,9 +546,12 @@ class ElevationModel:
 
     ``sigmaRatio`` is the pixels' empirical σ_β (from along-track second
     differences of β) over the fit's formal σ_β; every σ_β the model uses,
-    and the free fit's σ_β when ``fitPixels`` shrinks toward the model, is
-    the formal one times it. On TRR3 data the noise is spectrally
-    correlated (the IKF filter) and the formal σ_β is about twice too large.
+    and the free fit's σ_β when ``fitPixels`` weighs it against the prior,
+    is the formal one times it. On FRS00031442 it is about 0.17: the
+    along-track variation that sets the noise model's σ is dominated by an
+    achromatic component (texture or common-mode), which the continuum
+    absorbs, so it hardly reaches β (the noise model is being revised to
+    exclude it, Task 9b).
 
     ``scatter`` is the robust std of ln β about the line (1.4826 · MAD);
     ``intrinsicScatter`` τ is what is left of it beyond the pixels'
@@ -607,10 +610,15 @@ class PixelFit:
     few bands, a singular fit, β ≤ 0) are NaN. For the σ of the correction:
     ``gain`` ``(l, s, q, k)`` is ∂(β[, α])/∂ln R at the bands ``fitBands``
     ``(k,)`` (0 where a band was not used), and ``covariance`` ``(l, s, q,
-    q)`` is the covariance of (β[, α]), prior included."""
+    q)`` is the covariance of (β[, α]), prior included, both propagated from
+    the data's σ (so ``betaSigma`` is that propagation, consistent with σ′).
+    ``betaSigmaEmpirical`` is the honest uncertainty of β when a prior was
+    used: the data part rescaled by ``ElevationModel.sigmaRatio``², plus the
+    prior's part; without a prior it equals ``betaSigma``."""
 
     beta: np.ndarray
     betaSigma: np.ndarray
+    betaSigmaEmpirical: np.ndarray
     artifactAmplitude: np.ndarray
     residualRms: np.ndarray
     valid: np.ndarray
@@ -651,10 +659,13 @@ def fitPixels(
     augmented least squares (the data plus one row for the prior) is solved
     in closed form, as a scalar update of the free fit: β moves toward the
     prior mean by V / (V + s²), V the free fit's variance of β and s² the
-    prior's, and every coefficient with it by its covariance with β. V and
-    the covariance are the formal ones times ``sigmaRatio``² (the empirical
-    σ_β), here and in the result. A pixel whose elevation is invalid keeps
-    the free fit (its covariance is still rescaled)."""
+    prior's, and every coefficient with it by its covariance with β. V is
+    the empirical variance, the formal one times ``sigmaRatio``²: the ratio
+    sets only how far β moves. The covariance and gain stay the propagation
+    of the data's σ through the updated linear operator (plus the prior's
+    own variance), so ``correct`` propagates σ′ consistently; the honest σ
+    of β is ``betaSigmaEmpirical``. A pixel whose elevation is invalid keeps
+    the free fit."""
     elevation = model.elevation
     if elevation is not None and not elevation.accepted:
         elevation = None  # out of range or undetermined: per-pixel β (A5)
@@ -715,17 +726,33 @@ def fitPixels(
     covariance = (gain * variance[:, :, None, :]) @ gain.swapaxes(-1, -2)
     b = CONTINUUM_DEGREE + 1  # the index of β
     if elevation is not None and elevationM is not None:
-        # the free fit's σ is the empirical one when it meets the prior
-        covariance = covariance * elevation.sigmaRatio**2
         mean, spread = elevation.prior(elevationM)
         informed = np.isfinite(mean) & np.isfinite(spread) & (spread > 0)
-        denominator = covariance[..., b, b] + np.where(informed, spread**2, np.inf)
+        priorVariance = np.where(informed, spread**2, 0.0)
+        # the shrinkage weighs the free fit by its empirical σ_β
+        ratio2 = elevation.sigmaRatio**2
         withBeta = covariance[..., :, b]  # (l, s, p)
-        step = (np.where(informed, mean, 0.0) - coefficients[..., b]) / denominator
-        coefficients = coefficients + withBeta * step[..., None]
-        update = withBeta / denominator[..., None]
+        variance = covariance[..., b, b]
+        denominator = ratio2 * variance + np.where(informed, spread**2, np.inf)
+        update = ratio2 * withBeta / denominator[..., None]  # k: θ += k (μ − β̂)
+        innovation = np.where(informed, mean, 0.0) - coefficients[..., b]
+        coefficients = coefficients + update * innovation[..., None]
         gain = gain - update[..., :, None] * gain[..., b : b + 1, :]
-        covariance = covariance - update[..., :, None] * withBeta[..., None, :]
+        # propagated through the updated operator from the data's σ, plus the
+        # prior's own variance: C = G Σ Gᵀ + k kᵀ s² still holds for correct()
+        outer = update[..., :, None] * update[..., None, :]
+        dataPart = (
+            covariance
+            - update[..., :, None] * withBeta[..., None, :]
+            - withBeta[..., :, None] * update[..., None, :]
+            + outer * variance[..., None, None]
+        )
+        covariance = dataPart + outer * priorVariance[..., None, None]
+        empiricalVariance = (
+            ratio2 * dataPart[..., b, b] + update[..., b] ** 2 * priorVariance
+        )
+    else:
+        empiricalVariance = covariance[..., b, b]
 
     residuals = logR - np.einsum("skp,lsp->lsk", design, coefficients)
     scored = usable & _inside(window, SCORE_WINDOW_NM)[None]
@@ -747,6 +774,7 @@ def fitPixels(
     return PixelFit(
         beta=masked(beta),
         betaSigma=masked(np.sqrt(covariance[..., b, b])),
+        betaSigmaEmpirical=masked(np.sqrt(empiricalVariance)),
         artifactAmplitude=masked(
             coefficients[..., b + 1]
             if model.artifact is not None

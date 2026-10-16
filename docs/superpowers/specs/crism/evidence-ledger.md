@@ -390,6 +390,12 @@ are written in Phase 1, test-first. Design:
     uncertainty (empirical Bayes); the free fit's σ_β it is weighed against
     is the empirical one. The augmented least squares is solved in closed
     form, a scalar update of the free fit, so the column operator is kept.
+    The ratio sets only how far β moves: the covariance and gain stay the
+    propagation of the data's σ through the updated operator (plus the
+    prior's variance), so σ′ stays consistent (fix round 2: scaling the
+    covariance by the ratio² made σ′ at 2009 nm 0.59 of the free fit's on
+    FRS00031442 while β moved 0.04%; now 0.99). The honest σ of β is
+    `PixelFit.betaSigmaEmpirical`.
   - **Why empirical σ (fix round 1):** with the formal σ, τ collapsed to 0
     on FRS00031442 (the ln β scatter about the law, 0.014, is below the
     formal σ_β/β, 0.017) and the prior pinned β to the law to 0.005%, while
@@ -397,9 +403,10 @@ are written in Phase 1, test-first. Design:
     against 0.0025 from noise). The 5% most deviant pixels' CO2 residual
     then got 18% worse (0.00686 → 0.00812), the 5% most coherently deviant
     17% (0.00585 → 0.00684). The TRR3's along-track noise is 96% common to
-    the 53 fit-window bands (achromatic, absorbed by the continuum), so the
-    empirical σ_β is 0.17 of the formal one, not 2× too small as the
-    residual RMS (0.5 of σ_lnR) suggested.
+    the 53 fit-window bands: an achromatic component (texture or
+    common-mode) that the continuum absorbs, so the empirical σ_β is 0.17 of
+    the formal one, not half as the residual RMS (0.5 of σ_lnR) suggested.
+    The noise model is being revised to exclude it (Task 9b).
   - **σ of the correction** (`correct`): ln R′ = (I − G) ln R for the fit's
     gain G, so σ′ includes the covariance of β with the data it corrects.
     Neglecting it gives a reduced χ² of 0.97–0.98 over the fitted bands and
@@ -409,8 +416,8 @@ are written in Phase 1, test-first. Design:
   - **Synthetic results:** H 11.02 ± 0.04 (true 11); 30 km is found and
     rejected; shuffled elevations are rejected. With ln β departing from
     the law by a coherent field of std 0.01 (`betaScatter`, Gaussian of
-    4 pixels), τ comes back as 0.0087–0.0101 and the β z-scores have std
-    0.98–1.01 free and 0.98–1.12 with the prior. With σ overstated 2× the
+    4 pixels; 128 lines), τ comes back as 0.0096–0.0097 and the β z-scores
+    have std 1.00 free and 1.02–1.03 with the prior (seeds 0–3). With σ overstated 2× the
     ratio is 0.49–0.52, τ unchanged and the prior fit identical. With noise
     correlated across bands (1.5 bands) the formal σ_β is 1.4× too small;
     the ratio finds it (1.39–1.44) and the prior's z std is 0.89–1.19.
@@ -446,6 +453,8 @@ are written in Phase 1, test-first. Design:
   `::test_elevation_prior_uses_empirical_sigma`,
   `::test_prior_with_spectrally_correlated_noise`, `::test_correct_sigma_chi2`,
   `::test_co2_window_flat_after_correction`,
+  `::test_correct_sigma_is_consistent_with_the_prior`,
+  `::test_real_prior_spares_deviant_pixels` (data-gated),
   `::test_pixels_with_missing_bands`,
   `::test_rejected_elevation_model_is_not_a_prior`,
   `::test_fit_pixels_is_fast`; plus the V2/V3 CO2 residuals.
