@@ -175,7 +175,8 @@ are written in Phase 1, test-first. Design:
   clustered).
 - **Confidence:** medium.
 - **Test:** `test_despike.py::test_recall_and_false_rate` (≥ 95% recall at
-  ≥ 8σ; ≤ 1e-5 false flags) *(planned)*.
+  ≥ 8σ; ≤ 1e-5 false flags), `test_preserves_narrow_real_feature`,
+  `test_chunk_halo_equivalence`, `test_leask_count`.
 
 ### Atmospheric correction
 
