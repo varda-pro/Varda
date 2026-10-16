@@ -18,6 +18,7 @@ from attrs import frozen
 _MAD_TO_SIGMA = 1.4826 / np.sqrt(1.5)
 _BINS = 8
 _MIN_BIN_SAMPLES = 10
+_BAND_BLOCK = 32
 _SLOPE_HALF_WIDTH = 20  # bands: b(λ) is smooth, one band's slope is noisy
 
 
@@ -130,38 +131,31 @@ def _fitFloor(
     return np.where(total > 0, np.maximum(floor, 0.0), np.nan)
 
 
-def estimateNoise(
-    cube: np.ndarray, columnGroup: int = 16, quietFraction: float = 0.5
-) -> NoiseModel:
-    """Estimate the noise model of a ``(line, sample, band)`` reflectance cube.
-
-    NaN samples are ignored; a band with no usable data gets NaN.
-    """
-    _, samples, bands = cube.shape
-    cube = cube.astype(np.float64, copy=False)
-    center = cube[1:-1]
-    d = center - 0.5 * (cube[:-2] + cube[2:])
+def _blockStatistics(
+    block: np.ndarray, columnGroups: np.ndarray, groupCount: int, quietFraction: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(count, mean R, σ²) of shape ``(band, group, bin)`` for a block of bands."""
+    center = block[1:-1]
+    d = center - 0.5 * (block[:-2] + block[2:])
     # The reflectance each difference is regressed against must not share its
     # noise, so it is the mean of the two neighboring detector elements over
     # the same three lines (the edge columns have only one and are skipped).
     level = np.full(center.shape, np.nan)
     level[:, 1:-1] = (
-        cube[:-2, :-2]
-        + cube[:-2, 2:]
+        block[:-2, :-2]
+        + block[:-2, 2:]
         + center[:, :-2]
         + center[:, 2:]
-        + cube[2:, :-2]
-        + cube[2:, 2:]
+        + block[2:, :-2]
+        + block[2:, 2:]
     ) / 6
-    columnGroups = np.arange(samples) // columnGroup
-    groupCount = int(columnGroups[-1]) + 1
     quiet = (
         _quietMask(level, quietFraction, columnGroups)
         & np.isfinite(d)
         & np.isfinite(level)
     )
     groupIndex = np.broadcast_to(columnGroups[None, :], center.shape[:2])
-
+    bands = block.shape[2]
     count = np.zeros((bands, groupCount, _BINS))
     meanR = np.zeros_like(count)
     var = np.zeros_like(count)
@@ -170,10 +164,37 @@ def estimateNoise(
         if mask.sum() < _BINS * _MIN_BIN_SAMPLES:
             continue
         count[band], meanR[band], var[band] = _bandStatistics(
-            level[:, :, band][mask],
-            d[:, :, band][mask],
-            groupIndex[mask],
-            groupCount,
+            level[:, :, band][mask], d[:, :, band][mask], groupIndex[mask], groupCount
+        )
+    return count, meanR, var
+
+
+def estimateNoise(
+    cube: np.ndarray, columnGroup: int = 16, quietFraction: float = 0.5
+) -> NoiseModel:
+    """Estimate the noise model of a ``(line, sample, band)`` reflectance cube.
+
+    NaN samples are ignored; a band with no usable data gets NaN. The first and
+    last columns have no pair of neighbors, so they add no data but get the
+    floor of their column group. At least 3 lines are needed (``ValueError``).
+    Bands are processed in blocks, so memory stays near the size of one block
+    in float64 beyond the input.
+    """
+    lines, samples, bands = cube.shape
+    if lines < 3:
+        raise ValueError(
+            f"The noise model needs at least 3 lines for second differences, got {lines}."
+        )
+    columnGroups = np.arange(samples) // columnGroup
+    groupCount = int(columnGroups[-1]) + 1
+    count = np.zeros((bands, groupCount, _BINS))
+    meanR = np.zeros_like(count)
+    var = np.zeros_like(count)
+    for start in range(0, bands, _BAND_BLOCK):
+        sl = slice(start, start + _BAND_BLOCK)
+        block = cube[:, :, sl].astype(np.float64)
+        count[sl], meanR[sl], var[sl] = _blockStatistics(
+            block, columnGroups, groupCount, quietFraction
         )
     shot = np.maximum(_shotSlopes(count, meanR, var), 0.0)
     floorGroups = np.stack(
