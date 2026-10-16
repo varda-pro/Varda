@@ -129,7 +129,7 @@ are written in Phase 1, test-first. Design:
 - **Source:** DPSIS App. P1 §1; Seelos 2024 §5.
 - **Confidence:** high.
 - **Test:** `test_photometry.py::test_polynomial_incidence` (recovers a
-  synthetic smooth i under 16 ppd quantization) *(planned)*.
+  synthetic smooth i under 16 ppd quantization).
 
 **P2. Pluggable angles.**
 - **Decision:** the incidence and emission arrays are inputs, so DTM angles
