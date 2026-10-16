@@ -334,7 +334,12 @@ are written in Phase 1, test-first. Design:
 - **Source:** M7 (MTRDR values: 0.0035–0.0103).
 - **Confidence:** medium. A template-projection variant, the signed
   coefficient on the high-passed ln T, will be added as a secondary metric.
-- **Test:** `test_validation.py::test_co2_metric_on_synthetic` *(planned)*.
+- **Grid:** the 25 MTRDR band centers in 1940–2100 nm; other band sets
+  (per-column TRR3 wavelengths) are linearly interpolated onto them, so an
+  MTRDR scores exactly as M7 measured it.
+- **Test:** `src/varda/crism/_tests/test_validation.py::test_co2_metric_on_synthetic`;
+  `test_validation.py::test_co2_metric_reproduces_m7` (data-gated:
+  FRT00005850 MTRDR, 2× subsample, per-pixel median 0.0082).
 
 **V2. "BD2300".**
 - **Decision:** the prototype's "BD2300" is 1 − R2310 / continuum(2160,
@@ -343,7 +348,9 @@ are written in Phase 1, test-first. Design:
   official D2300 and BD2290 (D7).
 - **Source:** VB2014 Table 2; the PDS 2026 summary-parameter reference.
 - **Confidence:** high.
-- **Test:** `test_validation.py::test_bd2310_matches_prototype` *(planned)*.
+- **Test:** `src/varda/crism/_tests/test_validation.py::test_bd2310_matches_prototype`;
+  the Viviano-Beck parameters (ruling P2) in
+  `test_validation.py::test_summary_parameter_depth`.
 
 ## Measurements (2026-10-16)
 
