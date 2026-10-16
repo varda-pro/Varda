@@ -8,15 +8,17 @@ resampling to it makes the output index-compatible with MTRDR IR bands.
 
 **Resampling** is linear interpolation per column, from the column's own WA
 wavelengths to the vector. It has exact two-tap σ propagation, σ² = Σ w²σ²,
-and no ringing. The price is band-to-band correlation of the noise (adjacent
-targets share a source band) and a column-dependent variance reduction, both
-carried exactly in σ. A target outside a column's valid WA range, or whose tap
-is NaN, is NaN (never extrapolated or renormalized).
+and no ringing. The returned σ is the per-band standard deviation only: the
+band-to-band correlation interpolation introduces (adjacent targets share a
+source band; on the real WA the adjacent-band ρ has median 0.18, 95th
+percentile 0.50, maximum 0.93) is not in it. A target outside a column's
+valid WA range, or whose tap is NaN, is NaN (never extrapolated).
 
-**Filter joins** (``FILTER_BOUNDARIES_NM``) step per column between the
-bands either side, so a target between two source bands that straddle a join
-takes the nearest source band on its own side (a single tap of weight 1)
-rather than blending across the step.
+**Filter joins** (``FILTER_BOUNDARIES_NM``) are detector-row boundaries, the
+same in every column, so a band's segment is fixed (``segmentIds`` of the
+median wavelength per band) and a target never takes taps from another
+segment: it blends two taps of its own segment, or takes the single nearest
+one when only one lies in it, or is NaN.
 
 **ESC residual** (TER-style): the continuum-normalized spectrum of each column
 still carries a small multiplicative error that is linear in the column's
@@ -25,12 +27,13 @@ the normalized spectra are binned by offset, a line is fitted to the bin
 means (weighted by bin counts), and the correction is model(offset) / model(0).
 """
 
+import warnings
 from importlib import resources
 
 import numpy as np
 from attrs import frozen
 
-from varda.crism.brightness import FILTER_BOUNDARIES_NM, bandWindows, smoothBands
+from varda.crism.brightness import bandWindows, segmentIds, smoothBands
 
 _VECTOR_RESOURCE = "mtrdr_wavelengths.csv"
 _IR_SPECT_ID = 0
@@ -69,10 +72,26 @@ class ResampleWeights:
     weights: np.ndarray  # (s, n, 2) float64; both 0 where the output is NaN
 
 
-def linearWeights(columnWavelengths: np.ndarray, target: np.ndarray) -> ResampleWeights:
+def sourceSegments(columnWavelengths: np.ndarray) -> np.ndarray:
+    """The filter segment of each source band ``(b,)``, from its median
+    wavelength over the columns (the all-NaN placeholder band goes last)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return segmentIds(np.nanmedian(columnWavelengths, axis=0))
+
+
+def linearWeights(
+    columnWavelengths: np.ndarray,
+    target: np.ndarray,
+    sourceSegments: np.ndarray,
+    targetSegments: np.ndarray,
+) -> ResampleWeights:
     """Two-tap linear interpolation weights from each column's wavelengths
     ``(s, b)`` (ascending where finite; NaN entries are skipped) to ``target``
-    ``(n,)``. Targets outside a column's valid range get zero weights."""
+    ``(n,)``. ``sourceSegments`` ``(b,)`` and ``targetSegments`` ``(n,)`` are
+    the filter segment of each band (``brightness.segmentIds``); a target takes
+    taps only from its own segment. Targets outside a column's valid range, or
+    with no tap in their segment, get zero weights."""
     samples, bands = columnWavelengths.shape
     n = len(target)
     finite = np.isfinite(columnWavelengths)
@@ -95,10 +114,13 @@ def linearWeights(columnWavelengths: np.ndarray, target: np.ndarray) -> Resample
         t = (target[None, :] - wLo) / (wHi - wLo)
     t = np.nan_to_num(t, nan=0.0)
 
-    # Do not blend across a filter join: take the single nearest same-side band.
-    for boundary in FILTER_BOUNDARIES_NM:
-        straddle = (wLo < boundary) & (boundary <= wHi)
-        t = np.where(straddle, (target[None, :] >= boundary).astype(float), t)
+    # Taps from another filter segment are not used: one same-segment tap
+    # takes the whole weight, none makes the output NaN.
+    loOrder = np.take_along_axis(order, lo, axis=1)
+    hiOrder = np.take_along_axis(order, hi, axis=1)
+    loSame = sourceSegments[loOrder] == targetSegments[None, :]
+    hiSame = sourceSegments[hiOrder] == targetSegments[None, :]
+    t = np.where(loSame & hiSame, t, np.where(hiSame, 1.0, 0.0))
 
     firstWl = sortedWl[:, :1]
     lastWl = np.take_along_axis(sortedWl, last, axis=1)
@@ -106,12 +128,10 @@ def linearWeights(columnWavelengths: np.ndarray, target: np.ndarray) -> Resample
         (valid[:, None] >= 2)
         & (target[None, :] >= firstWl)
         & (target[None, :] <= lastWl)
+        & (loSame | hiSame)
     )
     weights = np.stack([1.0 - t, t], axis=-1) * inRange[..., None]
-    indices = np.stack(
-        [np.take_along_axis(order, lo, axis=1), np.take_along_axis(order, hi, axis=1)],
-        axis=-1,
-    )
+    indices = np.stack([loOrder, hiOrder], axis=-1)
     return ResampleWeights(indices=indices, weights=weights)
 
 
@@ -140,11 +160,19 @@ class EscFrame:
     correction: np.ndarray  # (s, n): multiplicative error of each column and band
 
 
+def escOffsets(waAligned: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """The ``columnOffsetNm`` of ``estimateEsc``: each column's actual WA
+    wavelength at the target band's detector row, minus the target wavelength.
+    ``waAligned`` ``(s, n)`` is the WA aligned to the vector's detector rows
+    (``readDetectorFrame(wa).alignedTo(vector.detectorRows)``)."""
+    return waAligned - target[None, :]
+
+
 def _escPass(
     columnSpectra: np.ndarray,
     columnOffsetNm: np.ndarray,
     binNm: float,
-    wavelengths: np.ndarray | None,
+    wavelengths: np.ndarray,
 ) -> np.ndarray:
     """One fit of the correction ``(s, n)``; see ``estimateEsc``."""
     samples, n = columnSpectra.shape
@@ -185,7 +213,7 @@ def estimateEsc(
     columnSpectra: np.ndarray,
     columnOffsetNm: np.ndarray,
     binNm: float,
-    wavelengths: np.ndarray | None = None,
+    wavelengths: np.ndarray,
 ) -> EscFrame:
     """The residual smile sensitivity from per-column spectra ``(s, n)``
     (typically medians over the bland lines) and each column's wavelength

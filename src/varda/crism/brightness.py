@@ -17,6 +17,16 @@ FILTER_BOUNDARIES_NM = (1656.0, 2730.0)
 SMOOTH_HALF_WIDTH = 10  # bands each side in the brightness level L
 
 
+def segmentIds(bandWavelengths: np.ndarray) -> np.ndarray:
+    """The filter segment (0, 1, 2) of each band from its representative
+    wavelength ``(b,)`` (the median over columns, NaN allowed: it goes in the
+    last segment). A join is a detector-row boundary, the same in every
+    column, so membership is per band, not per column wavelength."""
+    return np.searchsorted(
+        FILTER_BOUNDARIES_NM, np.nan_to_num(bandWavelengths, nan=np.inf)
+    )
+
+
 def bandWindows(
     wavelengths: np.ndarray | None, bands: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -25,9 +35,7 @@ def bandWindows(
     if wavelengths is None:
         segment = np.zeros(bands, dtype=int)
     else:
-        segment = np.searchsorted(
-            FILTER_BOUNDARIES_NM, np.nan_to_num(wavelengths, nan=np.inf)
-        )
+        segment = segmentIds(wavelengths)
     index = np.arange(bands)
     first = np.empty(bands, dtype=int)
     last = np.empty(bands, dtype=int)

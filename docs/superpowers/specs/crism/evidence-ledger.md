@@ -662,12 +662,22 @@ are written in Phase 1, test-first. Design:
   residual step: 0.125 nm bins, a weighted linear fit, normalization to the
   reference wavelength.
 - **Source:** DPSIS App. P1 §5; M4 (at most 1.6 bands of smile).
-- **Detail:** a target between two source bands on opposite sides of a
-  filter join (1656, 2730 nm) takes the nearest same-side band; a target
-  outside a column's valid range, or with a NaN tap, is NaN. The ESC fit is
-  repeated three times because a column's continuum carries a tenth of the
-  error it is meant to expose. It needs a bland scene: columns of different
-  units add scatter that a one-line fit reads as slope.
+- **Detail:** a filter join is a detector-row boundary (rows 346|345 in
+  every column; row 346 spans 1651–1662 nm across columns), so segment
+  membership is per band (`brightness.segmentIds` of the median wavelength)
+  and a target never takes a tap from another segment (a per-column cut at
+  1656 nm bridged it in about 9% of near-join cases on the real WA). A
+  target outside a column's valid range, or with a NaN tap, is NaN.
+  Per-band σ is the variance only; interpolation correlates adjacent bands
+  (real WA: adjacent-band ρ median 0.18, p95 0.50, max 0.93), which σ does
+  not carry.
+- **ESC offset:** the regressor is `escOffsets` = WA(x at the target's
+  detector row) − target (real smile −1.2…+15.2 nm, roughly parabolic across
+  the columns), not the nearest native band's offset. On FRS00031442 smile
+  |corr| falls 0.49 → 0.05 and column scatter by 25%, the same with bland or
+  all pixels; ESC frames correlate 0.95–0.98 across scenes (the
+  nearest-native offset gave −3%). The fit is repeated three times: one or
+  two passes leave more than a tenth of the injected error.
 - **Confidence:** medium.
 - **Test:** `test_smile.py::test_resampling_error_and_sigma`,
   `test_smile.py::test_esc_removes_column_slope`.
