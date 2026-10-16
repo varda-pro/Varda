@@ -25,6 +25,10 @@ spectral median never reaches across a boundary (within two bands of one only
 the spatial predictor is used) and the extremum and isolation tests do not
 compare across it.
 
+A spike must also be transient along the track, in units of the pixel's
+brightness (a per-element pattern that is a fixed share of the signal, or an
+element that wanders by more than white noise, is persistent, not a spike).
+
 NaN samples are never flagged and are never evidence for their neighbors.
 """
 
@@ -35,13 +39,11 @@ from itertools import product
 import numpy as np
 from attrs import frozen
 
+from varda.crism.brightness import FILTER_BOUNDARIES_NM, bandWindows, smoothBands
+
+
 _MAD_TO_SIGMA = 1.4826
 _LEASK_WINDOW_NM = (1850.0, 2150.0)
-# Where the IR detector's order-sorting filters join: spectra step there, per
-# column, between the bands either side. 1656 nm falls between 1653 and 1660 nm
-# (the 1.65 µm join); 2730 nm is mid-gap of the ≈2700 nm cliff, where the
-# detector rows 173–193 are missing (2701 → 2761 nm).
-FILTER_BOUNDARIES_NM = (1656.0, 2730.0)
 _BAND_BLOCK = 16
 _DISAGREEMENT = 3.0  # σ of the predictors' gap that is still noise
 _ISOLATION = 0.4  # a spike's band neighbors keep under this share of its residual
@@ -50,7 +52,10 @@ _ISOLATION = 0.4  # a spike's band neighbors keep under this share of its residu
 # adjacent lines, which a train of spikes shares), explains it. Chunks need this
 # many halo lines to match a whole-scene run.
 ALONG_TRACK_HALO = 4
-_TRANSIENT = 0.7  # a spike differs from its element's other lines by this many k errors
+_TRANSIENT_WANDER = 12.0  # and this many of its along-track spreads
+_TRANSIENT = (
+    0.85  # a spike differs from its element's other lines by this many k errors
+)
 _MIN_NEIGHBORS = 3  # fewer valid spatial neighbors: only the spectral median
 _LEVEL_LINES = 8  # lines per step of the level ratio, to bound its temporaries
 _NEIGHBOR_OFFSETS = [o for o in product(range(3), repeat=2) if o != (1, 1)]
@@ -212,30 +217,66 @@ def _isolatedExtremum(
     return (peak | trough) & isolated & (haveBefore | haveAfter)
 
 
-def _elementLevel(cube: np.ndarray, halo: int, stop: int, sel: slice) -> np.ndarray:
+def _brightness(
+    cube: np.ndarray, sel: slice, windows: tuple[np.ndarray, np.ndarray]
+) -> np.ndarray:
+    """The pixel's level L (mean of its other bands within its filter segment)
+    for the bands ``sel`` of every line ``(n, s, nb)``; 1 where it is not a
+    positive number, which leaves those samples in absolute units."""
+    first, last = windows
+    lo, hi = int(first[sel].min()), int(last[sel].max()) + 1
+    around = cube[:, :, lo:hi].astype(np.float64)
+    level = smoothBands(around, first[sel] - lo, last[sel] - lo, cube[:, :, sel])
+    return np.where(np.isfinite(level) & (level > 0), level, 1.0)
+
+
+def _elementLevel(
+    normalized: np.ndarray, halo: int, stop: int
+) -> tuple[np.ndarray, np.ndarray]:
     """The median of the same detector element 2 to ``ALONG_TRACK_HALO`` lines
-    before and after each output line, ``(l, s, nb)`` (NaN where none exists)."""
+    before and after each output line, and 1.4826 · MAD of those lines (how far
+    the element wanders along the track), ``(l, s, nb)``; NaN where none exists."""
     outLines = stop - halo
     lines = np.arange(outLines) + halo
     shifted = []
     for offset in (*range(-ALONG_TRACK_HALO, -1), *range(2, ALONG_TRACK_HALO + 1)):
         at = lines + offset
-        inside = (at >= 0) & (at < cube.shape[0])
-        values = np.full((outLines, *cube[0, :, sel].shape), np.nan)
-        values[inside] = cube[at[inside], :, sel]
+        inside = (at >= 0) & (at < normalized.shape[0])
+        values = np.full((outLines, *normalized.shape[1:]), np.nan)
+        values[inside] = normalized[at[inside]]
         shifted.append(values)
-    return _nanMedian(np.stack(shifted))
+    stack = np.stack(shifted)
+    middle = _nanMedian(stack)
+    return middle, _MAD_TO_SIGMA * _nanMedian(np.abs(stack - middle))
 
 
 def _transient(
-    block: np.ndarray, level: np.ndarray, residual: np.ndarray, limit: np.ndarray
+    block: np.ndarray,
+    level: np.ndarray,
+    wander: np.ndarray,
+    noise: np.ndarray,
+    residual: np.ndarray,
+    limit: np.ndarray,
 ) -> np.ndarray:
     """A spike is not a detector offset: the sample also stands out, in the
     direction of its residual, from the same element a few lines away (no such
     line does not count against it). An offset that persists agrees with them,
-    a train of 1 to 3 spiked lines does not."""
+    a train of 1 to 3 spiked lines does not. ``block`` and ``level`` are the
+    samples and the element's median in units of the pixel's brightness, so an
+    element whose offset is a fixed share of the signal (a multiplicative
+    pattern) agrees with itself as the scene brightens or darkens along the
+    track; ``limit`` is in those units too, and is raised to ``_TRANSIENT_WANDER``
+    times the part of how far the element wanders along the track that white
+    noise does not explain: real elements drift by far more than the white
+    instrument noise (FRS00031442: slow ±0.7% swings against σ ≈ 0.09%), and a
+    swing is not a spike."""
+    # the part of the spread that white noise (``noise``, the instrument σ in
+    # the same units) does not explain
     with np.errstate(invalid="ignore"):
-        return np.isnan(level) | ((block - level) * np.sign(residual) > limit)
+        drift = np.sqrt(np.fmax(wander**2 - 4.0 * noise**2, 0.0))
+        direction = np.sign(residual)
+        far = (block - level) * direction > np.fmax(limit, _TRANSIENT_WANDER * drift)
+        return np.isnan(level) | far
 
 
 def _predict(
@@ -311,6 +352,7 @@ def despike(
         raise ValueError(f"sigma {sigma.shape} must match the cube {cube.shape}.")
     samples, bands = cube.shape[1:]
     segment = _segments(wavelengths)
+    windows = bandWindows(_nanMedian(wavelengths), bands)
     blocks = [slice(i, i + _BAND_BLOCK) for i in range(0, bands, _BAND_BLOCK)]
 
     outCube = cube[halo:stop].astype(np.float64, copy=True)
@@ -367,16 +409,28 @@ def despike(
         error = np.hypot(sigma[halo:stop, :, sel], sigmaP[:, :, sel])
         with np.errstate(invalid="ignore"):
             over = np.abs(residual[:, :, sel]) > threshold * error
+        level = _brightness(cube, sel, windows)  # all lines, halo included
+        wide2 = slice(max(sel.start - 2, 0), min(sel.stop + 2, bands))
+        skip2 = sel.start - wide2.start
+        middle, _ = _spectralMedian(cube[:, :, wide2], segment[wide2])
+        around = middle[:, :, skip2 : skip2 + level.shape[2]]
+        # the element's own deviation from its spectrum (so the scene's spectral
+        # shape cancels), in units of the pixel's brightness
+        normalized = (
+            cube[:, :, sel] - np.where(np.isfinite(around), around, 0.0)
+        ) / level
+        mine = level[halo:stop]
         flags[:, :, sel] = (
             over
             & _isolatedExtremum(
                 residual[:, :, sel], before[:, :, keep], after[:, :, keep]
             )
             & _transient(
-                outCube[:, :, sel],
-                _elementLevel(cube, halo, stop, sel),
+                normalized[halo:stop],
+                *_elementLevel(normalized, halo, stop),
+                sigma[halo:stop, :, sel] / mine,
                 residual[:, :, sel],
-                _TRANSIENT * threshold * error,
+                _TRANSIENT * threshold * error / mine,
             )
         )
     outSigma = sigma[halo:stop].astype(np.float64, copy=True)

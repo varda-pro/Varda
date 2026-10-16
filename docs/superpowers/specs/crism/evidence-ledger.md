@@ -189,13 +189,16 @@ are written in Phase 1, test-first. Design:
      a strict local extremum in λ, and each band neighbor's residual is under
      0.4 of its own (a 3-band feature or a prediction wrong everywhere is not
      a spike).
-  5. **Transient (persistence).** The sample stands out, by at least 0.7 k
-     errors in the direction of its residual, from the median of the same
-     detector element on the lines 2 to 4 before and after (not the adjacent
-     lines, which a spike train shares). A spike train of 1 to 3 lines is
-     transient; an offset lasting 5 or more lines is a detector offset for
-     destriping, not a spike. Chunks therefore need `ALONG_TRACK_HALO = 4`
-     halo lines.
+  5. **Transient (persistence).** In units of the pixel's brightness L (the
+     mean of its other bands within ±10 bands, inside the filter segment,
+     `brightness.py`), the element's deviation from its own spectral median,
+     (R − M) / L, must stand out from the median of the same element on the
+     lines 2 to 4 before and after (not the adjacent lines, which a spike train
+     shares) by 0.85 k errors, and by 12× the part of the element's spread over
+     those lines that white noise (4σ²) does not explain. A multiplicative
+     per-element pattern (a fixed share of the signal) and a slow along-track
+     swing are therefore persistent, not spikes; a train of 1 to 3 lines is
+     transient. Chunks need `ALONG_TRACK_HALO = 4` halo lines.
   - **Filter boundaries** (`FILTER_BOUNDARIES_NM`: the 1.65 µm and 2.7 µm
     joins, where spectra step per column): the spectral median never
     straddles one (the two bands either side take the spatial predictor only)
@@ -211,9 +214,11 @@ are written in Phase 1, test-first. Design:
   plain average and raw-R extremum gave ~10³ false flags on synthetic units
   and 2e-4 on FRS00031442; see the Task 11 report).
 - **Confidence:** medium. On the synthetic cube, recall at ≥ 8σ is
-  0.94–0.98 and false flags 0–1e-6; 1–3 line trains of 10–20σ are caught at
+  0.95–0.98 and false flags 0–1e-6; 1–3 line trains of 10–20σ are caught at
   0.87–0.98 per sample; on FRS00031442 lines 0–63 the overall flag rate is
-  5.2e-5. Not validated against known real spikes.
+  2.7e-4 with the instrument-only σ (Task 9b; 1.7e-3 before this fix, from
+  per-element multiplicative band patterns of about 1%: bands 12, 16, 46, 48
+  one-signed, 27 and 116 of both signs, against σ ≈ 0.09%). Not validated against known real spikes.
 - **Expected on FRS00031442 lines 0–63:** three bands exceed 10× the overall
   rate, all clustered detector-element defects that the despiker should
   replace (not structure being eaten, which would spread over many columns):

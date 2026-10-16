@@ -29,10 +29,9 @@ share the noise of the difference.
 import numpy as np
 from attrs import frozen
 
-from varda.crism.despike import FILTER_BOUNDARIES_NM
+from varda.crism.brightness import bandWindows, smoothBands
 
 _MAD = 1.4826
-_SMOOTH_HALF_WIDTH = 10  # bands each side in the brightness level L
 _BINS = 8
 _MIN_BIN_SAMPLES = 10
 _BAND_BLOCK = 32
@@ -169,44 +168,6 @@ def _fillNearest(values: np.ndarray, axis: int) -> np.ndarray:
     return np.moveaxis(moved, -1, axis)
 
 
-def _bandWindows(
-    wavelengths: np.ndarray | None, bands: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """First and last band (inclusive) of each band's smoothing window, kept
-    inside its filter segment."""
-    if wavelengths is None:
-        segment = np.zeros(bands, dtype=int)
-    else:
-        segment = np.searchsorted(
-            FILTER_BOUNDARIES_NM, np.nan_to_num(wavelengths, nan=np.inf)
-        )
-    index = np.arange(bands)
-    first = np.empty(bands, dtype=int)
-    last = np.empty(bands, dtype=int)
-    for s in np.unique(segment):
-        members = index[segment == s]
-        first[members] = np.maximum(members - _SMOOTH_HALF_WIDTH, members[0])
-        last[members] = np.minimum(members + _SMOOTH_HALF_WIDTH, members[-1])
-    return first, last
-
-
-def _smoothBands(
-    block: np.ndarray, first: np.ndarray, last: np.ndarray, own: np.ndarray
-) -> np.ndarray:
-    """Mean of the finite values over each band's window ``[first, last]``
-    (indices into ``block``'s band axis) without the band itself, ``own`` being
-    that band's values ``(l, s, b)``; NaN where a window has none."""
-    finite = np.isfinite(block)
-    padding = [(0, 0), (0, 0), (1, 0)]
-    total = np.pad(np.cumsum(np.where(finite, block, 0.0), axis=2), padding)
-    number = np.pad(np.cumsum(finite, axis=2), padding)
-    ownFinite = np.isfinite(own)
-    n = number[:, :, last + 1] - number[:, :, first] - ownFinite
-    summed = total[:, :, last + 1] - total[:, :, first] - np.where(ownFinite, own, 0.0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return summed / np.where(n > 0, n, np.nan)
-
-
 def _robustVariance(values: np.ndarray) -> float:
     return float((_MAD * np.median(np.abs(values - np.median(values)))) ** 2)
 
@@ -229,7 +190,7 @@ def _blockStatistics(
     inside = slice(bandRange.start - lo, bandRange.stop - lo)
     bandCount = bandRange.stop - bandRange.start
     block = halo[:, :, inside]
-    level = _smoothBands(halo, first[bandRange] - lo, last[bandRange] - lo, block)
+    level = smoothBands(halo, first[bandRange] - lo, last[bandRange] - lo, block)
     ratio = block / level
     center = block[1:-1]
     # Texture and anything else that scales a whole spectrum cancels here.
@@ -304,7 +265,7 @@ def estimateNoise(
     meanR = np.zeros_like(count)
     var = np.zeros_like(count)
     achromatic = np.full(bands, np.nan)
-    windows = _bandWindows(wavelengths, bands)
+    windows = bandWindows(wavelengths, bands)
     for start in range(0, bands, _BAND_BLOCK):
         sl = slice(start, min(start + _BAND_BLOCK, bands))
         count[sl], meanR[sl], var[sl], achromatic[sl] = _blockStatistics(
