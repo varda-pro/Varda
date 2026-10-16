@@ -48,6 +48,7 @@ dependencies = [
     "shapely>=2.0",
     "psutil>=7.2.2",
     "astropy>=8.0.2",
+    "pvl>=1.3",
 ]
 
 [project.optional-dependencies]
@@ -129,6 +130,7 @@ type = "forbidden"
 source_modules = [
     "varda.image_loading.data_sources",
     "varda.analysis",
+    "varda.crism",
     "varda.rois.roi_collection",
     "varda.rois.roi_calculations",
     "varda.rois.roi_drawing_state",
