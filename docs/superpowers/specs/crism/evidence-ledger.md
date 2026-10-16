@@ -652,16 +652,25 @@ are written in Phase 1, test-first. Design:
 - **Source:** M2. The vector is identical in all six local MTRDRs and
   ≈ min-over-columns WA + 0.2–0.3 nm. DPSIS App. P1 §5 (ESC to the SW
   vector).
+- **Check:** the vector equals the IR rows of the SW CDR6 (L, versions 1, 5
+  and 9) exactly (max |difference| 0.00 nm).
 - **Confidence:** high.
-- **Test:** `test_smile.py::test_target_vector_matches_mtrdr` *(planned)*.
+- **Test:** `test_smile.py::test_target_vector_matches_mtrdr`.
 
 **M2. Resampling.**
 - **Decision:** linear interpolation per column. Then the TER-style ESC
   residual step: 0.125 nm bins, a weighted linear fit, normalization to the
   reference wavelength.
 - **Source:** DPSIS App. P1 §5; M4 (at most 1.6 bands of smile).
+- **Detail:** a target between two source bands on opposite sides of a
+  filter join (1656, 2730 nm) takes the nearest same-side band; a target
+  outside a column's valid range, or with a NaN tap, is NaN. The ESC fit is
+  repeated three times because a column's continuum carries a tenth of the
+  error it is meant to expose. It needs a bland scene: columns of different
+  units add scatter that a one-line fit reads as slope.
 - **Confidence:** medium.
-- **Test:** `test_smile.py::test_resampling_error_and_sigma` *(planned)*.
+- **Test:** `test_smile.py::test_resampling_error_and_sigma`,
+  `test_smile.py::test_esc_removes_column_slope`.
 
 ### Projection
 
