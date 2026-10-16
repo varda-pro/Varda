@@ -20,12 +20,18 @@ with δ (on the synthetic cube, residuals twice the noise and β off by about
 re-interpolating ln T, until it changes by less than 1e-4 nm (Gauss–Newton;
 a few steps).
 
+Bands inside the hydration-band core 1880–1945 nm are left out of the fit
+(weight 0): hydrated minerals and adsorbed water put a band there that the
+cubic continuum cannot follow and that would otherwise bias β and δ. The
+continuum still spans the whole window.
+
 A candidate's score is the median over valid columns of the σ-weighted RMS
 residual inside the score window 1947–2066 nm (the TER window): the fit's own
 objective restricted to that window (ledger A3). Candidates are scored after
 the shift fit (M10).
 """
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -36,9 +42,13 @@ from varda.crism.calibration import Transmission
 
 FIT_WINDOW_NM = (1850.0, 2200.0)
 SCORE_WINDOW_NM = (1947.0, 2066.0)
+HYDRATION_MASK_NM = (1880.0, 1945.0)
 CONTINUUM_DEGREE = 3
 
-_MIN_FIT_BANDS = 24  # of the ~53 bands in the fit window
+_MIN_FIT_BANDS = 24  # of the ~43 fitted bands (53 in the window, 10 masked)
+_MIN_COMPLETE_LINES = 8
+_IMPUTE_RANK = 2
+_IMPUTE_ITERATIONS = 10
 _MIN_SCORE_BANDS = 8  # of the ~18 bands in the score window
 _MAX_SHIFT_NM = 5.0  # beyond this a column's fit is not trusted (bands are 6.6 nm)
 _SHIFT_TOLERANCE_NM = 1e-4
@@ -53,49 +63,115 @@ class ColumnFit:
     """The fit of each spectrum (one per column, or any ``(n, b)`` stack).
 
     ``residualRms`` is the σ-weighted RMS of ``residuals`` over the score
-    window. ``residuals`` is ln R minus the model, NaN outside the fit window
-    and where a band was not used. Invalid fits (too few bands, β ≤ 0, or a
-    shift beyond 5 nm) are NaN everywhere but in a fixed ``shiftNm``."""
+    window. ``betaSigma`` and ``shiftSigma`` are the formal (noise-only)
+    σ; where the model does not reach the noise (``reducedChiSquare`` > 1,
+    e.g. surface structure in the window), σ · √max(1, χ²_ν) is the honest
+    uncertainty. ``residuals`` is ln R minus the model, NaN outside the fit window
+    and where a band was not used (the hydration mask among them). Invalid
+    fits (too few bands, β ≤ 0, a shift beyond 5 nm, or a last Gauss–Newton
+    step above the tolerance) are NaN everywhere but in a fixed ``shiftNm``."""
 
     beta: np.ndarray  # (n,)
     betaSigma: np.ndarray  # (n,)
     shiftNm: np.ndarray  # (n,) the fitted δ, else the fixed one as given (0 by default)
     shiftSigma: np.ndarray  # (n,) 0 when δ was not fitted
     residualRms: np.ndarray  # (n,)
+    reducedChiSquare: np.ndarray  # (n,) over the fitted bands
     residuals: np.ndarray  # (n, b)
     valid: np.ndarray  # (n,) bool
 
 
 @frozen(eq=False)
 class SelectionResult:
-    """The chosen transmission, every candidate's score (by scan ID), the
-    runner-up's score minus the best (inf with one candidate) and the chosen
-    candidate refitted with the smoothed shift held fixed."""
+    """The chosen transmission and every candidate's score, keyed by
+    ``Transmission.key``. ``margin`` is the runner-up's score minus the best,
+    ``relativeMargin`` that over the best score; both are ``math.inf`` with
+    one candidate, so a writer must serialize inf (e.g. as null or "inf").
+    ``winFraction`` is the fraction of columns valid for both where the
+    best's own column score is below the runner-up's (1.0 with one
+    candidate); a margin near 0 or a fraction near 0.5 flags a tie. ``fit``
+    is the chosen candidate refitted with the smoothed shift held fixed."""
 
     chosen: Transmission
     scores: dict[str, float]
     margin: float
+    relativeMargin: float
+    winFraction: float
     fit: ColumnFit
 
 
-def columnSpectra(cube: np.ndarray, sigma: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _inside(wavelengths: np.ndarray, window: tuple[float, float]) -> np.ndarray:
+    with np.errstate(invalid="ignore"):
+        return (wavelengths >= window[0]) & (wavelengths <= window[1])
+
+
+def _lowRankMean(logR: np.ndarray, usable: np.ndarray) -> np.ndarray:
+    """The mean over lines ``(s, b)`` of ``logR`` ``(l, s, b)`` with its
+    missing samples filled by an EM low-rank reconstruction per column: each
+    line differs from the column mean by about an offset (albedo) plus a
+    multiple of the CO2 shape (its own β), which a rank-2 model captures, so
+    every band then averages the same lines."""
+    observed = np.moveaxis(usable, 1, 0)  # (s, l, b)
+    values = np.moveaxis(np.where(usable, logR, 0.0), 1, 0)
+    count = observed.sum(axis=1, keepdims=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = np.where(count > 0, values.sum(axis=1, keepdims=True) / count, 0.0)
+    filled = np.where(observed, values, mean)
+    for _ in range(_IMPUTE_ITERATIONS):
+        mean = filled.mean(axis=1, keepdims=True)
+        u, singular, vt = np.linalg.svd(filled - mean, full_matrices=False)
+        rank = slice(0, _IMPUTE_RANK)
+        low = (u[..., rank] * singular[:, None, rank]) @ vt[:, rank]
+        filled = np.where(observed, values, mean + low)
+    return filled.mean(axis=1)
+
+
+def columnSpectra(
+    cube: np.ndarray, sigma: np.ndarray, wavelengths: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """The per-column geometric mean over lines of ``cube`` ``(l, s, b)``,
-    exp(mean ln R) over the finite samples, and its σ, R̄ · √(Σ σ_lnR²) / n
-    (NaN where a band has no samples).
+    exp(mean ln R), and its σ, R̄ · √(Σ σ_lnR²) / n over the n finite
+    samples (NaN where a band has none); ``wavelengths`` is ``(s, b)``.
 
     The mean of ln R keeps the column spectrum on the model: each line is
-    ln S_t + β_t · ln T(λ + δ), so the mean is the same model with the mean β.
-    A median is not linear: it takes each band from a different line, and on
-    the synthetic cube (β ±14 % down a column) that leaves residuals 1.4–1.8
-    times the noise and column β off by a median 5–11σ (up to 37σ)."""
+    ln S_t + β_t · ln T(λ + δ), so the mean of a fixed set of lines is the
+    same model with their mean β. A median is not linear: it takes each band
+    from a different line, and on the synthetic cube (β ±14 % down a column)
+    that leaves residuals 1.4–1.8 times the noise and column β off by a
+    median 5–11σ (up to 37σ).
+
+    So that every band averages the same lines, a column uses only its
+    complete lines: those finite in every fit-window band that at least half
+    of the column's lines have. When fewer than 8 lines are complete (e.g.
+    scattered invalid samples), every finite sample counts instead, and the
+    missing ones in those fit-window bands are filled by a rank-2 model of
+    the column (``_lowRankMean``) before the mean: a plain per-band mean
+    over different lines inflates the scatter of β by 1.5–1.6× at 10%
+    invalid samples. Bands outside the fit window are plain per-band
+    means."""
     with np.errstate(invalid="ignore", divide="ignore"):
         logR = np.log(cube)
         relative = sigma / cube
     usable = np.isfinite(logR) & np.isfinite(relative)
+    live = _inside(wavelengths, FIT_WINDOW_NM) & (
+        usable.sum(axis=0) >= 0.5 * cube.shape[0]
+    )
+    complete = (usable | ~live[None]).all(axis=2)  # (l, s)
+    enough = complete.sum(axis=0) >= _MIN_COMPLETE_LINES
+    usable &= complete[..., None] | ~enough[None, :, None]
     count = usable.sum(axis=0)
     with np.errstate(invalid="ignore", divide="ignore"):
-        spectra = np.exp(np.where(usable, logR, 0.0).sum(axis=0) / count)
+        logMean = np.where(usable, logR, 0.0).sum(axis=0) / count
         spread = np.sqrt((np.where(usable, relative, 0.0) ** 2).sum(axis=0)) / count
+    sparse = ~enough & live.any(axis=1)
+    if sparse.any():
+        bands = live[sparse].any(axis=0)
+        block = np.ix_(sparse, bands)
+        filled = _lowRankMean(
+            logR[:, sparse][..., bands], usable[:, sparse][..., bands]
+        )
+        logMean[block] = np.where(live[block], filled, logMean[block])
+    spectra = np.exp(logMean)
     empty = count == 0
     return np.where(empty, np.nan, spectra), np.where(empty, np.nan, spectra * spread)
 
@@ -191,11 +267,6 @@ def shiftedLogTransmission(
 # --- the fit ------------------------------------------------------------------------
 
 
-def _inside(wavelengths: np.ndarray, window: tuple[float, float]) -> np.ndarray:
-    with np.errstate(invalid="ignore"):
-        return (wavelengths >= window[0]) & (wavelengths <= window[1])
-
-
 @frozen(eq=False)
 class _Solution:
     coefficients: np.ndarray  # (n, p)
@@ -253,6 +324,7 @@ def fitColumns(
         weight = spectra / np.asarray(sigma, dtype=np.float64)  # 1 / σ_lnR
     data = (
         _inside(wavelengths, FIT_WINDOW_NM)
+        & ~_inside(wavelengths, HYDRATION_MASK_NM)
         & np.isfinite(logR)
         & np.isfinite(weight)
         & (weight > 0)
@@ -266,6 +338,7 @@ def fitColumns(
     continuum = legendre.legvander(u, degree)
     packed = _Packed.of(wavelengths, transmission)
     b = degree + 1  # the index of β
+    parameters = b + (2 if fitShift else 1)
 
     def solveAt(expansion: np.ndarray) -> tuple[_Solution, np.ndarray]:
         logT = packed.shifted(expansion)
@@ -291,10 +364,13 @@ def fitColumns(
                 break
             expansion = np.clip(expansion + delta, -_MAX_SHIFT_NM, _MAX_SHIFT_NM)
             solution, used = solveAt(expansion)
-        shift = expansion + step(solution)
+        last = step(solution)
+        shift = expansion + last
+        converged = np.abs(last) < _SHIFT_TOLERANCE_NM
     else:
         shift = np.zeros(rows) if shiftNm is None else np.asarray(shiftNm, np.float64)
         solution, used = solveAt(shift)
+        converged = np.ones(rows, dtype=bool)
 
     covariance = solution.covariance
     beta = solution.coefficients[:, b]
@@ -305,10 +381,13 @@ def fitColumns(
         & (scored.sum(axis=1) >= _MIN_SCORE_BANDS)
         & (beta > 0)
         & (np.abs(shift) < _MAX_SHIFT_NM)
+        & converged
     )
     w2 = np.where(scored, weight, 0.0) ** 2
     with np.errstate(invalid="ignore", divide="ignore"):
         rms = np.sqrt(np.nansum(w2 * solution.residuals**2, axis=1) / w2.sum(axis=1))
+        weighted = np.where(used, weight * solution.residuals, 0.0)
+        chiSquare = (weighted**2).sum(axis=1) / (used.sum(axis=1) - parameters)
         if fitShift:
             # δ = η / β about the last expansion point; its variance by propagation
             eta = solution.coefficients[:, b + 1]
@@ -330,6 +409,7 @@ def fitColumns(
         shiftNm=masked(shift) if fitShift else shift,
         shiftSigma=masked(shiftSigma),
         residualRms=masked(rms),
+        reducedChiSquare=masked(chiSquare),
         residuals=np.where(valid[:, None], solution.residuals, np.nan),
         valid=valid,
     )
@@ -339,7 +419,10 @@ def smoothShift(shiftNm: np.ndarray, valid: np.ndarray, degree: int = 3) -> np.n
     """A robust polynomial of ``degree`` in the column index through the valid
     shifts (iteratively reweighted least squares, Tukey biweight with
     c = 4.685 on a MAD scale), evaluated at every column. Zeros when no
-    column is valid; the degree drops when fewer than degree + 1 are."""
+    column is valid; the degree drops when fewer than degree + 1 are. Invalid
+    columns get the polynomial's value too: between valid columns that is an
+    interpolation, but at an invalid edge (e.g. the FRS's empty first and
+    last columns) it is an extrapolation of the cubic."""
     columns = shiftNm.shape[0]
     x = np.linspace(-1.0, 1.0, columns)
     keep = valid & np.isfinite(shiftNm)
@@ -377,30 +460,42 @@ def selectTransmission(
     """Fit ``spectra`` ``(s, b)`` (column spectra, see ``columnSpectra``) with
     every candidate, score each (the median over valid columns of the
     σ-weighted RMS residual over the score window) and choose the lowest.
+    Candidates are told apart by ``Transmission.key``; a repeated key raises.
     The chosen candidate's shifts are smoothed (``smoothShift``) and it is
     refitted with them held fixed."""
-    ids = [candidate.scanId for candidate in candidates]
-    if not ids:
+    keys = [candidate.key for candidate in candidates]
+    if not keys:
         raise ValueError("no transmission candidates")
-    if len(set(ids)) != len(ids):
-        raise ValueError(f"candidates share a scan ID: {ids}")
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"candidates share a key: {keys}")
     fits = {
-        c.scanId: fitColumns(spectra, sigma, wavelengths, c.values, fitShift=fitShift)
+        c.key: fitColumns(spectra, sigma, wavelengths, c.values, fitShift=fitShift)
         for c in candidates
     }
     scores = {
-        scanId: float(np.median(fit.residualRms[fit.valid]))
+        key: float(np.median(fit.residualRms[fit.valid]))
         if fit.valid.any()
-        else np.inf
-        for scanId, fit in fits.items()
+        else math.inf
+        for key, fit in fits.items()
     }
-    ranked = sorted(candidates, key=lambda c: scores[c.scanId])
+    ranked = sorted(candidates, key=lambda c: scores[c.key])
     chosen = ranked[0]
-    best = scores[chosen.scanId]
-    if not np.isfinite(best):
+    best = scores[chosen.key]
+    if not math.isfinite(best):
         raise ValueError("no column could be fitted with any candidate")
-    margin = scores[ranked[1].scanId] - best if len(ranked) > 1 else np.inf
-    first = fits[chosen.scanId]
+    first = fits[chosen.key]
+    if len(ranked) > 1:
+        rival = fits[ranked[1].key]
+        margin = scores[ranked[1].key] - best
+        both = first.valid & rival.valid
+        winFraction = (
+            float(np.mean(first.residualRms[both] < rival.residualRms[both]))
+            if both.any()
+            else 1.0
+        )
+    else:
+        margin, winFraction = math.inf, 1.0
+    relativeMargin = margin / best if best > 0 else math.inf
     shift = (
         smoothShift(first.shiftNm, first.valid)
         if fitShift
@@ -409,4 +504,4 @@ def selectTransmission(
     fit = fitColumns(
         spectra, sigma, wavelengths, chosen.values, fitShift=False, shiftNm=shift
     )
-    return SelectionResult(chosen, scores, float(margin), fit)
+    return SelectionResult(chosen, scores, margin, relativeMargin, winFraction, fit)

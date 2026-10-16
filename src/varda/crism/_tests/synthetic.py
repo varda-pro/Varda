@@ -12,6 +12,8 @@ transmission from the crop AT. The observed cube is
 then spikes are added, where
 
 - S is the surface I/F *after photometry*: the cube carries no cos i factor.
+  Its USGS library spectra are smoothed by a one-band Gaussian in ln, which
+  removes their lab band-to-band roughness;
   ``incidenceDeg`` is the incidence a DDR would report; a writer of raw TRR3
   files multiplies the cube (and σ) by cos i;
 - ln T_x(λ + δ) is interpolated along column x's own wavelengths; δ_x is a
@@ -38,6 +40,7 @@ from pathlib import Path
 import numpy as np
 from attrs import frozen
 from numpy.polynomial import legendre
+from scipy import ndimage
 
 from varda.analysis.spectral_library import LibrarySpectrum, loadUsgsLibrary, resampleTo
 from varda.crism.readers import readDetectorFrame, readTrr3
@@ -56,6 +59,7 @@ INCIDENCE_RANGE_DEG = (50.0, 55.0)
 READ_NOISE_FRACTION = 0.2  # of the variance at I/F 0.1
 SPIKE_SIGMAS = (5.0, 20.0)
 ALBEDO_VARIATION = 0.05
+_SMOOTH_BANDS = 1.0  # σ of the library-spectrum smoothing, in bands
 
 # The units: (library spectrum, fraction mixed with basalt, I/F at 1300–1700 nm)
 _BASALT = "BasaltFresh_BR93-46B_BECKb_AREF"
@@ -122,7 +126,27 @@ def _libraryAt(spectrum: LibrarySpectrum, wavelengths: np.ndarray) -> np.ndarray
     order = np.argsort(x)
     x, y = x[order], y[order]
     values = np.where(wavelengths < x[0], y[0], values)
-    return np.where(wavelengths > x[-1], y[-1], values)
+    values = np.where(wavelengths > x[-1], y[-1], values)
+    return _smoothBands(values)
+
+
+def _smoothBands(values: np.ndarray) -> np.ndarray:
+    """A Gaussian of one band (σ) along the band axis, in ln and NaN-aware.
+
+    The lab spectra carry band-to-band roughness (a second-difference RMS of
+    0.013 in ln for the basalt) that no Mars surface at CRISM resolution
+    shows and that a wavelength-shift fit would read as a shift of about
+    0.2 nm."""
+    finite = np.isfinite(values) & (values > 0)
+    logV = np.log(np.where(finite, values, 1.0))
+    weight = ndimage.gaussian_filter1d(
+        finite.astype(float), _SMOOTH_BANDS, axis=-1, mode="constant"
+    )
+    smooth = ndimage.gaussian_filter1d(
+        np.where(finite, logV, 0.0), _SMOOTH_BANDS, axis=-1, mode="constant"
+    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(finite, np.exp(smooth / weight), values)
 
 
 def _unitSpectra(wavelengths: np.ndarray) -> np.ndarray:

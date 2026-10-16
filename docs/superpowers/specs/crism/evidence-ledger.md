@@ -236,27 +236,52 @@ are written in Phase 1, test-first. Design:
 - **Source:** McGuire 2009 Eq. 1 (the model I/F = A cos i T^β); the
   linearized shift is our extension. Wiseman 2016 §3.3 explains why one
   exponent can't fix everything, and the residual model (A6) handles that.
-- **Implementation (Task 12):** the linearized shift is a Gauss–Newton
-  step, repeated about the shift found so far with ln T re-interpolated
-  (linearly in ln T) at λ + δ until the step is below 1e-4 nm. One step is
-  not enough: on the synthetic cube at δ = 0.8 nm it leaves residuals about
-  twice the noise and the column β a median 12σ off; iterated, residuals
-  are at the noise and β and δ have z-scores of mean ≈ 0, std ≈ 1. The
-  column spectrum is the mean of ln R over lines (a geometric mean), not
-  the median: the model is linear in ln R, so the mean of lines with
-  different β is the same model with the mean β, while the median takes
-  each band from a different line (residuals 1.4–1.8× the noise, column β
-  a median 5–11σ and up to 37σ off, with β varying ±14% down a column).
+- **Implementation (Task 12):**
+  - **Shift by Gauss–Newton.** The model's atmosphere is ln T_x(λ + δ_x),
+    ln T interpolated linearly along the column's wavelengths
+    (`atmosphere.shiftedLogTransmission`, also used by the correction). Each
+    step is the linear fit with the Taylor term η ∂ln T/∂λ about the current
+    shift; the shift moves by η/β and ln T is re-interpolated until the step
+    is below 1e-4 nm (a column still moving after 10 steps is invalid). One
+    step is not enough: on the synthetic cube at δ = 0.8 nm it leaves
+    residuals about twice the noise and the column β a median 12σ off;
+    iterated, residuals are at the noise and β and δ have z-scores of mean
+    ≈ 0, std ≈ 1.
+  - **Hydration mask.** Bands in 1880–1945 nm (`HYDRATION_MASK_NM`) get
+    zero weight; the degree-3 continuum still spans 1850–2200 nm. On the
+    synthetic's library surface (seeds 0–2) the column β bias goes from
+    −4.1…−4.8% to −0.5…−1.5%, and the true AT beats the depth decoy (it
+    lost 3/3 without the mask); σ_β grows by about 20%. The FRS00031442
+    choice is unchanged.
+  - **Column spectra: the mean of ln R**, not the median. The model is
+    linear in ln R, so the mean of a fixed set of lines with different β is
+    the same model with the mean β, while the median takes each band from a
+    different line (residuals 1.4–1.8× the noise, column β a median 5–11σ
+    and up to 37σ off, with β varying ±14% down a column). A column averages
+    only its lines complete in the fit window; with fewer than 8 such lines,
+    the missing fit-window samples are filled from a rank-2 model of the
+    column (an EM low-rank fill) before the mean: a plain per-band mean over
+    different lines inflates the β z-score std to 1.5–1.6 at 10% scattered
+    invalid samples, the fill brings it to 1.0–1.1.
 - **Confidence:** medium-high; M10 shows it beats the two-wavelength
   scaling.
 - **Test:** `test_atmosphere.py::test_recovers_beta_and_shift` (three
   seeds, smooth ±0.8 nm δ, the synthetic's surface replaced by its own
-  continuum over the window) and
-  `::test_shifted_log_transmission_matches_interp`. On the synthetic's raw
-  surface (library spectra with a 1.9 µm water band and about 3%
-  band-to-band structure at 2.1–2.2 µm), β is biased by −4 to −5% and δ by
-  +0.12 to +0.15 nm, residuals are 14× the noise, and the deep decoy of
-  `test_selects_injected_transmission` wins; that is the A5/A6 problem.
+  continuum over the window so the formal σ can be checked),
+  `::test_raw_surface` (seeds 0–2 on the library surface: column β median
+  |bias| ≤ 2%, the true AT wins against the decoys, the smoothed δ within 3
+  χ²-scaled σ), `::test_scattered_invalid_samples`,
+  `::test_column_spectra_use_complete_lines`,
+  `::test_unconverged_shift_is_invalid` and
+  `::test_shifted_log_transmission_matches_interp`. On the library surface
+  the residuals stay about 10× the noise (χ²_ν ≈ 85) and δ is biased by
+  +0.16 to +0.18 nm: the residual is broad structure, the wing of the 1.9 µm
+  water band past 1945 nm and a 1–2% bump at 2020–2040 nm under the deepest
+  CO2 bands, not band-to-band roughness (smoothing the library spectra by a
+  one-band Gaussian took their second-difference RMS from 0.013 to 0.005 in
+  ln but δ only from +0.19…+0.22 to +0.16…+0.18 nm; even three bands leave
+  +0.06 nm). `ColumnFit.reducedChiSquare` reports it, and
+  σ · √max(1, χ²_ν) is the honest uncertainty.
 
 **A2. Fitting β across the window, not at two wavelengths.**
 - **Decision:** β is a least-squares fit over the window, not the ratio at
@@ -283,19 +308,30 @@ are written in Phase 1, test-first. Design:
   bands, w = 1/σ_lnR², the fit's weighted objective restricted to the
   window (in ln R units, comparable to M7), from the fit with a free
   per-column shift; the median over valid columns.
+- **Ties.** Selection stays argmin. `SelectionResult` also records the
+  relative margin (margin / best score) and the win fraction (the share of
+  columns valid for both where the best's own column score beats the
+  runner-up's). Scores are keyed by `Transmission.key`, scan and source
+  (`061C4:AT`, `061C4:VS`), since an AT and a VS ADR can share a scan.
 - **Phase 1 measurement (FRS00031442, 6 PDS scans, mean-of-ln column
-  spectra, all 190 lines):** with the shift, 061C4 0.00612, 08608 0.00632,
-  06822 0.00874, 094B5 0.01036, 09E04 0.01181, 0A93E 0.01265; 061C4 is
-  chosen by a margin of 0.0002 (central 64 lines: 0.00646 against 0.00656).
-  Without the shift, 0A93E wins (0.01306) and 08608 and 061C4 are among the
-  worst (0.0190, 0.0197), the M10 pattern. Under the M7 metric 08608 edges
-  out 061C4 (0.0062 against 0.0063): the two scans are a near tie. Their
-  fitted shifts are −0.85 and −0.93 nm.
+  spectra, hydration mask, all 190 lines):** with the shift, 061C4 0.00597,
+  08608 0.00606, 094B5 0.00773, 06822 0.00858, 09E04 0.00891, 0A93E
+  0.01142; 061C4 is chosen by a margin of 0.00009 (relative 0.015, win
+  fraction 0.517: a tie). The central 64 lines give the same order (0.00620
+  against 0.00624, relative 0.006). Without the shift, 094B5 wins (0.01078)
+  and 08608 and 061C4 are among the worst (0.0188, 0.0196), the M10
+  pattern. Under the M7 metric 08608 edges out 061C4 (0.00597 against
+  0.00616). Their fitted shifts are −0.83 and −0.91 nm. With both sources
+  (23 candidates) a VS ADR wins: 2815C:VS 0.00525 against 32AFC:VS 0.00530
+  (relative margin 0.008, win fraction 0.585).
 - **Test:** `test_atmosphere.py::test_selects_injected_transmission` (true
   AT against copies shifted 1.5 nm and scaled in depth, 1 − k(1 − T) with
   k = 0.9, 1.1; a power T^k is no decoy, since β absorbs k exactly) and
   `::test_selection_requires_shift_fit` (a decoy pre-shifted by 0.9 δ_x with
   a 0.4% band pattern wins without the shift term and loses with it).
+  `::test_sources_sharing_a_scan_id` and
+  `test_calibration.py::test_cat_aux_vs_adrs` (the 23 FRS00031442
+  candidates have distinct keys).
 
 **A4. A smooth per-column shift.**
 - **Decision:** fit δ_x per column, then smooth it with a robust low-order
@@ -310,7 +346,9 @@ are written in Phase 1, test-first. Design:
 - **Test:** `test_atmosphere.py::test_recovers_beta_and_shift` (±0.8 nm
   injected; the smoothed δ within 3σ in ≥ 99% of columns) and
   `::test_smooth_shift_resists_outliers`. The FRS00031442 shifts depend on
-  the scan: −0.06 to −1.06 nm (median per scan), not just −0.5 to 0 nm.
+  the scan: −0.11 to −1.05 nm (median per scan), not just −0.5 to 0 nm.
+  `smoothShift` also evaluates the polynomial at invalid columns, which at
+  the FRS's empty edge columns is an extrapolation.
 
 **A5. Elevation-regularized β (default).**
 - **Decision:** fit ln β = a − z/H to the scene, then shrink each pixel's β

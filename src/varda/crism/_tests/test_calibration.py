@@ -296,6 +296,14 @@ def test_cat_aux_vs_adrs(demoData: Path):
     assert len(found) > 6
     assert all(t.artifacts is not None and t.artifacts.shape[0] == 2 for t in found)
     assert all(t.values.shape == (640, 438) for t in found)
+    # with both sources, an AT and a VS ADR of the same scan stay apart
+    both = lib.transmissions(trr3, TransmissionSource.BOTH)
+    keys = [t.key for t in both]
+    assert len(set(keys)) == len(keys)
+    shared = {t.scanId for t in both if t.key.endswith(":AT")} & {
+        t.scanId for t in both if t.key.endswith(":VS")
+    }
+    assert shared
 
 
 def test_download_leaves_no_partial_file(tmp_path: Path):

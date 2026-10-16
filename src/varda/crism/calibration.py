@@ -71,6 +71,12 @@ class Transmission:
     sclkStop: int | None = None
     extrapolated: bool = False
 
+    @property
+    def key(self) -> str:
+        """The scan ID and the source, ``"<scan>:AT"`` or ``"<scan>:VS"``: a
+        PDS AT and a VS ADR of the same scan are different candidates."""
+        return f"{self.scanId}:{'VS' if self.artifacts is not None else 'AT'}"
+
 
 @frozen
 class CalibrationFileStatus:

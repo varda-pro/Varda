@@ -339,7 +339,7 @@ Notation: x is the detector column, t the line, λ the band; R is I/F, and
 **Model.** For one pixel p in column x, over the fit window
 W = 1850–2200 nm in log space:
 
-    ln R_p(λ) = Σ_k c_pk P_k(λ) + β_p [ ln T_x(λ) + δ_x · ∂ln T_x/∂λ ] + ε
+    ln R_p(λ) = Σ_k c_pk P_k(λ) + β_p ln T_x(λ + δ_x) + ε
 
 - P_k is a smooth continuum basis (Legendre polynomials, degree 3 by
   default).
@@ -348,8 +348,23 @@ W = 1850–2200 nm in log space:
   resampling. This is the TER rule.
 - β_p is the per-pixel path scale.
 - δ_x is a small per-column wavelength shift (thermal drift ≤ about 1 nm,
-  McGuire 2009 §2), linearized (Taylor) so the fit stays linear.
-- The fit is weighted by σ.
+  McGuire 2009 §2). ln T_x(λ + δ) is ln T interpolated linearly along the
+  column's own wavelengths (`atmosphere.shiftedLogTransmission`).
+- δ is fitted by Gauss–Newton: each step is the linear fit of
+  (c, β, η = βδ) with the Taylor term η ∂ln T_x/∂λ (central differences)
+  about the current shift, which is then moved by η/β and ln T
+  re-interpolated, until the step is below 1e-4 nm; a column that does not
+  converge in 10 steps is invalid. One linearized step is biased at
+  δ ≈ 0.8 nm (on the synthetic, residuals about twice the noise and β a
+  median 12σ off).
+- The fit is weighted by σ. The hydration-band core 1880–1945 nm gets zero
+  weight (`HYDRATION_MASK_NM`): adsorbed water and hydrated minerals put a
+  band there that the continuum cannot follow (on the synthetic's library
+  surface it biased β by −4 to −5% and let a decoy transmission win). The
+  continuum still spans all of W.
+- A column's spectrum for Pass A is the mean of ln R over its lines (a
+  geometric mean), over the lines complete in W, since the model is linear
+  in ln R; a median is not (A1).
 
 **A. Choosing the transmission (Pass A).**
 1. For each candidate scan j (6 PDS AT scans, or 17 VS ADRs if available,
@@ -358,8 +373,10 @@ W = 1850–2200 nm in log space:
    to 64 lines for SNR).
 2. The score S_j is the median over columns of the σ-weighted residual RMS
    over **1947–2066 nm**, the TER window.
-3. Select j* = argmin S_j. Record the full score table and the margin to the
-   runner-up.
+3. Select j* = argmin S_j. Record the full score table (keyed by scan and
+   source, `Transmission.key`), the margin to the runner-up, the margin
+   relative to S_j*, and the fraction of columns where j* beats the
+   runner-up, so a near tie is flagged.
 4. Smooth δ_x across columns with a robust low-order polynomial in x, since
    the shift is an instrumental, smooth function of the column.
 
@@ -382,8 +399,9 @@ in (c_p, β_p).
   free per-pixel β. Topography can't. The H estimate and the β-versus-z
   scatter are physical sanity checks reported in the provenance.
 
-**D. Correction.** R' = R / exp(β_p [ln T_x + δ_x ∂ln T_x/∂λ]), over all
-bands.
+**D. Correction.** R' = R / exp(β_p ln T_x(λ + δ_x)), over all bands, with
+ln T_x(λ + δ_x) from `shiftedLogTransmission` and δ_x the smoothed shift
+(not the one-step Taylor form).
 
 **E. Residual (artifact) model, in place of the opaque patch.**
 - **What CAT's patch fixes** (Morgan 2011; Wiseman 2016 §2.1): the
