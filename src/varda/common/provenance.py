@@ -71,6 +71,7 @@ KEPT_METADATA_KEYS = (
     "mosaic",
     "displacement",
     "fatt",
+    "shadowMask",
     "sensorBands",
     "kmeans",
     "componentSelection",
