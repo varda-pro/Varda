@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pyproj
 import pytest
+from scipy import ndimage
 from scipy.spatial import KDTree
 
 from varda.crism.projection import (
@@ -27,6 +28,8 @@ _MTRDR = {
     "HRL000040FF": ("hrl000040ff_07_if183j_mtr3", "hrl000040ff_07_de183l_mtr1", 36.0),
 }
 _FRT_DDR = "data-for-paper/FRT00005850/ddr/frt00005850_07_de167l_ddr1.lbl"
+_FRT_IN = "data-for-paper/FRT00005850/mtrdr/frt00005850_07_in167j_mtr3.img"
+_DEFAULT_FACTOR = 2.0
 
 
 def _headerValue(header: str, key: str) -> str:
@@ -236,11 +239,21 @@ def test_coordinates_match_pyproj(centerLat: float, centerLon: float) -> None:
     assert grid.enviMapInfo().endswith("units=Meters")
 
 
-def test_backplanes_trace_to_sensor() -> None:
+def _interiorHoles(filled: np.ndarray) -> int:
+    return int((ndimage.binary_fill_holes(filled) & ~filled).sum())
+
+
+@pytest.mark.parametrize("factor", [None, 0.75 * math.sqrt(2)])
+def test_backplanes_trace_to_sensor(factor: float | None) -> None:
     s = 18.0
     lat, lon = _swath(18.3, 77.4, lines=60, samples=45, step=17.0, jitter=4.0)
     grid = mtrdrGrid(lat, lon, s)
-    glt = nearestNeighborGlt(grid, lat, lon)
+    if factor is None:
+        glt = nearestNeighborGlt(grid, lat, lon)
+        threshold = _DEFAULT_FACTOR * s
+    else:
+        glt = nearestNeighborGlt(grid, lat, lon, maxDistanceFactor=factor)
+        threshold = factor * s
     assert glt.sourceLine.shape == glt.sourceSample.shape == (grid.height, grid.width)
     assert glt.sourceLine.dtype == glt.sourceSample.dtype == np.int32
     filled = glt.sourceLine >= 0
@@ -253,7 +266,7 @@ def test_backplanes_trace_to_sensor() -> None:
     sourceX = x[glt.sourceLine[filled], glt.sourceSample[filled]]
     sourceY = y[glt.sourceLine[filled], glt.sourceSample[filled]]
     distance = np.hypot(sourceX - centerX, sourceY - centerY)
-    assert distance.max() <= 0.75 * s * math.sqrt(2)
+    assert distance.max() <= threshold
     # and the source is the nearest DDR center (brute force)
     points = np.column_stack([x.ravel(), y.ravel()])
     nearest, _ = KDTree(points).query(np.column_stack([centerX, centerY]))
@@ -268,7 +281,7 @@ def test_backplanes_trace_to_sensor() -> None:
             ]
         )
     )
-    assert emptyDistance.min() >= 0.75 * s * math.sqrt(2) - 1e-9
+    assert emptyDistance.min() >= threshold - 1e-9
     # the GLT carries values and backplanes alike
     cube = np.stack([lat, lon], axis=-1).astype(np.float32)
     projected = applyGlt(cube, glt)
@@ -283,6 +296,41 @@ def test_backplanes_trace_to_sensor() -> None:
         applyGlt(lat, glt)[filled],
         lat[glt.sourceLine[filled], glt.sourceSample[filled]],
     )
+
+
+def test_default_threshold_fills_coarse_geometry() -> None:
+    """DDR centers coarser than the grid (30 m for 18 m pixels; FRT00005850's
+    are 23 x 26 m, sheared) leave no holes at the default threshold, while
+    0.75 sqrt(2) leaves many."""
+    lat, lon = _swath(18.3, 77.4, lines=60, samples=45, step=30.0, jitter=2.0)
+    grid = mtrdrGrid(lat, lon, 18.0)
+    assert _interiorHoles(nearestNeighborGlt(grid, lat, lon).sourceLine >= 0) == 0
+    tight = nearestNeighborGlt(grid, lat, lon, maxDistanceFactor=0.75 * math.sqrt(2))
+    assert _interiorHoles(tight.sourceLine >= 0) > 50
+
+
+def test_glt_matches_mtrdr_from_sensor_ddr(demoData: Path) -> None:
+    """FRT00005850's GLT from its sensor-space DDR against its MTRDR: no
+    interior holes, the same empty mask on >= 99% of pixels and the same
+    source pixel (the MTRDR IN "IR Sample"/"IR Line", 0-based) on >= 95% of
+    the pixels both fill."""
+    ddr = readDdr(demoData / _FRT_DDR)
+    lat, lon = ddr.band(DdrBand.LATITUDE), ddr.band(DdrBand.LONGITUDE)
+    grid = mtrdrGrid(lat, lon, 18.0)
+    glt = nearestNeighborGlt(grid, lat, lon)
+    backplanes = np.memmap(
+        demoData / _FRT_IN, dtype="<f4", mode="r", shape=(9, grid.height, grid.width)
+    )
+    mtrdrSample, mtrdrLine = np.array(backplanes[5]), np.array(backplanes[6])
+    mtrdrFilled = (mtrdrSample != 65535) & (mtrdrLine != 65535)
+    filled = glt.sourceLine >= 0
+    assert _interiorHoles(filled) == 0
+    assert (filled == mtrdrFilled).mean() >= 0.99
+    both = filled & mtrdrFilled
+    same = (glt.sourceSample[both] == mtrdrSample[both]) & (
+        glt.sourceLine[both] == mtrdrLine[both]
+    )
+    assert same.mean() >= 0.95
 
 
 def test_glt_skips_invalid_geometry() -> None:

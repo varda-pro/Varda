@@ -730,28 +730,35 @@ are written in Phase 1, test-first. Design:
 **G3. Resampling.**
 - **Decision:** nearest neighbor (GLT-equivalent) by default, with
   source-sample and source-line backplanes; a KD-tree on the projected DDR
-  centers, empty beyond 0.75·s·√2. Option: area weighting, a sparse
-  (H·W) × (l·s) matrix from 4×4 bilinear subsamples of each source quad
-  (corners at neighbor midpoints, edges extrapolated half a step);
-  σ² = Σw²σ² / (Σw)² over valid sources; the look count is the effective
-  number of looks (Σw)² / Σw².
+  centers, empty beyond **2·s** (`maxDistanceFactor = 2.0`, controller
+  ruling in Task 17; the plan's 0.75·s·√2 leaves interior holes). Option:
+  area weighting, a sparse (H·W) × (l·s) matrix from 4×4 bilinear
+  subsamples of each source quad (corners at neighbor midpoints, edges
+  extrapolated half a step); σ² = Σw²σ² / (Σw)² over valid sources; the
+  look count is the effective number of looks (Σw)² / Σw².
 - **Source:** DPSIS App. P1 §12–13 (GLT); M1 (DE lat/lon scatter of 7–9 m
   std, the nearest-neighbor signature). Task 17 measurement on
-  FRT00005850: our GLT picks the same DDR pixel as the MTRDR DE for 96.9% of
-  the pixels both fill. The MTRDR fills 61.6% of its grid, our default
-  57.8%: its DDR centers are 23 m (across) × 26 m (along) apart, so the
-  0.75·s·√2 = 19.1 m threshold leaves 39,700 holes inside the footprint.
-  The MTRDR is not distance-gated (it leaves pixels empty whose nearest DDR
-  center is 0.5 s away, and fills some at 1.8 s). Factors of 1.5, 1.75 and
-  2.0 leave 1681, 16 and 0 holes and agree with the MTRDR's empty mask on
-  99.39%, 99.46% and 99.37% of pixels (0.75·√2: 95.6%). Full-FRT cost:
-  0.1 s for the GLT; 0.14 s and 21 MB (1.43 M non-zeros) for the area
-  weights.
-- **Confidence:** high for the method; **open** for the default empty
-  threshold (0.75·s·√2 is the spec's value and leaves holes on FRT
-  geometry).
-- **Test:** `src/varda/crism/_tests/test_projection.py::test_backplanes_trace_to_sensor`,
-  `::test_glt_skips_invalid_geometry`, `::test_area_weights_conserve_mean`,
+  FRT00005850, the GLT from its sensor-space DDR against the MTRDR IN
+  backplanes "IR Sample"/"IR Line" (0-based; the IN and DE empty masks are
+  identical):
+  - The DDR centers are 23 m (across) × 26 m (along) apart, coarser than
+    the 18 m grid. The MTRDR is not distance-gated: it leaves pixels empty
+    whose nearest DDR center is 0.5 s away, and fills some at 1.8 s.
+  - Interior holes and agreement with the MTRDR empty mask:
+    0.75·√2 (19.1 m): 39,739 holes, 95.64%; 1.5: 1,681 holes, 99.39%;
+    1.75: 16 holes, 99.46%; **2.0: 0 holes, 99.37%** (we fill 62.3% of the
+    grid, the MTRDR 61.6%: 6,501 pixels only we fill, at the swath edges,
+    none only it fills).
+  - The same source pixel as the MTRDR on 96.96% of the pixels both fill
+    (96.91% at 0.75·√2).
+  - Full-FRT cost: 0.1 s for the GLT; 0.14 s and 21 MB (1.43 M non-zeros)
+    for the area weights.
+- **Confidence:** high.
+- **Test:** `src/varda/crism/_tests/test_projection.py::test_backplanes_trace_to_sensor`
+  (default and 0.75·√2), `::test_default_threshold_fills_coarse_geometry`,
+  `::test_glt_matches_mtrdr_from_sensor_ddr` (data-gated: no interior holes,
+  empty mask ≥ 99%, same source ≥ 95%), `::test_glt_skips_invalid_geometry`,
+  `::test_area_weights_conserve_mean`,
   `::test_area_weights_memory_for_a_full_frt`.
 
 ### Validation metric

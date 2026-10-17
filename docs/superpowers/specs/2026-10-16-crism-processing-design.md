@@ -567,7 +567,11 @@ covariance of β with the data it corrects (`atmosphere.correct`).
 - **Resampling:**
   - **Default:** nearest neighbor, equivalent to the GLT. For each output
     pixel center, take the nearest DDR pixel center (a KD-tree in projected
-    coordinates), and leave the pixel empty beyond 0.75·s·√2.
+    coordinates), and leave the pixel empty beyond 2·s (controller ruling,
+    Task 17: the planned 0.75·s·√2 left about 39,700 interior holes on
+    FRT00005850, whose DDR centers are 23 × 26 m apart, where MTRDR has
+    none; 2·s leaves none and matches the MTRDR empty mask on 99.4% of
+    pixels, G3).
     Source-sample and source-line backplanes are written, so every pixel
     traces back to sensor space.
   - **Option: area weighted.** Each source pixel is a quadrilateral from

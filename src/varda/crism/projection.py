@@ -43,6 +43,7 @@ MapKind = Literal["equirectangular", "polar"]
 _POLAR_LIMIT_DEG = 65.0
 _TIE_DECIMALS = 1  # MTRDR tie points are whole decimeters (M1)
 _BAND_CHUNK = 32
+_MAX_DISTANCE_FACTOR = 2.0  # GLT empty threshold in output pixels (G3)
 
 
 def referenceLatitude(centerLatDeg: float) -> float:
@@ -248,14 +249,15 @@ def nearestNeighborGlt(
     grid: MapGrid,
     latDeg: np.ndarray,
     lonDeg: np.ndarray,
-    maxDistanceFactor: float = 0.75 * np.sqrt(2),
+    maxDistanceFactor: float = _MAX_DISTANCE_FACTOR,
 ) -> Glt:
     """For each output pixel center, the nearest DDR pixel center (a KD-tree on
     the projected centers); empty beyond ``maxDistanceFactor · s`` (G3).
 
-    The threshold is in output pixels. DDR centers coarser than about
-    1.5 s apart leave holes inside the footprint at the default (FRT00005850's
-    are 23 × 26 m apart for s = 18 m; ledger G3).
+    The default, 2 output pixels, leaves no holes inside the footprint of
+    DDR centers coarser than the grid (FRT00005850's are 23 × 26 m apart for
+    s = 18 m) and matches the MTRDR's empty mask on 99.4% of its pixels; the
+    plan's 0.75·√2 left 39,700 interior holes there (ledger G3).
     """
     x, y = mapCoordinates(grid, latDeg, lonDeg)
     valid = np.flatnonzero(np.isfinite(x) & np.isfinite(y))
