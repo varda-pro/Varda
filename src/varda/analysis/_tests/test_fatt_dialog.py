@@ -114,3 +114,23 @@ def test_ticked_targets_set_up_the_detection_map(dialog, qtbot):
     assert sorted(t.name for t in analysis.targets) == ["calcite", "kaolinite"]
     assert analysis.threshold.get() == 0.5
     assert analysis.minWavelength.get() == 1700.0
+
+
+def test_choosing_another_mineral_fits_the_plot_to_it_after_a_zoom(dialog, qtbot):
+    """Zooming turned the plot's auto-range off, so the next mineral kept the
+    zoomed range and could be drawn off the plot."""
+    _analyze(dialog, qtbot)
+    viewBox = dialog.fitPlot.getPlotItem().getViewBox()
+    dialog.table.selectRow(0)
+    viewBox.setYRange(100.0, 101.0)  # as a zoom or pan leaves it: off the data
+
+    dialog.table.selectRow(3)
+    fit = dialog._fits[3]
+    values = np.concatenate([fit.target, fit.fit])
+    values = values[np.isfinite(values)]
+
+    def fitted() -> None:  # pyqtgraph applies auto-range on the next update
+        low, high = viewBox.viewRange()[1]
+        assert low <= values.min() and values.max() <= high
+
+    qtbot.waitUntil(fitted, timeout=2000)
