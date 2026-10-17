@@ -97,13 +97,15 @@ Hourglass):
 - **Scroll over an axis** zooms only that axis, about the cursor. Over the
   Y axis this stretches the spectra vertically, so shallow absorption
   features look deeper; over the X axis it narrows the wavelength range.
+- **Drag on an axis** moves only that axis; **right-drag on an axis**
+  stretches only that axis.
 
 A Y stretch stays as new spectra arrive until you reset it with **Fit to
 Data** under **View** (or by setting **Range** back to **Auto**). Under
 **Range**, any pan or zoom turns **Auto** into **Manual**. In **Fit Y To X
 Range**, changing X keeps that mode and refits Y to the data in the new
-window, but scrolling over the Y axis switches to **Manual**, keeping the
-stretched view. **X View Range** and **Y View Range** show the range on
+window, but scrolling or dragging on the Y axis switches to **Manual**,
+keeping the view you made. **X View Range** and **Y View Range** show the range on
 screen, so you can note them for a figure.
 
 The Linked Images spectra and the FATT window's fit plot work the same

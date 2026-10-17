@@ -1,15 +1,18 @@
 """Scrolling over an axis zooms that axis alone, as in the FATT window's plot:
 over the Y axis it stretches the spectra vertically, and the stretch stays
-(through new spectra) in every range mode until the user resets the view."""
+(through new spectra) in every range mode until the user resets the view.
+A drag on the Y axis is kept the same way; plain drags in the plot are not
+changed."""
 
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6.QtCore import QPoint, QPointF, Qt
-from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent, QWheelEvent
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from varda.common.entities import VardaRaster
+from varda.common.vec2 import Vec2
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.plotting.pixel_spectra_plot import PixelSpectraPlotWidget
 from varda.plotting.plot import RangeMode, VardaPlotWidget
@@ -195,3 +198,78 @@ def test_the_linked_images_spectra_keep_a_y_stretch_like_fatt(qtbot):
     panel.showAt([np.array([3.0, 2.0])])  # the cursor moves on
     _settle(qtbot, panel, viewBox)
     assert viewBox.viewRange()[1] == pytest.approx(yAfter)
+
+
+def _drag(
+    qtbot,
+    view: pg.GraphicsView,
+    start: QPointF,
+    offset: QPointF,
+    button: Qt.MouseButton = Qt.MouseButton.LeftButton,
+) -> None:
+    """A real mouse drag on the view from ``start`` by ``offset`` (scene px),
+    its moves spaced out as pyqtgraph drops ones that come too fast."""
+    viewport = view.viewport()
+    assert viewport is not None
+
+    def send(kind: QEvent.Type, scenePos: QPointF, buttons: Qt.MouseButton) -> None:
+        pos = QPointF(view.mapFromScene(scenePos))
+        QApplication.sendEvent(
+            viewport,
+            QMouseEvent(
+                kind,
+                pos,
+                QPointF(viewport.mapToGlobal(pos.toPoint())),
+                button,
+                buttons,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+
+    send(QEvent.Type.MouseButtonPress, start, button)
+    for step in range(1, 6):
+        qtbot.wait(25)
+        send(QEvent.Type.MouseMove, start + offset * (step / 5), button)
+    send(QEvent.Type.MouseButtonRelease, start + offset, Qt.MouseButton.NoButton)
+
+
+def _fitYInsideTheData(qtbot, widget: VardaPlotWidget) -> None:
+    """Fit Y to an X window inside the data, leaving room to pan (the view
+    can't go past the data's extent)."""
+    widget.viewConfig.rangeMode.set(RangeMode.FIT_Y_TO_X_RANGE)
+    widget.rangeConfig.viewRangeX.set(Vec2(1000.0, 1150.0))
+    _settle(qtbot, widget, widget.viewBox)
+
+
+@pytest.mark.parametrize(
+    "button", [Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton]
+)
+def test_dragging_on_the_y_axis_in_fit_y_mode_keeps_the_new_y_view(
+    qtbot, widget, button
+):
+    _fitYInsideTheData(qtbot, widget)
+    xBefore, yBefore = widget.viewBox.viewRange()
+
+    _drag(qtbot, widget.gv, _overAxis(widget.plotItem, "left"), QPointF(0, 60), button)
+    _settle(qtbot, widget, widget.viewBox)
+    xAfter, yAfter = widget.viewBox.viewRange()
+    assert xAfter == pytest.approx(xBefore)
+    assert yAfter != pytest.approx(yBefore)  # panned (left) or stretched (right)
+    assert widget.viewConfig.rangeMode.value is RangeMode.MANUAL
+    yBox = widget.rangeConfig.viewRangeY.value
+    assert (yBox.x, yBox.y) == pytest.approx(tuple(yAfter))
+
+    widget.plot(X, _spectrum(0.45), name="second")
+    _settle(qtbot, widget, widget.viewBox)
+    assert widget.viewBox.viewRange()[1] == pytest.approx(yAfter)
+
+
+def test_a_plain_drag_in_the_plot_keeps_fit_y_mode(qtbot, widget):
+    _fitYInsideTheData(qtbot, widget)
+    xBefore = widget.viewBox.viewRange()[0]
+
+    center = widget.viewBox.sceneBoundingRect().center()
+    _drag(qtbot, widget.gv, center, QPointF(80, 0))
+    _settle(qtbot, widget, widget.viewBox)
+    assert widget.viewBox.viewRange()[0] != pytest.approx(xBefore)
+    assert widget.viewConfig.rangeMode.value is RangeMode.FIT_Y_TO_X_RANGE

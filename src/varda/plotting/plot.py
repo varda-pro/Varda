@@ -234,7 +234,8 @@ class ViewConfig(ParameterGroup):
         RangeMode.AUTO,
         "Auto fits both axes to all data. Fit Y To X Range keeps your X window "
         "and refits Y to the data inside it whenever spectra change (scrolling "
-        "over the Y axis takes Y over: Manual). Manual uses the ranges below.",
+        "or dragging on the Y axis takes Y over: Manual). Manual uses the "
+        "ranges below.",
     )
     showLegend = BoolParameter("Show Legend", True, "Show the curve legend.")
     showDataPoints = BoolParameter(
@@ -414,14 +415,14 @@ class VardaPlotWidget(QWidget):
         # sigRangeChangedManually fires only on user interaction (rubber-band
         # zoom, pan, wheel), not on programmatic setRange calls.
         self.viewBox.sigRangeChangedManually.connect(self._onUserViewChange)
-        self.viewBox.sigAxisWheel.connect(self._onAxisWheel)
+        self.viewBox.sigAxisGesture.connect(self._onAxisGesture)
 
         self.curveSettingsBox = SectionBox("Selected Curve", self._curvePlaceholder())
 
         hint = MutedLabel(
             "Drag to pan · Shift-drag to zoom to a box · Scroll to zoom · "
             "Scroll over an axis to zoom only it (over Y: stretch the spectra) · "
-            "Right-drag to stretch axes"
+            "Right-drag to stretch axes · Drag on an axis to move only it"
         )
         hint.setWordWrap(True)
 
@@ -610,8 +611,8 @@ class VardaPlotWidget(QWidget):
         # params to the new view. In Auto mode the user has taken over, so
         # switch to Manual. In Fit-Y mode keep the mode: the X window is
         # theirs, and Y goes back to fitting the data inside it (the mouse
-        # interaction turned Y auto-range off). Scrolling over the Y axis is
-        # the exception: _onAxisWheel has already switched to Manual.
+        # interaction turned Y auto-range off). Scrolling or dragging on the
+        # Y axis is the exception: _onAxisGesture has already gone Manual.
         self._seedManualRangeFromView()
         mode = self.viewConfig.rangeMode.value
         if mode is RangeMode.AUTO:
@@ -619,10 +620,10 @@ class VardaPlotWidget(QWidget):
         elif mode is RangeMode.FIT_Y_TO_X_RANGE:
             self.viewBox.enableAutoRange(pg.ViewBox.YAxis)
 
-    def _onAxisWheel(self, axis: int) -> None:
-        # Scrolling over the Y axis stretches Y. In Fit-Y mode the user has
-        # taken Y over, so go Manual (from the current view) rather than
-        # refitting the stretch away; the zoom itself follows.
+    def _onAxisGesture(self, axis: int) -> None:
+        # Scrolling or dragging on the Y axis stretches or moves Y. In Fit-Y
+        # mode the user has taken Y over, so go Manual (from the current view)
+        # rather than refitting their change away; the change itself follows.
         if axis == 1 and self.viewConfig.rangeMode.value is RangeMode.FIT_Y_TO_X_RANGE:
             self._seedManualRangeFromView()
             self.viewConfig.rangeMode.set(RangeMode.MANUAL)
