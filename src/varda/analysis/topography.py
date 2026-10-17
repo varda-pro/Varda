@@ -42,6 +42,16 @@ def pixelSize(image: VardaRaster) -> tuple[float, float]:
     ) or 1.0
 
 
+def gridDirections(image: VardaRaster) -> tuple[float, float]:
+    """Which way east and north lie on the grid: +1 when columns run east
+    and rows run south (up is north), -1 for an axis a map projection flips
+    (a south-up or mirrored transform)."""
+    if image.crs is None:
+        return 1.0, 1.0
+    transform = image.transform
+    return float(np.sign(transform.a) or 1.0), float(-np.sign(transform.e) or 1.0)
+
+
 def gradients(
     elevation: np.ndarray,
     dx: float,
@@ -64,15 +74,24 @@ def slopeAspect(east: np.ndarray, north: np.ndarray) -> tuple[np.ndarray, np.nda
     return slope, np.where((east == 0) & (north == 0), np.nan, aspect)
 
 
+def illuminationCosine(
+    slope: np.ndarray, aspect: np.ndarray, azimuth: float, elevation: float
+) -> np.ndarray:
+    """cos(i), i the angle between the sun and each slope's normal:
+    cos(s) sin(e) + sin(s) cos(e) cos(azimuth - aspect), for slope s and the
+    sun's elevation e (all in degrees). Zero or less where a slope faces
+    away from the sun (self-shadow); no cast shadows."""
+    s, a = np.radians(slope), np.radians(np.nan_to_num(aspect))
+    e = np.radians(elevation)
+    return np.cos(s) * np.sin(e) + np.sin(s) * np.cos(e) * np.cos(
+        np.radians(azimuth) - a
+    )
+
+
 def hillshade(
     slope: np.ndarray, aspect: np.ndarray, azimuth: float, elevation: float
 ) -> np.ndarray:
-    zenith = np.radians(90.0 - elevation)
-    s, a = np.radians(slope), np.radians(np.nan_to_num(aspect))
-    shade = np.cos(zenith) * np.cos(s) + np.sin(zenith) * np.sin(s) * np.cos(
-        np.radians(azimuth) - a
-    )
-    return np.clip(shade, 0.0, 1.0)
+    return np.clip(illuminationCosine(slope, aspect, azimuth, elevation), 0.0, 1.0)
 
 
 class TerrainAnalysis(Analysis):
@@ -136,13 +155,7 @@ class TerrainAnalysis(Analysis):
         )
         dx, dy = pixelSize(image)
         perPixel = not hasPixelSize(image)
-        # Which way is east and north on the grid: up is north unless a map
-        # projection says otherwise (a south-up or mirrored transform)
-        transform = image.transform
-        eastSign, northSign = 1.0, 1.0
-        if image.crs is not None:
-            eastSign = float(np.sign(transform.a) or 1.0)
-            northSign = float(-np.sign(transform.e) or 1.0)
+        eastSign, northSign = gridDirections(image)
         east, north = gradients(elevation, dx, dy, eastSign, northSign)
         reportProgress(50, "computing terrain")
         output = self.output.value

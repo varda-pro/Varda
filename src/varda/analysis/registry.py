@@ -18,6 +18,7 @@ from varda.analysis.image_math import (
     ThresholdToMaskAnalysis,
 )
 from varda.analysis.sensor_bands import SensorBandsAnalysis
+from varda.analysis.shadow_mask import ShadowMaskAnalysis
 from varda.analysis.detection import (
     AceAnalysis,
     LocalRxAnalysis,
@@ -83,6 +84,7 @@ ANALYSES: list[type[Analysis]] = [
     BandMathAnalysis,
     ImageArithmeticAnalysis,
     ThresholdToMaskAnalysis,
+    ShadowMaskAnalysis,
     RoiToMaskAnalysis,
     ApplyMaskAnalysis,
     ContinuumRemovalAnalysis,

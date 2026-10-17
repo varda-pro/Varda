@@ -17,6 +17,8 @@ import re
 
 import attrs
 import numpy as np
+import rasterio
+from rasterio.errors import RasterioError
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,8 @@ _BAND_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "target_id": ("target id",),
     "segment_id": ("segment id (counter)", "segment id", "segment"),
+    # the solar incidence angle to the reference surface, not the MOLA-local one
+    "incidence": ("ina at areoid",),
 }
 
 
@@ -265,3 +269,43 @@ def resolveGeometryFile(sourceFilename: str) -> str | None:
     logger.debug("CRISM GEOMETRY: NO geometry file path")
 
     return None
+
+
+@attrs.frozen
+class Incidence:
+    """The solar incidence angle at the areoid over a CRISM scene, in degrees."""
+
+    mean: float
+    low: float
+    high: float
+    path: str  # the DDR it was read from
+
+
+def sceneIncidence(sourceFilename: str) -> Incidence | None:
+    """The solar incidence angle at the areoid (the DDR's "INA at areoid"
+    band) over the scene of a CRISM product, or None without a DDR that has
+    it. The DDR gives no solar azimuth."""
+    geomPath = resolveGeometryFile(sourceFilename)
+    if geomPath is None:
+        return None
+    try:
+        with rasterio.open(geomPath) as geom:
+            index = findBandIndex(geom.descriptions or (), "incidence")
+            if index is None:
+                return None
+            values = geom.read(index).astype(np.float64)
+            if geom.nodata is not None:
+                values[values == geom.nodata] = np.nan
+    except RasterioError as e:
+        logger.warning("Failed to read DDR geometry %s: %s", geomPath, e)
+        return None
+    # CRISM marks missing values with 65535
+    values[(values < 0) | (values > 180)] = np.nan
+    if not np.isfinite(values).any():
+        return None
+    return Incidence(
+        float(np.nanmean(values)),
+        float(np.nanmin(values)),
+        float(np.nanmax(values)),
+        geomPath,
+    )
