@@ -14,7 +14,8 @@ Four passes over the lines:
   per-pixel fit gives the elevation model (S4.C).
 - **B, per chunk** of ``CHUNK_LINES`` lines, read with
   ``despike.ALONG_TRACK_HALO`` lines on each side: the sample mask (invalid
-  samples, columns without a wavelength, bad pixels, slew lines), σ,
+  samples, columns without a wavelength, slew lines; not the BP-flagged
+  elements, which the calibration already interpolated), σ,
   photometry, despike and the atmospheric fit and correction, into a float32
   work memmap of I/F and σ under ``.work/``.
 - **C**: the destripe frame (estimated from the work memmap, off by default),
@@ -365,8 +366,9 @@ class _Run:
         self.maskCounts = {
             "invalidSamples": 0,
             "noWavelength": 0,
-            "badPixel": 0,
             "slewLine": 0,
+            # BP-flagged samples the calibration already replaced: counted, kept
+            "badPixelInterpolated": 0,
         }
         # set by the passes, in order
         self.status: list[CalibrationFileStatus] = []
@@ -449,7 +451,15 @@ class _Run:
 
     def _read(self, lo: int, hi: int, tally: tuple[int, int] | None) -> np.ndarray:
         """TRR3 lines [lo, hi) with every masked sample NaN; ``tally`` (start,
-        stop) counts each mask reason over those lines."""
+        stop) counts each mask reason over those lines.
+
+        Elements flagged in the BP CDRs are not masked: the calibration has
+        already replaced each with the mean of its good neighbors in the same
+        detector row (DPSIS §2.6, the a priori mask, and §2.15), so the TRR3
+        holds interpolated I/F there, as the MTRDRs do. Masking them dropped 17%
+        of FRS00031442's samples (the 2014 BPs flag 14–24% of the elements) and
+        left 98% of its pixels with a gap in the CO2 window. They are counted
+        (``badPixelInterpolated``)."""
         cube = self.trr3.lines(slice(lo, hi))
         invalid = np.isnan(cube)
         inner = slice(tally[0] - lo, tally[1] - lo) if tally is not None else None
@@ -459,14 +469,15 @@ class _Run:
         masks = [
             ("noWavelength", np.broadcast_to(~np.isfinite(self.wavelengths), shape))
         ]
-        if self.badPixels is not None:
-            masks.append(("badPixel", np.broadcast_to(self.badPixels, shape)))
         slew = ~self.usable[lo:hi]
         masks.append(("slewLine", np.broadcast_to(slew[:, None, None], shape)))
         for reason, mask in masks:
             if inner is not None:
                 self.maskCounts[reason] += int((mask & ~invalid)[inner].sum())
             invalid |= mask
+        if inner is not None and self.badPixels is not None:
+            interpolated = np.broadcast_to(self.badPixels, shape) & ~invalid
+            self.maskCounts["badPixelInterpolated"] += int(interpolated[inner].sum())
         cube[invalid] = np.nan
         return cube
 

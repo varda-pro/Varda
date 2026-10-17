@@ -272,9 +272,12 @@ Notation: x is the detector column, t the line, λ the band; R is I/F, and
     65535). It is BIL with an appended ROWNUM table (M3).
   - The DDR (BSQ, 14 bands).
   - The WA CDR named by `MRO:WAVELENGTH_FILE_NAME`.
-- **Invalid samples:** 65535, values below 1e-6 (denormals occur, M3),
-  non-scene columns (outside WA-valid columns 29–632) and bad detector
-  elements from the BP CDR. These become a sample mask.
+- **Invalid samples:** 65535, values below 1e-6 (denormals occur, M3) and
+  non-scene columns (outside WA-valid columns 29–632). These become a sample
+  mask. Elements flagged in the BP CDRs are *not* masked: the calibration
+  already replaced them by interpolation along the detector row (DPSIS §2.6
+  and §2.15), as the MTRDRs use them; they are counted (Task 23: masking them
+  dropped 17% of FRS00031442's samples).
 - **Masked rows:** slew and edge rows, using the step-size heuristic from
   jezero-rim-mapping (MIT, attributed).
 - **Provenance:** the counts of each mask reason.
@@ -633,6 +636,9 @@ product type:
   makes the choice robust anyway.
 
 ## Validation design (Phase 1 definition of done)
+
+Results (Task 23): `crism/phase1-validation.md`, with the measured causes of
+the criteria not met and the decisions they need (D9–D13).
 
 Tolerances come from the first measurements (M1–M11) or from each
 estimator's own predicted uncertainty, never from round numbers. All of them

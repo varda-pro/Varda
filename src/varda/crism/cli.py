@@ -40,7 +40,7 @@ from varda.crism.observation import CrismObservation
 from varda.crism.pipeline import ColumnResiduals, columnResiduals, process
 from varda.crism.readers import readTrr3
 from varda.crism.recipe import Recipe, recipeFromDict
-from varda.crism.validation import co2Residual
+from varda.crism.validation import CO2_WINDOW_NM, co2Residual
 from varda.crism.validation_report import validate
 
 EXIT_FAILED = 1
@@ -262,7 +262,13 @@ def _co2Median(column: ColumnResiduals, basis: ArtifactBasis | None) -> float:
             path = path + scale * basis.spectra
     with np.errstate(invalid="ignore", over="ignore"):
         corrected = column.spectra * np.exp(-fit.beta[:, None] * path)
-    residual = co2Residual(column.wavelengths, corrected)
+        window = (column.wavelengths > CO2_WINDOW_NM[0]) & (
+            column.wavelengths < CO2_WINDOW_NM[1]
+        )
+    covered = window.sum(axis=1) >= 4  # not the columns without wavelengths
+    if not covered.any():
+        return math.nan
+    residual = co2Residual(column.wavelengths[covered], corrected[covered])
     finite = residual[np.isfinite(residual)]
     return float(np.median(finite)) if finite.size else math.nan
 

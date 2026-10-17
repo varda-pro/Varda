@@ -57,13 +57,26 @@ are written in Phase 1, test-first. Design:
 **R3. Invalid samples.**
 - **Decision:** 65535 (DPSIS App. L §2.2); values below 1e-6 (denormals
   such as 1.5e-44 occur, M3); columns outside the WA-valid range (29–632 for
-  WA 490947778566, M4); elements flagged in the BP CDR.
-- **Confidence:** high for 65535 and WA; medium for the 1e-6 floor.
+  WA 490947778566, M4). Elements flagged in the BP CDRs are **not** invalid
+  (Task 23): the calibration already replaced each with the mean of its good
+  neighbors in the same detector row (DPSIS §2.6, the a priori mask, and
+  §2.15, the ex post facto correction), so the TRR3 holds interpolated I/F
+  there, as the MTRDRs use it. They are counted (`badPixelInterpolated` in the
+  provenance's mask record).
+- **Why changed (Task 23):** the 2014 BPs flag 13.7% and 24.1% of the 280,320
+  elements (the two background BPs of each FRS); masking their union dropped
+  9.3 M (17%) of FRS00031442's samples and left 97–98% of the FRSs' map pixels
+  with a gap in the CO2 window, so V3's per-pixel metric covered 1.8–3.0% of
+  the pixels. Task 20's FRS runs were offline (no BPs) and never saw it.
+- **Confidence:** high for 65535, WA and BP (primary documentation); medium
+  for the 1e-6 floor.
 - **Test:** `src/varda/crism/_tests/test_readers.py::test_trr3_layout_and_nodata` (65535, below 1e-6 and non-finite
   samples); the WA column range, BP flags and slew lines are applied by the
   pipeline's mask, and end to end (invalid columns, lines and a band are 65535
   in every data product, nothing non-finite is written)
-  `src/varda/crism/_tests/test_pipeline.py::test_invalid_regions_become_nodata`.
+  `src/varda/crism/_tests/test_pipeline.py::test_invalid_regions_become_nodata`;
+  BP-flagged elements kept:
+  `src/varda/crism/_tests/test_pipeline.py::test_bad_pixel_elements_are_kept`.
 
 **R4. DDR.**
 - **Decision:** 14 bands, BSQ, in label order: INA areoid, EMA areoid,
@@ -373,6 +386,14 @@ are written in Phase 1, test-first. Design:
   worst to near-best, and FRS00031260 would flip from 08608 to 061C4), so
   the score would mostly measure how well each basis was learned, not the
   transmission.
+- **CAT comparison (Task 23,** `phase1-validation.md`**):** CAT 7.4's
+  `crism_obs_info.txt` picks 11D87 (FRT00005850), 1B815 (FRS00031442,
+  FRS00031260) and 0A93E (FRS0002FE75). With the PDS ATs ours agrees on
+  FRS0002FE75 (0A93E); 11D87 and 1B815 are not PDS scans. With the CAT VS
+  ADRs too, CAT's scan ranks 3rd–7th of 23 in our score and ours picks
+  06822:VS, 2815C:VS, 28D04:VS and 2815C:VS (in the order above). Forcing 11D87:VS on FRT00005850 worsens our CO2
+  residual (0.00665 → 0.00783) and our agreement with the MTRDR (we apply its
+  transmission without CAT's patch).
 - **Test:** `test_atmosphere.py::test_selects_injected_transmission` (true
   AT against copies shifted 1.5 nm and scaled in depth, 1 − k(1 − T) with
   k = 0.9, 1.1; a power T^k is no decoy, since β absorbs k exactly) and
@@ -531,8 +552,26 @@ are written in Phase 1, test-first. Design:
     (`ArtifactBasis.transmissionKey`, `"061C4:AT"`; an AT and a VS ADR of
     one scan differ), stored as `resources/artifacts/<scan>_<AT|VS>.npz`
     (`artifactFileName`: ':' becomes '_') with a JSON metadata entry (key,
-    source observations, the training SCLK span, Varda version). No basis is
-    bundled yet (Task 23).
+    source observations, the training SCLK span, Varda version), compressed.
+  - **Bundled (Task 23):** `061C4_AT.npz`, `0A93E_AT.npz`, `08608_AT.npz`, the
+    scans the pipeline chooses for FRS00031442, FRS0002FE75 and FRS00031260.
+    Each is learned from all three FRSs under that scan (`learn-artifacts
+    --scan`): with the pipeline's own choice each key holds one observation,
+    which allows no leave-one-out. Training span SCLK 1084995594–1090233681
+    (2014-05-19 to 2014-07-19), so the gate serves 2014 only. FRT00005850
+    (06822, 2007) has no basis: one observation, and the FRSs' basis worsens
+    it. Leave-one-out (column CO2 residual, none → held out, BP elements kept):
+    061C4 −46%, −41%, −52%; 0A93E −64%, −39%, −62%; 08608 −41%, −33%, −44%
+    (FRS00031442, FRS0002FE75, FRS00031260); every one ≥ 30%, so
+    `artifactModel` stays on.
+  - **Effect on the products (Task 23):** per-pixel CO2 residual 0.0073–0.0077
+    → 0.0040–0.0052 (leave-one-out basis 0.0044–0.0054). The basis moves the
+    D2300 / BD2290 / BD1900_2 medians by −0.0007 / 0.0000 / +0.0012
+    (FRS00031442), −0.0018 / −0.0001 / +0.0018 (FRS0002FE75) and −0.0009 /
+    0.0000 / +0.0035 (FRS00031260), against crater-floor repeatabilities
+    0.0015 / 0.0010 / 0.0019: two of nine exceed it (decision D12 in
+    `phase1-validation.md`). A leave-one-out basis shifts them nearly as much,
+    so it is the basis, not in-sample learning.
   - **Epoch gate (fix round 1):** `bundledArtifactBasis(key, samples,
     bands, sclk)` returns a `BasisLookup(basis, reason)`: the basis only
     when the file's key is the transmission's, its columns and bands are the
@@ -610,8 +649,16 @@ are written in Phase 1, test-first. Design:
   `::test_bundled_basis_lookup`, `::test_learn_rejects_mismatched_inputs`,
   `::test_artifact_scale_must_be_finite`,
   `::test_artifact_basis_leave_one_out` (data-gated: the three FRSs under
-  061C4:AT, each held out reduced by ≥ 30%; completed in Task 23). If D3
-  allows, a comparison with the VS ADR artifact spectra (Task 23).
+  061C4:AT, each held out reduced by ≥ 30%);
+  `src/varda/crism/_tests/test_regression.py::test_artifact_basis_leave_one_out`
+  (each bundled scan, the pipeline's `columnResiduals` path),
+  `::test_bundled_bases_serve_the_frss_only`,
+  `::test_artifact_basis_preserves_mineral_medians` (Task 14's review: ≤ the
+  repeatability; two xfail) and `::test_artifact_basis_mineral_shift_achieved`.
+  **VS ADR comparison (Task 23):** the V2 shape ratio ours ÷ MTRDR has a 2 µm
+  bowl (A7) that correlates −0.81/−0.87 with CAT's 11D87 McGuire/Pelkey
+  artifact spectra: the MTRDR has the patch, which our high-passed basis
+  cannot hold.
 
 **A7. A curve-of-growth term is not added.**
 - **Decision:** no γ (ln T)² term in Phase 1.
@@ -623,6 +670,12 @@ are written in Phase 1, test-first. Design:
   −3% at an artifact RMS of 0.02) that neither A6 nor a free γ can
   separate from β and the continuum; revisit if V2/V3 show a 2 µm bowl
   against the MTRDRs.
+- **V2 shows it (Task 23):** on FRT00005850 ours ÷ MTRDR (shape-normalized)
+  falls to 0.966 at 2080–2086 nm and stays 1–2.4% low over 1.875–2.21 µm,
+  the same on every line (not EGN), tracking 1 − CAT's VS ADR artifact
+  spectra (r = −0.81/−0.87). The V2 shape test is an xfail; the fix (CAT's
+  patch from the aux files, or a learned low-pass term) is decision D10 in
+  `phase1-validation.md`.
 - **Test:** none. This is a recorded negative result.
 
 ### Destripe
@@ -650,6 +703,12 @@ are written in Phase 1, test-first. Design:
   controller ruling after Task 15), available as an option: on FRS00031442
   M11 0.514% → 0.524%, cross-validated 0.693% → 0.720%; the method as first
   specified, 0.51% → 0.75%, cross-validated 0.69% → 1.32%.
+- **V2 (Task 23):** on FRT00005850 against its MTRDR, destripe on raises
+  every parameter map's Pearson r (D2300 0.785 → 0.795, BD2290 0.774 →
+  0.801, BD1900_2 0.627 → 0.663, BD2310 0.883 → 0.902) and lowers the CO2
+  residual (0.00665 → 0.00653). Ours has 2–4× the MTRDR's column-to-column
+  scatter in band depths (the MTRDR has RSC). The default is unchanged
+  pending decision D9 (`phase1-validation.md`).
 - **Confidence:** high for the order; medium for the model (one real scene).
 - **Test:** `test_destripe.py::test_removes_injected_stripes` (M11 metric
   against the truth: 0.56% → 0.045%, bar 0.05%).
@@ -823,6 +882,25 @@ are written in Phase 1, test-first. Design:
 - **Test:** `src/varda/crism/_tests/test_validation.py::test_bd2310_matches_prototype`;
   the Viviano-Beck parameters (ruling P2) in
   `test_validation.py::test_summary_parameter_depth`.
+
+### Phase 1 validation (Task 23)
+
+**Q1. V2 and V3 against the approved tolerances.**
+- **Result:** every number, the attribution and the decisions are in
+  `phase1-validation.md`. Met: the grid, geolocation, CO2 (V2 and V3, with
+  and without the basis), FRS00031442's shape χ² against the crater-floor
+  MTRDRs, the artifact basis's leave-one-out check, four of five biases.
+  Not met, each an xfail with its measured cause: Pearson r ≥ 0.90 (OLINDEX3
+  EGN; the other four a cross-track, band-structured difference inside
+  Phase 1, not noise), the spectral shape (the 2 µm bowl, A7), the D2300
+  bias, the basis's effect on two mineral medians (A6), FRS00031442's BD2310
+  offset (between observations).
+- **Repeatability** (the prototype's code ported into the test, five
+  crater-floor MTRDRs): BD2310 0.00139, D2300 0.00152, BD2290 0.00103,
+  BD1900_2 0.00189, OLINDEX3 0.00595; the port reproduces the prototype's
+  BD2300 (0.00140) and BD1900 (0.00162) values and registration residuals.
+- **Test:** `src/varda/crism/_tests/test_regression.py` (data-gated, about
+  10 minutes).
 
 ## Measurements (2026-10-16)
 

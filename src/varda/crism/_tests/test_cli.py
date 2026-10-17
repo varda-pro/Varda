@@ -1,10 +1,12 @@
 """The command line: ``python -m varda.crism`` and ``Varda --crism`` (``crismMain``)."""
 
 import json
+import math
 import re
 import shutil
 from pathlib import Path
 
+import attrs
 import numpy as np
 import pytest
 import rasterio
@@ -13,8 +15,10 @@ from affine import Affine
 from varda.crism import calibration, cli
 from varda.crism._tests.synthetic import makeSyntheticCube, writeSyntheticObservation
 from varda.crism.atmosphere import artifactFileName, loadArtifactBasis
+from varda.crism.calibration import CalibrationLibrary
 from varda.crism.cli import crismMain
-from varda.crism.pipeline import ProcessResult
+from varda.crism.pipeline import ProcessResult, columnResiduals
+from varda.crism.recipe import Recipe
 from varda.image_loading.data_sources.envi_data_source import ENVIDataSource
 
 _WA = "cdr490947778566_wa0000000l_3"
@@ -167,6 +171,23 @@ def test_cli_learn_artifacts(
     table = capsys.readouterr().out
     assert basis.transmissionKey in table and "leave-one-out" in table.lower()
     assert table.count("FRS00031442") == 3
+
+
+def test_leave_one_out_skips_columns_without_wavelengths(tmp_path: Path) -> None:
+    """A real WA leaves the edge columns without wavelengths (FRS: 29–632
+    valid); the leave-one-out table must score the other columns, not raise
+    (it did on every real observation)."""
+    cube, truth = makeSyntheticCube(lines=64, seed=1)
+    observation = writeSyntheticObservation(tmp_path / "obs", cube, truth)
+    library = CalibrationLibrary([tmp_path / "obs"], tmp_path / "cache")
+    column = columnResiduals(observation, Recipe(), library)
+    wavelengths = column.wavelengths.copy()
+    wavelengths[:3] = np.nan
+    edged = attrs.evolve(column, wavelengths=wavelengths)
+    assert math.isfinite(cli._co2Median(edged, None))
+    assert cli._co2Median(edged, None) == pytest.approx(
+        cli._co2Median(column, None), rel=0.05
+    )
 
 
 def test_cli_validate_against_itself(

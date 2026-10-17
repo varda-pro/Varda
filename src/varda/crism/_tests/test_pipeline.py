@@ -19,6 +19,7 @@ import pytest
 
 from varda.crism import pipeline
 from varda.crism._tests.synthetic import makeSyntheticCube, writeSyntheticObservation
+from varda.crism._tests.test_calibration import copyCdr
 from varda.crism.brightness import segmentIds
 from varda.crism.calibration import CalibrationLibrary, atTable
 from varda.crism.labels import readLabel
@@ -253,6 +254,28 @@ def test_invalid_regions_become_nodata(cropDir: Path, tmp_path: Path) -> None:
         assert (mapped[..., nearest] == NODATA).all()
     # IN: the bands derived from the data too; the source position is kept
     assert (_raw(result.info)[hit][:, 2:] == NODATA).all()
+
+
+def test_bad_pixel_elements_are_kept(cropDir: Path, tmp_path: Path) -> None:
+    """Elements flagged in the BP CDRs hold I/F the calibration already
+    interpolated along the detector row (DPSIS §2.6), which the MTRDRs use:
+    they are counted, not masked (Task 23: masking them left 98% of
+    FRS00031442's pixels with a gap in the CO2 window)."""
+    observation = _copyCrop(cropDir, tmp_path / "obs")
+    trr3 = readTrr3(observation.irCube)
+    library = _library(tmp_path / "obs", tmp_path)
+    names = [entry.name for entry in library.status(trr3) if entry.kind == "BP"]
+    assert names
+    for name in names:  # a crop AT as the BP: no zero, so every element flagged
+        copyCdr(cropDir, _AT, tmp_path / "obs", name)
+    flagged = library.badPixels(trr3)
+    assert flagged is not None and flagged.all()
+
+    result = process(observation, _sensorRecipe(), tmp_path / "out", library=library)
+    assert result.sensorSpace is not None
+    assert np.isfinite(_read(result.sensorSpace)).mean() > 0.5
+    mask = json.loads(result.provenance.read_text())["steps"]["mask"]
+    assert mask["badPixelInterpolated"] > 0 and "badPixel" not in mask
 
 
 def test_sigma_chi2_synthetic(tmp_path: Path) -> None:

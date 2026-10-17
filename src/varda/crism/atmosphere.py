@@ -1239,7 +1239,8 @@ def artifactScale(
 
 
 def saveArtifactBasis(basis: ArtifactBasis, path: Path) -> None:
-    """``path`` (.npz): the spectra and a JSON ``metadata`` entry."""
+    """``path`` (.npz, compressed: the basis is 0 outside the fit window):
+    the spectra and a JSON ``metadata`` entry."""
     metadata = {
         "transmissionKey": basis.transmissionKey,
         "sourceObservations": list(basis.sourceObservations),
@@ -1247,7 +1248,7 @@ def saveArtifactBasis(basis: ArtifactBasis, path: Path) -> None:
         "createdWith": basis.createdWith,
     }
     with Path(path).open("wb") as file:
-        np.savez(
+        np.savez_compressed(
             file,
             spectra=np.asarray(basis.spectra, dtype=np.float64),
             metadata=np.array(json.dumps(metadata)),
