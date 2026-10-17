@@ -54,6 +54,8 @@ MEASURED = [c for c in ANALYSES if c.name not in NOT_MEASURED]
 
 @pytest.mark.parametrize("analysisClass", MEASURED, ids=lambda c: c.name)
 def test_the_estimate_bounds_what_the_analysis_uses(analysisClass: type[Analysis]):
+    if not analysisClass.isAvailable():  # an optional extra isn't installed
+        pytest.skip(f"{analysisClass.name} needs {analysisClass.requirement}")
     # A first run also pays one-time costs (imports, compiled kernels, caches:
     # 20 MiB for GLCM) that don't grow with the image: warm up on a small one
     warmUp = _scene(40, 40)
