@@ -1,6 +1,8 @@
 """Factor analysis target transformation finds the minerals mixed into a
 scene, and only where they are."""
 
+import tracemalloc
+
 import numpy as np
 import pytest
 
@@ -127,6 +129,38 @@ def test_windowed_fatt_leaves_windows_with_missing_pixels_out():
     )
     assert np.isnan(nrmse[0, 0, 0])  # only windows containing the NaN cover it
     assert np.isfinite(nrmse[0, 6, 6])
+
+
+def _windowedCase(rows: int, cols: int, bands: int) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(7)
+    cube = rng.random((rows, cols, bands)) + 0.1
+    cube[3, 5] = np.nan  # a window with a missing pixel is left out
+    return cube, rng.random((2, bands)) + 0.1
+
+
+def test_windowed_fatt_memory_stays_within_its_budget():
+    """The windows were all copied into one array before any was fitted:
+    (windows x bands x pixels per window) doubles, about 15 GiB per window
+    shape for a CRISM scene, which crashed a 16 GB laptop. Work now goes in
+    chunks sized to the budget, whatever the image size."""
+    cube, targets = _windowedCase(100, 120, 60)
+    budget = 32 * 2**20
+    tracemalloc.start()
+    windowedNrmse(cube, targets, factors=5, shapes=[(7, 7)], memoryBudget=budget)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    # the budget, plus results and a float64 copy of the cube (under 10 MiB)
+    assert peak < budget + 16 * 2**20
+
+
+def test_windowed_fatt_results_do_not_depend_on_the_budget():
+    cube, targets = _windowedCase(30, 40, 20)
+    shapes = [(7, 7), (5, 10), (10, 5)]
+    roomy = windowedNrmse(cube, targets, factors=5, shapes=shapes)
+    tight = windowedNrmse(
+        cube, targets, factors=5, shapes=shapes, memoryBudget=256 * 2**10
+    )
+    np.testing.assert_array_equal(roomy, tight)
 
 
 def test_spectra_are_sampled_from_usable_pixels_on_a_grid():
