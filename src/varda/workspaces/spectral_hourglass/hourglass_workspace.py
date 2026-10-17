@@ -42,6 +42,7 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.plotting.plot import VardaPlotWidget
 from varda.plotting.spectrum_matching import matchToReference
+from varda.spectral_libraries.spectrum import SpectrumOrigin
 from varda.workspaces.cropping import addCrop, cropMessage
 from varda.workspaces.spectral_hourglass.endmember_table import EndmemberTable
 from varda.workspaces.spectral_hourglass.hourglass_model import (
@@ -500,6 +501,9 @@ class SpectralHourglassWorkspace(QMainWindow):
         if self.model.prepared is None:
             return
         x = self._x()
+        model = self.model.image.bandModel
+        hasWavelengths = self.model.wavelengths is not None and model.isSpectral
+        plot.setSpectralUnit(model.unit if hasWavelengths else None)
         active = self.endmemberTable.activeEndmemberId()
         activeSpectrum = None
         # the active endmember last (on top), thick with a halo; the rest faded
@@ -512,6 +516,13 @@ class SpectralHourglassWorkspace(QMainWindow):
                 color.setAlphaF(_FADED_ALPHA)
             curve = plot.plot(
                 x, spectrum, color=Color.fromQColor(color), name=endmember.name
+            )
+            curve.origin = SpectrumOrigin(
+                self.model.image.name,
+                self.model.image.filePath or "",
+                f"endmember “{endmember.name}” (Spectral Hourglass)",
+                int(endmember.pixels.size),
+                "mean of its pixels' prepared spectra",
             )
             curve.config.width.set(_ACTIVE_WIDTH if isActive else _OTHER_WIDTH)
             if isActive:
@@ -532,9 +543,11 @@ class SpectralHourglassWorkspace(QMainWindow):
                     x, y, x, activeSpectrum, (float(x.min()), float(x.max()))
                 )
                 y = y * scale + offset
-            plot.plot(
+            preview = plot.plot(
                 x, y, color=_LIBRARY_COLOR, name=f"{self._libraryPreview.name} (scaled)"
             )
+            # Add to Library copies the library spectrum, not this resampled view
+            preview.librarySpectrum = self._libraryPreview
 
     # --- starting over, saving and resuming --------------------------------------------------
 

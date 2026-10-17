@@ -6,6 +6,7 @@ from varda._actions import ALL_ACTIONS
 from varda._actions._menu_ids import MENUBAR, MenuId
 from varda._actions._processing_actions import (
     OPTIONAL_FEATURES_ACTION_ID,
+    SPECTRAL_LIBRARIES_ACTION_ID,
     categoryMenuId,
     processingActions,
     PROCESSING_SUBMENUS,
@@ -98,6 +99,13 @@ def test_optional_features_is_at_the_end_of_the_processing_menu():
     assert action.title == "Optional Features…"
     assert action.menus[0].id == MenuId.PROCESSING
     assert action.enablement is None  # usable before any image is open
+
+
+def test_spectral_libraries_is_in_the_processing_menu_without_an_image():
+    (action,) = [a for a in ALL_ACTIONS if a.id == SPECTRAL_LIBRARIES_ACTION_ID]
+    assert action.title == "Spectral Libraries…"
+    assert action.menus[0].id == MenuId.PROCESSING
+    assert action.enablement is None
 
 
 def test_band_parameters_is_offered_under_spectral_parameters():

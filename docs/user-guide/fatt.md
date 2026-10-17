@@ -34,8 +34,10 @@ with ratioed spectra, before reporting it.
    eigenvectors. More factors fit the targets better, but they also fit
    noise and processing artifacts, so expect more false positives. 10–15 is
    typical for CRISM.
-5. Pick a library (MICA numerators for CRISM, USGS minerals, or **Load
-   Library…**). Every spectrum is resampled to the image's bands and ranked
+5. Pick a library: any of Varda's [spectral libraries](spectral-libraries.md)
+   (MICA numerators for CRISM, USGS minerals, your own, or one loaded
+   anywhere in Varda), or **Load Library…** another, which then appears in
+   every library list and is remembered. Every spectrum is resampled to the image's bands and ranked
    by **normalized RMSE** (nRMSE, shown in units of 10⁻⁴): the RMSE after
    dividing both spectra by their sum, so brightness doesn't matter.
    **Angle (°)** is the spectral angle between the library spectrum and its
@@ -105,7 +107,9 @@ For the ranking:
   wavelength range and the number of bands.
 - The decomposition, the number of factors you used, and the suggested
   number (IND minimum or Hysime count).
-- The library (name and version, or the file you loaded), the threshold,
+- The library (name and version, the file you loaded, or for one of your
+  own the records of its spectra; see
+  [Spectral libraries](spectral-libraries.md#reporting-and-citing)), the threshold,
   and each reported target's nRMSE and angle.
 
 For the map:

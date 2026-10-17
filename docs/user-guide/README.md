@@ -12,6 +12,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Viewing and measuring](viewing-and-measuring.md): display stretches, pixel spectra and library overlays, ROI statistics, the Ratio Explorer
 - [Finding data](finding-data.md): searching PDS ODE, STAC and footprint catalogs, and downloading products
 - [Image processing tools](image-processing.md): spatial filters, texture, color, class map tools, terrain and geometry
+- [Spectral libraries](spectral-libraries.md): the bundled libraries, building your own from image spectra, loading, exporting, and what's recorded with each spectrum
 - [Spectral analysis](spectral-analysis.md): continuum removal, spectral derivatives and slopes
 - [Classification](classification.md): MLP, CNN and ViT classifiers, maximum likelihood, Mahalanobis distance, k-means, hold-out validation and accuracy assessment
 - [Target and anomaly detection](target-detection.md): RX, ACE and the matched filter

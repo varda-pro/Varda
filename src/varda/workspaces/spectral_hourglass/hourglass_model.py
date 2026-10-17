@@ -46,6 +46,11 @@ from varda.analysis.unmixing import Constraint, UnmixingReport
 from varda.analysis.transforms import TRANSFORM_METADATA_KEY, transformMetadata
 from varda.common.entities import VardaRaster
 from varda.common.provenance import makeProvenance, setProvenance
+from varda.spectral_libraries.spectrum import (
+    LibrarySpectrum,
+    SpectrumOrigin,
+    spectrumFromImage,
+)
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -543,6 +548,57 @@ class HourglassModel:
         if flat.size == 0:
             return np.full(cube.shape[2], np.nan)
         return flat.mean(axis=0)
+
+    def endmemberStatistics(
+        self, endmemberId: int
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        """Mean and standard deviation (population, ddof 0) of an endmember's
+        valid prepared spectra, and how many pixels are behind them."""
+        cube = self.cube
+        pixels = self.endmember(endmemberId).pixels
+        flat = cube.reshape(-1, cube.shape[2])[pixels]
+        flat = flat[np.all(np.isfinite(flat), axis=1)]
+        if flat.size == 0:
+            missing = np.full(cube.shape[2], np.nan)
+            return missing, missing.copy(), 0
+        return flat.mean(axis=0), flat.std(axis=0), int(flat.shape[0])
+
+    def endmemberLibrarySpectra(
+        self, endmemberIds: Sequence[int]
+    ) -> list[LibrarySpectrum]:
+        """The endmembers' mean spectra (± 1 σ) as library spectra, recording
+        the image, the pixels behind each and how the spectra were prepared.
+        Empty when the bands have no wavelengths."""
+        prepared = self._require(self.prepared, Step.PREPARE)
+        if prepared.wavelengthsNm is None:
+            return []
+        note = "Spectral Hourglass endmember: mean of its pixels' prepared spectra"
+        settings = prepared.settings
+        if settings is not None and settings.wavelengthRange is not None:
+            lo, hi = settings.wavelengthRange
+            note += f"; bands kept {lo:g}–{hi:g} (image units)"
+        if settings is not None and settings.useIovf:
+            note += "; IOVF-filtered"
+        image = self.image
+        spectra = []
+        for endmemberId in endmemberIds:
+            endmember = self.endmember(endmemberId)
+            mean, std, count = self.endmemberStatistics(endmemberId)
+            if count == 0:
+                continue
+            origin = SpectrumOrigin(
+                image.name,
+                image.filePath or "",
+                f"endmember “{endmember.name}” (Spectral Hourglass)",
+                count,
+                note,
+            )
+            spectra.append(
+                spectrumFromImage(
+                    endmember.name, prepared.wavelengthsNm, mean, origin, std=std
+                )
+            )
+        return spectra
 
     def _pushUndo(self) -> None:
         snapshot = [attrs.evolve(e, pixels=e.pixels.copy()) for e in self.endmembers]

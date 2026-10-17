@@ -120,8 +120,14 @@ look deeper than they do at full range.
 
 ### Library overlays
 
-**Library Spectra** adds a spectrum from the bundled USGS library (splib07a,
-at the library's own spectral resolution, not resampled to your sensor).
+**Library Spectra** adds spectra from any of Varda's
+[spectral libraries](spectral-libraries.md): the bundled CRISM MICA
+numerators and USGS minerals (splib07a), your own libraries and libraries
+you loaded. **Libraries (n of m)** chooses which libraries to pick from
+(one, several or all), **Search by name** filters their spectra, and **Add
+to Plot** (or a double-click) plots the selected ones, at the library's own
+spectral resolution, not resampled to your sensor. **Manage…** opens the
+Spectral Library Manager.
 To make it easy to compare shapes, Varda **scales and offsets** the library
 curve so that, within the wavelengths on screen, its minimum and maximum
 match those of the selected curve (or the most recently added one). The
@@ -140,6 +146,14 @@ This is cosmetic, but it changes what a reader sees:
   **Y Scale** and **Y Offset**: what's plotted is value × scale + offset.
   Tell your CSV reader to skip lines starting with `#` (in pandas,
   `comment="#"`).
+
+### Saving spectra to a library
+
+Click a curve (a pixel spectrum, box mean or ROI mean) and press **Add to
+Library…** under **Selected Curve** to save it in one of your spectral
+libraries, with the image, the pixel or region, the number of pixels, its
+± 1 σ for a mean, and the Varda version. Its own values are saved, not as
+scaled. See [Spectral libraries](spectral-libraries.md#adding-spectra-from-your-images).
 
 ## ROI statistics
 
@@ -263,8 +277,9 @@ for what applies to every process.
 ### What to state
 
 - For figures: the bands, stretch and limits, as in [the caption
-  section](#stating-the-display-in-a-figure-caption), and whether library
-  spectra are scaled and offset.
+  section](#stating-the-display-in-a-figure-caption), whether library
+  spectra are scaled and offset, and which library each came from (cite it;
+  see [Spectral libraries](spectral-libraries.md#reporting-and-citing)).
 - For spectra: whether each is a single pixel, a box (its size) or an ROI
   (its shape, how and where it was drawn, its pixel count), and that the
   plotted spread is ±1 population standard deviation.
@@ -283,8 +298,9 @@ for what applies to every process.
   projection's distortion. Areas in pixels are in pixel units, whatever
   the pixels' size on the ground.
 - **Library comparisons** are qualitative while the library curve is scaled:
-  the match of shapes says nothing about absolute reflectance. The library
-  is also at a finer spectral resolution than most sensors.
+  the match of shapes says nothing about absolute reflectance. Library
+  spectra are also at their own spectral resolution, often finer than your
+  sensor's.
 - **Stretches** don't affect any number on this page.
 
 ### References
@@ -294,3 +310,8 @@ for what applies to every process.
   H. A., Driscoll, R. L., & Klein, A. J. (2017). USGS Spectral Library
   Version 7. *U.S. Geological Survey Data Series 1035*.
   https://doi.org/10.3133/ds1035
+- CRISM MICA library: Viviano-Beck, C. E., Seelos, F. P., Murchie, S. L.,
+  et al. (2014). Revised CRISM spectral parameters and summary products
+  based on the currently detected mineral diversity on Mars. *Journal of
+  Geophysical Research: Planets*, 119(6), 1403–1431.
+- Your own and loaded libraries: see [Spectral libraries](spectral-libraries.md#reporting-and-citing).

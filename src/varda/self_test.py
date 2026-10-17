@@ -42,6 +42,8 @@ from varda.image_loading.raster_writer import writeRaster
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.kindling.checks import runChecks
 from varda.kindling.docs import EXAMPLES, apiReference
+from varda.spectral_libraries.formats import loadEnviLibrary, writeEnviLibrary
+from varda.spectral_libraries.store import bundledLibraries
 from varda.version import vardaVersion
 
 LOAD_TIMEOUT_S = 60
@@ -56,6 +58,10 @@ def runSelfTest(app: VardaApplication) -> int:
             ("main window", lambda: _mainWindow(app)),
             ("version", _version),
             ("brand assets", _brandAssets),
+            (
+                "spectral libraries",
+                lambda: _spectralLibraries(Path(folder) / "lib.sli"),
+            ),
             ("coordinate systems", _coordinateSystems),
             ("ENVI write and read", lambda: _roundTrip(image, Path(folder) / "a.img")),
             (
@@ -151,6 +157,17 @@ def _brandAssets() -> str:
     broken = [icon.name for icon in icons if not QSvgRenderer(str(icon)).isValid()]
     assert not broken, f"unreadable: {broken}"
     return f"{len(icons)} icons"
+
+
+def _spectralLibraries(path: Path) -> str:
+    """The bundled libraries are packaged, and a library writes and reads back."""
+    libraries = bundledLibraries()
+    sizes = {library.name: len(library.spectra) for library in libraries}
+    assert all(sizes.values()) and len(sizes) == 2, f"bundled: {sizes}"
+    spectra = libraries[0].spectra[:2]
+    loaded = loadEnviLibrary(writeEnviLibrary(path, spectra))
+    assert [s.name for s in loaded] == [s.name for s in spectra], "names differ"
+    return ", ".join(f"{name} ({size})" for name, size in sizes.items())
 
 
 def _coordinateSystems() -> str:

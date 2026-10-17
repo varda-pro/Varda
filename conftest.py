@@ -23,6 +23,7 @@ if sys.platform.startswith("linux"):
 import PyQt6.QtWebEngineWidgets  # noqa: E402, F401
 
 from varda.workspaces.terrain.terrain_view import TerrainView  # noqa: E402
+from varda.spectral_libraries.store import setDefaultStore  # noqa: E402
 from keyring.backend import KeyringBackend
 from PyQt6.QtWidgets import QApplication
 
@@ -54,6 +55,15 @@ def memoryKeyring():
     keyring.set_keyring(backend)
     yield backend
     keyring.set_keyring(previous)
+
+
+@pytest.fixture(autouse=True)
+def _freshLibraryStore():
+    """Each test starts with only the bundled spectral libraries, in memory:
+    nothing a test creates reaches the real app-data folder or the next test."""
+    setDefaultStore(None)
+    yield
+    setDefaultStore(None)
 
 
 @pytest.fixture(autouse=True, scope="session")

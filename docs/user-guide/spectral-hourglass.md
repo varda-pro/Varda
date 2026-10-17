@@ -36,17 +36,25 @@ re-running" when you change an earlier choice:
    spectral angle, absorption shape and binary encoding; select a match to
    overlay it, then **Use as Name** (**Identify All** records every
    endmember's best match). **Only** limits the comparison to a wavelength
-   window. Two libraries are bundled: the CRISM
+   window. The library list holds every
+   [spectral library](spectral-libraries.md) in Varda: the bundled CRISM
    MICA numerators (Viviano-Beck et al. 2014; picked automatically for CRISM
-   products) and USGS splib07 minerals. **Load Library…** adds your own (see
-   below; the **?** button beside it explains the formats).
+   products) and USGS splib07 minerals, your own libraries, and libraries
+   loaded anywhere in Varda. **Load Library…** loads another (see below; the
+   **?** button beside it explains the formats); it then appears in every
+   library list and is remembered.
 6. **Map** — SAM (class + angle images), linear unmixing (abundances + RMS
    error; fully constrained by default, or sum-to-one or unconstrained) or
    MTMF (matched-filter score + infeasibility, with a review plot whose
    threshold lines highlight detections live).
 
 Maps join the project's images (as can the MNF and PPI images); endmember
-classes can be saved as JSON or exported as a CSV spectral library.
+classes can be saved as JSON or exported as a CSV spectral library, and
+**Add to Library…** saves the selected endmembers' mean spectra (all of
+them, if none is selected) in one of your
+[spectral libraries](spectral-libraries.md#adding-spectra-from-your-images),
+each with its ± 1 σ, pixel count, the image, and a note that it is the mean
+of prepared spectra (the bands kept and whether IOVF filtered them).
 **Save Workflow…** keeps the settings, endmembers and PPI counts in one file,
 and the workspace is part of saved sessions.
 
@@ -113,7 +121,9 @@ covers them too; where they differ, it says so.
   drawn on the image), and each class's pixel count (the **Pixels**
   column). Each endmember spectrum is the mean of its pixels in the
   prepared (windowed, filtered) image.
-- **Identify:** the library and its version, any spectra you excluded, the
+- **Identify:** the library and its version (for one of your own, the
+  records of its spectra; see [Spectral libraries](spectral-libraries.md#reporting-and-citing)),
+  any spectra you excluded, the
   comparison window if **Only** was on, and for each name the score, angle
   and fit RMS, plus any "close" matches.
 - **Maps:** the method and its setting (SAM's maximum angle, the unmixing

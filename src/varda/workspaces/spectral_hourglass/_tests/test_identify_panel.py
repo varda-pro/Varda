@@ -3,12 +3,9 @@
 import pytest
 
 from synthetic_scene import WAVELENGTHS, endmemberSpectra, modelWithEndmembers
-from varda.analysis.spectral_library import (
-    LIBRARY_FORMAT_HELP,
-    MICA_LIBRARY_NAME,
-    USGS_LIBRARY_NAME,
-    LibrarySpectrum,
-)
+from varda.analysis.spectral_library import LibrarySpectrum
+from varda.spectral_libraries.formats import LIBRARY_FORMAT_HELP
+from varda.spectral_libraries.store import MICA_LIBRARY_NAME, USGS_LIBRARY_NAME
 from varda.workspaces.spectral_hourglass.identify_panel import IdentifyPanel
 
 

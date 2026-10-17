@@ -32,6 +32,7 @@ def make_split_image() -> Callable[[int, int, int, float, float], SimpleNamespac
         data[:, :half, :] = left_fill
         data[:, half:, :] = right_fill
         return SimpleNamespace(
+            name="split image",
             width=width,
             height=height,
             bandCount=bands,

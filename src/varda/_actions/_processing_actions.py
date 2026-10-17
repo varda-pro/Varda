@@ -30,6 +30,7 @@ from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
 from varda.context_keys import EXPR_HAS_IMAGES, EXPR_NEVER
 from varda.image_loading import ImageLoadingService
+from varda.library_manager.manager_window import openLibraryManager
 from varda.maingui import MainGUI
 from varda.optional_features.optional_features_dialog import openOptionalFeatures
 from varda.workspaces.mosaic.cam2map_dialog import Cam2mapDialog
@@ -268,6 +269,11 @@ def openCam2map(images: ProjectImages, mainGui: MainGUI) -> None:
     dialog.show()
 
 
+def openSpectralLibraries(mainGui: MainGUI) -> None:
+    """The Spectral Library Manager; non-modal, one at a time."""
+    openLibraryManager(mainGui)
+
+
 def openSpectralHourglass(images: ProjectImages, mainGui: MainGUI) -> None:
     NewSpectralHourglassDialog(images, parent=mainGui).connectOnAccept(
         mainGui.addTab
@@ -280,6 +286,7 @@ SPECTRAL_HOURGLASS_ACTION_ID = "varda.processing.spectral_hourglass"
 FATT_ACTION_ID = "varda.processing.fatt"
 CAM2MAP_ACTION_ID = "varda.processing.cam2map"
 OPTIONAL_FEATURES_ACTION_ID = "varda.processing.optional_features"
+SPECTRAL_LIBRARIES_ACTION_ID = "varda.processing.spectral_libraries"
 
 PROCESSING_SUBMENUS = processingSubmenus(MenuId.PROCESSING, ANALYSES)
 PROCESSING_ACTIONS = processingActions(
@@ -340,6 +347,16 @@ PROCESSING_ACTIONS = processingActions(
         ),
         callback=openCam2map,
         menus=[MenuRule(id=categoryMenuId(MenuId.PROCESSING, "Geometry"), order=99)],
+    ),
+    Action(
+        id=SPECTRAL_LIBRARIES_ACTION_ID,
+        title="Spectral Libraries…",
+        tooltip=(
+            "Browse the bundled spectral libraries, build your own from image "
+            "spectra, load ENVI/CSV/USGS libraries, and export them"
+        ),
+        callback=openSpectralLibraries,
+        menus=[MenuRule(id=MenuId.PROCESSING, group="8_libraries")],
     ),
     Action(
         id=OPTIONAL_FEATURES_ACTION_ID,
