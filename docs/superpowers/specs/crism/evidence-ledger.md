@@ -60,7 +60,10 @@ are written in Phase 1, test-first. Design:
   WA 490947778566, M4); elements flagged in the BP CDR.
 - **Confidence:** high for 65535 and WA; medium for the 1e-6 floor.
 - **Test:** `src/varda/crism/_tests/test_readers.py::test_trr3_layout_and_nodata` (65535, below 1e-6 and non-finite
-  samples; the WA column range and BP flags are applied in later tasks).
+  samples); the WA column range, BP flags and slew lines are applied by the
+  pipeline's mask, and end to end (invalid columns, lines and a band are 65535
+  in every data product, nothing non-finite is written)
+  `src/varda/crism/_tests/test_pipeline.py::test_invalid_regions_become_nodata`.
 
 **R4. DDR.**
 - **Decision:** 14 bands, BSQ, in label order: INA areoid, EMA areoid,
@@ -159,7 +162,9 @@ are written in Phase 1, test-first. Design:
   `test_noise.py::test_all_nan_band_is_nan_without_warnings`,
   `test_noise.py::test_texture_does_not_inflate_sigma` and
   `test_noise.py::test_real_sigma_is_the_chromatic_noise` (data-gated); the end-to-end
-  χ² check (V1) *(planned)*.
+  χ² check (V1), `test_pipeline.py::test_sigma_chi2_synthetic`. The pipeline
+  estimates σ on the raw I/F of Pass A's central lines and divides it by cos i
+  with the data.
 
 **N2. Random and systematic uncertainty are kept apart.**
 - **Decision:** σ holds random uncertainty only. The systematic terms
@@ -168,7 +173,16 @@ are written in Phase 1, test-first. Design:
 - **Source:** fusion prototype: instrument-noise χ² understates
   disagreement (shape χ² ≈ 5.6, M9).
 - **Confidence:** high, as a design principle.
-- **Test:** `test_pipeline.py::test_sigma_chi2_synthetic` *(planned)*.
+- **Measured (Task 20):** on the synthetic cube (seeds 0–3), the
+  sensor-space product's χ² against the truth, on the bland basalt unit and
+  about each band's mean residual, is 0.98–1.01 in every band group. What is
+  left in those means is systematic, as N2 intends: the shift fit is
+  +0.17 nm off on the library surfaces (A1) and β about 1% low, which offsets
+  single CO2 bands by up to 0.82σ; the raw χ² of 1900–2100 nm is 1.04–1.08 on
+  basalt and 1.38–1.53 on the hydrated and smectite units (A5). The
+  provenance reports the scan-choice, artifact-amplitude and destripe terms
+  per band; this fit bias is not among them.
+- **Test:** `test_pipeline.py::test_sigma_chi2_synthetic`.
 
 ### Despike
 

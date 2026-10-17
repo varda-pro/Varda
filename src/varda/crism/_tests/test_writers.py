@@ -126,6 +126,16 @@ def test_nan_written_as_nodata(tmp_path: Path) -> None:
     np.testing.assert_array_equal(data, expected.astype(np.float32))
 
 
+def test_write_band_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "x_vmtr.img"
+    cube = _cube()
+    with EnviCubeWriter(path, 3, 4, _bands(), _grid(), "", {}) as writer:
+        writer.writeBands(1, cube[:, :, 1:])
+        writer.writeBands(0, cube[:, :, :1])
+    expected = np.where(np.isfinite(cube), cube, NODATA).transpose(2, 0, 1)
+    np.testing.assert_array_equal(_read(path), expected.astype(np.float32))
+
+
 def test_unwritten_lines_are_nodata(tmp_path: Path) -> None:
     path = tmp_path / "x_vmtr.img"
     with EnviCubeWriter(path, 3, 4, _bands(), None, "", {}) as writer:

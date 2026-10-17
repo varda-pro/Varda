@@ -171,6 +171,26 @@ def test_all_ats_failing_raises(cropDir: Path, tmp_path: Path, trr3: Trr3):
     assert {f.kind for f in caught.value.files} == {"AT"}
 
 
+def test_other_local_period_satisfies_ensure(cropDir: Path, tmp_path: Path, trr3: Trr3):
+    # The crop AT is scan 08608's earlier period, not the one ranked best for
+    # the 2014 SCLK; offline, it is still a transmission the cube can use.
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    copyCdr(cropDir, AT, tmp_path / "cdr")
+    assert AT not in atNames(library(tmp_path), trr3)
+    lib = library(tmp_path, Recorder(OSError("offline")))
+    lib.ensure(trr3)
+    found = lib.transmissions(trr3, TransmissionSource.PDS_AT)
+    assert [f.sourceName.lower() for f in found] == [AT]
+
+
+def test_local_file(cropDir: Path, tmp_path: Path):
+    copyCdr(cropDir, AT, tmp_path / "cdr" / "CRISM_CDR" / "at")
+    lib = library(tmp_path)
+    path = lib.localFile("AT", AT.upper())
+    assert path == tmp_path / "cdr" / "CRISM_CDR" / "at" / (AT + ".img")
+    assert lib.localFile("WA", WA) is None
+
+
 def test_missing_bad_pixels_do_not_block(cropDir: Path, tmp_path: Path, trr3: Trr3):
     copyCdr(cropDir, WA, tmp_path / "cdr")
     lib = library(tmp_path)

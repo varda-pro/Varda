@@ -244,6 +244,11 @@ class CalibrationLibrary:
                 return image
         return None
 
+    def localFile(self, kind: str, stem: str) -> Path | None:
+        """The local ``.img`` of the CDR ``stem`` of ``kind`` (e.g. "AT"), any
+        case, or None; nothing is fetched."""
+        return self._find(kind, stem.lower())
+
     def _entry(
         self, kind: str, stem: str, required: bool = True, note: str = ""
     ) -> CalibrationFileStatus:
@@ -322,7 +327,8 @@ class CalibrationLibrary:
         """Fetch what ``status`` shows missing into the cache (BPs best effort)
         and return the final status, with a note on each file that could not be
         fetched. Raises ``MissingCalibrationError`` when the WA is missing or
-        no AT at all is available."""
+        no AT at all is available: not even another period of a scan, which
+        ``transmissions`` uses when the best-ranked one is absent."""
         for entry in self.status(trr3):
             if entry.localPath is None:
                 self._download(entry)
@@ -330,7 +336,12 @@ class CalibrationLibrary:
         wa = entries[0]
         ats = [e for e in entries if e.kind == "AT"]
         missing = [wa] if wa.localPath is None else []
-        if all(e.localPath is None for e in ats):
+        anyPeriod = any(
+            self._find("AT", row.name) is not None
+            for rows in self._rowsByScan(trr3).values()
+            for row in rows
+        )
+        if not anyPeriod:
             missing += ats
         if missing:
             raise MissingCalibrationError(missing)

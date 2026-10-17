@@ -121,6 +121,14 @@ class EnviCubeWriter:
             2, 0, 1
         )
 
+    def writeBands(self, firstBand: int, block: np.ndarray) -> None:
+        """Write ``block`` (lines, samples, bands): every line of the bands from
+        ``firstBand`` on, e.g. one band block of an area-weighted product."""
+        if self._map is None:
+            raise RuntimeError("EnviCubeWriter used outside its with block")
+        clean = np.where(np.isfinite(block), block, NODATA).astype(np.float32)
+        self._map[firstBand : firstBand + clean.shape[2]] = clean.transpose(2, 0, 1)
+
     def __exit__(
         self,
         excType: type[BaseException] | None,

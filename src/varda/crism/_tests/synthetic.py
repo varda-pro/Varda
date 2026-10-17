@@ -39,6 +39,9 @@ then spikes are added, where
 - spikes of 5–20 σ, either sign, at ``spikeRate`` per valid sample.
 """
 
+import math
+import re
+import shutil
 from functools import cache
 from pathlib import Path
 
@@ -48,10 +51,13 @@ from numpy.polynomial import legendre
 from scipy import ndimage
 
 from varda.analysis.spectral_library import LibrarySpectrum, loadUsgsLibrary, resampleTo
-from varda.crism.readers import readDetectorFrame, readTrr3
+from varda.crism.labels import ArrayLayout, readLabel
+from varda.crism.observation import CrismObservation
+from varda.crism.readers import DdrBand, readDetectorFrame, readTrr3
 
 _DATA = Path(__file__).parent / "data"
 _TRR3 = _DATA / "frs00031442_01_if168l_trr3.lbl"
+_DDR = _DATA / "frs00031442_01_de168l_ddr1.lbl"
 _WA = _DATA / "cdr490947778566_wa0000000l_3.lbl"
 _AT = _DATA / "cdr420862848019_at0000000l_7.lbl"
 
@@ -322,4 +328,165 @@ def makeSyntheticCube(
         artifact=artifact,
         columnUnitMask=units == _COLUMN_UNIT,
         units=units,
+    )
+
+
+# --- the observation as files (Task 20) ---------------------------------------------
+
+# A Jezero-like scene: pixel centers about 18 m apart, the swath turned a little
+SCENE_CENTER_DEG = (18.3, 77.4)  # (latitude N, longitude E)
+SCENE_PIXEL_M = 18.0
+SCENE_ROTATION_DEG = 8.0
+_MARS_RADIUS_M = 3396190.0
+_NODATA = 65535.0
+_LABEL_NOTE = "/* Varda synthetic observation, written by writeSyntheticObservation */"
+# DDR backplanes the synthetic does not model: constants
+_DDR_CONSTANTS = {
+    DdrBand.EMISSION_AREOID: 5.0,
+    DdrBand.PHASE: 55.0,
+    DdrBand.EMISSION_MOLA: 5.0,
+    DdrBand.SLOPE: 0.0,
+    DdrBand.SLOPE_AZIMUTH: 0.0,
+    DdrBand.THERMAL_INERTIA: 350.0,
+    DdrBand.ALBEDO: 0.2,
+    DdrBand.LOCAL_SOLAR_TIME: 15.0,
+    DdrBand.SPARE: _NODATA,
+}
+
+
+def _sub(pattern: str, replacement: str, text: str) -> str:
+    """Replace the first match of ``pattern``; a miss is a bug in the template."""
+    result, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    assert count == 1, f"label anchor not found: {pattern}"
+    return result
+
+
+def _relabel(label: Path, lines: int, records: int, rownumRecord: int | None) -> str:
+    """The crop's label with its line count, file records and row-number table
+    pointer (1-based record) rewritten; the first FILE object is the image's."""
+    text = label.read_text()
+    text = _sub(r"^/\* Varda test crop:.*\*/$", _LABEL_NOTE, text)
+    text = _sub(r"^(\s*LINES\s*=\s*)\d+", rf"\g<1>{lines}", text)
+    text = _sub(r"^(\s*FILE_RECORDS\s*=\s*)\d+", rf"\g<1>{records}", text)
+    if rownumRecord is not None:
+        text = _sub(
+            r'^(\s*\^ROWNUM_TABLE\s*=\s*\(\s*"[^"]+"\s*,\s*)\d+',
+            rf"\g<1>{rownumRecord}",
+            text,
+        )
+    return text
+
+
+def _recordBytes(layout: ArrayLayout) -> int:
+    return layout.samples * layout.dtype.itemsize
+
+
+def _writeProduct(
+    label: Path, target: Path, image: np.ndarray, layout: ArrayLayout, table: bytes
+) -> None:
+    """``image`` in stored axis order, then ``table``, padded to whole records,
+    as ``target`` (.img) with the crop's label rewritten beside it."""
+    record = _recordBytes(layout)
+    data = np.where(np.isfinite(image), image, _NODATA).astype(layout.dtype).tobytes()
+    imageRecords = len(data) // record
+    payload = data + table
+    payload += bytes(-len(payload) % record)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.with_suffix(".img").write_bytes(payload)
+    target.with_suffix(".lbl").write_text(
+        _relabel(
+            label,
+            image.shape[0] if layout.interleave == "BIL" else image.shape[1],
+            len(payload) // record,
+            imageRecords + 1 if table else None,
+        )
+    )
+
+
+def _geometry(lines: int, samples: int) -> tuple[np.ndarray, np.ndarray]:
+    """Latitude and longitude of the pixel centers ``(l, s)``: lines run
+    south, samples east, both turned by ``SCENE_ROTATION_DEG``."""
+    rows, cols = np.mgrid[0:lines, 0:samples].astype(np.float64)
+    rows -= (lines - 1) / 2
+    cols -= (samples - 1) / 2
+    angle = math.radians(SCENE_ROTATION_DEG)
+    east = SCENE_PIXEL_M * (cols * math.cos(angle) + rows * math.sin(angle))
+    north = SCENE_PIXEL_M * (cols * math.sin(angle) - rows * math.cos(angle))
+    lat0, lon0 = SCENE_CENTER_DEG
+    lat = lat0 + np.degrees(north / _MARS_RADIUS_M)
+    lon = lon0 + np.degrees(east / (_MARS_RADIUS_M * math.cos(math.radians(lat0))))
+    return lat, lon
+
+
+def writeSyntheticObservation(
+    folder: Path, cube: np.ndarray, truth: SyntheticTruth
+) -> CrismObservation:
+    """Write ``cube`` and its truth as a raw observation the readers accept:
+    the TRR3 (``trdr/``, I/F times cos i, since the synthetic cube carries no
+    cos i factor), its DDR (``ddr/``: the truth's incidence, as the areoid and
+    the MOLA one, and elevation; latitude and longitude of a Jezero-like swath
+    of ~18 m pixels turned by 8°; the other backplanes constant), and the
+    calibration ``CalibrationLibrary`` finds offline in ``CRISM_CDR/``: the
+    crop's WA and an AT holding the truth's transmission. The labels are the
+    crops', with their line counts, records and pointers rewritten."""
+    folder = Path(folder)
+    lines, samples, bands = cube.shape
+    trr3 = readTrr3(_TRR3)
+    layout = trr3.label.image
+    if (samples, bands) != (layout.samples, layout.bands):
+        raise ValueError(
+            f"the cube is {samples} x {bands}; the crop template is "
+            f"{layout.samples} x {layout.bands}"
+        )
+    assert layout.rownumOffset is not None
+    table = layout.dataFile.read_bytes()[
+        layout.rownumOffset : layout.rownumOffset + 2 * bands
+    ]
+    cosine = np.cos(np.radians(truth.incidenceDeg))[..., None]
+    raw = cube * cosine
+    stored = (raw[:, :, ::-1] if trr3.flipped else raw).transpose(0, 2, 1)  # BIL
+    irCube = folder / "trdr" / _TRR3.with_suffix(".img").name
+    _writeProduct(_TRR3, irCube, stored, layout, table)
+
+    ddrLayout = readLabel(_DDR).image
+    lat, lon = _geometry(lines, samples)
+    planes = np.full((len(DdrBand), lines, samples), _NODATA)
+    planes[DdrBand.INCIDENCE_AREOID] = truth.incidenceDeg
+    planes[DdrBand.INCIDENCE_MOLA] = truth.incidenceDeg
+    planes[DdrBand.LATITUDE] = lat
+    planes[DdrBand.LONGITUDE] = lon
+    planes[DdrBand.ELEVATION] = truth.elevationM
+    for band, value in _DDR_CONSTANTS.items():
+        planes[band] = value
+    irDdr = folder / "ddr" / _DDR.with_suffix(".img").name
+    _writeProduct(_DDR, irDdr, planes, ddrLayout, b"")
+
+    calibration = folder / "CRISM_CDR"
+    for source, kind in ((_WA, "wa"), (_AT, "at")):
+        (calibration / kind).mkdir(parents=True, exist_ok=True)
+        for suffix in (".lbl", ".img"):
+            shutil.copyfile(
+                source.with_suffix(suffix),
+                calibration / kind / source.with_suffix(suffix).name,
+            )
+    at = readLabel(calibration / "at" / _AT.name).image
+    rows = readDetectorFrame(_AT).detectorRows
+    position = {int(row): i for i, row in enumerate(trr3.detectorRows)}
+    stored = np.memmap(
+        at.dataFile,
+        dtype=at.dtype,
+        mode="r+",
+        offset=at.offset,
+        shape=(1, at.bands, at.samples),
+    )
+    for j, row in enumerate(rows):
+        values = truth.transmission[:, position[int(row)]]
+        stored[0, j] = np.where(np.isfinite(values), values, _NODATA)
+    stored.flush()
+    del stored
+    return CrismObservation(
+        trr3.id.observationName,
+        trr3.id.counter,
+        irCube.with_suffix(".lbl"),
+        irDdr.with_suffix(".lbl"),
     )
