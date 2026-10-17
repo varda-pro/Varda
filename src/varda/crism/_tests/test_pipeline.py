@@ -7,6 +7,7 @@ The ENVI products are opened with ``ENVIDataSource`` directly: it is what
 ``image_loading_service`` imports Qt, which ``varda.crism`` may not.
 """
 
+import gc
 import json
 import re
 import shutil
@@ -187,6 +188,9 @@ def test_crop_end_to_end(cropDir: Path, tmp_path: Path) -> None:
     assert fractions[0] == 0.0 and fractions[-1] == 1.0
     assert all(b >= a for a, b in zip(fractions, fractions[1:]))
     assert all(message for _, message in reports)
+    # the σ write goes on from where the I/F write ended, it does not repeat
+    projecting = [f for f, m in reports if m.startswith("Pass D: projecting")]
+    assert len(projecting) == 2 and projecting[1] > projecting[0]
     assert not (out / ".work").exists()
     assert not list(out.glob("*.part"))
 
@@ -509,3 +513,69 @@ def test_work_folder_left_behind_is_reported(
             cancelled=lambda: True,
         )
     assert str(tmp_path / "other" / ".work") in caplog.text
+
+
+def _mappedWorkFiles(work: Path) -> int:
+    """Live arrays (memmaps, and views of them) that keep a file under
+    ``work`` mapped: Windows cannot delete those files."""
+    count = 0
+    for obj in gc.get_objects():
+        if not isinstance(obj, np.ndarray):
+            continue
+        array: object = obj
+        while isinstance(array, np.ndarray):
+            if isinstance(array, np.memmap) and str(array.filename or "").startswith(
+                str(work)
+            ):
+                count += 1
+                break
+            array = array.base
+    return count
+
+
+@pytest.mark.parametrize("stage", ["Pass B", "Pass C", "Pass D", "error"])
+def test_no_work_file_is_mapped_at_cleanup(
+    cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    # finding 4: the frames of a cancel or failure must not keep the work
+    # memmaps (or views of them) alive when .work/ is removed
+    monkeypatch.setattr(pipeline, "CHUNK_LINES", 7)
+    seen: list[int] = []
+    removeWork = pipeline._removeWork
+
+    def spy(work: Path, succeeded: bool) -> None:
+        seen.append(_mappedWorkFiles(work))
+        removeWork(work, succeeded)
+
+    monkeypatch.setattr(pipeline, "_removeWork", spy)
+    last = [""]
+
+    def cancelled() -> bool:
+        return last[0].startswith(stage)
+
+    if stage == "error":
+
+        def broken(*args: object) -> None:
+            raise RuntimeError("forced")
+
+        monkeypatch.setattr(pipeline, "applyEsc", broken)
+    expected = RuntimeError if stage == "error" else ProcessCancelled
+    with pytest.raises(expected):
+        process(
+            CrismObservation.fromFolder(cropDir),
+            _sensorRecipe(),
+            tmp_path / "out",
+            library=_library(cropDir, tmp_path),
+            progress=lambda fraction, message: last.__setitem__(0, message),
+            cancelled=cancelled,
+        )
+    assert last[0].startswith("Pass") and seen == [0]
+    assert not (tmp_path / "out" / ".work").exists()
+
+
+def test_git_commit_only_for_vardas_checkout(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "other"\n')
+    assert not pipeline._isVardaCheckout(str(tmp_path))
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "varda"\n')
+    assert pipeline._isVardaCheckout(str(tmp_path))
+    assert not pipeline._isVardaCheckout(str(tmp_path / "missing"))

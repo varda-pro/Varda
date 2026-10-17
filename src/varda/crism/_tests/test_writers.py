@@ -157,6 +157,28 @@ def test_writes_without_a_memmap(
     np.testing.assert_array_equal(_read(path), expected.astype(np.float32))
 
 
+@pytest.mark.parametrize(
+    ("method", "first", "shape"),
+    [
+        ("write", 2, (2, 4, 2)),  # past the last line
+        ("write", -1, (1, 4, 2)),
+        ("write", 0, (1, 5, 2)),  # samples differ from the header's
+        ("write", 0, (1, 4, 3)),  # bands differ
+        ("writeBands", 1, (3, 4, 2)),  # past the last band
+        ("writeBands", 0, (2, 4, 1)),  # lines differ
+        ("writeBands", 0, (3, 3, 1)),  # samples differ
+    ],
+)
+def test_block_must_fit_the_product(
+    tmp_path: Path, method: str, first: int, shape: tuple[int, int, int]
+) -> None:
+    path = tmp_path / "x_vmtr.img"
+    with pytest.raises(ValueError):
+        with EnviCubeWriter(path, 3, 4, _bands(), _grid(), "", {}) as writer:
+            getattr(writer, method)(first, np.ones(shape, dtype=np.float32))
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_unwritten_lines_are_nodata(tmp_path: Path) -> None:
     path = tmp_path / "x_vmtr.img"
     with EnviCubeWriter(path, 3, 4, _bands(), None, "", {}) as writer:

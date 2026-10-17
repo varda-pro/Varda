@@ -129,6 +129,17 @@ class EnviCubeWriter:
 
     def write(self, firstLine: int, block: np.ndarray) -> None:
         """Write ``block`` (lines, samples, bands) from image line ``firstLine``."""
+        lines, samples, bands = np.shape(block)
+        if firstLine < 0 or firstLine + lines > self._lines:
+            raise ValueError(
+                f"lines {firstLine}–{firstLine + lines - 1} are outside the "
+                f"product's {self._lines}"
+            )
+        if (samples, bands) != (self._samples, self._count):
+            raise ValueError(
+                f"a block of {samples} samples × {bands} bands for a product of "
+                f"{self._samples} × {self._count}"
+            )
         clean = _clean(block)
         for band in range(clean.shape[2]):
             self._rows(band, firstLine, clean[:, :, band])
@@ -137,6 +148,17 @@ class EnviCubeWriter:
     def writeBands(self, firstBand: int, block: np.ndarray) -> None:
         """Write ``block`` (lines, samples, bands): every line of the bands from
         ``firstBand`` on, e.g. one band block of an area-weighted product."""
+        lines, samples, bands = np.shape(block)
+        if firstBand < 0 or firstBand + bands > self._count:
+            raise ValueError(
+                f"bands {firstBand}–{firstBand + bands - 1} are outside the "
+                f"product's {self._count}"
+            )
+        if (lines, samples) != (self._lines, self._samples):
+            raise ValueError(
+                f"a block of {lines} lines × {samples} samples for a product of "
+                f"{self._lines} × {self._samples}"
+            )
         clean = _clean(block)
         for k in range(clean.shape[2]):
             self._rows(firstBand + k, 0, clean[:, :, k])

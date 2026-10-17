@@ -55,6 +55,8 @@ chunk, so the OS may reclaim their pages, and the products are written with
 plain file I/O (``EnviCubeWriter``), the I/F and its σ one after the other.
 """
 
+import contextlib
+import gc
 import logging
 import math
 import os
@@ -62,8 +64,10 @@ import platform
 import shutil
 import subprocess
 import time
+import tomllib
+import traceback
 import warnings
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -172,6 +176,8 @@ _AREA_IN_NAMES = {"Spike count": "Mean spike count", "Leask count": "Mean Leask 
 _GIT_TIMEOUT_S = 5
 
 _log = logging.getLogger(__name__)
+# (first line or band, block, by lines?) pieces of a product
+type _Pieces = Generator[tuple[int, np.ndarray, bool]]
 # the share of the run each stage reports, in order
 _STAGES = {
     "calibration": (0.0, 0.03),
@@ -272,8 +278,8 @@ def _defaultBands(vector: StandardVector) -> tuple[int, int, int]:
 
 
 def _git(*args: str) -> str | None:
-    """A git command's output in this package's checkout, or None (no git, not
-    a checkout, a frozen bundle)."""
+    """A git command's output in this package's folder, or None (no git, not
+    a checkout, a frozen bundle). No console window opens on Windows."""
     try:
         done = subprocess.run(
             ["git", *args],
@@ -282,16 +288,29 @@ def _git(*args: str) -> str | None:
             text=True,
             timeout=_GIT_TIMEOUT_S,
             check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip()
 
 
+def _isVardaCheckout(top: str) -> bool:
+    """Whether the repository at ``top`` is Varda's own (its pyproject.toml
+    names the project ``varda``), not one Varda happens to sit in."""
+    try:
+        with (Path(top) / "pyproject.toml").open("rb") as file:
+            project = tomllib.load(file).get("project", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return project.get("name") == "varda"
+
+
 def _software() -> dict[str, object]:
     """Versions, and the git commit (with a dirty flag) when Varda runs from
     a checkout; best effort."""
-    commit = _git("rev-parse", "HEAD")
+    top = _git("rev-parse", "--show-toplevel")
+    commit = _git("rev-parse", "HEAD") if top and _isVardaCheckout(top) else None
     status = _git("status", "--porcelain", "--untracked-files=no") if commit else None
     return {
         "varda": vardaVersion(),
@@ -1110,11 +1129,17 @@ class _Run:
         name: str,
         grid: MapGrid | None,
         what: str,
-        blocks: Callable[[np.memmap], Iterator[tuple[int, np.ndarray, bool]]],
+        blocks: Callable[[np.memmap, float, float], _Pieces],
+        span: tuple[float, float],
     ) -> None:
         """An I/F product, then its σ, one after the other: ``blocks`` turns a
         resampled work memmap into (first, block, whole lines?) pieces, written
-        with ``write`` (lines) or ``writeBands`` (bands)."""
+        with ``write`` (lines) or ``writeBands`` (bands), reporting progress
+        over its share of the stage's ``span`` (the first half for the I/F,
+        the second for σ)."""
+        low, high = span
+        middle = 0.5 * (low + high)
+        halves = [(low, middle), (middle, high)]
         lines = grid.height if grid is not None else self.lines
         samples = grid.width if grid is not None else self.samples
         bands = self._spectralBands()
@@ -1130,19 +1155,24 @@ class _Run:
             with self._writer(
                 product, lines, samples, bands, grid, description, withSigma
             ) as writer:
-                for first, block, byLines in blocks(self.memmaps[key]):
-                    if byLines:
-                        writer.write(first, block)
-                    else:
-                        writer.writeBands(first, block)
-                    self.progress.check()
+                # closing: a cancel or error ends the generator, and with it
+                # its reference to the work memmap
+                with contextlib.closing(
+                    blocks(self.memmaps[key], *halves.pop(0))
+                ) as pieces:
+                    for first, block, byLines in pieces:
+                        if byLines:
+                            writer.write(first, block)
+                        else:
+                            writer.writeBands(first, block)
+                        self.progress.check()
 
     def _writeSensorSpace(self) -> None:
-        def blocks(source: np.memmap) -> Iterator[tuple[int, np.ndarray, bool]]:
+        def blocks(source: np.memmap, low: float, high: float) -> _Pieces:
             for start, stop in _chunks(self.lines, CHUNK_LINES):
                 self.progress.report(
                     "passC",
-                    0.8 + 0.2 * start / self.lines,
+                    low + (high - low) * start / self.lines,
                     f"Pass C: writing the sensor-space product, lines {start + 1}–{stop}",
                 )
                 yield start, np.asarray(source[start:stop]), True
@@ -1152,6 +1182,7 @@ class _Run:
             None,
             "CRISM IR I/F on the MTRDR wavelength vector, sensor space",
             blocks,
+            (0.8, 1.0),
         )
 
     # --- pass D --------------------------------------------------------------
@@ -1176,12 +1207,12 @@ class _Run:
         )
         count = len(self.vector.wavelengths)
 
-        def blocks(source: np.memmap) -> Iterator[tuple[int, np.ndarray, bool]]:
+        def blocks(source: np.memmap, low: float, high: float) -> _Pieces:
             if area is None:
                 for start, stop in _chunks(grid.height, _MAP_ROWS):
                     self.progress.report(
                         "passD",
-                        0.05 + 0.75 * start / grid.height,
+                        low + (high - low) * start / grid.height,
                         f"Pass D: projecting rows {start + 1}–{stop} of {grid.height}",
                     )
                     yield start, applyGlt(source, _rows(glt, start, stop)), True
@@ -1191,7 +1222,7 @@ class _Run:
                 block = slice(first, min(first + _BAND_BLOCK, count))
                 self.progress.report(
                     "passD",
-                    0.05 + 0.75 * first / count,
+                    low + (high - low) * first / count,
                     f"Pass D: area weighting bands {block.start + 1}–{block.stop}",
                 )
                 mean, meanSigma = applyAreaWeights(
@@ -1204,6 +1235,7 @@ class _Run:
             grid,
             "CRISM IR I/F on the MTRDR wavelength vector, map projected",
             blocks,
+            (0.05, 0.8),
         )
         self.progress.report(
             "passD", 0.85, "Pass D: geometry and processing backplanes"
@@ -1519,6 +1551,24 @@ def _publish(
     )
 
 
+def _releaseFrames(error: BaseException) -> None:
+    """Clear the locals of the frames ``error`` (and its causes) passed
+    through, then collect: they hold work memmaps and views of them, and
+    Windows cannot delete a mapped file. The frame still running is kept."""
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        traceback.clear_frames(current.__traceback__)
+        pending += [
+            e for e in (current.__cause__, current.__context__) if e is not None
+        ]
+    gc.collect()
+
+
 def _removeWork(work: Path, succeeded: bool) -> None:
     """Remove the work folder; a failure is logged, and raised when the run
     itself succeeded (it would otherwise go unnoticed)."""
@@ -1563,6 +1613,9 @@ def process(
         result = _publish(run.run(), work / "out", outputFolder, run.names)
         succeeded = True
         return result
+    except BaseException as error:
+        _releaseFrames(error)
+        raise
     finally:
         if run is not None:
             run.close()
