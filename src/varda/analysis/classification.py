@@ -191,6 +191,7 @@ def _classificationRaster(
 class MlpClassificationAnalysis(_SupervisedClassification):
     analysisId = "mlp_classification"
     name = "Train MLP on ROIs"
+    memoryFactor = 8
     description = (
         "Trains a multi-layer perceptron on the spectra inside the chosen ROIs "
         "of the current workspace (ROIs sharing a name are one class) and classifies every "

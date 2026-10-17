@@ -200,6 +200,7 @@ def _outputSize(image: VardaRaster) -> str:
 class BandMathAnalysis(Analysis):
     analysisId = "band_math"
     name = "Band Math"
+    memoryFactor = 1.5
     category = "Spectral Parameters"
     description = (
         "A new image from an expression over the bands, e.g. R2300 / R2200 "

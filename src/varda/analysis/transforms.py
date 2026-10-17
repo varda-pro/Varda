@@ -302,6 +302,7 @@ class _ComponentAnalysis(Analysis):
 class PcaAnalysis(_ComponentAnalysis):
     analysisId = "pca"
     name = "Principal Component Analysis (PCA)"
+    memoryFactor = 7
     description = (
         "Rotates the bands onto uncorrelated axes ordered by variance. Band "
         "names carry each component's share of the total variance."
@@ -325,6 +326,7 @@ class PcaAnalysis(_ComponentAnalysis):
 class MnfAnalysis(_ComponentAnalysis):
     analysisId = "mnf"
     name = "Minimum Noise Fraction (MNF)"
+    memoryFactor = 8
     description = (
         "Like PCA but ordered by signal-to-noise: the noise covariance is "
         "estimated from differences between neighboring pixels and whitened "
@@ -414,6 +416,7 @@ class MnfAnalysis(_ComponentAnalysis):
 class IcaAnalysis(_ComponentAnalysis):
     analysisId = "ica"
     name = "Independent Component Analysis (ICA)"
+    memoryFactor = 10
     description = (
         "FastICA on the leading principal components: finds statistically "
         "independent, non-Gaussian source images, e.g. to separate mixed "

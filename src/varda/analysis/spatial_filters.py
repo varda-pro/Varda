@@ -67,6 +67,7 @@ class SmoothingAnalysis(BandwiseAnalysis):
     analysisId = "smoothing"
     software = ("scipy", "scikit-image")
     name = "Smoothing"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Spatial smoothing (low pass) of each band: mean (box) and Gaussian "
@@ -137,6 +138,7 @@ class SharpeningAnalysis(BandwiseAnalysis):
     analysisId = "sharpening"
     software = ("scipy", "scikit-image")
     name = "Sharpening"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Sharpen each band, or keep only its fine detail. Unsharp mask and "
@@ -193,6 +195,7 @@ class EdgeDetectionAnalysis(BandwiseAnalysis):
     analysisId = "edge_detection"
     software = ("scipy", "scikit-image")
     name = "Edge Detection"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Edges in each band. Sobel, Prewitt, Scharr and Roberts give the "
@@ -290,6 +293,7 @@ class MorphologyAnalysis(BandwiseAnalysis):
     analysisId = "morphology"
     software = ("scipy", "scikit-image")
     name = "Morphology"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Grayscale morphology on each band: dilate and erode (local maximum "
@@ -379,6 +383,7 @@ class SpeckleFilterAnalysis(BandwiseAnalysis):
     analysisId = "speckle_filter"
     software = ("scipy", "scikit-image")
     name = "Speckle Filters (Lee, Kuan, Frost)"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Adaptive filters that suppress multiplicative noise (speckle) while "
@@ -473,6 +478,7 @@ class FrequencyFilterAnalysis(BandwiseAnalysis):
     analysisId = "frequency_filter"
     software = ("scipy", "scikit-image")
     name = "Frequency Filter (FFT)"
+    memoryFactor = 2.5
     category = CATEGORY
     description = (
         "Filter each band in the Fourier (frequency) domain: low pass keeps "
@@ -540,6 +546,7 @@ class CustomKernelAnalysis(BandwiseAnalysis):
     analysisId = "custom_kernel"
     software = ("scipy", "scikit-image")
     name = "Custom Kernel"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Apply a kernel you write to each band, as written (each output pixel "

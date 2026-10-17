@@ -153,6 +153,8 @@ def unmixingDetail(constraint: Constraint, report: UnmixingReport) -> str:
 class PixelPurityAnalysis(Analysis):
     analysisId = "pixel_purity_index"
     name = "Pixel Purity Index (PPI)"
+    memoryFactor = 18
+    memoryFixed = 80 * 2**20
     category = "Endmembers"
     description = (
         "Counts how often each pixel lands at an extreme of random projections "
@@ -281,6 +283,7 @@ class _RoiEndmemberMapping(_RoiTrainingAnalysis):
 class SamMappingAnalysis(_RoiEndmemberMapping):
     analysisId = "sam_roi_endmembers"
     name = "Spectral Angle Mapper (ROI Endmembers)"
+    memoryFactor = 5
     description = (
         "Classifies every pixel by the smallest spectral angle to the mean "
         "spectra of the chosen ROIs (brightness does not matter), leaving it "
@@ -307,6 +310,7 @@ class SamMappingAnalysis(_RoiEndmemberMapping):
 class UnmixingAnalysis(_RoiEndmemberMapping):
     analysisId = "unmixing_roi_endmembers"
     name = "Linear Spectral Unmixing (ROI Endmembers)"
+    memoryFactor = 6
     description = (
         "Abundance of each chosen ROI's mean spectrum in every pixel, plus the "
         "RMS error of the fit (structure in it points to a missing endmember). "
@@ -335,6 +339,7 @@ class UnmixingAnalysis(_RoiEndmemberMapping):
 class MtmfAnalysis(_RoiEndmemberMapping):
     analysisId = "mtmf_roi_endmembers"
     name = "Mixture Tuned Matched Filtering (ROI Endmembers)"
+    memoryFactor = 7
     description = (
         "Matched-filter score (≈ abundance) and infeasibility for each chosen "
         "ROI, computed in the image's MNF space. Trust high scores only where "

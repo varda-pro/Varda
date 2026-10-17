@@ -8,6 +8,13 @@ can alter results.
 
 ### Added
 
+- **Memory check before an analysis runs.** Varda estimates the memory a
+  Processing-menu analysis may need (measured per analysis, as upper bounds)
+  and compares it with the memory free at that moment. If it may not fit, it
+  says how much it may need and how much is free, and asks; when it may need
+  more than the computer has, the warning says it may freeze the computer and
+  Cancel is the default. You can always run it anyway. Plugins can state
+  their own needs (`memoryFactor`, `memoryFixed`).
 - **IOVF maps what it replaced (adds a result):** by default IOVF also adds
   a one-band image counting the bands replaced at each pixel (**Replaced
   Count Image**; saved beside the result when the dialog saves it). Both

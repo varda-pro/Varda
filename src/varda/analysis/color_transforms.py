@@ -120,6 +120,7 @@ class ColorSpace(LabeledEnum):
 class ColorTransformAnalysis(ThreeBandAnalysis):
     analysisId = "color_transform"
     name = "Color Transform"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Convert three bands between RGB and hue-saturation spaces. RGB to HSV "
@@ -174,6 +175,7 @@ def decorrelationStretch(rgb: np.ndarray) -> np.ndarray:
 class DecorrelationStretchAnalysis(ThreeBandAnalysis):
     analysisId = "decorrelation_stretch"
     name = "Decorrelation Stretch"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Exaggerate the color differences between three correlated bands "
@@ -190,6 +192,7 @@ class SaturationStretchAnalysis(ThreeBandAnalysis):
     analysisId = "saturation_stretch"
     software = ("scikit-image",)
     name = "Saturation Stretch"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Boost the color saturation of three bands: they're scaled together "

@@ -13,6 +13,13 @@ from varda.analysis.provenance import recordProvenance
 from varda.branding.loader import BusyDialog
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
+from varda.common.memory import (
+    MemoryFit,
+    assessMemory,
+    availableMemory,
+    memoryWarning,
+    totalMemory,
+)
 from varda.image_loading.raster_writer import writeRaster
 from varda.utilities.background import onMainThread, runInBackground
 
@@ -33,6 +40,19 @@ def companionPath(outputPath: str, main: VardaRaster, companion: VardaRaster) ->
     return path.with_name(f"{path.stem}_{slug}{path.suffix}")
 
 
+def askToRunAnyway(
+    parent: QWidget | None, title: str, text: str, cautious: bool
+) -> bool:
+    """Warn about memory and let the user decide. ``cautious``: the job needs
+    more than the machine has, so Cancel is the default button."""
+    box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=parent)
+    runAnyway = box.addButton("Run Anyway", QMessageBox.ButtonRole.AcceptRole)
+    cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(cancel if cautious else runAnyway)
+    box.exec()
+    return box.clickedButton() is runAnyway
+
+
 class AnalysisRunner(QObject):
     """Runs analyses in the background; a successful result is appended to the
     project's images."""
@@ -49,7 +69,10 @@ class AnalysisRunner(QObject):
     def run(
         self, analysis: Analysis, image: VardaRaster, outputPath: str | None = None
     ) -> None:
-        """``outputPath``: also write the result there (ENVI or GeoTIFF)."""
+        """``outputPath``: also write the result there (ENVI or GeoTIFF). An
+        analysis that may not fit in the free memory asks first."""
+        if not self._memoryAllows(analysis, image):
+            return
         # No cancel button: analyses run to completion
         dialog = BusyDialog(
             f"Running {analysis.name} on {image.name}…",
@@ -96,4 +119,15 @@ class AnalysisRunner(QObject):
 
         runInBackground(
             task, onFinished, onFailed, description=f"Analysis {analysis.name}"
+        )
+
+    def _memoryAllows(self, analysis: Analysis, image: VardaRaster) -> bool:
+        estimate = analysis.estimateMemory(image)
+        available, total = availableMemory(), totalMemory()
+        fit = assessMemory(estimate, available, total)
+        if fit is MemoryFit.FITS:
+            return True
+        title, text = memoryWarning(analysis.name, estimate, available, total)
+        return askToRunAnyway(
+            self._parentWidget, title, text, fit is MemoryFit.EXCEEDS_TOTAL
         )

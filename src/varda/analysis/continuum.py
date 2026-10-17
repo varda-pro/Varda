@@ -68,6 +68,8 @@ def continuumRemovedCube(cube: np.ndarray, wavelengthsNm: np.ndarray) -> np.ndar
 class ContinuumRemovalAnalysis(Analysis):
     analysisId = "continuum_removal"
     name = "Continuum Removal"
+    memoryFactor = 6
+    memoryFixed = 20 * 2**20
     category = "Spectral Parameters"
     description = (
         "Divides each spectrum by its upper convex hull within a wavelength "

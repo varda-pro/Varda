@@ -102,6 +102,7 @@ class MajorityFilterAnalysis(ClassMapAnalysis):
     analysisId = "majority_filter"
     software = ("scipy",)
     name = "Majority/Minority Filter"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Replace each classified pixel with the most (or least) common class "
@@ -180,6 +181,7 @@ class SieveAnalysis(ClassMapAnalysis):
     analysisId = "sieve"
     software = ("scipy",)
     name = "Sieve Classes"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Remove isolated groups of pixels smaller than a minimum size from a "
@@ -224,6 +226,7 @@ class ClumpAnalysis(ClassMapAnalysis):
     analysisId = "clump"
     software = ("scipy",)
     name = "Clump Classes"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Make class regions spatially coherent: each class is closed "
@@ -272,6 +275,7 @@ def _format(value: float) -> str:
 class DensitySliceAnalysis(Analysis):
     analysisId = "density_slice"
     name = "Density Slice"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Turn one band into a class map of value ranges: equal intervals "

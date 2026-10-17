@@ -84,3 +84,79 @@ def test_analysis_settings_are_a_parameter_group():
     analysis.bands.set(3)
     assert analysis.bands.value == 3
     assert groupWidget(analysis) is not None or pytest.skip("needs QApplication")
+
+
+# --- the memory check before a run ---------------------------------------------
+
+GIB = 2**30
+
+
+class HungryAnalysis(DoublingAnalysis):
+    """Says it needs a fixed amount of memory, whatever the image."""
+
+    name = "Hungry"
+
+    def __init__(self, need: int) -> None:
+        super().__init__()
+        self.need = need
+
+    def estimateMemory(self, image: VardaRaster) -> int:
+        return self.need
+
+
+@pytest.fixture
+def machine(monkeypatch):
+    """8 GiB free of 16 GiB, and a record of the questions asked."""
+    from varda.analysis import runner as runnerModule
+
+    asked: list[tuple[str, str, bool]] = []
+    answer = {"run": False}
+    monkeypatch.setattr(runnerModule, "availableMemory", lambda: 8 * GIB)
+    monkeypatch.setattr(runnerModule, "totalMemory", lambda: 16 * GIB)
+
+    def askToRunAnyway(parent, title, text, cautious):
+        asked.append((title, text, cautious))
+        return answer["run"]
+
+    monkeypatch.setattr(runnerModule, "askToRunAnyway", askToRunAnyway)
+    return asked, answer
+
+
+def test_an_analysis_that_fits_runs_without_asking(qtbot, machine):
+    asked, _ = machine
+    runner = AnalysisRunner(ProjectImages())
+    with qtbot.waitSignal(runner.sigFinished, timeout=5000):
+        runner.run(HungryAnalysis(1 * GIB), generate_random_image((10, 10, 10)))
+    assert asked == []
+
+
+def test_a_tight_analysis_asks_and_cancel_stops_it(qtbot, machine):
+    asked, answer = machine
+    answer["run"] = False
+    images = ProjectImages()
+    runner = AnalysisRunner(images)
+    with qtbot.assertNotEmitted(runner.sigFinished, wait=300):
+        runner.run(HungryAnalysis(7 * GIB), generate_random_image((10, 10, 10)))
+    ((title, text, cautious),) = asked
+    assert "Hungry" in title and "7 GB" in text and "8 GB" in text
+    assert not cautious
+    assert list(images) == []
+
+
+def test_run_anyway_runs_it(qtbot, machine):
+    asked, answer = machine
+    answer["run"] = True
+    runner = AnalysisRunner(ProjectImages())
+    with qtbot.waitSignal(runner.sigFinished, timeout=5000):
+        runner.run(HungryAnalysis(7 * GIB), generate_random_image((10, 10, 10)))
+    assert len(asked) == 1
+
+
+def test_more_than_the_machine_has_asks_cautiously(qtbot, machine):
+    asked, answer = machine
+    answer["run"] = True  # warned, not refused: the user may still run it
+    runner = AnalysisRunner(ProjectImages())
+    with qtbot.waitSignal(runner.sigFinished, timeout=5000):
+        runner.run(HungryAnalysis(20 * GIB), generate_random_image((10, 10, 10)))
+    ((_, text, cautious),) = asked
+    assert cautious and "16 GB" in text
