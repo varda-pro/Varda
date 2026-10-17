@@ -5,7 +5,10 @@ import logging
 import math
 import re
 import shutil
+import sys
 from pathlib import Path
+
+import appdirs
 
 import attrs
 import numpy as np
@@ -305,3 +308,67 @@ def test_cli_validate_unmatched_bands_is_an_error(
         ]
     )
     assert code == 2 and "no MTRDR band" in capsys.readouterr().err
+
+
+def test_program_name() -> None:
+    assert cli._parser().prog == "python -m varda.crism"
+
+
+def test_windowed_app_output_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review, Important 8: the windowed Windows build has no console.
+    ``Varda --crism`` attaches to the parent's console, and when there is
+    none, writes to a log file; elsewhere nothing changes."""
+    attached: list[bool] = []
+
+    def attach(result: bool):
+        def call() -> bool:
+            attached.append(result)
+            return result
+
+        return call
+
+    log = tmp_path / "Logs" / cli.CRISM_LOG_NAME
+    stdout = sys.stdout
+    assert cli.consoleForWindowedApp(windowed=False, attach=attach(False)) is None
+    assert attached == [] and sys.stdout is stdout
+    assert cli.consoleForWindowedApp(windowed=True, attach=attach(True)) is None
+    assert attached == [True] and sys.stdout is stdout
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    found = cli.consoleForWindowedApp(
+        windowed=True, attach=attach(False), logFile=lambda: log
+    )
+    assert found == log and attached == [True, False]
+    print("to the log")
+    print("errors too", file=sys.stderr)
+    sys.stdout.flush()
+    text = log.read_text()
+    assert "Varda --crism" in text and "to the log" in text and "errors too" in text
+    sys.stdout.close()
+
+
+def test_windowed_app_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "stdout", None)
+    assert not cli.isWindowedWindowsApp()
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert not cli.isWindowedWindowsApp()  # not frozen: run from Python
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert cli.isWindowedWindowsApp()
+
+
+def test_shared_app_data_locations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One cache for the CLI and the GUI; the log beside the GUI's logs. On
+    macOS and Linux the folders are where they were."""
+    monkeypatch.undo()  # the real defaultCache, not the isolated one
+    assert cli.defaultCache() == calibration.defaultCacheFolder()
+    if sys.platform != "win32":
+        assert calibration.defaultCacheFolder() == (
+            Path(appdirs.user_data_dir("Varda")) / "crism"
+        )
+        assert (
+            cli.crismLogFile().parent == Path(appdirs.user_data_dir("Varda")) / "Logs"
+        )

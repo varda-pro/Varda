@@ -9,14 +9,21 @@
 Exit codes: 0 everything succeeded; 1 some observations failed (the others
 still ran); 2 a usage or configuration error (a bad recipe or path, or
 missing calibration files with nothing processed).
+
+The windowed Windows build has no console: ``Varda --crism`` attaches to the
+console of the shell that started it (``consoleForWindowedApp``), or writes
+to ``crismLogFile()`` when there is none. That shell does not wait for it,
+so scripts on Windows use ``python -m varda.crism``.
 """
 
 import argparse
+import ctypes
 import json
 import logging
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 
 import appdirs
@@ -36,6 +43,7 @@ from varda.crism.calibration import (
     CalibrationLibrary,
     MissingCalibrationError,
     TransmissionSource,
+    defaultCacheFolder,
 )
 from varda.crism.observation import CrismObservation
 from varda.crism.pipeline import ColumnResiduals, columnResiduals, process
@@ -47,12 +55,66 @@ from varda.crism.validation_report import validate
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 DEFAULT_OUTPUT = "crism-products"
+CRISM_LOG_NAME = "Varda-crism.log"
+_ATTACH_PARENT_PROCESS = -1
 
 _log = logging.getLogger(__name__)
 
 
 def defaultCache() -> Path:
-    return Path(appdirs.user_data_dir("Varda")) / "crism"
+    return defaultCacheFolder()
+
+
+def crismLogFile() -> Path:
+    """Where ``Varda --crism`` writes when it has no console: beside the
+    app's own logs (Qt's AppLocalDataLocation, ``Logs``), e.g.
+    ``%LOCALAPPDATA%\\Varda\\Logs\\Varda-crism.log`` on Windows."""
+    return (
+        Path(appdirs.user_data_dir("Varda", appauthor=False)) / "Logs" / CRISM_LOG_NAME
+    )
+
+
+def isWindowedWindowsApp() -> bool:
+    """The frozen Windows build is windowed (no console: no stdout)."""
+    return (
+        sys.platform == "win32"
+        and bool(getattr(sys, "frozen", False))
+        and sys.stdout is None
+    )
+
+
+def _attachParentConsole() -> bool:
+    """Windows: attach to the console of the process that started this one
+    and send stdout and stderr there; False when there is none."""
+    windll = getattr(ctypes, "windll", None)
+    if windll is None or not windll.kernel32.AttachConsole(_ATTACH_PARENT_PROCESS):
+        return False
+    try:
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)  # noqa: SIM115
+    except OSError:
+        return False
+    return True
+
+
+def consoleForWindowedApp(
+    *,
+    windowed: bool,
+    attach: Callable[[], bool] = _attachParentConsole,
+    logFile: Callable[[], Path] = crismLogFile,
+) -> Path | None:
+    """Give a ``windowed`` app (``isWindowedWindowsApp``) somewhere to print:
+    the parent's console (``attach``), else the file ``logFile()``, appended
+    to and returned. Nothing changes when not ``windowed``."""
+    if not windowed or attach():
+        return None
+    path = logFile()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stream = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    sys.stdout = sys.stderr = stream
+    started = datetime.now().isoformat(timespec="seconds")
+    print(f"--- Varda --crism {' '.join(sys.argv[1:])} ({started})")
+    return path
 
 
 class _UsageError(Exception):
@@ -68,7 +130,8 @@ def _error(message: object) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="varda-crism", description="CRISM TRR3 to MTRDR-consistent products."
+        prog="python -m varda.crism",
+        description="CRISM TRR3 to MTRDR-consistent products.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

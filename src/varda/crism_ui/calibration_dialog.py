@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QStandardPaths, Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -24,7 +24,11 @@ from PyQt6.QtWidgets import (
 
 from varda.common.ui import MutedLabel
 from varda.crism import CalibrationLibrary, CrismObservation
-from varda.crism.calibration import CalibrationFileStatus, MissingCalibrationError
+from varda.crism.calibration import (
+    CalibrationFileStatus,
+    MissingCalibrationError,
+    defaultCacheFolder,
+)
 from varda.utilities.background import runInBackground
 
 CAT_AUX_KEY = "crism/catAuxFolder"
@@ -42,11 +46,8 @@ def setCatAuxFolder(folder: Path | None, settings: QSettings | None = None) -> N
 
 
 def cacheFolder() -> Path:
-    """Where fetched calibration files are kept."""
-    base = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppDataLocation
-    )
-    return Path(base) / "crism"
+    """Where fetched calibration files are kept (the command line's too)."""
+    return defaultCacheFolder()
 
 
 def libraryFolders(observations: Sequence[CrismObservation]) -> list[Path]:

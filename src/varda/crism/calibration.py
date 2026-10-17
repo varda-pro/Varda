@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
 
+import appdirs
 import certifi
 import numpy as np
 from attrs import frozen
@@ -133,6 +134,14 @@ def atTable() -> tuple[AtRow, ...]:
             )
             for row in csv.DictReader(lines)
         )
+
+
+def defaultCacheFolder() -> Path:
+    """Where fetched calibration files are kept, shared by the command line
+    and the dialogs: ``crism`` in Varda's app-data folder (Qt's
+    AppDataLocation: ``%APPDATA%\\Varda`` on Windows, ``~/Library/Application
+    Support/Varda`` on macOS, ``~/.local/share/Varda`` on Linux)."""
+    return Path(appdirs.user_data_dir("Varda", appauthor=False, roaming=True)) / "crism"
 
 
 def downloadTo(url: str, target: Path) -> None:

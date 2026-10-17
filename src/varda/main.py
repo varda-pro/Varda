@@ -93,8 +93,13 @@ def main():
         sys.exit(checkPlugin(sys.argv[sys.argv.index(CHECK_PLUGIN_FLAG) + 1 :]))
     if CRISM_FLAG in sys.argv:
         # Imported only in this mode, like --check-plugin: no Qt, no splash wait
-        from varda.crism.cli import crismMain
+        from varda.crism.cli import (
+            consoleForWindowedApp,
+            crismMain,
+            isWindowedWindowsApp,
+        )
 
+        consoleForWindowedApp(windowed=isWindowedWindowsApp())
         sys.exit(crismMain(sys.argv[sys.argv.index(CRISM_FLAG) + 1 :]))
     _consoleForSelfTest()
     # The 3D terrain view (Qt WebEngine) shares OpenGL with the rest of Qt

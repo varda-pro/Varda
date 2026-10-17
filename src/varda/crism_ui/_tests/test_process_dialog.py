@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, QStandardPaths
 from PyQt6.QtWidgets import QMessageBox
 
 from varda._actions import ALL_ACTIONS, PROCESSING_SUBMENUS
@@ -17,6 +17,7 @@ from varda._actions._processing_actions import (
 )
 from varda.crism import CalibrationLibrary, CrismObservation, ProcessResult
 from varda.crism.calibration import CalibrationFileStatus, MissingCalibrationError
+from varda.crism.cli import crismLogFile
 from varda.crism.pipeline import ProcessCancelled
 from varda.crism.recipe import recipeToDict
 from varda.crism_ui import calibration_dialog, process_dialog
@@ -347,3 +348,21 @@ def test_calibration_is_fetched_then_the_batch_runs(
     _run(qtbot, dialog)
     assert dialog.statuses() == ["done"], dialog.progressLabel.text()
     assert any(name.endswith(".img") for name in fetched)
+
+
+def test_cache_and_log_follow_the_apps_folders(qapp):
+    """The calibration cache is the CLI's and in Qt's AppDataLocation; the
+    windowed CLI's log is beside the GUI's logs (AppLocalDataLocation)."""
+    name = qapp.applicationName()
+    qapp.setApplicationName("Varda")
+    try:
+        data = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppDataLocation
+        )
+        local = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+    finally:
+        qapp.setApplicationName(name)
+    assert calibration_dialog.cacheFolder() == Path(data) / "crism"
+    assert crismLogFile().parent == Path(local) / "Logs"
