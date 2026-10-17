@@ -1085,11 +1085,12 @@ class ArtifactBasis:
 
 @frozen
 class BasisLookup:
-    """The outcome of ``bundledArtifactBasis``: the basis, or None and why
-    (for the provenance)."""
+    """The outcome of ``findArtifactBasis``: the basis and its file, or None
+    and why (for the provenance)."""
 
     basis: ArtifactBasis | None
     reason: str
+    path: Path | None = None
 
 
 def highPass(
@@ -1269,44 +1270,79 @@ def loadArtifactBasis(path: Path) -> ArtifactBasis:
     )
 
 
-def artifactFileName(transmissionKey: str) -> str:
-    """The bundled file of a transmission key: ``"061C4:AT"`` is
-    ``061C4_AT.npz`` (':' is awkward in file names)."""
-    return transmissionKey.replace(":", "_") + ".npz"
+def _keyStem(transmissionKey: str) -> str:
+    return transmissionKey.replace(":", "_")  # ':' is awkward in file names
 
 
-def bundledArtifactBasis(
-    transmissionKey: str, samples: int, bands: int, sclk: float
+def artifactFileName(transmissionKey: str, sclkSpan: tuple[float, float]) -> str:
+    """The file of a basis: the transmission key and the SCLK span it was
+    learned over, so one folder holds a key's bases of several epochs.
+    ``"061C4:AT"`` over 1084995594.5–1090233681.1 is
+    ``061C4_AT_1084995594-1090233682.npz``."""
+    first, last = sclkSpan
+    return f"{_keyStem(transmissionKey)}_{math.floor(first)}-{math.ceil(last)}.npz"
+
+
+def findArtifactBasis(
+    transmissionKey: str,
+    samples: int,
+    bands: int,
+    sclk: float,
+    folders: Sequence[Path] = (),
 ) -> BasisLookup:
-    """The basis shipped for ``transmissionKey`` (in ``resources/artifacts``,
-    ``artifactFileName``) for a cube of ``samples`` columns and ``bands``
-    bands observed at ``sclk``. It is given only when the file's key is the
-    transmission's, its shape is the cube's (not, e.g., a binned
+    """The basis for ``transmissionKey`` for a cube of ``samples`` columns and
+    ``bands`` bands observed at ``sclk``, from the files of the key
+    (``artifactFileName``) in ``folders`` (the recipe's artifact folder,
+    bases learned with ``learn-artifacts``), then in the bundled
+    ``resources/artifacts`` (``ARTIFACT_FOLDER``). A file serves when its key
+    is the transmission's, its shape is the cube's (not, e.g., a binned
     observation's) and ``sclk`` lies within its training span ± 180 days
-    (``ARTIFACT_EPOCH_MARGIN_SCLK``); otherwise the basis is None and the
-    reason says why."""
-    path = ARTIFACT_FOLDER / artifactFileName(transmissionKey)
-    if not path.is_file():
-        return BasisLookup(None, f"no artifact basis is bundled for {transmissionKey}")
-    basis = loadArtifactBasis(path)
-    if basis.transmissionKey != transmissionKey:
-        return BasisLookup(
-            None,
-            f"{path.name} holds the basis of {basis.transmissionKey}, "
-            f"not {transmissionKey}",
-        )
-    if basis.spectra.shape != (samples, bands):
-        return BasisLookup(
-            None,
-            f"the {transmissionKey} basis is {basis.spectra.shape[0]} columns × "
-            f"{basis.spectra.shape[1]} bands; the cube is {samples} × {bands}",
-        )
-    first, last = basis.sclkSpan
+    (``ARTIFACT_EPOCH_MARGIN_SCLK``). Of several, the nearest span wins (0
+    when it holds ``sclk``), the earlier folder on ties. With none, the
+    basis is None and the reason says why."""
     margin = ARTIFACT_EPOCH_MARGIN_SCLK
-    if not first - margin <= sclk <= last + margin:
+    searched = [*(Path(f) for f in folders), ARTIFACT_FOLDER]
+    fits: list[tuple[float, int, Path, ArtifactBasis]] = []
+    rejected: list[str] = []
+    for path in (
+        path
+        for folder in searched
+        if folder.is_dir()
+        for path in sorted(folder.glob(f"{_keyStem(transmissionKey)}_*.npz"))
+    ):
+        try:
+            basis = loadArtifactBasis(path)
+        except (OSError, ValueError, KeyError) as error:
+            rejected.append(f"{path.name} could not be read: {error}")
+            continue
+        first, last = basis.sclkSpan
+        gap = max(first - sclk, sclk - last, 0.0)
+        if basis.transmissionKey != transmissionKey:
+            rejected.append(
+                f"{path.name} holds the basis of {basis.transmissionKey}, "
+                f"not {transmissionKey}"
+            )
+        elif basis.spectra.shape != (samples, bands):
+            rejected.append(
+                f"the {transmissionKey} basis {path.name} is "
+                f"{basis.spectra.shape[0]} columns × {basis.spectra.shape[1]} "
+                f"bands; the cube is {samples} × {bands}"
+            )
+        elif gap > margin:
+            rejected.append(
+                f"SCLK {sclk:.0f} is more than 180 days from the {transmissionKey} "
+                f"basis's training span {first:.0f}–{last:.0f} ({path.name})"
+            )
+        else:
+            fits.append((gap, len(fits), path, basis))
+    if fits:
+        _, _, path, basis = min(fits, key=lambda fit: fit[:2])
+        where = "bundled" if path.parent == ARTIFACT_FOLDER else f"in {path.parent}"
         return BasisLookup(
-            None,
-            f"SCLK {sclk:.0f} is more than 180 days from the {transmissionKey} "
-            f"basis's training span {first:.0f}–{last:.0f}",
+            basis, f"the {transmissionKey} basis {path.name} ({where})", path
         )
-    return BasisLookup(basis, f"the bundled {transmissionKey} basis")
+    if rejected:
+        return BasisLookup(None, "; ".join(rejected))
+    places = ", ".join(str(f) for f in folders)
+    where = f"in {places} or bundled" if folders else "bundled"
+    return BasisLookup(None, f"no artifact basis is {where} for {transmissionKey}")

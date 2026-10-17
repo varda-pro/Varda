@@ -125,6 +125,10 @@ def _error(message: object) -> None:
     print(f"error: {message}", file=sys.stderr)
 
 
+def _warn(message: object) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
 # --- shared ------------------------------------------------------------------------
 
 
@@ -152,6 +156,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--out", type=Path, default=Path(DEFAULT_OUTPUT))
     run.add_argument("--sensor-space", action="store_true", help="also write _vter")
     run.add_argument("--cog", action="store_true", help="also write a COG")
+    run.add_argument(
+        "--artifacts",
+        type=Path,
+        help="a folder of artifact bases (learn-artifacts), searched first",
+    )
     calibrationOptions(run)
 
     status = commands.add_parser("calibration", help="list calibration files")
@@ -224,6 +233,8 @@ def _run(args: argparse.Namespace) -> int:
         recipe.output.sensorSpace.set(True)
     if args.cog:
         recipe.output.cog.set(True)
+    if args.artifacts is not None:
+        recipe.atmosphere.artifactFolder.set(str(args.artifacts))
     observations = _observations(args.paths)
     if not observations:
         raise _UsageError("no observation found")
@@ -383,10 +394,15 @@ def _learnKey(key: str, columns: list[ColumnResiduals], out: Path) -> None:
         )
 
     full = learn(columns)
-    saveArtifactBasis(full, out / artifactFileName(key))
-    print(
-        f"\n{key}: {len(columns)} observation(s), written to {out / artifactFileName(key)}"
-    )
+    path = out / artifactFileName(key, full.sclkSpan)
+    saveArtifactBasis(full, path)
+    print(f"\n{key}: {len(columns)} observation(s), written to {path}")
+    if len(columns) == 1:
+        _warn(
+            f"{key}: the basis is learned from one observation: it may carry that "
+            "scene's own surface, and there is no leave-one-out check; use two or "
+            "more observations that chose this transmission"
+        )
     print("Column-spectrum CO2 residual (median over columns), leave-one-out check")
     print(f"{'observation':<22}{'no basis':>12}{'leave-one-out':>15}{'in-sample':>12}")
     for held, column in enumerate(columns):

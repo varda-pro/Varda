@@ -64,7 +64,7 @@ from skimage.registration import phase_cross_correlation
 from varda.crism import validation_report as report
 from varda.crism.atmosphere import (
     ARTIFACT_EPOCH_MARGIN_SCLK,
-    bundledArtifactBasis,
+    findArtifactBasis,
     learnArtifactBasis,
 )
 from varda.crism.calibration import CalibrationLibrary
@@ -653,7 +653,7 @@ def test_bundled_bases_serve_the_frss_only(
         assert key == CHOSEN_SCANS[name]
         assert record["artifact"]["used"] is True
         assert set(record["artifact"]["sourceObservations"]) == set(FRS)
-        lookup = bundledArtifactBasis(key, 640, 438, sclk)
+        lookup = findArtifactBasis(key, 640, 438, sclk)
         assert lookup.basis is None and "180 days" in lookup.reason
         first, last = record["artifact"]["sclkSpan"]
         assert sclk < first - ARTIFACT_EPOCH_MARGIN_SCLK

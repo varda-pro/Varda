@@ -183,11 +183,36 @@ def test_cli_learn_artifacts(
     files = list(out.glob("*.npz"))
     assert len(files) == 1
     basis = loadArtifactBasis(files[0])
-    assert files[0].name == artifactFileName(basis.transmissionKey)
+    assert files[0].name == artifactFileName(basis.transmissionKey, basis.sclkSpan)
     assert len(basis.sourceObservations) == 3
-    table = capsys.readouterr().out
+    captured = capsys.readouterr()
+    table = captured.out
     assert basis.transmissionKey in table and "leave-one-out" in table.lower()
     assert table.count("FRS00031442") == 3
+    assert "one observation" not in captured.err
+
+    # the learned folder serves process --artifacts (final review, Important 10)
+    code = crismMain(
+        ["process", folders[0], "--artifacts", str(out), "--out", str(tmp_path / "p")]
+    )
+    assert code == 0
+    (provenance,) = (tmp_path / "p").glob("*.provenance.json")
+    record = json.loads(provenance.read_text())
+    artifact = record["steps"]["atmosphere"]["artifact"]
+    assert artifact["used"] is True and artifact["file"] == str(files[0])
+    assert record["recipe"]["atmosphere"]["artifactFolder"] == str(out)
+
+
+def test_cli_learn_artifacts_from_one_observation_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cube, truth = makeSyntheticCube(lines=64, seed=1)
+    writeSyntheticObservation(tmp_path / "obs", cube, truth)
+    code = crismMain(
+        ["learn-artifacts", str(tmp_path / "obs"), "--out", str(tmp_path / "b")]
+    )
+    assert code == 0
+    assert "one observation" in capsys.readouterr().err
 
 
 def test_leave_one_out_skips_columns_without_wavelengths(tmp_path: Path) -> None:

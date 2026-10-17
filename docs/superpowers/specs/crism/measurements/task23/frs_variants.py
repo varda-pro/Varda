@@ -47,7 +47,7 @@ for name, key in FRS.items():
     )
     folder = S / f"loo-bases-{name}"
     folder.mkdir(exist_ok=True)
-    saveArtifactBasis(basis, folder / artifactFileName(key))
+    saveArtifactBasis(basis, folder / artifactFileName(key, basis.sclkSpan))
     saved = atmosphere.ARTIFACT_FOLDER
     atmosphere.ARTIFACT_FOLDER = folder
     process(obs, Recipe(), S / "frs-loo", library=lib(name))

@@ -101,6 +101,13 @@ class AtmosphereStep(ParameterGroup):
         "Fit the known artifact spectra of the volcano scans. Skipped, with the "
         "reason recorded, when no basis matches the observation's epoch.",
     )
+    artifactFolder = StringParameter(
+        "Artifact basis folder",
+        "",
+        "A folder of artifact bases learned with learn-artifacts (for example "
+        "for another epoch), searched before the bundled ones. Leave empty to "
+        "use the bundled bases only.",
+    )
 
 
 class DestripeStep(ParameterGroup):

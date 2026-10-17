@@ -18,7 +18,7 @@ from varda.crism.atmosphere import (
     ElevationModel,
     PixelFit,
     artifactScale,
-    bundledArtifactBasis,
+    findArtifactBasis,
     columnSpectra,
     correct,
     fitColumns,
@@ -1093,27 +1093,39 @@ def test_round_trip_npz(tmp_path: Path) -> None:
     assert loaded.sclkSpan == basis.sclkSpan
     assert loaded.createdWith == basis.createdWith
     np.testing.assert_array_equal(loaded.spectra, basis.spectra)
-    assert atmosphere.artifactFileName("061C4:AT") == "061C4_AT.npz"
+    # the name carries the epoch: one folder can hold a key's bases of several
+    assert (
+        atmosphere.artifactFileName("061C4:AT", (1084995594.49, 1090233681.08))
+        == "061C4_AT_1084995594-1090233682.npz"
+    )
+
+
+def _save(folder: Path, basis: ArtifactBasis, key: str | None = None) -> Path:
+    """``basis`` under the file name of ``key`` (default: its own)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / atmosphere.artifactFileName(
+        key or basis.transmissionKey, basis.sclkSpan
+    )
+    saveArtifactBasis(basis, path)
+    return path
 
 
 def test_bundled_basis_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A6: the bundled basis serves a cube only with the same transmission
-    key, columns and bands, and an SCLK within its training span ± 180 days;
+    """A6: a basis serves a cube only with the same transmission key,
+    columns and bands, and an SCLK within its training span ± 180 days;
     otherwise None, with the reason for the provenance."""
     monkeypatch.setattr(atmosphere, "ARTIFACT_FOLDER", tmp_path)
     basis = _basis()
-    saveArtifactBasis(basis, tmp_path / atmosphere.artifactFileName("061C4:AT"))
-    # a file under one key holding another key's basis
-    saveArtifactBasis(
-        _basis(key="08608:AT"), tmp_path / atmosphere.artifactFileName("0A93E:AT")
-    )
+    path = _save(tmp_path, basis)
+    _save(tmp_path, _basis(key="08608:AT"), key="0A93E:AT")  # another key's basis
     first, last = basis.sclkSpan
     margin = atmosphere.ARTIFACT_EPOCH_MARGIN_SCLK
     assert margin == pytest.approx(15.55e6, rel=1e-3)
     for sclk in (first, last, first - 0.99 * margin, last + 0.99 * margin):
-        found = bundledArtifactBasis("061C4:AT", 640, 438, sclk)
+        found = findArtifactBasis("061C4:AT", 640, 438, sclk)
         assert found.basis is not None, found.reason
         assert found.basis.sourceObservations == basis.sourceObservations
+        assert found.path == path and path.name in found.reason
     cases = {
         "180 days": ("061C4:AT", 640, 438, last + 1.01 * margin),
         "training span": ("061C4:AT", 640, 438, first - 1.01 * margin),
@@ -1123,8 +1135,42 @@ def test_bundled_basis_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         "no artifact basis": ("094B5:AT", 640, 438, first),
     }
     for reason, arguments in cases.items():
-        lookup = bundledArtifactBasis(*arguments)
+        lookup = findArtifactBasis(*arguments)
         assert lookup.basis is None and reason in lookup.reason, lookup.reason
+        assert lookup.path is None
+
+
+def test_artifact_folder_and_epochs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review, Important 10: bases learned for other epochs (``Varda
+    --crism learn-artifacts``) in a user folder serve their epochs: the
+    folder is searched before the bundled bases, and of several bases of a
+    key the one whose span holds the SCLK, else the nearest, is used."""
+    bundled = tmp_path / "bundled"
+    monkeypatch.setattr(atmosphere, "ARTIFACT_FOLDER", bundled)
+    year = 365.25 * 86400
+    shipped = _save(bundled, _basis(span=(_SCLK_2014, _SCLK_2014 + 5e6)))
+    mine = tmp_path / "mine"
+    early = _save(mine, _basis(span=(_SCLK_2014 - 7 * year, _SCLK_2014 - 6 * year)))
+    late = _save(mine, _basis(span=(_SCLK_2014 + 3 * year, _SCLK_2014 + 4 * year)))
+    nearLate = _save(
+        mine, _basis(span=(_SCLK_2014 + 4.1 * year, _SCLK_2014 + 5 * year))
+    )
+    assert len({shipped, early, late, nearLate}) == 4
+
+    def found(sclk: float, folders: list[Path]) -> Path | None:
+        return findArtifactBasis("061C4:AT", 640, 438, sclk, folders).path
+
+    assert found(_SCLK_2014 - 6.5 * year, []) is None  # bundled only: none for 2007
+    assert found(_SCLK_2014 - 6.5 * year, [mine]) == early
+    assert found(_SCLK_2014 + 1e6, [mine]) == shipped  # the bundled one still serves
+    assert found(_SCLK_2014 + 3.5 * year, [mine]) == late
+    # within ± 180 days of both late spans, nearer to the second
+    assert found(_SCLK_2014 + 4.07 * year, [mine]) == nearLate
+    # a user basis of the bundled epoch wins over the bundled one
+    again = _save(tmp_path / "again", _basis(span=(_SCLK_2014, _SCLK_2014 + 5e6)))
+    assert found(_SCLK_2014 + 1e6, [tmp_path / "again"]) == again
 
 
 def test_learn_rejects_mismatched_inputs() -> None:

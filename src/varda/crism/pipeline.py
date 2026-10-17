@@ -93,10 +93,10 @@ from varda.crism.atmosphere import (
     PixelFit,
     SelectionResult,
     artifactScale,
-    bundledArtifactBasis,
     columnSpectra,
     correct,
     fitElevationModel,
+    findArtifactBasis,
     fitPixels,
     selectTransmission,
     shiftedLogTransmission,
@@ -455,6 +455,11 @@ class _Run:
 
     def _calibration(self) -> None:
         self.progress.report("calibration", 0.0, "Checking the calibration files")
+        for folder in self._artifactFolders():
+            if not folder.is_dir():
+                raise ValueError(
+                    f"The recipe's artifact folder {folder} does not exist"
+                )
         self.status = self.library.ensure(self.trr3)
         self.wavelengths = self.library.wavelengths(self.trr3)  # (s, b)
         self.bandWavelengths = _nanMedian(self.wavelengths, axis=0)
@@ -683,7 +688,9 @@ class _Run:
         if not self.recipe.atmosphere.artifactModel.get():
             return None, None, {"used": False, "reason": "off in the recipe"}
         key = selection.chosen.key
-        lookup = bundledArtifactBasis(key, self.samples, self.bands, self.trr3.sclk)
+        lookup = findArtifactBasis(
+            key, self.samples, self.bands, self.trr3.sclk, self._artifactFolders()
+        )
         if lookup.basis is None:
             return None, None, {"used": False, "reason": lookup.reason}
         basis = lookup.basis
@@ -705,6 +712,7 @@ class _Run:
             {
                 "used": True,
                 "reason": lookup.reason,
+                "file": lookup.path,
                 "scale": scale,
                 "scaleSigma": scaleSigma,
                 "sourceObservations": list(basis.sourceObservations),
@@ -712,6 +720,11 @@ class _Run:
                 "createdWith": basis.createdWith,
             },
         )
+
+    def _artifactFolders(self) -> list[Path]:
+        """The recipe's artifact folder, searched before the bundled bases."""
+        folder = self.recipe.atmosphere.artifactFolder.get().strip()
+        return [Path(folder)] if folder else []
 
     def _systematicNative(
         self,
