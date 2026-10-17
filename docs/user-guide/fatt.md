@@ -84,13 +84,56 @@ laptop without crowding out other programs.
 
 The result joins the image list. Its first band is the number of targets
 detected at each pixel; then there's one band per target with its
-normalized RMSE, so you can threshold a target differently later.
+normalized RMSE, so you can threshold a target differently later; the last
+is the **Mean signal** (see below).
 *Factors per window* (15 by default, 1 to 49) is the dimension of each
 window's factor space.
 
 A phase must add variance to the spectra in a window to be found: a phase
 spread evenly across the window, under about half a pixel, or masked in a
 mixture can be missed.
+
+### Shadows and dim pixels
+
+Detections often fall in shadows and other dark areas, for several reasons:
+
+- In a dark window the signal is small, so most of the 15 or so factors of
+  its ~49 spectra describe noise. The target transformation is an
+  unconstrained least-squares fit, and a large noise subspace can reproduce
+  almost any smooth target.
+- nRMSE compares spectra divided by their sums, so a low signal isn't
+  penalized: a dim window's fit counts as much as a bright one's.
+- Shadowed ground is lit by diffuse sky light and light scattered from
+  nearby terrain, not the direct sun. Corrections that assume direct
+  illumination (photometric and atmospheric) leave structured residuals
+  there, which the factors pick up.
+- Each pixel takes the best of up to about 50 windows per shape, so chance
+  fits are more likely (multiple comparisons).
+
+Lin et al. (2021) caution that "using more eigenvectors increases the
+likelihood of introducing structured and random noise, and can lead to
+false positive detections", and confirm their detections with ratioed I/F
+spectra.
+
+Two settings leave such pixels out. Both make the pixels no data before the
+windows are cut, so every window touching one is skipped, and the pixels
+themselves have no value in the map:
+
+- **Exclude**: any 0/1 mask on the image's grid (its first band), such as a
+  [Shadow Mask](image-processing.md#shadow-mask), Threshold to Mask or ROI
+  to Mask. Pixels where it's set (nonzero) are left out; where it has no
+  data, it has no say. None by default.
+- **Minimum Signal**: pixels whose mean over the fitted bands (the good
+  bands in the wavelength range) is below it are left out. In the image's
+  data units (e.g. I/F); 0, the default, is off.
+
+The map's last band, **Mean signal**, is each pixel's mean over the fitted
+bands (in data units), whatever was left out, so you can see whether
+detections follow brightness. To guard against false positives from
+shadow: mask shadows (a Shadow Mask with a buffer of 3 pixels drops the
+windows that straddle a shadow's edge), try fewer factors per window and
+see which detections survive, and confirm every detection with ratioed
+I/F spectra.
 
 ## Reporting your results
 
@@ -116,6 +159,10 @@ For the map:
 
 - The targets, the threshold, *Factors per window*, the window shapes
   (7×7, 5×10, 10×5) and the number of bands used.
+- What was left out: the Exclude mask (and how it was made, e.g. its
+  Shadow Mask settings) and the Minimum Signal, with the pixels each left
+  out (the `fatt` metadata's `excludedByMask`, `excludedBySignal` and
+  `excludedPixels`, also in the description).
 - How you confirmed each detection (for example ratioed spectra), since
   the map gives candidates.
 
@@ -141,7 +188,12 @@ Settings that aren't in the dialog:
   to about 50 windows per shape, so its nRMSE is lower than a single
   window's and false positives are more likely. The three shapes must
   agree, which works against that. Pixels near the image's edges or near
-  no-data lie in fewer windows, so their values are less reliable.
+  no-data lie in fewer windows, so their values are less reliable;
+  so do pixels next to an excluded area.
+- **Dark pixels fit too well.** Compare detections with the Mean signal
+  band: detections that cluster in the dimmest pixels, or vanish when
+  shadows are masked or the factors reduced, are suspect (see Shadows and
+  dim pixels).
 - **Ranking and map values aren't comparable.** The ranking uses one
   factor space for the whole sample; the map uses one per window, with a
   different number of factors. Within the map, targets covering different
@@ -159,9 +211,9 @@ Settings that aren't in the dialog:
   lines giving the image, the spectra used (sampling or ROI class, and how
   many), the wavelength window and band count, the decomposition, the
   factor count, the library, the threshold, the Varda version and the time.
-  The map's targets, library, threshold, factors, windows and each
-  target's band count
-  are in its metadata and its provenance record (threshold in units of
+  The map's targets, library, threshold, factors, windows, each
+  target's band count, and the exclusions (mask, minimum signal, pixels
+  left out) are in its metadata and its provenance record (threshold in units of
   10⁻⁴), in Varda and in exported files; the band names name the targets.
 
 ### References

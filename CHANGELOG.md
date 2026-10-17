@@ -8,6 +8,22 @@ can alter results.
 
 ### Added
 
+- **Shadow Mask** (Processing → Image Math): a 0/1 mask of shadow from the
+  image's brightness (the mean over a wavelength range, 1280–1380 nm by
+  default, below a percentile of the scene or a value), from the terrain
+  (a co-registered DEM and the sun: slopes facing away, by the local
+  illumination cos(i), and cast shadows traced toward the sun), or both,
+  with an optional buffer. It adds the brightness and cos(i) bands and
+  records the thresholds used, the sun angles and where they came from
+  (the image's metadata or a CRISM DDR's incidence angle, else you enter
+  them) and the pixels each rule found.
+- **FATT map exclusions:** the FATT detection map can leave out the pixels
+  set in a mask (**Exclude**, e.g. a Shadow Mask) and pixels dimmer than a
+  **Minimum Signal**, with every window touching them, and adds a **Mean
+  signal** band, so you can see whether detections follow brightness. Dark
+  and shadowed windows fit almost any target; the FATT guide explains why
+  and how to guard against it. The pixels left out by each rule are
+  recorded. (The map has one more band, the last.)
 - **Spectral libraries: choose them, build your own, load and export them.**
   Every library list in Varda now draws from one set of libraries: the
   bundled CRISM MICA numerators and USGS minerals, your own, and libraries

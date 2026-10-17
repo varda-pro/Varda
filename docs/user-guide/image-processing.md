@@ -178,6 +178,81 @@ Masks combine with Image Arithmetic: **minimum** of two 0/1 masks is
 "and", **maximum** is "or", and `1 - mask` in Band Math inverts one. Band
 Math makes masks too (`b3 > 0.2` is 1 or 0).
 
+### Shadow Mask
+
+**Processing → Image Math → Shadow Mask** marks where an image is in
+shadow: 1 for shadow, 0 for lit ground, no data where it can't tell. Use it
+as the **Exclude** mask of a [FATT detection map](fatt.md#shadows-and-dim-pixels),
+with Apply Mask, or anywhere a 0/1 mask goes. **Method** chooses how:
+
+- **Brightness** (the default): a pixel is shadow when its brightness is
+  below a threshold. Brightness is the mean of the image's good bands
+  between **Brightness From** and **Brightness To** (nm), each pixel's
+  no-data bands left out. The range starts at 1280–1380 nm, the window of
+  CRISM's IR albedo parameter R1330 (Viviano-Beck et al. 2014), a continuum
+  region away from strong mineral absorptions, when the image has a good
+  band there; otherwise at the image's whole wavelength range (every good
+  band). For one band, set a range around it with no other band inside:
+  when no band falls in the range, the band nearest its center is used.
+  Without wavelengths, every good band is used. **Threshold** is a
+  **Percentile of the scene** (**Percentile**, default 5%: the darkest 5%
+  of the valid pixels) or an **Absolute value** in the image's data units
+  (e.g. I/F; **Absolute Threshold**, default 0). A pixel is shadow when its
+  brightness is strictly below the threshold.
+- **Topographic (needs a DEM)**: shadow from the terrain and the sun.
+  - **DEM**: elevation (its first band) on the image's pixel grid: the same
+    size, map projection and pixel positions, **co-registered** with it.
+    Varda doesn't resample a DEM onto another image's grid yet; prepare it
+    elsewhere (for example GDAL's `gdalwarp` with the image's extent and
+    pixel size), then check the fit, e.g. by draping the image over the DEM
+    in [3D Terrain](3d-terrain.md#overlays), whose **Auto Align** matches
+    an image to a DEM. A misregistered DEM puts shadows in the wrong place.
+  - **Z Factor** (default 1) multiplies elevations to put them in the pixel
+    size's units (1000 for kilometers of elevation over meters of pixel
+    size), as in Terrain. DEMs in degrees (a geographic coordinate system)
+    are refused; a DEM without georeferencing counts each pixel as one unit
+    of elevation (the description says so).
+  - **Sun Azimuth** (degrees clockwise from north) and **Sun Elevation**
+    (degrees above the horizon, 90° − the incidence angle). Varda fills
+    them in when it knows them: from the image's metadata (keys named
+    `sun_azimuth` or `solar_azimuth`, `sun_elevation` or `solar_elevation`,
+    or `incidence_angle`, in any case and with spaces or underscores), or,
+    for the elevation of a CRISM product with its DDR beside it, 90° minus
+    the scene's mean "INA at areoid" (the incidence angle to the reference
+    surface; the DDR has no solar azimuth). Otherwise you must enter them,
+    from the product's label or geometry; Run stays unavailable until you
+    do. Check a metadata azimuth's convention: Varda takes it as clockwise
+    from north.
+  - **Self-shadow** where the local illumination cosine is at or below
+    **Self-Shadow cos(i) ≤** (default 0, slopes facing away from the sun):
+    cos(i) = cos(s) sin(e) + sin(s) cos(e) cos(azimuth − aspect), with
+    slope s and aspect from the DEM by Horn's method (as in Terrain) and
+    sun elevation e. Raise the threshold (say 0.1) to drop grazing-lit
+    slopes too.
+  - **Cast shadow** where other terrain hides the sun: from each pixel,
+    Varda steps toward the sun one pixel at a time along the larger of the
+    row and column directions (interpolating linearly across the other),
+    and marks the pixel when the DEM rises strictly above the straight
+    line to the sun. Distances come from the DEM's pixel size. Terrain
+    beyond the DEM's edge can't cast a shadow.
+- **Both (union)**: shadow by either method.
+
+**Buffer** (default 0, 0–100 px) grows the shadow by that many pixels in
+every direction (a square). For a FATT map, a buffer of half the window,
+3 px, also drops the windows that straddle a shadow's edge.
+
+The result's bands: **Shadow mask** first, then **Brightness** (the mean
+used, in data units) when brightness is used, then **cos(i)** (unitless,
+−1 to 1) when the terrain is. cos(i) shows weakly lit slopes even where
+they aren't shadowed; its no-data matches the DEM's. Where a method has no
+data (no brightness, a gap in the DEM), the mask has none either, unless
+the other method finds shadow there. The `shadowMask` metadata (saved with
+the file) and the description record the method, the bands used, the
+threshold actually used (a percentile's value in data units too), the DEM,
+the sun angles and where each came from, the cos(i) threshold, the pixel
+size and Z Factor, the buffer, and the pixels found by each rule, added by
+the buffer, in shadow and with data.
+
 ### ROIs from a threshold or a mask
 
 In the ROI Manager, **From Threshold or Mask…** makes a new ROI class
@@ -367,6 +442,7 @@ Sizes are made odd (a 4 becomes 5).
 | Band Math | Expression in 64-bit floats; `R<nm>` as above | `R2300 / R2200` | As the expression |
 | Image Arithmetic | Band by band | Add; Number 1 | As the operation |
 | Threshold to Mask | 1 where Low ≤ value ≤ High (or the opposite for outside) | Range: the band's minimum and maximum | 0 / 1 |
+| Shadow Mask | Brightness: mean of the good bands in the range (no-data bands left out) < threshold; a percentile is numpy's `nanpercentile` (linear interpolation) over the valid pixels. Topographic: cos(i) ≤ threshold (slope and aspect by Horn's method, edges extended, DEM gaps filled with the nearest value and no data in the result), or cast shadow by a ray march toward the sun in one-pixel steps along the major axis, linear interpolation across it, shadow where the DEM is strictly above the ray. Buffer: a (2N + 1)-pixel square maximum filter | Brightness; 1280–1380 nm (else all good bands); 5th percentile; absolute 0; Z Factor 1; cos(i) ≤ 0; buffer 0 | Mask 0 / 1; brightness in data units; cos(i) unitless |
 | Decode Bit Mask | Each value's bits at the image's own width; signed integers read as unsigned of the same width (16-bit −1 is 16 bits set) | Number of bits set; Bits `0` | Count, or 0 / 1 |
 | Local Statistics | Moments over the window (variance divided by n, not n − 1) | Standard deviation; 7 px; One band | Band units (variance: squared; skewness: none) |
 | GLCM | Symmetric co-occurrence of pairs inside the window (windows are cut at the image's edges); gray levels over the band's 2–98% range | Contrast; 7 px; 32 levels; all directions; distance 1 px; One band | Gray levels: contrast, variance in levels²; dissimilarity, mean in levels; entropy in nats (natural log); second moment (Σp², not its square root), homogeneity, correlation unitless |
@@ -456,6 +532,22 @@ how to get a number:
   pixel size² (√20) per pixel. On flat ground, noise alone gives a
   roughness of about 1.13 σz. Report the DEM's stated vertical precision
   and pixel size with these products.
+- **Shadow Mask is a model, not a measurement.** Brightness confuses dark
+  materials (basalt, dark sand) with shadow, and a
+  percentile always flags that share of the scene, shadows or not: look
+  at the Brightness band and its histogram before trusting it, and prefer
+  an absolute threshold you can state. The topographic method is only as
+  good as the DEM: a shadow narrower than a few DEM pixels, or cast by
+  relief within the DEM's vertical error, is missed or misplaced, and any
+  misregistration between the DEM and the image moves every shadow. Cast
+  shadow edges are approximate at the scale of a pixel (the ray is sampled
+  once per pixel, and a pixel is either shadow or not, though its footprint
+  can be part lit). The sun is a point here, so the penumbra (the sun's
+  disk is about 0.35° across at Mars, 0.53° at Earth) isn't modeled, and
+  shadowed ground isn't dark: diffuse light from the sky and light
+  scattered from nearby slopes still reach it. For a margin, buffer the
+  mask, and report the method, thresholds, sun angles (and their source),
+  DEM, buffer and pixel counts from the `shadowMask` metadata.
 - **Resample** with bilinear or cubic interpolation changes values (cubic
   can overshoot), and when shrinking also smooths them (the anti-aliasing
   Gaussian above: report its σ); nearest neighbor keeps them but moves each
@@ -520,8 +612,13 @@ how to get a number:
   (1986). Color enhancement of highly correlated images. I. Decorrelation
   and HSI contrast stretches. *Remote Sensing of Environment*, 20(3),
   209–235.
-- Slope, aspect and hillshade: Horn, B. K. P. (1981). Hill shading and the
-  reflectance map. *Proceedings of the IEEE*, 69(1), 14–47.
+- Slope, aspect and hillshade, and the Shadow Mask's slopes: Horn, B. K.
+  P. (1981). Hill shading and the reflectance map. *Proceedings of the
+  IEEE*, 69(1), 14–47.
+- Shadow Mask's default brightness window (R1330, IR albedo): Viviano-Beck,
+  C. E., et al. (2014). Revised CRISM spectral parameters and summary
+  products based on the currently detected mineral diversity on Mars.
+  *Journal of Geophysical Research: Planets*, 119(6), 1403–1431.
 - Filters, morphology and interpolation (scipy) and the scikit-image
   methods: Virtanen, P., et al. (2020). SciPy 1.0: fundamental algorithms
   for scientific computing in Python. *Nature Methods*, 17(3), 261–272.
