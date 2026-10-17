@@ -293,18 +293,22 @@ class CalibrationLibrary:
 
     def status(self, trr3: Trr3) -> list[CalibrationFileStatus]:
         """The files the observation uses and where each is, or would be
-        fetched from: its WA (required), one AT per volcano scan (at least one
+        fetched from: its WA (required), one AT per volcano scan (the first
+        local period of the scan, else its best-ranked one; at least one scan
         is required) and its BPs (optional)."""
         entries = [self._entry("WA", Path(trr3.wavelengthFileName).stem)]
         scans = self._rowsByScan(trr3)
         for rows in scans.values():
-            row = rows[0]
+            # the first local period of the scan, else the best-ranked one
+            index = next((i for i, r in enumerate(rows) if self._find("AT", r.name)), 0)
+            row = rows[index]
             held = self._distance(row, trr3.sclk) == 0
-            note = (
-                f"scan {row.scanId}: period holds the observation's SCLK"
+            where = (
+                "its period holds the observation's SCLK"
                 if held
-                else f"scan {row.scanId}: nearest period (SCLK outside it)"
+                else "SCLK outside its period"
             )
+            note = f"scan {row.scanId}: period {index + 1} of {len(rows)}, {where}"
             entries.append(self._entry("AT", row.name, note=note))
         if not scans:
             entries.append(
@@ -326,9 +330,9 @@ class CalibrationLibrary:
     def ensure(self, trr3: Trr3) -> list[CalibrationFileStatus]:
         """Fetch what ``status`` shows missing into the cache (BPs best effort)
         and return the final status, with a note on each file that could not be
-        fetched. Raises ``MissingCalibrationError`` when the WA is missing or
-        no AT at all is available: not even another period of a scan, which
-        ``transmissions`` uses when the best-ranked one is absent."""
+        fetched; a scan with a local period is not fetched again. Raises
+        ``MissingCalibrationError`` when the WA is missing or no scan has a
+        local AT."""
         for entry in self.status(trr3):
             if entry.localPath is None:
                 self._download(entry)
@@ -336,12 +340,7 @@ class CalibrationLibrary:
         wa = entries[0]
         ats = [e for e in entries if e.kind == "AT"]
         missing = [wa] if wa.localPath is None else []
-        anyPeriod = any(
-            self._find("AT", row.name) is not None
-            for rows in self._rowsByScan(trr3).values()
-            for row in rows
-        )
-        if not anyPeriod:
+        if not any(e.localPath for e in ats):
             missing += ats
         if missing:
             raise MissingCalibrationError(missing)

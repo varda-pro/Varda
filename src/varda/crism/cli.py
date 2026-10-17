@@ -284,7 +284,8 @@ def _learn(args: argparse.Namespace) -> int:
             _error(f"{observation.name}: {type(error).__name__}: {error}")
         else:
             groups.setdefault(column.transmissionKey, []).append(column)
-    args.out.mkdir(parents=True, exist_ok=True)
+    if groups:
+        args.out.mkdir(parents=True, exist_ok=True)
     for key, columns in sorted(groups.items()):
         try:
             _learnKey(key, columns, args.out)

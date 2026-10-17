@@ -176,8 +176,9 @@ def test_other_local_period_satisfies_ensure(cropDir: Path, tmp_path: Path, trr3
     # the 2014 SCLK; offline, it is still a transmission the cube can use.
     copyCdr(cropDir, WA, tmp_path / "cdr")
     copyCdr(cropDir, AT, tmp_path / "cdr")
-    assert AT not in atNames(library(tmp_path), trr3)
     lib = library(tmp_path, Recorder(OSError("offline")))
+    entry = next(f for f in lib.status(trr3) if f.name == AT)
+    assert entry.localPath is not None and "period" in entry.note
     lib.ensure(trr3)
     found = lib.transmissions(trr3, TransmissionSource.PDS_AT)
     assert [f.sourceName.lower() for f in found] == [AT]
@@ -337,3 +338,18 @@ def test_download_leaves_no_partial_file(tmp_path: Path):
         downloadTo((tmp_path / "absent").as_uri(), tmp_path / "cache" / "y.img")
     assert not (tmp_path / "cache" / "y.img").exists()
     assert not list((tmp_path / "cache").glob("*.part"))
+
+
+def test_local_second_period_is_used_and_not_fetched(
+    cropDir: Path, tmp_path: Path, trr3: Trr3
+):
+    copyCdr(cropDir, WA, tmp_path / "cdr")
+    copyCdr(cropDir, AT, tmp_path / "cdr")
+    row = next(r for r in atTable() if r.name == AT)
+    recorder = Recorder(OSError("offline"))
+    lib = library(tmp_path, recorder)
+    status = lib.ensure(trr3)
+    scan = [f for f in status if f.kind == "AT" and f"scan {row.scanId}:" in f.note]
+    assert [f.name for f in scan] == [AT] and scan[0].localPath is not None
+    assert "period" in scan[0].note and "of" in scan[0].note
+    assert not [u for u in recorder.urls if scan[0].name in u]

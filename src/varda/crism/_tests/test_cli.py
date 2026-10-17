@@ -1,17 +1,21 @@
 """The command line: ``python -m varda.crism`` and ``Varda --crism`` (``crismMain``)."""
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
+import rasterio
+from affine import Affine
 
 from varda.crism import calibration, cli
 from varda.crism._tests.synthetic import makeSyntheticCube, writeSyntheticObservation
 from varda.crism.atmosphere import artifactFileName, loadArtifactBasis
 from varda.crism.cli import crismMain
 from varda.crism.pipeline import ProcessResult
+from varda.image_loading.data_sources.envi_data_source import ENVIDataSource
 
 _WA = "cdr490947778566_wa0000000l_3"
 _AT = "cdr420862848019_at0000000l_7"
@@ -185,3 +189,84 @@ def test_cli_validate_against_itself(
     for name in (*_PARAMETERS, "spectra", "co2_by_column"):
         assert (report / f"{name}.png").stat().st_size > 0, name
     assert np.isfinite(data["shapeRatio"]["median"])
+
+
+def _joinedReference(oursPath: Path, target: Path) -> int:
+    """A stand-in for the joined VNIR + IR MTRDR: our bands plus 78 extra VNIR
+    ones in front, on a grid shifted by (2, 1) pixels; returns the overlap size."""
+    ours = ENVIDataSource(str(oursPath))
+    cube = ours.readAllBands()[1:, 2:]  # (rows, cols, bands), NaN = no data
+    extra = np.full((*cube.shape[:2], 78), 0.5)
+    stacked = np.concatenate([extra, cube], axis=-1)
+    wavelengths = [436.0 + 7.0 * i for i in range(78)] + [
+        float(w) for w in ours.wavelengths
+    ]
+    data = np.moveaxis(np.where(np.isnan(stacked), 65535.0, stacked), -1, 0)
+    transform = ours.transform * Affine.translation(2, 1)
+    with rasterio.open(
+        target,
+        "w",
+        driver="ENVI",
+        width=data.shape[2],
+        height=data.shape[1],
+        count=data.shape[0],
+        dtype="float32",
+        crs=ours.crs,
+        transform=transform,
+        nodata=65535.0,
+    ) as out:
+        out.write(data.astype("float32"))
+        out.update_tags(
+            ns="ENVI", wavelength="{" + ", ".join(map(str, wavelengths)) + "}"
+        )
+    return cube.shape[0] * cube.shape[1]
+
+
+def test_cli_validate_joined_reference_with_other_extent(
+    cropDir: Path, tmp_path: Path
+) -> None:
+    assert crismMain(["process", str(cropDir), "--out", str(tmp_path / "out")]) == 0
+    product = tmp_path / "out" / "frs00031442_01_if168l_vmtr.img"
+    reference = tmp_path / "joined.img"
+    size = _joinedReference(product, reference)
+    report = tmp_path / "report"
+    assert (
+        crismMain(["validate", str(product), str(reference), "--report", str(report)])
+        == 0
+    )
+    data = json.loads((report / "report.json").read_text())
+    assert data["overlap"]["pixels"] == size
+    assert data["parameters"]["D2300"]["medianBias"] == pytest.approx(0.0, abs=1e-6)
+    assert max(data["shapeRatio"]["wavelengthsNm"]) <= 2600  # bbl = 0 bands left out
+    assert data["shapeRatio"]["median"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_cli_validate_unmatched_bands_is_an_error(
+    cropDir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert crismMain(["process", str(cropDir), "--out", str(tmp_path / "out")]) == 0
+    product = tmp_path / "out" / "frs00031442_01_if168l_vmtr.img"
+    reference = tmp_path / "joined.img"
+    _joinedReference(product, reference)
+    other = ENVIDataSource(str(reference))
+    assert other.bandCount == 489
+    del other
+    # a reference holding only the extra VNIR bands has none of ours
+    shutil.copyfile(reference, tmp_path / "vnir.img")
+    header = reference.with_suffix(".hdr").read_text()
+    wavelengths = ", ".join(str(436.0 + 7.0 * i) for i in range(489))
+    (tmp_path / "vnir.hdr").write_text(
+        re.sub(
+            r"wavelength\s*=\s*\{[^}]*\}", "wavelength = {" + wavelengths + "}", header
+        )
+    )
+    code = crismMain(
+        [
+            "validate",
+            str(product),
+            str(tmp_path / "vnir.img"),
+            "--report",
+            str(tmp_path / "r"),
+        ]
+    )
+    assert code == 2 and "no MTRDR band" in capsys.readouterr().err

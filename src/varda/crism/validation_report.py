@@ -32,13 +32,18 @@ from varda.crism.validation import (
     summaryParameter,
 )
 from varda.crism.writers import jsonSafe
-from varda.image_loading.data_sources.envi_data_source import ENVIDataSource
+from varda.image_loading.data_sources.envi_data_source import (
+    ENVIDataSource,
+    findEnviHeader,
+)
 
 PARAMETERS = ("D2300", "BD2290", "BD1900_2", "OLINDEX3", "BD2310")
 _BLOCK_ROWS = 32
 _SAMPLE_COUNT = 20000  # pixels behind the spectra and the shape ratio
 _LATTICE_TOLERANCE_PX = 0.25
 _SOURCE_SAMPLE_BAND = 0  # the IN product's first band
+_BAND_MATCH_NM = 1.0
+_BBL = re.compile(r"^\s*bbl\s*=\s*\{([^}]*)\}", re.IGNORECASE | re.MULTILINE)
 
 
 def _nanMedian(values: np.ndarray, axis: int) -> np.ndarray:
@@ -122,11 +127,27 @@ def _nanometers(source: ENVIDataSource) -> np.ndarray:
     return wavelengths * 1000.0 if np.nanmax(wavelengths) < 20 else wavelengths
 
 
+def _goodBands(path: Path, count: int) -> np.ndarray:
+    """The header's bbl as bool ``(count,)`` (all True without one)."""
+    header = findEnviHeader(path)
+    match = _BBL.search(header.read_text(errors="replace")) if header else None
+    if match is None:
+        return np.ones(count, dtype=bool)
+    values = [
+        v.strip() for v in match.group(1).replace("\n", " ").split(",") if v.strip()
+    ]
+    if len(values) != count:
+        return np.ones(count, dtype=bool)
+    return np.array([float(v) != 0 for v in values])
+
+
 @frozen(eq=False)
 class _Comparison:
-    """The overlap's maps (``(h, w)``) and spectra samples (``(n, b)``)."""
+    """The overlap's maps (``(h, w)``) and spectra samples (``(n, b)``) on our
+    bands; ``good`` marks the bands neither header flags bad (bbl = 0)."""
 
     wavelengths: np.ndarray
+    good: np.ndarray
     parameters: dict[str, tuple[np.ndarray, np.ndarray]]  # name: (ours, reference)
     co2: tuple[np.ndarray, np.ndarray]
     albedo: tuple[np.ndarray, np.ndarray]
@@ -138,16 +159,32 @@ def _blocks(rows: slice) -> Iterator[slice]:
         yield slice(start, min(start + _BLOCK_ROWS, rows.stop))
 
 
+def _matchBands(wavelengths: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """For each of ours, the index of the reference band nearest in wavelength
+    (the reference may hold more, e.g. the joined VNIR + IR MTRDR); raises
+    when one has none within 1 nm."""
+    nearest = np.abs(reference[None, :] - wavelengths[:, None]).argmin(axis=1)
+    off = np.abs(reference[nearest] - wavelengths) > _BAND_MATCH_NM
+    if off.any():
+        raise ValueError(
+            f"{int(off.sum())} of our {wavelengths.size} bands have no MTRDR band "
+            f"within {_BAND_MATCH_NM:g} nm (first: {wavelengths[off][0]:.1f} nm)"
+        )
+    return nearest
+
+
 def _compare(
-    ours: ENVIDataSource, reference: ENVIDataSource, window: _Window
+    ours: ENVIDataSource,
+    reference: ENVIDataSource,
+    window: _Window,
 ) -> _Comparison:
     wavelengths = _nanometers(ours)
-    refWavelengths = _nanometers(reference)
-    if wavelengths.size != refWavelengths.size:
-        raise ValueError(
-            f"the images have {wavelengths.size} and {refWavelengths.size} bands; "
-            "both must be on the MTRDR band vector"
-        )
+    matched = _matchBands(wavelengths, _nanometers(reference))
+    refWavelengths = _nanometers(reference)[matched]
+    good = (
+        _goodBands(Path(ours.filePath), ours.bandCount)
+        & _goodBands(Path(reference.filePath), reference.bandCount)[matched]
+    )
     height, width = window.shape
     maps = {
         name: (np.empty((height, width)), np.empty((height, width)))
@@ -155,8 +192,10 @@ def _compare(
     }
     co2 = (np.empty((height, width)), np.empty((height, width)))
     albedo = (np.empty((height, width)), np.empty((height, width)))
-    inCo2 = (wavelengths > CO2_WINDOW_NM[0]) & (wavelengths < CO2_WINDOW_NM[1])
-    inShape = (wavelengths >= SHAPE_WINDOW_NM[0]) & (wavelengths <= SHAPE_WINDOW_NM[1])
+    inCo2 = (wavelengths > CO2_WINDOW_NM[0]) & (wavelengths < CO2_WINDOW_NM[1]) & good
+    inShape = (
+        (wavelengths >= SHAPE_WINDOW_NM[0]) & (wavelengths <= SHAPE_WINDOW_NM[1]) & good
+    )
     step = max(1, int(np.sqrt(height * width / _SAMPLE_COUNT)))
     taken: tuple[list[np.ndarray], list[np.ndarray]] = ([], [])
     dr, dc = window.shift
@@ -166,7 +205,9 @@ def _compare(
         blocks = (
             (_read(ours, rows, window.cols), wavelengths),
             (
-                _read(reference, slice(rows.start - dr, rows.stop - dr), refCols),
+                _read(
+                    reference, slice(rows.start - dr, rows.stop - dr), refCols, matched
+                ),
                 refWavelengths,
             ),
         )
@@ -179,6 +220,7 @@ def _compare(
             taken[side].append(cube[keep][:, ::step].reshape(-1, cube.shape[-1]))
     return _Comparison(
         wavelengths,
+        good,
         maps,
         co2,
         albedo,
@@ -268,11 +310,12 @@ def _spectraFigure(
     wl = comparison.wavelengths
     if before is not None:
         top.plot(*before, color="0.6", label="Before (TRR3)")
-    top.plot(wl, _nanMedian(comparison.samples[0], 0), label="Ours (after)")
-    top.plot(wl, _nanMedian(comparison.samples[1], 0), label="MTRDR", linestyle="--")
+    for side, label, style in ((0, "Ours (after)", "-"), (1, "MTRDR", "--")):
+        median = _nanMedian(comparison.samples[side], 0)
+        top.plot(wl, np.where(comparison.good, median, np.nan), style, label=label)
     top.set_ylabel("Median I/F")
     top.legend()
-    bottom.plot(wl, ratio)
+    bottom.plot(wl[comparison.good], ratio)
     bottom.axhline(1.0, color="0.5", linewidth=0.8)
     bottom.set_ylabel("Shape ratio, ours ÷ MTRDR")
     bottom.set_xlabel("Wavelength (nm)")
@@ -343,7 +386,12 @@ def validate(
             report["geolocationOffset"] = {"dxPx": dx, "dyPx": dy}
         except ValueError as error:
             report["geolocationOffset"] = {"error": str(error)}
-        ratio = shapeRatio(*comparison.samples, wavelengths)
+        good = comparison.good
+        ratio = shapeRatio(
+            comparison.samples[0][:, good],
+            comparison.samples[1][:, good],
+            wavelengths[good],
+        )
         finite = np.isfinite(ratio)
         report["shapeRatio"] = {
             "median": _median(ratio),
@@ -352,10 +400,12 @@ def validate(
             "rmsFromOne": float(np.sqrt(np.nanmean((ratio - 1) ** 2)))
             if finite.any()
             else None,
-            "wavelengthsNm": wavelengths,
+            "wavelengthsNm": wavelengths[good],
             "byBand": ratio,
         }
-        inCo2 = (wavelengths > CO2_WINDOW_NM[0]) & (wavelengths < CO2_WINDOW_NM[1])
+        inCo2 = (
+            (wavelengths > CO2_WINDOW_NM[0]) & (wavelengths < CO2_WINDOW_NM[1]) & good
+        )
         report["co2Residual"] = {
             side: {
                 "median": _median(co2),
