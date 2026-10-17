@@ -366,3 +366,47 @@ def test_cache_and_log_follow_the_apps_folders(qapp):
         qapp.setApplicationName(name)
     assert calibration_dialog.cacheFolder() == Path(data) / "crism"
     assert crismLogFile().parent == Path(local) / "Logs"
+
+
+def test_missing_calibration_skips_only_that_observation(qtbot, tmp_path, monkeypatch):
+    """Final review: like the command line, a batch skips an observation
+    whose required calibration is missing and processes the others."""
+    missing = CalibrationFileStatus("wa0000000l_3", "WA", None, "https://x/wa")
+
+    def ensure(observation, library):
+        if observation.name == "a":
+            raise MissingCalibrationError([missing])
+
+    monkeypatch.setattr(process_dialog, "ensureCalibration", ensure)
+    ran: list[str] = []
+
+    def fake(observation, recipe, outputFolder, **kwargs):
+        ran.append(observation.name)
+        return _result(tmp_path, observation.name)
+
+    monkeypatch.setattr(process_dialog, "process", fake)
+    dialog = _dialog(qtbot, tmp_path, ["a", "b"])
+    _run(qtbot, dialog)
+    assert ran == ["b"]
+    assert dialog.statuses() == ["failed: missing calibration files", "done"]
+    text = dialog.progressLabel.text()
+    assert "1 done, 1 failed" in text and "wa0000000l_3" in text
+    assert not dialog.getCalibrationButton.isHidden()
+
+
+def test_calibration_dialog_blocks_only_on_what_processing_needs(qtbot, tmp_path):
+    """One local AT is enough (``ensure``); other scans and BPs are not blockers."""
+    dialog = CalibrationDialog(libraryFor=lambda obs: _library(tmp_path))
+    qtbot.addWidget(dialog)
+    here = tmp_path / "x.img"
+
+    def entry(kind: str, name: str, local: bool, required: bool = True):
+        return CalibrationFileStatus(
+            name, kind, here if local else None, None, required
+        )
+
+    wa, bp = entry("WA", "wa", True), entry("BP", "bp", False, required=False)
+    dialog._showStatus([wa, entry("AT", "at1", False), entry("AT", "at2", True), bp])
+    assert dialog.message.text() == "All required files are available."
+    dialog._showStatus([entry("WA", "wa", False), entry("AT", "at1", False), bp])
+    assert dialog.message.text() == "Missing required: wa, at1"

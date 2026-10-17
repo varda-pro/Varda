@@ -1076,7 +1076,7 @@ class _Run:
         smile = self.recipe.smile
         self.steps["smile"] = {
             "enabled": bool(smile.enabled.get()),
-            "method": smile.method.get().name,
+            "method": "LINEAR",
             "target": "MTRDR IR standard vector",
             "bands": len(self.vector.wavelengths),
             "esc": escOn,

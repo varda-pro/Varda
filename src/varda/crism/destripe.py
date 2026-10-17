@@ -74,7 +74,7 @@ from attrs import frozen
 from numpy.polynomial import legendre
 from scipy import ndimage
 
-from varda.crism.brightness import FILTER_BOUNDARIES_NM, bandWindows, smoothBands
+from varda.crism.brightness import bandWindows, segmentIds, smoothBands
 
 BLAND_WINDOW_NM = (1000.0, 2600.0)
 BLAND_FRACTION = 0.5  # the quietest share of the continuum-removed variance
@@ -449,16 +449,18 @@ def _std(values: np.ndarray, axis: int) -> np.ndarray:
 
 
 def _smoothParts(
-    targets: np.ndarray, wavelengths: np.ndarray, weight: np.ndarray
+    targets: np.ndarray,
+    wavelengths: np.ndarray,
+    weight: np.ndarray,
+    segment: np.ndarray,
 ) -> np.ndarray:
     """``(m, b)``: each target spectrum's weighted Legendre polynomial of degree
-    ``SPECTRAL_DEGREE`` in λ, fitted per filter segment of one column; 0 in a
-    segment with fewer than ``_MIN_SEGMENT_BANDS`` weighted bands."""
+    ``SPECTRAL_DEGREE`` in λ, fitted per filter segment of one column (each
+    band's ``segment``, ``brightness.segmentIds``: the join is a detector row,
+    so membership is per band, not per column wavelength); 0 in a segment
+    with fewer than ``_MIN_SEGMENT_BANDS`` weighted bands."""
     smooth = np.zeros_like(targets)
     known = np.isfinite(wavelengths) & (weight > 0)
-    segment = np.searchsorted(
-        FILTER_BOUNDARIES_NM, np.nan_to_num(wavelengths, nan=np.inf)
-    )
     for s in np.unique(segment[known]):
         bands = known & (segment == s)
         if bands.sum() < _MIN_SEGMENT_BANDS:
@@ -561,6 +563,7 @@ def estimateStripes(
     for 190 × 640 × 438."""
     lines, samples, bands = cube.shape
     columnWavelengths = _nominal(wavelengths, samples, bands)
+    segment = segmentIds(_bandCenters(columnWavelengths))
     resamples = _blockResamples(lines)
     firstHalf = np.arange(lines) < lines // 2
     design = legendre.legvander(np.linspace(-1.0, 1.0, samples), legendreDegree)
@@ -605,7 +608,7 @@ def estimateStripes(
         targets = np.vstack([logF[x], halves[:, x], resampledLogF])
         targets = np.where(np.isfinite(targets), targets, logF[x])
         targets = np.where(known, np.vstack([targets, bootDifference[:, x]]), 0.0)
-        parts = _smoothParts(targets, columnWavelengths[x], weight)
+        parts = _smoothParts(targets, columnWavelengths[x], weight, segment)
         high = targets - parts
         resampled = slice(3, 3 + BOOTSTRAP_RESAMPLES)
         differences = slice(3 + BOOTSTRAP_RESAMPLES, None)

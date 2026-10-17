@@ -1,6 +1,8 @@
 """Processing > CRISM > Process CRISM Observation: a batch of observations
 through the TRR3 to MTRDR-like pipeline with one recipe. Calibration files are
-checked (and fetched) first, so a missing file stops the batch before any pass."""
+checked (and fetched) first: an observation missing a required file is
+skipped before any pass, and the others are processed (as on the command
+line)."""
 
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from PyQt6.QtWidgets import (
 from superqt import QCollapsible
 
 from varda.common.parameter import Parameter, ParameterGroup
-from varda.common.parameter_widgets import formWidget, groupWidget
+from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import MutedLabel
 from varda.crism import CrismObservation, ProcessResult, Recipe, process
 from varda.crism.calibration import CalibrationLibrary, MissingCalibrationError
@@ -47,6 +49,7 @@ from varda.utilities.background import onMainThread, runInBackground
 
 QUEUED = "queued"
 CANCELED = "canceled"
+MISSING = "failed: missing calibration files"
 STEP_TITLES = {
     "photometry": "Photometry",
     "despike": "Despike",
@@ -56,8 +59,7 @@ STEP_TITLES = {
     "projection": "Map projection",
     "output": "Outputs",
 }
-_HIDDEN = {("smile", "method")}
-_log = logging.getLogger(__name__)  # a single option: nothing to choose
+_log = logging.getLogger(__name__)
 
 
 def _copyValues(source: ParameterGroup, target: ParameterGroup) -> None:
@@ -88,6 +90,7 @@ class ProcessCrismDialog(QDialog):
         self._cancelRequested = False
         self._running = False
         self._missingFolder: Path | None = None
+        self._missingText = ""
         self._closing = False
         self.recipe = Recipe()
 
@@ -117,7 +120,7 @@ class ProcessCrismDialog(QDialog):
         for key, group in self.recipe.params.items():
             assert isinstance(group, ParameterGroup)
             box = QCollapsible(STEP_TITLES.get(key, key.capitalize()))
-            box.setContent(self._stepWidget(key, group))
+            box.setContent(groupWidget(group))
             box.collapse(animate=False)
             self._steps.append(box)
             stepsLayout.addWidget(box)
@@ -194,12 +197,6 @@ class ProcessCrismDialog(QDialog):
         return call
 
     # --- recipe -----------------------------------------------------------------
-
-    def _stepWidget(self, key: str, group: ParameterGroup) -> QWidget:
-        hidden = {k for step, k in _HIDDEN if step == key}
-        if not hidden:
-            return groupWidget(group)
-        return formWidget([p for k, p in group.params.items() if k not in hidden])
 
     def stepTitles(self) -> list[str]:
         return [box.text() for box in self._steps]
@@ -370,10 +367,11 @@ class ProcessCrismDialog(QDialog):
         missing: dict[int, MissingCalibrationError],
     ) -> None:
         self.progressBar.setRange(0, 100)
+        self._missingText = ""
         if missing:
             lines = []
             for row, error in missing.items():
-                self._setStatus(row, "failed: missing calibration files")
+                self._setStatus(row, MISSING)
                 lines += [
                     f"{observations[row].name}: {f.kind} {f.name} ({f.url or 'no known source'})"
                     + (f": {f.note}" if f.note else "")
@@ -381,18 +379,18 @@ class ProcessCrismDialog(QDialog):
                 ]
             first = observations[min(missing)]
             self._missingFolder = first.irCube.parent
-            self.progressLabel.setText(
-                "Missing calibration files:\n" + "\n".join(lines)
-            )
+            self._missingText = "Missing calibration files:\n" + "\n".join(lines)
             self.getCalibrationButton.show()
+        self.progressLabel.setText(self._missingText)
+        if len(missing) == len(observations):
             self._finish()
             return
-        self.progressLabel.setText("")
         recipe = Recipe()
         _copyValues(self.recipe, recipe)  # the batch keeps the settings it started with
         output = Path(self.outputFolder.text())
+        skip = set(missing)
         runInBackground(
-            lambda: self._batch(observations, recipe, output, library),
+            lambda: self._batch(observations, recipe, output, library, skip),
             lambda _: self._batchDone(),
             self._failed,
             description="CRISM batch",
@@ -405,11 +403,15 @@ class ProcessCrismDialog(QDialog):
         recipe: Recipe,
         output: Path,
         library: CalibrationLibrary,
+        skip: set[int],
     ) -> None:
         """On the worker thread: every call back into the GUI goes through
-        ``self._report`` or the main-thread helpers."""
+        ``self._report`` or the main-thread helpers. The rows in ``skip``
+        (missing calibration) are left as they are."""
         report = self._report
         for row, observation in enumerate(observations):
+            if row in skip:
+                continue
             if self._cancelRequested:
                 report(row, 0.0, CANCELED)
                 continue
@@ -451,7 +453,9 @@ class ProcessCrismDialog(QDialog):
             parts.append(f"{failed} failed")
         if canceled:
             parts.append(f"{canceled} canceled")
-        self.progressLabel.setText(", ".join(parts))
+        summary = ", ".join(parts)
+        missing = self._missingText
+        self.progressLabel.setText(f"{summary}\n{missing}" if missing else summary)
         self._finish()
 
     def _failed(self, error: Exception) -> None:

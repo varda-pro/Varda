@@ -250,7 +250,13 @@ class CalibrationDialog(QDialog):
                 self.table.setItem(row, column, item)
         missing = [e for e in statuses if e.localPath is None and e.url]
         self.fetchButton.setEnabled(bool(missing))
-        blocking = [e for e in statuses if e.localPath is None and e.required]
+        # what ``ensure`` needs: the WA, and one AT (any scan's)
+        haveAt = any(e.kind == "AT" and e.localPath is not None for e in statuses)
+        blocking = [
+            e
+            for e in statuses
+            if e.localPath is None and e.required and not (e.kind == "AT" and haveAt)
+        ]
         self.message.setText(
             f"Missing required: {', '.join(e.name for e in blocking)}"
             if blocking

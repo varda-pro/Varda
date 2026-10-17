@@ -2,12 +2,15 @@ import json
 
 import pytest
 
+import math
+
+from varda.common.parameter import IntParameter, ParameterGroup
+from varda.crism import recipe as recipeModule
 from varda.crism.calibration import TransmissionSource
 from varda.crism.recipe import (
     RECIPE_VERSION,
     Recipe,
     Resampling,
-    SmileMethod,
     recipeFromDict,
     recipeToDict,
 )
@@ -33,7 +36,6 @@ def test_recipe_round_trip():
     again = recipeFromDict(data)
     assert recipeToDict(again) == recipeToDict(recipe)
     assert again.despike.threshold.get() == 7.5
-    assert again.smile.method.get() is SmileMethod.LINEAR
     assert again.atmosphere.source.get() is TransmissionSource.BOTH
 
 
@@ -58,25 +60,44 @@ def test_recipe_rejects_unknown_keys():
 def test_removed_options_are_gone():
     # writing nothing deleted the previous products (final review, Important 4)
     assert "enabled" not in Recipe().output.params
-    assert [member.name for member in SmileMethod] == ["LINEAR"]
+    # one interpolation only: nothing to choose (final review)
+    assert "method" not in Recipe().smile.params
     assert "continuumDegree" not in Recipe().atmosphere.params
-
-
-def test_version_1_recipe_with_the_values_that_ran_loads():
+    assert not hasattr(recipeModule, "SmileMethod")
     data = recipeToDict(Recipe())
-    data["recipeVersion"] = 1
-    data["atmosphere"]["continuumDegree"] = 3  # ty: ignore[invalid-assignment]
     data["smile"]["method"] = "LINEAR"  # ty: ignore[invalid-assignment]
-    assert recipeToDict(recipeFromDict(data)) == recipeToDict(Recipe())
+    with pytest.raises(ValueError, match="method"):
+        recipeFromDict(data)
 
 
 @pytest.mark.parametrize(
     ("group", "key", "value"),
-    [("atmosphere", "continuumDegree", 5), ("smile", "method", "CUBIC")],
+    [
+        ("despike", "threshold", 10.5),  # range 3–10
+        ("despike", "threshold", 2.0),
+        ("despike", "threshold", math.nan),
+        ("projection", "pixelSize", math.inf),
+        ("projection", "maxDistanceFactor", -1.0),
+    ],
 )
-def test_version_1_recipe_with_a_removed_value_is_rejected(group, key, value):
+def test_recipe_rejects_values_outside_the_range(group, key, value):
+    """Final review: a recipe file sets only values the dialog could."""
     data = recipeToDict(Recipe())
-    data["recipeVersion"] = 1
     data[group][key] = value  # ty: ignore[invalid-assignment]
     with pytest.raises(ValueError, match=key):
         recipeFromDict(data)
+    data[group][key] = 5  # ty: ignore[invalid-assignment]
+    if key == "threshold":  # an integer is a fine float
+        assert recipeFromDict(data).despike.threshold.get() == 5.0
+
+
+def test_integer_parameters_take_integers_in_range():
+    class Group(ParameterGroup):
+        count = IntParameter("Count", 3, (1, 9))
+
+    for bad in (2.5, 12, math.nan, "3"):
+        with pytest.raises(ValueError, match="count"):
+            recipeModule._setParameter("count", Group().count, bad)
+    group = Group()
+    recipeModule._setParameter("count", group.count, 4.0)
+    assert group.count.get() == 4 and isinstance(group.count.get(), int)

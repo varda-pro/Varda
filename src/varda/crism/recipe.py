@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from enum import Enum
 
@@ -10,6 +11,7 @@ from varda.common.parameter import (
     BoolParameter,
     EnumParameter,
     FloatParameter,
+    IntParameter,
     LabeledEnum,
     Parameter,
     ParameterGroup,
@@ -19,10 +21,6 @@ from varda.crism.calibration import TransmissionSource
 
 RECIPE_VERSION = 2
 VERSION_KEY = "recipeVersion"
-# Version 1 offered options Phase 1 never implemented. A version-1 recipe
-# loads when it sets them to what actually ran (they then change nothing) and
-# is rejected, naming the key, otherwise.
-_REMOVED_IN_2 = {("atmosphere", "continuumDegree"): 3, ("smile", "method"): "LINEAR"}
 
 
 class IncidenceSource(LabeledEnum):
@@ -33,10 +31,6 @@ class IncidenceSource(LabeledEnum):
 class BetaMode(LabeledEnum):
     ELEVATION_PRIOR = "Per pixel, with an elevation prior"
     PER_PIXEL = "Per pixel"
-
-
-class SmileMethod(LabeledEnum):
-    LINEAR = "Linear"
 
 
 class Resampling(LabeledEnum):
@@ -124,12 +118,10 @@ class DestripeStep(ParameterGroup):
 
 
 class SmileStep(ParameterGroup):
-    enabled = _enabled(True, "Correct the spectral shift across the detector columns.")
-    method = EnumParameter(
-        "Interpolation",
-        SmileMethod,
-        SmileMethod.LINEAR,
-        "How spectra are resampled onto a common wavelength grid.",
+    enabled = _enabled(
+        True,
+        "Correct the spectral shift across the detector columns (linear "
+        "interpolation onto the MTRDR wavelengths).",
     )
     esc = BoolParameter(
         "Empirical shift correction",
@@ -217,20 +209,44 @@ def recipeToDict(recipe: Recipe) -> dict[str, object]:
 
 
 def _setParameter(key: str, param: Parameter, value: object) -> None:
+    """Set ``param`` from recipe data, as the dialog could: an enum by member
+    name, a bool as a bool, a string as a string, and a number finite,
+    integral for an integer, and inside the parameter's range."""
+
+    def invalid(why: str = "") -> ValueError:
+        return ValueError(f"Invalid value {value!r} for recipe key {key!r}{why}")
+
     if isinstance(param, EnumParameter):
         current = param.get()
         assert isinstance(current, Enum)
         members = {member.name: member for member in type(current)}
         if not isinstance(value, str) or value not in members:
-            raise ValueError(f"Invalid value {value!r} for recipe key {key!r}")
+            raise invalid()
         param.set(members[value])
+        return
+    expected = type(param.default)
+    if isinstance(value, bool) != (expected is bool):
+        raise invalid()
+    if expected is str:
+        if not isinstance(value, str):
+            raise invalid()
+        param.set(value)
+        return
+    if expected is bool:
+        param.set(value)
+        return
+    if not isinstance(value, int | float) or not math.isfinite(value):
+        raise invalid(": a finite number is needed")
+    if isinstance(param, IntParameter):
+        if value != int(value):
+            raise invalid(": a whole number is needed")
+        number: int | float = int(value)
     else:
-        expected = type(param.default)
-        if isinstance(value, bool) != (expected is bool) or not isinstance(
-            value, int | float | str
-        ):
-            raise ValueError(f"Invalid value {value!r} for recipe key {key!r}")
-        param.set(float(value) if expected is float else value)
+        number = float(value)
+    bounds = param.range if isinstance(param, IntParameter | FloatParameter) else None
+    if bounds is not None and not bounds[0] <= number <= bounds[1]:
+        raise invalid(f": outside {bounds[0]:g}–{bounds[1]:g}")
+    param.set(number)
 
 
 def _fillGroup(group: ParameterGroup, data: Mapping[str, object], path: str) -> None:
@@ -259,28 +275,6 @@ def recipeFromDict(data: Mapping[str, object]) -> Recipe:
             f"({RECIPE_VERSION})"
         )
     values = {key: v for key, v in data.items() if key != VERSION_KEY}
-    if version < 2:
-        values = _fromVersion1(values)
     recipe = Recipe()
     _fillGroup(recipe, values, "")
     return recipe
-
-
-def _fromVersion1(data: Mapping[str, object]) -> dict[str, object]:
-    """Version-1 data without the options version 2 removed (see
-    ``_REMOVED_IN_2``); a value other than the one that ran raises."""
-    values = dict(data)
-    for (group, key), ran in _REMOVED_IN_2.items():
-        raw = values.get(group)
-        if not isinstance(raw, Mapping):
-            continue
-        section = {str(k): v for k, v in raw.items()}
-        if key not in section:
-            continue
-        if section[key] != ran:
-            raise ValueError(
-                f"Recipe key {group}.{key!r} = {section[key]!r} is no longer "
-                f"offered (it always ran as {ran!r}); remove it or set it to {ran!r}"
-            )
-        values[group] = {k: v for k, v in section.items() if k != key}
-    return values

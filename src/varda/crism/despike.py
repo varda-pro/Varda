@@ -39,7 +39,7 @@ from itertools import product
 import numpy as np
 from attrs import frozen
 
-from varda.crism.brightness import FILTER_BOUNDARIES_NM, bandWindows, smoothBands
+from varda.crism.brightness import bandWindows, segmentIds, smoothBands
 
 
 _MAD_TO_SIGMA = 1.4826
@@ -132,8 +132,7 @@ def _spatialStack(
 def _segments(wavelengths: np.ndarray) -> np.ndarray:
     """The filter segment of each band ``(b,)``, from the columns' median
     wavelengths (the same for every column: the join is a detector row)."""
-    middle = _nanMedian(wavelengths)
-    return np.searchsorted(FILTER_BOUNDARIES_NM, np.nan_to_num(middle, nan=np.inf))
+    return segmentIds(_nanMedian(wavelengths))
 
 
 def _sameSegment(segment: np.ndarray, offset: int) -> np.ndarray:

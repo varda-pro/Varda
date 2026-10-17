@@ -2,6 +2,9 @@ from functools import cache
 from pathlib import Path
 
 import numpy as np
+
+from varda.crism import destripe
+from varda.crism.brightness import segmentIds
 from scipy import ndimage
 
 from varda.crism import validation
@@ -204,3 +207,18 @@ def test_memmap_input_matches(tmp_path: Path) -> None:
         blandMask(stored, truth.columnWavelengths),
         blandMask(cube.astype(np.float32), truth.columnWavelengths),
     )
+
+
+def test_smooth_parts_use_each_bands_segment() -> None:
+    """Final review: a band's filter segment is fixed (the join is a detector
+    row), so a column whose own wavelength for the last band before the join
+    is past 1656 nm still fits that band with its segment."""
+    wavelengths = np.linspace(1500.0, 1800.0, 40)
+    segment = segmentIds(wavelengths)
+    join = int(np.argmax(segment == 1))
+    column = wavelengths.copy()
+    column[join - 1] = 1657.0  # this column's smile moves it across 1656 nm
+    targets = (column - 1650.0)[None] / 100.0
+    targets[:, join:] += 1.0  # the step at the join
+    parts = destripe._smoothParts(targets, column, np.ones(40), segment)
+    np.testing.assert_allclose(parts, targets, atol=1e-9)

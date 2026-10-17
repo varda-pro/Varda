@@ -305,11 +305,13 @@ def writeSidecars(
 
 def writeCog(enviImage: Path, target: Path) -> Path:
     """Convert an ENVI product to a Cloud Optimized GeoTIFF (DEFLATE), keeping
-    its no-data value and map projection. GDAL builds the CRS from the header's
-    WKT under ``PROJ_LOCK``."""
+    its no-data value and map projection. Only opening it, where GDAL builds
+    the CRS from the header's WKT, holds ``PROJ_LOCK`` (as ``writeRaster``
+    does): the GUI thread's pyproj calls wait on it, not on the conversion."""
     part = _partOf(target)
     with PROJ_LOCK:
-        with rasterio.open(enviImage) as src:
-            rasterioShutil.copy(src, part, driver="COG", compress="DEFLATE")
+        src = rasterio.open(enviImage)
+    with src:
+        rasterioShutil.copy(src, part, driver="COG", compress="DEFLATE")
     os.replace(part, target)
     return target

@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import rasterio
 
+from varda.crism import writers
 from varda.crism.projection import IAU2000_A, MapGrid
 from varda.crism.smile import standardVector
 from varda.crism.writers import (
@@ -297,3 +298,35 @@ def test_cog_export(tmp_path: Path) -> None:
         assert src.transform.a == 18.0
         np.testing.assert_allclose(src.read(1)[0, 0], cube[0, 0, 0])
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_cog_holds_the_proj_lock_only_for_the_crs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review: the conversion runs outside ``PROJ_LOCK``, which the GUI
+    thread's pyproj calls wait on; only building the CRS holds it."""
+    held: list[bool] = []
+
+    class Lock:
+        locked = False
+
+        def __enter__(self) -> None:
+            Lock.locked = True
+
+        def __exit__(self, *args: object) -> None:
+            Lock.locked = False
+
+    copy = writers.rasterioShutil.copy
+
+    def spy(*args: object, **kwargs: object) -> None:
+        held.append(Lock.locked)
+        copy(*args, **kwargs)
+
+    monkeypatch.setattr(writers, "PROJ_LOCK", Lock())
+    monkeypatch.setattr(writers.rasterioShutil, "copy", spy)
+    path = tmp_path / "x_vmtr.img"
+    _write(path, _cube())
+    target = writeCog(path, tmp_path / "x_vmtr.tif")
+    assert held == [False]
+    with rasterio.open(target) as src:
+        assert src.crs is not None
