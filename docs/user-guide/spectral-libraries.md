@@ -131,7 +131,9 @@ the `libraries` folder of Varda's app-data folder (beside `plugins`):
 
 Each library is three files: `<name>.sli` (the values), `<name>.hdr` (the
 ENVI header) and `<name>.varda.json` (the record, below). The list of
-library files you loaded is `loaded.json` in the same folder. Back up the
+library files you loaded is `loaded.json` in the same folder, and the
+libraries new plots leave out are in `preferences.json` (see
+[Which libraries a plot uses](#which-libraries-a-plot-uses)). Back up the
 folder to keep your libraries; copy it to another computer to move them.
 
 ### The file format
@@ -177,9 +179,38 @@ spectral library and ignores the sidecar.
   plots the selected ones. They are scaled and offset to overlay a curve;
   see [Library overlays](viewing-and-measuring.md#library-overlays) for what
   that means for figures and exports. **Manage…** opens the manager.
+  See [Which libraries a plot uses](#which-libraries-a-plot-uses) for how
+  the choice is remembered.
 - **Spectral Hourglass → Identify** and **FATT**: the library list holds
   every library; each window keeps its own choice. See
   [Spectral Hourglass](spectral-hourglass.md) and [FATT](fatt.md).
+
+### Which libraries a plot uses
+
+Each plot remembers the libraries you **turned off**, by name; every other
+library is on. So:
+
+- **A library added later is on** in every plot, until you untick it.
+- **Sessions keep each plot's choice**: the General Image Analysis and Dual
+  Image workspaces' ROI plot and each of their pixel-spectra plots, and the
+  Spectral Hourglass's spectra plot. A session reopens only the first
+  pixel-spectra plot; the others get their saved choices, in the order they
+  were first opened, when you open them again (**New Plot**, or the Ratio
+  Explorer's plot). A session saved before Varda kept this opens with every
+  library on, as its plots had then.
+- **New plots start with your most recent choice**, made in any plot, even
+  after Varda restarts. It is kept in `preferences.json` in the libraries
+  folder ([below](#where-your-libraries-live)). Opening a session doesn't
+  change it.
+- **Renaming** one of your libraries in the manager keeps it off wherever it
+  was off: in open plots and for new plots. A session saved before the
+  rename names the old library, so in that session it comes back on.
+- **A library that no longer exists** (deleted, forgotten, or a remembered
+  file that couldn't be read when Varda started) is ignored; if a library of
+  that name is made or loaded again later, it comes in on.
+
+The choice only affects which spectra the picker lists; it does not change
+any spectrum or any plotted curve.
 
 ## Reporting and citing
 

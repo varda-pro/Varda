@@ -46,6 +46,8 @@ class PixelSpectraDocks(QObject):
         self._docks: dict[PixelSpectraPlotWidget, VardaDockWidget] = {}
         self._baseTitles: dict[PixelSpectraPlotWidget, str] = {}
         self._active: PixelSpectraPlotWidget | None = None
+        # Restored Libraries choices for plots not opened yet, by plot number
+        self._savedLibrariesOff: list[list[str]] = []
         # Clicking in a plot, or on its dock tab, makes it the active one; those
         # presses go to child widgets, so watch them application-wide.
         app = QApplication.instance()
@@ -100,6 +102,10 @@ class PixelSpectraDocks(QObject):
         self.plots.append(plot)
         self._docks[plot] = dock
         self._baseTitles[plot] = title
+        if len(self.plots) <= len(self._savedLibrariesOff):
+            plot.referencePicker.setExcluded(
+                self._savedLibrariesOff[len(self.plots) - 1]
+            )
         if self._configurePlot is not None:
             self._configurePlot(plot)
 
@@ -124,6 +130,18 @@ class PixelSpectraDocks(QObject):
             self.setActive(self._active)  # refresh the new plot's checkbox/title
         self.sigPlotAdded.emit(plot)
         return plot
+
+    def librariesOff(self) -> list[list[str]]:
+        """Each plot's Libraries choice (the libraries turned off), in the
+        order the plots were opened: for a session."""
+        return [plot.referencePicker.excludedLibraries() for plot in self.plots]
+
+    def restoreLibrariesOff(self, saved: Sequence[Sequence[str]]) -> None:
+        """Give the plots their saved choices, by plot number; plots opened
+        later (a session reopens only the first) get theirs when they open."""
+        self._savedLibrariesOff = [list(names) for names in saved]
+        for plot, names in zip(self.plots, self._savedLibrariesOff):
+            plot.referencePicker.setExcluded(names)
 
     def dedicated(self, title: str) -> DedicatedPlotSink:
         """A sink whose spectra go to their own plot (created on first use,

@@ -48,6 +48,7 @@ from varda.workspaces.raster_overlay import OverlayBar
 from varda.workspaces.cropping import addCrop, cropMessage
 from varda.workspaces.pixel_markers import PixelMarkerController
 from varda.workspaces.pixel_spectra_docks import PixelSpectraDocks
+from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
 from varda.workspaces.saved_point_markers import SavedPointMarkers
 from varda.workspaces.ratio_explorer import (
     RatioExplorerConfig,
@@ -519,6 +520,14 @@ class DualImageWorkspace(QMainWindow):
     @property
     def pixelPlotDock(self) -> VardaDockWidget:
         return self.pixelSpectraDocks.activeDock
+
+    # --- sessions --------------------------------------------------------------------
+
+    def sessionState(self) -> dict:
+        return plotLibrariesState(self.plotWidget, self.pixelSpectraDocks)
+
+    def restoreSessionState(self, state: dict) -> None:
+        restorePlotLibraries(state, self.plotWidget, self.pixelSpectraDocks)
 
     def closeEvent(self, event):
         if self.viewportLinkController is not None:

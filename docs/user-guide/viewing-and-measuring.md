@@ -124,7 +124,10 @@ look deeper than they do at full range.
 [spectral libraries](spectral-libraries.md): the bundled CRISM MICA
 numerators and USGS minerals (splib07a), your own libraries and libraries
 you loaded. **Libraries (n of m)** chooses which libraries to pick from
-(one, several or all), **Search by name** filters their spectra, and **Add
+(one, several or all; each plot keeps its choice in sessions and new plots
+start with your most recent one, see
+[Which libraries a plot uses](spectral-libraries.md#which-libraries-a-plot-uses)),
+**Search by name** filters their spectra, and **Add
 to Plot** (or a double-click) plots the selected ones, at the library's own
 spectral resolution, not resampled to your sensor. **Manage…** opens the
 Spectral Library Manager.
