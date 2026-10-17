@@ -147,6 +147,9 @@ can alter results.
 
 ### Fixed
 
+- **The FATT window's plot fits each mineral you pick**, also after you've
+  zoomed or panned it; a zoom used to turn the fitting off, so the next
+  mineral could be drawn off the plot.
 - **The FATT detection map no longer runs out of memory.** It copied every
   window of the image into one array before fitting any (about 15 GiB per
   window shape for a CRISM scene), which crashed a 16 GB laptop and the
