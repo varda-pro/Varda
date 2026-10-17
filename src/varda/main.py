@@ -31,6 +31,7 @@ SELF_TEST_FLAG = "--self-test"
 # Kindle a Feature checks a plugin by running Varda in this mode (no window);
 # the same as varda.kindling.checks.CHECK_FLAG
 CHECK_PLUGIN_FLAG = "--check-plugin"
+CRISM_FLAG = "--crism"
 # Where the self-test writes its report when the app has no console (the
 # windowed Windows app); the release build reads it from here
 SELF_TEST_REPORT_ENV = "VARDA_SELF_TEST_REPORT"
@@ -90,6 +91,10 @@ def main():
         from varda.kindling.check_worker import main as checkPlugin
 
         sys.exit(checkPlugin(sys.argv[sys.argv.index(CHECK_PLUGIN_FLAG) + 1 :]))
+    if CRISM_FLAG in sys.argv:
+        from varda.crism.cli import crismMain
+
+        sys.exit(crismMain(sys.argv[sys.argv.index(CRISM_FLAG) + 1 :]))
     _consoleForSelfTest()
     # The 3D terrain view (Qt WebEngine) shares OpenGL with the rest of Qt
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)

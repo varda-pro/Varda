@@ -63,6 +63,7 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 import time
 import tomllib
 import traceback
@@ -566,12 +567,7 @@ class _Run:
             return
         self.progress.report("passA", 0.3, "Pass A: choosing the transmission")
         cube, sigma, _ = self._prepare(central.start, central.stop, tally=False)
-        spectra, spread = columnSpectra(cube, sigma, self.wavelengths)
-        candidates = self._candidates()
-        fitShift = bool(self.recipe.atmosphere.fitShift.get())
-        selection = selectTransmission(
-            spectra, spread, self.wavelengths, candidates, fitShift=fitShift
-        )
+        spectra, spread, candidates, selection = self._chooseTransmission(cube, sigma)
         shift = selection.fit.shiftNm
         artifact, scale, record = self._artifactModel(selection, spectra, spread)
         free = AtmosphereModel(selection.chosen, shift, artifact, None, scale)
@@ -602,6 +598,19 @@ class _Run:
             "columnResiduals": fitted.residuals,
         }
         self.progress.report("passA", 1.0, "Pass A: done")
+
+    def _chooseTransmission(
+        self, cube: np.ndarray, sigma: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, list[Transmission], SelectionResult]:
+        """The column spectra of ``cube`` and the transmission they choose
+        (S4.A, without the artifact basis)."""
+        spectra, spread = columnSpectra(cube, sigma, self.wavelengths)
+        candidates = self._candidates()
+        fitShift = bool(self.recipe.atmosphere.fitShift.get())
+        selection = selectTransmission(
+            spectra, spread, self.wavelengths, candidates, fitShift=fitShift
+        )
+        return spectra, spread, candidates, selection
 
     def _candidates(self) -> list[Transmission]:
         atmosphere = self.recipe.atmosphere
@@ -1580,6 +1589,60 @@ def _removeWork(work: Path, succeeded: bool) -> None:
         _log.warning("Could not remove the CRISM work folder %s: %s", work, error)
         if succeeded:
             raise
+
+
+@frozen(eq=False)
+class ColumnResiduals:
+    """What Pass A's transmission choice leaves in one observation's column
+    spectra: the input of ``learnArtifactBasis`` (``fit.residuals``) and of
+    its leave-one-out check. ``wavelengths``, ``spectra`` and ``spread`` are
+    ``(s, b)``."""
+
+    name: str
+    sclk: float
+    wavelengths: np.ndarray
+    spectra: np.ndarray
+    spread: np.ndarray
+    selection: SelectionResult
+
+    @property
+    def transmissionKey(self) -> str:
+        return self.selection.chosen.key
+
+    @property
+    def residuals(self) -> np.ndarray:
+        return self.selection.fit.residuals
+
+
+def columnResiduals(
+    observation: CrismObservation, recipe: Recipe, library: CalibrationLibrary
+) -> ColumnResiduals:
+    """Pass A's pieces up to the transmission choice, nothing written: the
+    calibration check, the noise model, the central lines (masked,
+    photometric, despiked) and their column spectra fitted with the
+    candidates (``recipe.atmosphere.scan`` forces one). Used to learn an
+    artifact basis (``learnArtifactBasis``)."""
+    with tempfile.TemporaryDirectory(prefix="varda-crism-") as folder:
+        run = _Run(observation, recipe, Path(folder), library, _Progress(None, None))
+        try:
+            run._calibration()
+            central = run._selectionLines()
+            run.noise = estimateNoise(
+                run._read(central.start, central.stop, None),
+                wavelengths=run.bandWavelengths,
+            )
+            cube, sigma, _ = run._prepare(central.start, central.stop, tally=False)
+            spectra, spread, _, selection = run._chooseTransmission(cube, sigma)
+            return ColumnResiduals(
+                observation.name,
+                run.trr3.sclk,
+                run.wavelengths,
+                spectra,
+                spread,
+                selection,
+            )
+        finally:
+            run.close()
 
 
 def process(
