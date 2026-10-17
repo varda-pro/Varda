@@ -72,6 +72,7 @@ class LocalStatisticsAnalysis(BandwiseAnalysis):
     analysisId = "local_statistics"
     software = ("scipy",)
     name = "Local Statistics (Texture)"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "A statistic of the values in a window around each pixel: mean, "
@@ -226,6 +227,7 @@ class CooccurrenceTextureAnalysis(BandwiseAnalysis):
     analysisId = "cooccurrence_texture"
     software = ("scipy",)
     name = "Co-occurrence Texture (GLCM)"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Gray-level co-occurrence texture: how often pairs of gray levels sit "

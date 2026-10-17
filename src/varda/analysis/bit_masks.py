@@ -49,6 +49,7 @@ class BitOutput(LabeledEnum):
 class DecodeBitMaskAnalysis(Analysis):
     analysisId = "decode_bit_mask"
     name = "Decode Bit Mask"
+    memoryFactor = 1.5
     category = "Statistics"
     description = (
         "For images whose values are sets of bits, such as a pipeline's frame "

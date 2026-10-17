@@ -22,6 +22,7 @@ IOVF_METADATA_KEY = "iovf"
 class IovfAnalysis(Analysis):
     analysisId = "iovf"
     name = "Iterative Outlier Voting Filter (IOVF)"
+    memoryFactor = 22
     category = "Filtering/Spectral"
     description = (
         "Removes isolated spikes without smoothing the spectra (Phillips et al. "

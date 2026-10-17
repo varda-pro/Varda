@@ -48,6 +48,7 @@ class ResampleAnalysis(Analysis):
     analysisId = "resample"
     software = ("scipy",)
     name = "Resample (Resize)"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Change the number of pixels: a factor above 1 enlarges, below 1 "
@@ -147,6 +148,7 @@ class RotateFlipAnalysis(Analysis):
     analysisId = "rotate_flip"
     software = ("scipy",)
     name = "Rotate / Flip"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Rotate the image by quarter turns or mirror it. The georeferencing "
@@ -214,6 +216,7 @@ def crop(
 class SubsetAnalysis(Analysis):
     analysisId = "subset"
     name = "Subset (Crop Rows, Columns, Bands)"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Keep part of the image: drag the box on the preview (or type the "
@@ -286,6 +289,7 @@ class SubsetAnalysis(Analysis):
 class CropToRoiAnalysis(Analysis):
     analysisId = "crop_to_roi"
     name = "Crop to ROI"
+    memoryFactor = 1.5
     category = CATEGORY
     needsRois = True
     description = (

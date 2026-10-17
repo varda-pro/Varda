@@ -134,6 +134,7 @@ class MaximumLikelihoodAnalysis(_GaussianClassification):
     analysisId = "maximum_likelihood"
     software = ("spectral",)
     name = "Maximum Likelihood"
+    memoryFactor = 7
     suffix = "ML classes"
     description = (
         "Gaussian maximum-likelihood classification: each ROI class is "
@@ -161,6 +162,7 @@ class MahalanobisAnalysis(_GaussianClassification):
     analysisId = "mahalanobis"
     software = ("spectral",)
     name = "Mahalanobis Distance"
+    memoryFactor = 7
     suffix = "Mahalanobis classes"
     description = (
         "Mahalanobis-distance classification: every pixel goes to the class "
@@ -187,6 +189,7 @@ class KMeansAnalysis(Analysis):
     analysisId = "kmeans"
     software = ("spectral",)
     name = "K-Means Clustering"
+    memoryFactor = 5
     category = "Classification"
     description = (
         "Unsupervised: groups the pixels into clusters of similar spectra, "

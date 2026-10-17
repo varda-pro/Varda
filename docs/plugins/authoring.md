@@ -104,6 +104,7 @@ What Varda does with it:
 - **Menu and dialog:** it adds the menu item, and a settings dialog with an image picker built from your Parameters.
 - **Running:** `run` executes in a background thread with a progress dialog, so `run` must not touch widgets. The result joins the project's images, and can be saved to ENVI or GeoTIFF.
 - **Provenance:** every result records the analysis, its settings, its inputs (with how they were made), the Varda version, and your plugin's name and version, and keeps the record in the files it is saved to. If a library does the scientific work, name its distribution in `software = ("spectral",)` and its installed version is recorded too.
+- **Memory:** before your analysis runs, Varda checks its estimate of the memory it needs against what's free and warns if it may not fit. By default it assumes 6 times the image in 64-bit numbers. If yours needs less (a band-by-band filter) or more, say so: `memoryFactor = 2` (a multiple of rows × columns × bands × 8 bytes), plus `memoryFixed` for a fixed amount, or override `estimateMemory(image)`.
 
 Other optional methods:
 - `prepareFor(image)`: adapt the settings to an image before the dialog shows them, for example by offering only the choices its wavelengths support

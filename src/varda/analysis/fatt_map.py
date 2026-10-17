@@ -17,6 +17,7 @@ from varda.analysis.fatt import (
     DEFAULT_WINDOW_SHAPES,
     MIN_BANDS,
     NRMSE_THRESHOLD,
+    WINDOW_MEMORY_BUDGET,
     windowedNrmse,
 )
 from varda.analysis.rasters import readCube
@@ -58,6 +59,10 @@ class FattMapAnalysis(Analysis):
     analysisId = "fatt_map"
     software = ("spectral",)
     name = "FATT Detection Map"
+    # the image read and its band subset (float64) and the per-target
+    # results, plus the windows being fitted (WINDOW_MEMORY_BUDGET)
+    memoryFactor = 4
+    memoryFixed = WINDOW_MEMORY_BUDGET
     description = (
         "Target transformation in small moving windows of several shapes "
         "(DAFA/TT, Lin, Tarnas et al. 2021). Bands: how many targets fit each "

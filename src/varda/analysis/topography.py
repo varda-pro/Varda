@@ -79,6 +79,7 @@ class TerrainAnalysis(Analysis):
     analysisId = "terrain"
     software = ("scipy",)
     name = "Terrain (Slope, Aspect, Hillshade)"
+    memoryFactor = 1.5
     category = "Topography"
     description = (
         "Measures of the surface from an elevation band (a DTM): slope, "

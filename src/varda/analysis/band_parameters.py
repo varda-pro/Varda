@@ -24,6 +24,7 @@ class BandParametersAnalysis(Analysis):
     analysisId = "band_parameters"
     software = ("hypyrameter",)
     name = "Band Parameters (HyPyRameter)"
+    memoryFactor = 8
     category = "Spectral Parameters"
     requirement = "HyPyRameter"
     description = (

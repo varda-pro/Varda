@@ -14,6 +14,7 @@ from varda.common.parameter import IntParameter
 class SpectralEntropyAnalysis(Analysis):
     analysisId = "spectral_entropy"
     name = "Spectral Entropy"
+    memoryFactor = 7
     category = "Statistics"
     description = (
         "Shannon entropy (bits) of each pixel's spectrum treated as a "
@@ -46,6 +47,7 @@ class SpectralEntropyAnalysis(Analysis):
 class SpatialEntropyAnalysis(Analysis):
     analysisId = "spatial_entropy"
     name = "Spatial Entropy"
+    memoryFactor = 1.5
     category = "Statistics"
     description = (
         "Shannon entropy (bits) of one band's values in a square window around "

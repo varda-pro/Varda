@@ -22,6 +22,7 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 class SpectralDerivativeAnalysis(Analysis):
     analysisId = "spectral_derivative"
     name = "Spectral Derivative"
+    memoryFactor = 5
     category = "Derivatives"
     description = (
         "Derivative of each spectrum with respect to wavelength, band by band "
@@ -65,6 +66,7 @@ class SpectralDerivativeAnalysis(Analysis):
 class SpectralSlopeAnalysis(Analysis):
     analysisId = "spectral_slope"
     name = "Spectral Slope"
+    memoryFactor = 3.5
     category = "Derivatives"
     description = (
         "Least-squares slope of each spectrum between two wavelengths "
@@ -163,6 +165,7 @@ def _lineFit(
 class SpatialGradientAnalysis(Analysis):
     analysisId = "spatial_gradient"
     name = "Spatial Gradient"
+    memoryFactor = 1.5
     category = "Derivatives"
     description = (
         "Magnitude of the spatial gradient (Sobel) of one band, in band units "

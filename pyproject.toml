@@ -46,6 +46,7 @@ dependencies = [
     "keyring>=25.0",
     "openai>=1.60",
     "shapely>=2.0",
+    "psutil>=7.2.2",
 ]
 
 [project.optional-dependencies]
@@ -122,6 +123,7 @@ source_modules = [
     "varda.common.expressions",
     "varda.common.grid",
     "varda.common.provenance",
+    "varda.common.memory",
     "varda.common.parameter",
     "varda.updates",
     "varda.mosaicking",

@@ -76,6 +76,13 @@ class Analysis(ParameterGroup):
     # Distributions that do the work (e.g. "spectral"); their versions are
     # recorded in results' provenance.
     software: ClassVar[tuple[str, ...]] = ()
+    # Peak memory as a multiple of the image in float64 (rows x cols x bands
+    # x 8 bytes), plus a fixed amount: checked against free memory before the
+    # analysis runs. Measured per analysis with headroom (and tested to stay
+    # an upper bound, _tests/test_memory_estimates.py); the default is
+    # cautious, for analyses (and plugins) that don't say.
+    memoryFactor: ClassVar[float] = 6.0
+    memoryFixed: ClassVar[int] = 0
 
     def __init__(self) -> None:
         super().__init__()
@@ -88,6 +95,11 @@ class Analysis(ParameterGroup):
     def softwareVersions(cls) -> dict[str, str]:
         """The versions of ``software`` (those installed), for provenance."""
         return softwareVersions(cls.software)
+
+    def estimateMemory(self, image: VardaRaster) -> int:
+        """Bytes this analysis may need at most on ``image``."""
+        cube = image.height * image.width * image.bandCount * 8
+        return int(self.memoryFactor * cube) + self.memoryFixed
 
     @classmethod
     def isAvailable(cls) -> bool:

@@ -85,3 +85,25 @@ You need Python 3.13 and the [uv package manager](https://docs.astral.sh/uv/).
 To check that an installation works, run `uv run varda --self-test` (or
 `Varda --self-test` for a downloaded build). It opens, reads and writes test
 images, renders one and runs two analyses, then reports each check.
+
+## Memory
+
+Analyses work on the whole image in memory, as 64-bit numbers, so they can
+need several times the image's size: an image of 480 × 640 pixels and 438
+bands is about 1 GB that way, and most spectral analyses need 4 to 8 times
+that (IOVF and the Pixel Purity Index, up to about 20 times).
+
+Before an analysis from the **Processing** menu starts, Varda estimates the
+memory it may need and compares it with what's free at that moment:
+
+- If it fits, the analysis just runs.
+- If it would use more than about 80 % of the free memory, Varda says how
+  much it may need and how much is free, and asks before running.
+- If it may need more than the computer has, the warning says it may freeze
+  the computer or close other programs, and **Cancel** is the default.
+
+You can always choose **Run Anyway**. To need less, crop or subset the image
+first (**Processing → Geometry**): fewer pixels or bands, or just the
+wavelength range you need. The estimates are upper bounds, measured for each
+analysis.
+

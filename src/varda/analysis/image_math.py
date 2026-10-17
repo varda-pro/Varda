@@ -71,6 +71,7 @@ OPERATIONS = {
 class ImageArithmeticAnalysis(Analysis):
     analysisId = "image_arithmetic"
     name = "Image Arithmetic"
+    memoryFactor = 3.5
     category = CATEGORY
     description = (
         "Combine the image with another image on the same pixel grid (with the "
@@ -129,6 +130,7 @@ class ThresholdSide(LabeledEnum):
 class ThresholdToMaskAnalysis(Analysis):
     analysisId = "threshold_to_mask"
     name = "Threshold to Mask"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "A mask from one band: 1 where its value is inside (or outside) a range, "
@@ -182,6 +184,7 @@ class MaskMode(LabeledEnum):
 class ApplyMaskAnalysis(Analysis):
     analysisId = "apply_mask"
     name = "Apply Mask"
+    memoryFactor = 1.5
     category = CATEGORY
     description = (
         "Apply a mask on the same pixel grid (one band, or the image's bands): "
@@ -240,6 +243,7 @@ class ApplyMaskAnalysis(Analysis):
 class RoiToMaskAnalysis(Analysis):
     analysisId = "roi_to_mask"
     name = "ROI to Mask"
+    memoryFactor = 1.5
     category = CATEGORY
     needsRois = True
     description = (

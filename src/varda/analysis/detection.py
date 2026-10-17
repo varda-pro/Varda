@@ -64,6 +64,7 @@ class RxAnalysis(Analysis):
     analysisId = "rx_global"
     software = ("spectral",)
     name = "RX Anomaly (Global)"
+    memoryFactor = 5.5
     category = CATEGORY
     description = (
         "Squared Mahalanobis distance of each pixel from the scene's mean and "
@@ -89,6 +90,7 @@ class LocalRxAnalysis(Analysis):
     analysisId = "rx_local"
     software = ("spectral", "scipy")
     name = "RX Anomaly (Local)"
+    memoryFactor = 9
     category = CATEGORY
     description = (
         "Distance of each pixel from the mean of its surroundings (an outer "
@@ -206,6 +208,7 @@ class AceAnalysis(_TargetDetection):
     analysisId = "ace"
     software = ("spectral",)
     name = "ACE Target Detection"
+    memoryFactor = 7
     detectorLabel = "ACE"
     description = (
         "Adaptive coherence estimator: how closely each pixel's spectrum, "
@@ -230,6 +233,7 @@ class MatchedFilterAnalysis(_TargetDetection):
     analysisId = "matched_filter"
     software = ("spectral",)
     name = "Matched Filter"
+    memoryFactor = 4
     detectorLabel = "matched filter"
     description = (
         "Matched filter: an estimate of how much of the target is in each "
