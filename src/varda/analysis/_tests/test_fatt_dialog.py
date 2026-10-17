@@ -128,9 +128,6 @@ def test_choosing_another_mineral_fits_the_plot_to_it_after_a_zoom(dialog, qtbot
     fit = dialog._fits[3]
     values = np.concatenate([fit.target, fit.fit])
     values = values[np.isfinite(values)]
-
-    def fitted() -> None:  # pyqtgraph applies auto-range on the next update
-        low, high = viewBox.viewRange()[1]
-        assert low <= values.min() and values.max() <= high
-
-    qtbot.waitUntil(fitted, timeout=2000)
+    # at once, without a repaint (none comes on a headless CI machine)
+    low, high = viewBox.viewRange()[1]
+    assert low <= values.min() and values.max() <= high
