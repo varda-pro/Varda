@@ -54,8 +54,15 @@ forgotten at restart. There was no way to build a library from image spectra.
 
 ## Open questions
 
-- Should the plots' library choice persist per plot or across sessions?
-  (Now: per plot, in memory; new libraries are included automatically.)
+- ~~Should the plots' library choice persist?~~ Done: each plot's choice is
+  the set of library names turned off (so new libraries are on), saved per
+  plot in workspace session state (`plotLibrariesOff`, see
+  `workspaces/plot_libraries.py`; a missing key means all on); the most
+  recent user choice is the default for new plots, kept by the store in
+  `preferences.json` beside `loaded.json` (not QSettings, so it stays
+  Qt-free). The store's `renamed(old, new)` carries a turned-off library to
+  its new name in open plots and the default; saved sessions keep the old
+  name, so a renamed library comes back on in them.
 - Should a library of yours hold a citation/description you can edit in the
   manager? (Stored and shown, not yet editable in the UI.)
 - Resampling a library to a sensor and saving that as a new library.

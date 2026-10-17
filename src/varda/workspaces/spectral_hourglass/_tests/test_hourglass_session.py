@@ -5,10 +5,12 @@ import pytest
 from synthetic_scene import PATCHES, syntheticScene
 from varda.common.di_types import ProjectImages
 from varda.session import captureSession, readSession, writeSession
+from varda.spectral_libraries.store import MICA_LIBRARY_NAME
 from varda.session_restore import SessionRestorer
 from varda.workspaces.spectral_hourglass.hourglass_workspace import (
     SpectralHourglassWorkspace,
 )
+from varda.workspaces.workspace_kinds import buildWorkspace
 
 PATH = "/data/scene.img"
 
@@ -77,3 +79,26 @@ def test_restore_reopens_the_hourglass_with_its_settings_and_endmembers(qtbot):
     prepare.runButton.click()
     restored.pipeline.reducePage.runButton.click()
     assert restored.model.components == 3  # the saved count wins over the suggestion
+
+
+def test_the_spectra_plots_libraries_are_kept_and_old_sessions_have_all_on(
+    qtbot, tmp_path
+):
+    image, _ = syntheticScene(filePath=PATH)
+    ws = SpectralHourglassWorkspace(image, [image])
+    qtbot.addWidget(ws)
+    ws.spectraPlot.referencePicker.setExcluded([MICA_LIBRARY_NAME])
+    path = writeSession(captureSession([image], [ws]).state, tmp_path / "s")
+    (saved,) = readSession(path).workspaces
+
+    restored = buildWorkspace("hourglass", [image], [image], saved.extra)
+    qtbot.addWidget(restored)
+    assert isinstance(restored, SpectralHourglassWorkspace)
+    picker = restored.spectraPlot.referencePicker
+    assert picker.excludedLibraries() == [MICA_LIBRARY_NAME]
+
+    old = {k: v for k, v in saved.extra.items() if k != "plotLibrariesOff"}
+    restored = buildWorkspace("hourglass", [image], [image], old)
+    qtbot.addWidget(restored)
+    assert isinstance(restored, SpectralHourglassWorkspace)
+    assert restored.spectraPlot.referencePicker.excludedLibraries() == []

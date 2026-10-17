@@ -44,6 +44,7 @@ from varda.plotting.plot import VardaPlotWidget
 from varda.plotting.spectrum_matching import matchToReference
 from varda.spectral_libraries.spectrum import SpectrumOrigin
 from varda.workspaces.cropping import addCrop, cropMessage
+from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
 from varda.workspaces.spectral_hourglass.endmember_table import EndmemberTable
 from varda.workspaces.spectral_hourglass.hourglass_model import (
     HourglassModel,
@@ -663,6 +664,7 @@ class SpectralHourglassWorkspace(QMainWindow):
             "endmembers": self.model.endmembersToJson(),
             "excludedLibrarySpectra": self.identifyPanel.excludedNames(),
             "ppiCounts": self.model.ppiToJson(),
+            **plotLibrariesState(self.spectraPlot),
         }
 
     def restoreSessionState(self, state: dict) -> None:
@@ -692,6 +694,7 @@ class SpectralHourglassWorkspace(QMainWindow):
         if state.get("endmembers"):
             self.model.endmembersFromJson(state["endmembers"])
         self.identifyPanel.setExcluded(state.get("excludedLibrarySpectra", []))
+        restorePlotLibraries(state, self.spectraPlot)
         self._pendingPpi = state.get("ppiCounts")
         self.resumeButton.setVisible(self.model.prepared is None)
         self.status.showMessage(

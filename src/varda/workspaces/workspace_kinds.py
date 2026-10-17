@@ -72,7 +72,9 @@ def buildWorkspace(
         config = DualImageWorkspaceConfig(projectImages)
         config.image1Param.set(images[0])
         config.image2Param.set(images[1])
-        return DualImageWorkspace(config)
+        workspace = DualImageWorkspace(config)
+        workspace.restoreSessionState(dict(extra or {}))
+        return workspace
     if kind == "hourglass":
         workspace = SpectralHourglassWorkspace(images[0], projectImages)
         workspace.restoreSessionState(dict(extra or {}))

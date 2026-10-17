@@ -157,6 +157,13 @@ can alter results.
 
 ### Changed
 
+- **Spectral plots remember which libraries you chose.** The libraries you
+  turn off under **Libraries (n of m)** are saved with each plot in
+  sessions (General Image Analysis, Dual Image and Spectral Hourglass), and
+  new plots start with your most recent choice, also after a restart (kept
+  in `preferences.json` in the libraries folder). Libraries added later are
+  still on, and renaming a library of yours keeps it off. Older sessions
+  open with every library on, as before.
 - **Scrolling over a spectral plot's Y axis stretches the spectra, and the
   stretch stays**, as in the FATT window. Over an axis the wheel zooms only
   that axis, about the cursor. In **Fit Y To X Range** a Y stretch, or a

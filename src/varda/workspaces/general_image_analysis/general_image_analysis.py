@@ -48,6 +48,7 @@ from varda.workspaces.line_display import LineDisplay
 from varda.workspaces.raster_overlay import OverlayBar
 from varda.workspaces.pixel_markers import PixelMarkerController
 from varda.workspaces.pixel_spectra_docks import PixelSpectraDocks
+from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
 from varda.workspaces.cropping import addCrop, cropMessage
 from varda.workspaces.saved_point_markers import SavedPointMarkers
 from varda.workspaces.ratio_explorer import (
@@ -416,10 +417,14 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
     # --- sessions ---------------------------------------------------------------
 
     def sessionState(self) -> dict:
-        return {"lines": self.lineCollection.toJson()}
+        return {
+            "lines": self.lineCollection.toJson(),
+            **plotLibrariesState(self.plotWidget, self.pixelSpectraDocks),
+        }
 
     def restoreSessionState(self, state: dict) -> None:
         self.lineCollection.addFromJson(state.get("lines", []))
+        restorePlotLibraries(state, self.plotWidget, self.pixelSpectraDocks)
 
     def _onCropRequested(self, image: VardaRaster, box: QRect) -> None:
         cropped = addCrop(image, box, self.config.imageList)

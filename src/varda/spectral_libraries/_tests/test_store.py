@@ -178,3 +178,39 @@ def test_the_default_store_is_shared_until_replaced(folder):
     setDefaultStore(mine)
     assert defaultStore() is mine
     setDefaultStore(None)
+
+
+# --- the plots' library choice -------------------------------------------------------
+
+
+def test_the_plots_library_choice_is_kept_across_restarts(folder):
+    store = LibraryStore(folder)
+    assert store.plotLibrariesOff() == set()  # nothing chosen yet: all on
+    store.setPlotLibrariesOff({MICA_LIBRARY_NAME})
+    assert (folder / "preferences.json").is_file()
+    assert _restart(folder).plotLibrariesOff() == {MICA_LIBRARY_NAME}
+
+
+def test_an_unreadable_preferences_file_means_all_libraries_on(folder):
+    folder.mkdir(parents=True)
+    (folder / "preferences.json").write_text("{not json", encoding="utf-8")
+    assert LibraryStore(folder).plotLibrariesOff() == set()
+
+
+def test_an_in_memory_store_keeps_the_choice_without_writing_files(tmp_path):
+    store = LibraryStore()
+    store.setPlotLibrariesOff({USGS_LIBRARY_NAME})
+    assert store.plotLibrariesOff() == {USGS_LIBRARY_NAME}
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_renaming_a_library_carries_its_choice_and_says_so(folder):
+    store = LibraryStore(folder)
+    library = store.createLibrary("Dunes", [_spectrum("a")])
+    store.setPlotLibrariesOff({"Dunes", MICA_LIBRARY_NAME})
+    renames = []
+    store.renamed.connect(lambda old, new: renames.append((old, new)))
+    store.renameLibrary(library, "Dune field")
+    assert renames == [("Dunes", "Dune field")]
+    assert store.plotLibrariesOff() == {"Dune field", MICA_LIBRARY_NAME}
+    assert _restart(folder).plotLibrariesOff() == {"Dune field", MICA_LIBRARY_NAME}

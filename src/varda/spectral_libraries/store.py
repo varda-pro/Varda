@@ -11,6 +11,10 @@ Three kinds:
   ``loaded.json`` in the same folder) and read again next time; one that has
   gone missing is listed in ``unavailable`` until you forget it.
 
+The store also keeps the spectral plots' most recent **Libraries** choice (the
+names turned off, in ``preferences.json`` in the same folder), the default
+for new plots.
+
 Any change emits ``changed``, so every list showing libraries can follow.
 ``defaultStore()`` is the store the app's windows share; the app points it at
 its folder at startup (``setDefaultStore``). Unconfigured (tests, scripts), it
@@ -65,6 +69,7 @@ USGS_CITATION = (
     "Survey Data Series 1035. https://doi.org/10.3133/ds1035"
 )
 REMEMBERED_FILE = "loaded.json"
+PREFERENCES_FILE = "preferences.json"
 
 
 class LibraryKind(Enum):
@@ -146,6 +151,7 @@ def _fileStem(name: str) -> str:
 
 class LibraryStore:
     changed = Signal()
+    renamed = Signal(str, str)  # a library's old name, its new name
 
     def __init__(self, folder: Path | None = None, *, bundled: bool = True) -> None:
         self.folder = folder
@@ -154,8 +160,10 @@ class LibraryStore:
         # them stay remembered (a drive may be unplugged) until forgotten.
         self.unavailable: dict[Path, str] = {}
         self._unreadRemembered: list[Path] = []
+        self._plotLibrariesOff: set[str] = set()
         if folder is not None:
             self._loadFolder(folder)
+            self._plotLibrariesOff = self._readPlotLibrariesOff(folder)
 
     # --- reading ---------------------------------------------------------------------
 
@@ -232,6 +240,37 @@ class LibraryStore:
         paths = [str(p) for p in loaded + self._unreadRemembered]
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(json.dumps(paths, indent=1), encoding="utf-8")
+
+    # --- the plots' library choice -----------------------------------------------------
+
+    def plotLibrariesOff(self) -> set[str]:
+        """The libraries a new spectral plot leaves out, by name: the most
+        recent choice in any plot. Any other library is searched, so one added
+        later is on."""
+        return set(self._plotLibrariesOff)
+
+    def setPlotLibrariesOff(self, names: Iterable[str]) -> None:
+        """Remember the libraries turned off (in the folder, if there is one)."""
+        self._plotLibrariesOff = set(names)
+        if self.folder is None:
+            return
+        self.folder.mkdir(parents=True, exist_ok=True)
+        (self.folder / PREFERENCES_FILE).write_text(
+            json.dumps({"plotLibrariesOff": sorted(self._plotLibrariesOff)}, indent=1),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _readPlotLibrariesOff(folder: Path) -> set[str]:
+        file = folder / PREFERENCES_FILE
+        if not file.is_file():
+            return set()
+        try:
+            names = json.loads(file.read_text(encoding="utf-8"))["plotLibrariesOff"]
+            return {str(name) for name in names}
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            logger.warning("Couldn't read %s: %s", file, error)
+            return set()
 
     def _save(self, library: SpectralLibrary) -> None:
         """Write one of your libraries to the folder (memory only without one)."""
@@ -348,7 +387,10 @@ class LibraryStore:
         self._requireEditable(library)
         if name == library.name:
             return
-        library.name = self.uniqueName(name)
+        old, library.name = library.name, self.uniqueName(name)
+        if old in self._plotLibrariesOff:  # a library turned off stays off
+            self.setPlotLibrariesOff(self._plotLibrariesOff - {old} | {library.name})
+        self.renamed.emit(old, library.name)
         self._changed(library)
 
     def setDescription(self, library: SpectralLibrary, description: str) -> None:
