@@ -556,8 +556,9 @@ covariance of β with the data it corrects (`atmosphere.correct`).
     IAU 2000 ellipsoid, central meridian 0. Beyond ±65°, polar stereographic
     on the pole, as in `mtr_map.cat`.
   - **Grid size and origin:** 18 m pixels (36 m for HRL/HRS, D5). The tie
-    point is x(W) − s/2, y(N) + s/2, where W and N are the extreme DDR
-    pixel centers, rounded to 0.01 m.
+    point is (x_min, y_max) of the DDR pixel centers, rounded to 0.1 m: the
+    extreme centers lie on the UL corner, and the labels' W and N (the first
+    column and row centers) give tie = x(W) − s/2, y(N) + s/2 (G2).
   - **Lat/lon source:** the DDR lat/lon is the IR geometry of the row
     nearest 2300 nm.
   - **Option:** "snap to a global lattice" (an origin at integer multiples

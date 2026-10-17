@@ -686,33 +686,73 @@ are written in Phase 1, test-first. Design:
 
 **G1. The MTRDR grid.**
 - **Decision:** rolling equirectangular; φ_P = the equatorward 5°
-  multiple; R = the IAU 2000 ellipsoid radius at φ_P; x = R cos φ_P λ;
-  y = R φ; central meridian 0; 18 m (36 m HRL); polar stereographic beyond
-  ±65°.
+  multiple of the median DDR latitude; R = the IAU 2000 ellipsoid radius at
+  φ_P; x = R cos φ_P λ; y = R φ; central meridian 0; 18 m (36 m HRL); polar
+  stereographic beyond ±65°, on the pole, spherical with R = Rp = 3376200 m
+  and true scale at the pole (the catalog's fallback; no local polar MTRDR,
+  so its names, `[90.00N; 0.00E]`, `Stereographic_North_Pole`, are built by
+  analogy and checked only by pyproj round trips). Longitudes are unwrapped
+  around the scene's median longitude (taken into (−180°, 180°]), so a scene
+  on the antimeridian stays contiguous near x ≈ ±π R cos φ_P. Southern names
+  (`[15.00S; 0.00E]`, `custom_sphere_lat-15`) are also by analogy.
 - **Source:** `mtr_map.cat` Table 1.0 and its equations; M1 (the 15° and
-  3394839.8133 m values reproduced).
-- **Confidence:** high.
-- **Test:** `test_projection.py::test_grid_matches_mtrdr_labels`
-  (FRT00005850, HRL000040FF) *(planned)*.
+  3394839.8133 m values reproduced). The WKT and `map info` strings match
+  both local MTRDR headers exactly.
+- **Confidence:** high (equirectangular north); medium (southern and polar
+  names).
+- **Test:** `src/varda/crism/_tests/test_projection.py::test_grid_matches_mtrdr_labels`
+  (data-gated; FRT00005850, HRL000040FF), `::test_radius_table`,
+  `::test_reference_latitude_and_wrap`, `::test_coordinates_match_pyproj`.
 
 **G2. Tie point.**
-- **Decision:** tie = (x(W) − s/2, y(N) + s/2), the UL corner of a pixel
-  centered on the extreme DDR pixel centers. The origin is not snapped to a
-  global lattice by default.
-- **Source:** M1. The residual is 0.02 m for both local MTRDR labels;
-  tie/s is fractional (245438.2).
-- **Confidence:** high for the rule. Medium for which DDR samples define
-  W/N (the 2300 nm geometry row, MOLA intercept).
-- **Test:** `test_projection.py::test_tie_point_rule` *(planned)*.
+- **Decision:** tie = (x_min, y_max) of the DDR pixel centers, the UL corner
+  of their bounding box, rounded to 0.1 m: the extreme DDR centers lie on the
+  grid's corner, not half a pixel inside it. Width = ⌊(x_max − tie_x)/s⌋ + 1,
+  likewise the height. In label terms this is still tie = x(W) − s/2,
+  y(N) + s/2, because the label's WESTERNMOST_LONGITUDE and
+  MAXIMUM_LATITUDE are the first column and row *centers* (M1), half a pixel
+  inside the extreme DDR centers. The origin is not snapped to a global
+  lattice by default; `snapToLattice` floors x_min and ceils y_max to
+  multiples of s.
+- **Source:** M1; Task 17 measurement: FRT00005850's sensor-space DDR
+  (`frt00005850_07_de167l_ddr1`, all 510 × 640 centers) gives x_min =
+  4417887.627, y_max = 1091944.932 against the header's 4417887.6000,
+  1091944.9000 (0.03 m), and 990 × 1043 pixels, the MTRDR size exactly. The
+  MTRDR DE extremes give the same values (HRL000040FF: 4422632.234,
+  1109935.515 against 4422632.2, 1109935.5). A "tie = x_min − s/2" rule
+  would be off by s/2 (9 m). The header values are whole decimeters, so
+  0.1 m rounding reproduces `map info` character for character.
+- **Confidence:** high (two observations, 18 m and 36 m; 0.1 m rounding
+  versus truncation cannot be told apart on them).
+- **Test:** `src/varda/crism/_tests/test_projection.py::test_tie_point_rule`,
+  `::test_grid_from_sensor_ddr_matches_mtrdr` (data-gated).
 
 **G3. Resampling.**
 - **Decision:** nearest neighbor (GLT-equivalent) by default, with
-  source-sample and source-line backplanes.
+  source-sample and source-line backplanes; a KD-tree on the projected DDR
+  centers, empty beyond 0.75·s·√2. Option: area weighting, a sparse
+  (H·W) × (l·s) matrix from 4×4 bilinear subsamples of each source quad
+  (corners at neighbor midpoints, edges extrapolated half a step);
+  σ² = Σw²σ² / (Σw)² over valid sources; the look count is the effective
+  number of looks (Σw)² / Σw².
 - **Source:** DPSIS App. P1 §12–13 (GLT); M1 (DE lat/lon scatter of 7–9 m
-  std, the nearest-neighbor signature).
-- **Confidence:** high.
-- **Test:** `test_projection.py::test_backplanes_trace_to_sensor`
-  *(planned)*.
+  std, the nearest-neighbor signature). Task 17 measurement on
+  FRT00005850: our GLT picks the same DDR pixel as the MTRDR DE for 96.9% of
+  the pixels both fill. The MTRDR fills 61.6% of its grid, our default
+  57.8%: its DDR centers are 23 m (across) × 26 m (along) apart, so the
+  0.75·s·√2 = 19.1 m threshold leaves 39,700 holes inside the footprint.
+  The MTRDR is not distance-gated (it leaves pixels empty whose nearest DDR
+  center is 0.5 s away, and fills some at 1.8 s). Factors of 1.5, 1.75 and
+  2.0 leave 1681, 16 and 0 holes and agree with the MTRDR's empty mask on
+  99.39%, 99.46% and 99.37% of pixels (0.75·√2: 95.6%). Full-FRT cost:
+  0.1 s for the GLT; 0.14 s and 21 MB (1.43 M non-zeros) for the area
+  weights.
+- **Confidence:** high for the method; **open** for the default empty
+  threshold (0.75·s·√2 is the spec's value and leaves holes on FRT
+  geometry).
+- **Test:** `src/varda/crism/_tests/test_projection.py::test_backplanes_trace_to_sensor`,
+  `::test_glt_skips_invalid_geometry`, `::test_area_weights_conserve_mean`,
+  `::test_area_weights_memory_for_a_full_frt`.
 
 ### Validation metric
 
