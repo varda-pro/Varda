@@ -245,8 +245,9 @@ class ViewConfig(ParameterGroup):
         RangeMode,
         RangeMode.AUTO,
         "Auto fits both axes to all data. Fit Y To X Range keeps your X window "
-        "and refits Y to the data inside it whenever spectra change. Manual "
-        "uses the ranges below.",
+        "and refits Y to the data inside it whenever spectra change (scrolling "
+        "or dragging on the Y axis takes Y over: Manual). Manual uses the "
+        "ranges below.",
     )
     showLegend = BoolParameter("Show Legend", True, "Show the curve legend.")
     showDataPoints = BoolParameter(
@@ -392,7 +393,8 @@ class VardaPlotWidget(QWidget):
         self.plotItem = pg.PlotItem(viewBox=self.viewBox)
         self.legend = self.plotItem.addLegend()
         # Left-drag pans, Shift/Cmd+left-drag zooms to the dragged box,
-        # right-drag stretches the axes, wheel zooms about the cursor.
+        # right-drag stretches the axes, wheel zooms about the cursor (over an
+        # axis, that axis only: over Y it stretches the spectra).
         self.viewBox.setMouseMode(pg.ViewBox.PanMode)
         self.viewBox.setMouseEnabled(x=True, y=True)
         # pyqtgraph's default (-1/8) zooms ~26% per wheel notch, which feels
@@ -425,12 +427,14 @@ class VardaPlotWidget(QWidget):
         # sigRangeChangedManually fires only on user interaction (rubber-band
         # zoom, pan, wheel), not on programmatic setRange calls.
         self.viewBox.sigRangeChangedManually.connect(self._onUserViewChange)
+        self.viewBox.sigAxisGesture.connect(self._onAxisGesture)
 
         self.curveSettingsBox = SectionBox("Selected Curve", self._curvePlaceholder())
 
         hint = MutedLabel(
-            "Drag to pan · Shift-drag to zoom to a box · "
-            "Scroll to zoom · Right-drag to stretch axes"
+            "Drag to pan · Shift-drag to zoom to a box · Scroll to zoom · "
+            "Scroll over an axis to zoom only it (over Y: stretch the spectra) · "
+            "Right-drag to stretch axes · Drag on an axis to move only it"
         )
         hint.setWordWrap(True)
 
@@ -612,13 +616,22 @@ class VardaPlotWidget(QWidget):
         # params to the new view. In Auto mode the user has taken over, so
         # switch to Manual. In Fit-Y mode keep the mode: the X window is
         # theirs, and Y goes back to fitting the data inside it (the mouse
-        # interaction turned Y auto-range off).
+        # interaction turned Y auto-range off). Scrolling or dragging on the
+        # Y axis is the exception: _onAxisGesture has already gone Manual.
         self._seedManualRangeFromView()
         mode = self.viewConfig.rangeMode.value
         if mode is RangeMode.AUTO:
             self.viewConfig.rangeMode.set(RangeMode.MANUAL)
         elif mode is RangeMode.FIT_Y_TO_X_RANGE:
             self.viewBox.enableAutoRange(pg.ViewBox.YAxis)
+
+    def _onAxisGesture(self, axis: int) -> None:
+        # Scrolling or dragging on the Y axis stretches or moves Y. In Fit-Y
+        # mode the user has taken Y over, so go Manual (from the current view)
+        # rather than refitting their change away; the change itself follows.
+        if axis == 1 and self.viewConfig.rangeMode.value is RangeMode.FIT_Y_TO_X_RANGE:
+            self._seedManualRangeFromView()
+            self.viewConfig.rangeMode.set(RangeMode.MANUAL)
 
     def fitToData(self) -> None:
         """Frame all curves once, leaving the range under manual control."""

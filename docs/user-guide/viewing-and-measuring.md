@@ -85,6 +85,39 @@ the mean and standard deviation. When curves don't share wavelengths, the
 CSV has one row per sample instead, with columns `curve`, `x`, `y` and, if
 any curve is a mean, `std` and `n` (blank for single pixels).
 
+### Moving around a spectral plot
+
+In the spectral plots (pixel, ROI and ratio spectra, and the Spectral
+Hourglass):
+
+- **Drag** pans; **Shift-drag** (or Ctrl/Cmd-drag) zooms to the dragged box;
+  **right-drag** stretches the axes.
+- **Scroll** (mouse wheel or trackpad) over the plot zooms both axes about
+  the cursor.
+- **Scroll over an axis** zooms only that axis, about the cursor. Over the
+  Y axis this stretches the spectra vertically, so shallow absorption
+  features look deeper; over the X axis it narrows the wavelength range.
+- **Drag on an axis** moves only that axis; **right-drag on an axis**
+  stretches only that axis.
+
+A Y stretch stays as new spectra arrive until you reset it with **Fit to
+Data** under **View** (or by setting **Range** back to **Auto**). Under
+**Range**, any pan or zoom turns **Auto** into **Manual**. In **Fit Y To X
+Range**, changing X keeps that mode and refits Y to the data in the new
+window, but scrolling or dragging on the Y axis switches to **Manual**,
+keeping the view you made. **X View Range** and **Y View Range** show the range on
+screen, so you can note them for a figure.
+
+The Linked Images spectra and the FATT window's fit plot work the same
+way when you scroll or drag (without the Shift-drag box zoom). They have no
+**View** controls: the small **A** button in a plot's lower-left corner
+fits it to the data again.
+
+A stretch changes only the view, never the values: the axis labels stay
+in the data's units, and an export writes the curves' own values. In a
+figure, give the Y range shown, because a stretched axis makes features
+look deeper than they do at full range.
+
 ### Library overlays
 
 **Library Spectra** adds spectra from any of Varda's
