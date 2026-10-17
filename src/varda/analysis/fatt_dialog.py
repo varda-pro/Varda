@@ -477,8 +477,10 @@ class FattDialog(QDialog):
             centers, fit.target, pen=TARGET_PEN, name="Library", connect="finite"
         )
         self.fitPlot.plot(centers, fit.fit, pen=FIT_PEN, name="Target transformation")
-        # A zoom or pan turns auto-range off; each mineral starts fitted again
+        # A zoom or pan turns auto-range off; each mineral starts fitted again.
+        # pyqtgraph applies auto-range when it next paints, so apply it now.
         self.fitPlot.enableAutoRange()
+        self.fitPlot.getPlotItem().getViewBox().updateAutoRange()
 
     # --- mapping ----------------------------------------------------------------------
 
