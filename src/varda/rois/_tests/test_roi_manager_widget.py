@@ -46,18 +46,32 @@ class _FakePlot:
         count=None,
         **kwargs,
     ):
-        self.fillCalls.append(
-            SimpleNamespace(
-                x=np.asarray(x),
-                y=np.asarray(y),
-                yLower=np.asarray(yLower),
-                yUpper=np.asarray(yUpper),
-                color=color,
-                name=name,
-                std=std,
-                count=count,
-            )
+        call = SimpleNamespace(
+            x=np.asarray(x),
+            y=np.asarray(y),
+            yLower=np.asarray(yLower),
+            yUpper=np.asarray(yUpper),
+            color=color,
+            name=name,
+            std=std,
+            count=count,
+            origin=None,
         )
+        self.fillCalls.append(call)
+        return call  # stands in for the curve
+
+
+def test_an_roi_mean_curve_records_its_image_and_pixels(qtbot, make_split_image):
+    c = ROICollection()
+    fid = c.addROI(box(2, 2, 8, 8), "dunes", RED, ROIMode.RECTANGLE)
+    plot = _FakePlot()
+    image = make_split_image(40, 20, 3, 8.0, 4.0)
+    w = ROIManagerWidget(c, image, plot)
+    w.plotSpectrum(fid)
+    origin = plot.fillCalls[0].origin
+    assert origin.imageName == image.name
+    assert origin.region == "ROI “dunes”"
+    assert origin.pixelCount == 36
 
 
 def test_plot_spectrum_records_filled_curve(qtbot, make_split_image):
@@ -87,6 +101,7 @@ def test_plot_spectrum_fill_band_is_mean_plus_minus_std(qtbot):
         return data[r : r + h, col : col + w, :]
 
     image = SimpleNamespace(
+        name="2x2",
         width=2,
         height=2,
         bandCount=1,

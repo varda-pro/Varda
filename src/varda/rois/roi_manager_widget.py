@@ -38,6 +38,7 @@ from varda.rois.roi_drawing_state import ROIDrawingState
 from varda.rois.roi_drawing_widgets import ROIClassPicker, ROIShapePicker
 from varda.rois.roi_table_model import ROITableModel
 from varda.rois.roi_table_view import ROITableView
+from varda.spectral_libraries.spectrum import SpectrumOrigin
 
 if TYPE_CHECKING:
     from varda.common.entities import VardaRaster
@@ -308,7 +309,7 @@ class ROIManagerWidget(QWidget):
 
         fillColor = roi.color.toQColor()
         fillColor.setAlpha(50)
-        self._plotWidget.plotWithFill(
+        curve = self._plotWidget.plotWithFill(
             wavelengths,
             mean,
             yLower=mean - std,
@@ -318,6 +319,12 @@ class ROIManagerWidget(QWidget):
             name=roi.name,
             std=std,
             count=np.asarray(stats["valid_count"]),
+        )
+        curve.origin = SpectrumOrigin(
+            self._image.name,
+            self._image.filePath or "",
+            f"ROI “{roi.name}”",
+            int(np.asarray(stats["pixel_count"])),
         )
 
     def plotRatioSpectrum(self, fid: int) -> None:

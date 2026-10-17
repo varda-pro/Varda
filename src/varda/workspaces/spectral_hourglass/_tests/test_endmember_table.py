@@ -7,7 +7,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView
 
 from synthetic_scene import WAVELENGTHS, modelThroughPpi, modelWithEndmembers
-from varda.analysis.spectral_library import loadCsvLibrary
+from varda.spectral_libraries.formats import loadCsvLibrary
 from varda.workspaces.spectral_hourglass import endmember_table
 from varda.workspaces.spectral_hourglass.endmember_table import EndmemberTable
 
@@ -112,3 +112,29 @@ def test_exported_spectra_load_back_as_a_library_in_nanometres(
     library = loadCsvLibrary(target)
     assert [s.name for s in library] == [e.name for e in model.endmembers]
     np.testing.assert_allclose(library[0].wavelengths, WAVELENGTHS)
+
+
+def test_add_to_library_records_each_endmembers_mean_spread_and_pixels(table):
+    table.selectRows([1])  # clay
+    dialog = table.addToLibraryDialog()
+    assert dialog is not None
+    table.model.renameEndmember(table.model.endmembers[1].id, "ignored")  # snapshot
+    (spectrum,) = dialog.spectra
+    assert spectrum.name == "clay"
+    assert spectrum.provenance["pixelCount"] == 16
+    assert spectrum.provenance["statistic"] == "mean ± 1 σ"
+    assert "Spectral Hourglass" in str(spectrum.provenance["region"])
+    assert spectrum.std is not None and spectrum.std.shape == spectrum.reflectance.shape
+    np.testing.assert_allclose(spectrum.wavelengths, table.model.wavelengthsNm)
+    dialog.newNameEdit.setText("Endmembers")
+    dialog.targetBox.setCurrentIndex(dialog.targetBox.count() - 1)
+    dialog.accept()
+    library = dialog.store.library("Endmembers")
+    assert library is not None and [s.name for s in library.spectra] == ["clay"]
+
+
+def test_add_to_library_takes_every_endmember_when_none_is_selected(table):
+    table.table.clearSelection()
+    dialog = table.addToLibraryDialog()
+    assert dialog is not None
+    assert [s.name for s in dialog.spectra] == ["flat", "clay", "mafic"]

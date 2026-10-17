@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from varda.common.spectral_axis import SpectralUnit
 from varda.common.ui import FlowLayout, HBoxBuilder, WrapperWidget
+from varda.library_manager.add_to_library_dialog import AddToLibraryDialog
 from varda.workspaces.spectral_hourglass.hourglass_model import HourglassModel
 
 _COLUMNS = ["", "Name", "Pixels", "Identified as"]
@@ -96,6 +97,13 @@ class EndmemberTable(QWidget):
         exportButton = QPushButton("Export Spectra…")
         exportButton.setToolTip("Write the endmember mean spectra as a CSV library")
         exportButton.clicked.connect(self._exportSpectra)
+        self.addToLibraryButton = QPushButton("Add to Library…")
+        self.addToLibraryButton.setToolTip(
+            "Save the selected endmembers' mean spectra (all, if none is "
+            "selected) in one of your spectral libraries, with ± 1 σ, the "
+            "pixel count and the image"
+        )
+        self.addToLibraryButton.clicked.connect(self._openAddToLibrary)
 
         # button rows wrap in a narrow dock
         edit = FlowLayout()
@@ -114,7 +122,7 @@ class EndmemberTable(QWidget):
         )
         edit.addWidget(WrapperWidget(suggest))
         files = FlowLayout()
-        for button in (saveButton, loadButton, exportButton):
+        for button in (saveButton, loadButton, exportButton, self.addToLibraryButton):
             files.addWidget(button)
 
         layout = QVBoxLayout(self)
@@ -271,6 +279,34 @@ class EndmemberTable(QWidget):
             QMessageBox.warning(
                 self, "Load Endmembers", f"Could not load {path}:\n{error}"
             )
+
+    def addToLibraryDialog(self) -> AddToLibraryDialog | None:
+        """Add to Library for the selected endmembers (all usable ones when
+        none is selected); None before Prepare or without wavelengths."""
+        if self.model.prepared is None:
+            return None
+        usable = {e.id for e in self.model.usableEndmembers()}
+        ids = [i for i in self._selectedIds() if i in usable] or [
+            e.id for e in self.model.usableEndmembers()
+        ]
+        spectra = self.model.endmemberLibrarySpectra(ids)
+        if not spectra:
+            return None
+        dialog = AddToLibraryDialog(spectra, parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        return dialog
+
+    def _openAddToLibrary(self) -> None:
+        dialog = self.addToLibraryDialog()
+        if dialog is None:
+            QMessageBox.information(
+                self,
+                "Add to Library",
+                "Add to Library needs endmembers with pixels, after Prepare, "
+                "on an image whose bands have wavelengths.",
+            )
+            return
+        dialog.open()
 
     def _exportSpectra(self) -> None:
         endmembers = self.model.usableEndmembers()

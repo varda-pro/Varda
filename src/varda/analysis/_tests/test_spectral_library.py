@@ -5,19 +5,28 @@ import pytest
 import spectral.io.envi as envi
 
 from varda.analysis.spectral_library import (
-    MICA_LIBRARY_NAME,
-    USGS_LIBRARY_NAME,
     LibrarySpectrum,
     binaryEncodingMatch,
     continuumRemoved,
     featureFit,
-    loadCsvLibrary,
-    loadBundledLibraries,
-    loadEnviLibrary,
-    loadUsgsLibrary,
     rankLibrary,
     resampleTo,
 )
+from varda.spectral_libraries.formats import (
+    loadCsvLibrary,
+    loadEnviLibrary,
+    loadUsgsLibrary,
+)
+from varda.spectral_libraries.store import (
+    MICA_LIBRARY_NAME,
+    USGS_LIBRARY_NAME,
+    bundledLibraries,
+)
+
+
+def loadBundledLibraries() -> dict[str, list[LibrarySpectrum]]:
+    return {library.name: library.spectra for library in bundledLibraries()}
+
 
 WL = np.linspace(1000.0, 2500.0, 151)
 

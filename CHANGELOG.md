@@ -24,6 +24,24 @@ can alter results.
   and shadowed windows fit almost any target; the FATT guide explains why
   and how to guard against it. The pixels left out by each rule are
   recorded. (The map has one more band, the last.)
+- **Spectral libraries: choose them, build your own, load and export them.**
+  Every library list in Varda now draws from one set of libraries: the
+  bundled CRISM MICA numerators and USGS minerals, your own, and libraries
+  loaded from ENVI (.sli), CSV or USGS splib07 folders, which Varda
+  remembers (and says so if a remembered file has gone missing). The
+  spectral plots' **Library Spectra** overlay, previously USGS-only, picks
+  from any libraries you choose, one or several, with a search by name; the
+  Spectral Hourglass and FATT list them all, and a library loaded or made
+  anywhere appears everywhere. **Add to Library…** saves a plotted pixel,
+  box mean or ROI mean, or Spectral Hourglass endmembers, in a library of
+  yours, recording its value units, image, pixel or region, pixel count, ±
+  1 σ for a mean, the Varda version and date; spectra copied from other
+  libraries keep their record. **Processing → Spectral Libraries…** opens a
+  manager to browse (with a preview and each library's citation), create,
+  rename, delete and export libraries (ENVI .sli or CSV, records included).
+  Your libraries are saved as ENVI spectral libraries in Varda's app-data
+  `libraries` folder, with a `.varda.json` sidecar for what ENVI headers
+  can't hold. See the new guide, Spectral libraries.
 - **Memory check before an analysis runs.** Varda estimates the memory a
   Processing-menu analysis may need (measured per analysis, as upper bounds)
   and compares it with the memory free at that moment. If it may not fit, it

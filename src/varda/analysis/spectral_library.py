@@ -1,4 +1,4 @@
-"""Spectral libraries and matching unknown spectra against them.
+"""Matching unknown spectra against spectral libraries.
 
 Matching follows ENVI's Spectral Analyst: each library spectrum is resampled
 to the unknown's wavelengths and compared three ways, each mapped to a 0-1
@@ -11,64 +11,19 @@ score by a linear ramp and combined by weights:
 - Binary encoding: the fraction of bands where both spectra are on the same
   side of their own mean
 
-Pure numpy; wavelengths are in nm. Library files declare their unit (ENVI
-``wavelength units``, a CSV column name such as ``wavelength_um``, or a
-``# units:`` comment); otherwise it is inferred once, with a warning.
+Pure numpy; wavelengths are in nm. The libraries themselves (spectra, files,
+the shared store) are in ``varda.spectral_libraries``.
 """
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Sequence
-from pathlib import Path
 
 import attrs
 import numpy as np
-import spectral.io.envi as envi
 
 from varda.analysis import _spy
-from varda.common.spectral_axis import nanometresFrom, parseUnit, unitInText
-from varda.plotting.library_spectra import (
-    DEFAULT_LIBRARY_PATH,
-    listSpectra,
-    loadSpectrum,
-)
-from varda.utilities.resources import resource_path
-
-MICA_LIBRARY_NAME = "CRISM MICA numerators"
-USGS_LIBRARY_NAME = "USGS minerals"
-MICA_LIBRARY_PATH = Path(
-    resource_path("resources/spectral_libraries/crism_mica_numerators.csv")
-)
-
-LIBRARY_FORMAT_HELP = """\
-<p>Load Library accepts three formats. Wavelengths may be in nm, µm or cm⁻¹:
-name the unit in the wavelength column (e.g. <code>wavelength_um</code>) or in a
-<code># units: µm</code> comment; otherwise Varda infers it. The library is resampled to your image's bands, and
-it must overlap at least five of them. Matching ignores overall brightness,
-so reflectance, I/F or scaled values all work.</p>
-
-<p><b>CSV</b> (.csv or .txt): the first column is wavelength, every other column
-is one spectrum, and the first non-comment row holds the names, e.g.</p>
-<pre>
-# optional comment lines start with #
-wavelength_um,Kaolinite,Nontronite
-1.0010,0.512,0.430
-1.0075,0.515,0.431
-</pre>
-<p>Leave a cell empty where a value is missing.</p>
-
-<p><b>ENVI spectral library</b> (.sli with its .hdr): the header needs
-<code>spectra names</code>, <code>wavelength</code> and <code>wavelength units</code>,
-as written by ENVI or by <code>spectral.envi.SpectralLibrary.save</code>.</p>
-
-<p><b>USGS splib07 folder</b>: pick a folder with one sub-folder per spectrum, each
-holding the spectrum's .txt file and its <i>*Wavelengths*.txt</i> file, as
-downloaded from the USGS Spectral Library.</p>
-
-<p>For CRISM, compare unratioed I/F endmembers with the <b>MICA numerators</b>
-(bundled); ratioed type spectra only match ratioed data.</p>
-"""
+from varda.spectral_libraries.spectrum import LibrarySpectrum
 
 # Score ramps: a value at "best" scores 1, at "worst" 0, linear between
 SAM_RAMP = (0.0, 0.25)  # radians
@@ -81,14 +36,6 @@ CLOSE_FRACTION = 0.10
 
 
 @attrs.frozen
-class LibrarySpectrum:
-    name: str
-    wavelengths: np.ndarray  # nm (the loaders convert declared units)
-    reflectance: np.ndarray
-    source: str = ""
-
-
-@attrs.frozen
 class LibraryMatch:
     name: str
     score: float  # weighted 0-1, higher is better
@@ -98,83 +45,6 @@ class LibraryMatch:
     binary: float  # fraction of bands matching
     flag: str  # "best", "close" (within 10% of the best score) or "far"
     spectrum: LibrarySpectrum
-
-
-# --- loading ---------------------------------------------------------------------
-
-
-def loadUsgsLibrary(path: Path = DEFAULT_LIBRARY_PATH) -> list[LibrarySpectrum]:
-    """The USGS splib07a spectra bundled with Varda (one folder per spectrum)."""
-    library = []
-    for folder in listSpectra(path):
-        try:
-            name, wavelengths, reflectance = loadSpectrum(path, folder)
-        except (FileNotFoundError, ValueError):
-            continue
-        library.append(LibrarySpectrum(name, wavelengths, reflectance, "USGS splib07a"))
-    return library
-
-
-def loadEnviLibrary(header: str | Path) -> list[LibrarySpectrum]:
-    """An ENVI spectral library (.sli + .hdr)."""
-    header = Path(header)
-    if header.suffix.lower() != ".hdr":
-        header = header.with_suffix(".hdr")
-    library = envi.open(str(header))
-    names = list(library.names)
-    unit = parseUnit(library.metadata.get("wavelength units"))
-    wavelengths = nanometresFrom(library.bands.centers, unit)
-    spectra = np.asarray(library.spectra, dtype=np.float64)
-    return [
-        LibrarySpectrum(name, wavelengths, spectra[i], header.stem)
-        for i, name in enumerate(names)
-    ]
-
-
-def loadCsvLibrary(path: str | Path) -> list[LibrarySpectrum]:
-    """A CSV whose first column is wavelength and each other column a spectrum
-    (named by its header)."""
-    path = Path(path)
-    with open(path, newline="") as f:
-        allLines = list(f)
-    comments = [line for line in allLines if line.lstrip().startswith("#")]
-    lines = [line for line in allLines if not line.lstrip().startswith("#")]
-    rows = list(csv.reader(lines))
-    header, body = rows[0], [r for r in rows[1:] if r]
-    values = np.array([[float(v) if v.strip() else np.nan for v in r] for r in body])
-    # The unit from the wavelength column's name (e.g. wavelength_um), else a
-    # "# units: ..." comment, else inferred from the values
-    unitComments = [c for c in comments if "unit" in c.lower()]
-    unit = unitInText(header[0]) or next(
-        (u for c in unitComments if (u := unitInText(c)) is not None), None
-    )
-    wavelengths = nanometresFrom(values[:, 0], unit)
-    return [
-        LibrarySpectrum(name.strip(), wavelengths, values[:, i + 1], path.stem)
-        for i, name in enumerate(header[1:])
-    ]
-
-
-def loadBundledLibraries() -> dict[str, list[LibrarySpectrum]]:
-    """The spectral libraries shipped with Varda, by display name."""
-    libraries = {}
-    if MICA_LIBRARY_PATH.is_file():
-        libraries[MICA_LIBRARY_NAME] = loadCsvLibrary(MICA_LIBRARY_PATH)
-    libraries[USGS_LIBRARY_NAME] = loadUsgsLibrary()
-    return libraries
-
-
-def loadLibrary(path: str | Path) -> list[LibrarySpectrum]:
-    """Load a library file by extension (.sli/.hdr ENVI, .csv), or a folder of
-    USGS spectra."""
-    path = Path(path)
-    if path.is_dir():
-        return loadUsgsLibrary(path)
-    if path.suffix.lower() in {".sli", ".hdr"}:
-        return loadEnviLibrary(path)
-    if path.suffix.lower() in {".csv", ".txt"}:
-        return loadCsvLibrary(path)
-    raise ValueError(f"Unsupported spectral library: {path.name}")
 
 
 # --- comparison ------------------------------------------------------------------
