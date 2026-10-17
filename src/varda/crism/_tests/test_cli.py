@@ -1,6 +1,7 @@
 """The command line: ``python -m varda.crism`` and ``Varda --crism`` (``crismMain``)."""
 
 import json
+import logging
 import math
 import re
 import shutil
@@ -33,6 +34,14 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
         raise OSError("offline (test)")
 
     monkeypatch.setattr(calibration, "downloadTo", refuse)
+
+
+@pytest.fixture(autouse=True)
+def isolatedCache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """The tests never read or fill the user's own calibration cache."""
+    cache = tmp_path / "default-cache"
+    monkeypatch.setattr(cli, "defaultCache", lambda: cache)
+    return cache
 
 
 def _copy(cropDir: Path, folder: Path, names: tuple[str, ...]) -> Path:
@@ -134,6 +143,7 @@ def test_cli_one_failure_does_not_stop_the_rest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     calls: list[str] = []
 
@@ -146,10 +156,14 @@ def test_cli_one_failure_does_not_stop_the_rest(
 
     monkeypatch.setattr(cli, "process", fake)
     cube = str(cropDir / (_OBSERVATION[0] + ".lbl"))
-    code = crismMain(["process", cube, cube, "--out", str(tmp_path)])
+    with caplog.at_level(logging.ERROR, logger="varda.crism.cli"):
+        code = crismMain(["process", cube, cube, "--out", str(tmp_path)])
     assert code == 1 and len(calls) == 2
     captured = capsys.readouterr()
     assert "first one is bad" in captured.err and "x.img" in captured.out
+    # the traceback goes to the log (final review, Important 7)
+    (record,) = [r for r in caplog.records if r.exc_info is not None]
+    assert "first one is bad" in caplog.text and "Traceback" in caplog.text
 
 
 def test_cli_learn_artifacts(

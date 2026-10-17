@@ -3,8 +3,10 @@ observation needs: the wavelength table (WA), the bad-pixel maps (BP), and the
 atmospheric transmission spectra (AT CDRs and CAT's volcano-scan ADRs).
 
 Files are searched in the user's folders, the download cache and CAT's aux
-folder, in that order; missing PDS files are fetched into the cache. Nothing
-here touches the network unless ``ensure`` runs or a ``Fetcher`` is called.
+folder, in that order; a missing WA or AT is fetched into the cache. The BPs
+are used only when local, never fetched: PDS files them by acquisition day,
+so their URLs could only be guessed, and they are optional. Nothing here
+touches the network unless ``ensure`` runs or a ``Fetcher`` is called.
 """
 
 import csv
@@ -14,7 +16,6 @@ import ssl
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta
 from functools import cache
 from pathlib import Path
 
@@ -27,22 +28,17 @@ from varda.crism.products import CdrId, VsAdrId
 from varda.crism.readers import DetectorFrame, Trr3, readDetectorFrame, readVsAdr
 from varda.version import vardaVersion
 
-PDS_VOLUMES_URL = "https://pds-geosciences.wustl.edu/mro/mro-m-crism-2-edr-v1/"
-PDS_CDR_URL = PDS_VOLUMES_URL + "mrocr_0001/cdr/"
+PDS_CDR_URL = (
+    "https://pds-geosciences.wustl.edu/mro/mro-m-crism-2-edr-v1/mrocr_0001/cdr/"
+)
 TIMEOUT_S = 60
 
 _AT_TABLE = Path(__file__).parent / "resources" / "at_cdrs.csv"
 # PIXEL_AVERAGING_WIDTH -> the binning code in a CDR name
 _BINNING_CODES = {1: 0, 2: 1, 5: 2, 10: 3}
-# MRO's SCLK counts seconds from 1980-01-01; PDS files date-stamped CDRs
-# (BP among them) sit in the volume holding the year
-_SCLK_EPOCH = datetime(1980, 1, 1)
-_YEAR_VOLUMES = {
-    2006: (1,), 2007: (1,), 2008: (2, 3), 2009: (3,), 2010: (3, 4), 2011: (4, 5),
-    2012: (5, 6), 2013: (6, 7), 2014: (7, 8), 2015: (8, 9), 2016: (9, 10),
-    2017: (10, 11), 2018: (11, 12), 2019: (12, 13), 2020: (13, 14), 2021: (14, 15),
-    2022: (15,), 2023: (15,),
-}  # fmt: skip
+_BP_NOTE = (
+    "optional bad-pixel map; used only when local (put it in a calibration folder)"
+)
 
 type Fetcher = Callable[[str, Path], None]
 """Downloads a URL to a path; raises ``OSError`` when it can't."""
@@ -60,7 +56,8 @@ class Transmission:
     order (sample, band). ``artifacts`` is (2, sample, band) for a VS ADR (the
     McGuire and Pelkey artifact spectra). The SCLK period is that of the
     source scan; ``extrapolated`` says no candidate's period held the
-    observation's SCLK, so the nearest was used."""
+    observation's SCLK, so the nearest was used. ``path`` is the file read
+    (the AT CDR's or the VS ADR's image), for the provenance."""
 
     scanId: str
     sourceName: str
@@ -70,6 +67,7 @@ class Transmission:
     sclkStart: int | None = None
     sclkStop: int | None = None
     extrapolated: bool = False
+    path: Path | None = None
 
     @property
     def key(self) -> str:
@@ -190,24 +188,9 @@ def _bpNames(trr3: Trr3) -> list[str]:
     )
 
 
-def _bpUrls(stem: str) -> list[str]:
-    """Where a BP CDR may sit: PDS files them by acquisition day, in the volume
-    for that year. The day is computed from the SCLK, so also try its neighbors."""
-    day = _SCLK_EPOCH + timedelta(seconds=CdrId.parse(stem).sclk)
-    urls: list[str] = []
-    for offset in (0, -1, 1):
-        date = day + timedelta(days=offset)
-        for volume in _YEAR_VOLUMES.get(date.year, ()):
-            urls.append(
-                f"{PDS_VOLUMES_URL}mrocr_{volume:04d}/cdr/{date.year}/"
-                f"{date.year}_{date.timetuple().tm_yday:03d}/bp/{stem}"
-            )
-    return urls
-
-
 def _candidateUrls(kind: str, stem: str) -> list[str]:
-    """Base URLs (without extension) a CDR may be fetched from, most likely first."""
-    return _bpUrls(stem) if kind == "BP" else [f"{PDS_CDR_URL}{kind.lower()}/{stem}"]
+    """Base URLs (without extension) a CDR may be fetched from; none for a BP."""
+    return [] if kind == "BP" else [f"{PDS_CDR_URL}{kind.lower()}/{stem}"]
 
 
 def _sha256(values: np.ndarray) -> str:
@@ -227,6 +210,16 @@ class CalibrationLibrary:
         self._catAux = Path(catAuxFolder) if catAuxFolder is not None else None
         self._fetch: Fetcher = fetch or downloadTo
         self._failures: dict[str, str] = {}
+        self._skipped: dict[str, str] = {}  # BPs that could not be used, and why
+
+    @property
+    def catAuxFolder(self) -> Path | None:
+        return self._catAux
+
+    @property
+    def skippedBadPixels(self) -> dict[str, str]:
+        """The local BPs ``badPixels`` could not use, by name, and why."""
+        return dict(self._skipped)
 
     def _searchFolders(self, kind: str) -> list[Path]:
         lowered = kind.lower()
@@ -254,13 +247,14 @@ class CalibrationLibrary:
     ) -> CalibrationFileStatus:
         urls = _candidateUrls(kind, stem.lower())
         failure = self._failures.get(stem.lower())
+        skipped = self._skipped.get(stem.lower())
         return CalibrationFileStatus(
             stem.lower(),
             kind,
             self._find(kind, stem),
             urls[0] + ".img" if urls else None,
             required,
-            "; ".join(n for n in (note, failure) if n),
+            "; ".join(n for n in (note, failure, skipped) if n),
         )
 
     def _atRows(self, trr3: Trr3) -> list[AtRow]:
@@ -321,15 +315,12 @@ class CalibrationLibrary:
                     "(atmospheric transmission CDRs are IR only)",
                 )
             )
-        entries += [
-            self._entry("BP", name, False, "optional bad-pixel map")
-            for name in _bpNames(trr3)
-        ]
+        entries += [self._entry("BP", name, False, _BP_NOTE) for name in _bpNames(trr3)]
         return entries
 
     def ensure(self, trr3: Trr3) -> list[CalibrationFileStatus]:
-        """Fetch what ``status`` shows missing into the cache (BPs best effort)
-        and return the final status, with a note on each file that could not be
+        """Fetch the WA and ATs ``status`` shows missing into the cache (never
+        the BPs) and return the final status, with a note on each file that could not be
         fetched; a scan with a local period is not fetched again. Raises
         ``MissingCalibrationError`` when the WA is missing or no scan has a
         local AT."""
@@ -384,15 +375,22 @@ class CalibrationLibrary:
         return self._aligned(trr3, readDetectorFrame(path))
 
     def badPixels(self, trr3: Trr3) -> np.ndarray | None:
-        """``(sample, band)`` bool, True where any BP CDR found flags the pixel
+        """``(sample, band)`` bool, True where any local BP CDR flags the pixel
         (nonzero or invalid); None when the label lists none or none is
-        available (BPs are optional; ``status`` shows the skipped ones)."""
+        usable. BPs are optional: one that cannot be read or whose columns do
+        not match the cube is skipped, with the reason in ``status``'s note
+        (``skippedBadPixels``), and never fails the run."""
         bad: np.ndarray | None = None
         for name in _bpNames(trr3):
             path = self._find("BP", name)
             if path is None:
                 continue
-            values = self._aligned(trr3, readDetectorFrame(path))
+            try:
+                values = self._aligned(trr3, readDetectorFrame(path))
+            except (OSError, ValueError) as error:
+                self._skipped[name] = f"skipped: {error}"
+                continue
+            self._skipped.pop(name, None)
             flagged = np.isnan(values) | (values != 0)
             bad = flagged if bad is None else bad | flagged
         return bad
@@ -437,6 +435,7 @@ class CalibrationLibrary:
                     row.sclkStart,
                     row.sclkStop,
                     extrapolated,
+                    path,
                 )
             )
         return result
@@ -480,5 +479,6 @@ class CalibrationLibrary:
                 aligned[0],
                 _sha256(aligned[0]),
                 np.stack(aligned[1:]),
+                path=path,
             )
         return list(result.values())

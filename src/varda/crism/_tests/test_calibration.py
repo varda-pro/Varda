@@ -194,11 +194,40 @@ def test_local_file(cropDir: Path, tmp_path: Path):
 
 def test_missing_bad_pixels_do_not_block(cropDir: Path, tmp_path: Path, trr3: Trr3):
     copyCdr(cropDir, WA, tmp_path / "cdr")
-    lib = library(tmp_path)
+    fetch = Recorder()
+    lib = library(tmp_path, fetch)
     copyCdr(cropDir, AT, tmp_path / "cdr", atNames(lib, trr3)[0])
-    status = lib.ensure(trr3)  # the BPs are absent and the fake writes nothing
-    assert [f.localPath for f in status if f.kind == "BP"] == [None, None]
+    status = lib.ensure(trr3)  # the BPs are absent
+    bps = [f for f in status if f.kind == "BP"]
+    assert [f.localPath for f in bps] == [None, None]
     assert lib.badPixels(trr3) is None
+    # final review: BPs are used only when local, never fetched from guessed URLs
+    assert fetch.urls and not [u for u in fetch.urls if "_bp" in u.lower()]
+    assert all(f.url is None and "only when local" in f.note for f in bps)
+
+
+def test_bad_pixels_of_other_columns_are_skipped(
+    cropDir: Path, tmp_path: Path, trr3: Trr3
+):
+    """A BP only marks elements the calibration already interpolated, so a
+    column mismatch skips it with a note; it never fails the run."""
+    label = trr3.label
+    binned = evolve(
+        trr3,
+        label=evolve(
+            label,
+            keywords={**label.keywords, "PIXEL_AVERAGING_WIDTH": 2},
+            image=evolve(label.image, samples=320),
+        ),
+    )
+    lib = library(tmp_path)
+    names = [f.name for f in lib.status(binned) if f.kind == "BP"]
+    for name in names:
+        copyCdr(cropDir, AT, tmp_path / "cdr", name)  # 120 columns, not 320
+    assert lib.badPixels(binned) is None
+    notes = [f.note for f in lib.status(binned) if f.kind == "BP"]
+    assert notes and all("skipped" in n and "120 columns" in n for n in notes)
+    assert set(lib.skippedBadPixels) == set(names)
 
 
 def test_sensor_s_has_no_pds_ats(cropDir: Path, tmp_path: Path, trr3: Trr3):
@@ -228,6 +257,9 @@ def test_dedupe_transmissions(cropDir: Path, tmp_path: Path, trr3: Trr3):
     assert len(found) == 1
     assert found[0].values.shape == (120, 438)
     assert found[0].artifacts is None
+    assert (
+        found[0].path is not None and found[0].path.stem == found[0].sourceName.lower()
+    )
 
 
 def twoPeriods(cropDir: Path, tmp_path: Path) -> tuple[str, str]:
@@ -315,6 +347,9 @@ def test_cat_aux_vs_adrs(demoData: Path):
     )
     found = lib.transmissions(trr3, TransmissionSource.CAT_VS_ADR)
     assert len(found) > 6
+    assert all(
+        t.path is not None and t.path.stem.upper() == t.sourceName for t in found
+    )
     assert all(t.artifacts is not None and t.artifacts.shape[0] == 2 for t in found)
     assert all(t.values.shape == (640, 438) for t in found)
     # with both sources, an AT and a VS ADR of the same scan stay apart

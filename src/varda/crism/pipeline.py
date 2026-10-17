@@ -106,6 +106,7 @@ from varda.crism.calibration import (
     CalibrationFileStatus,
     CalibrationLibrary,
     Transmission,
+    TransmissionSource,
 )
 from varda.crism.despike import ALONG_TRACK_HALO, SpikeReport, despike
 from varda.crism.destripe import StripeFrame, applyStripes, blandMask, estimateStripes
@@ -458,6 +459,7 @@ class _Run:
         self.wavelengths = self.library.wavelengths(self.trr3)  # (s, b)
         self.bandWavelengths = _nanMedian(self.wavelengths, axis=0)
         self.badPixels = self.library.badPixels(self.trr3)
+        self.status = self.library.status(self.trr3)  # with the BPs' notes
         self.usable = usableLines(self.ddr)
         if self.recipe.photometry.incidence.get() is IncidenceSource.AREOID_POLYNOMIAL:
             incidence = self.ddr.band(DdrBand.INCIDENCE_AREOID)
@@ -660,7 +662,18 @@ class _Run:
                 )
             found = chosen
         if not found:
-            raise ValueError(f"No transmission is available for {self.trr3.id.stem}.")
+            hint = ""
+            if (
+                atmosphere.source.get() is TransmissionSource.CAT_VS_ADR
+                and self.library.catAuxFolder is None
+            ):
+                hint = (
+                    " The source is CAT volcano-scan ADRs, and no CAT aux folder is "
+                    "set: set it in Get CRISM Calibration Files (or pass --cat-aux)."
+                )
+            raise ValueError(
+                f"No transmission is available for {self.trr3.id.stem}.{hint}"
+            )
         return found
 
     def _artifactModel(
@@ -1447,8 +1460,8 @@ class _Run:
 
     def _calibrationRecord(self) -> list[dict[str, object]]:
         """Every calibration file: ``required`` means needed for this
-        processing (the WA, and the AT the atmosphere used), ``used`` that its
-        data went in (also the bad-pixel maps found)."""
+        processing (the WA, and the AT or VS ADR the atmosphere used),
+        ``used`` that its data went in (also each bad-pixel map read)."""
         chosen = (
             self.atmosphere.selection.chosen.sourceName.lower()
             if self.atmosphere is not None
@@ -1457,13 +1470,15 @@ class _Run:
         records: list[dict[str, object]] = []
         seen: set[str] = set()
 
+        skipped = self.library.skippedBadPixels
+
         def add(kind: str, name: str, path: Path | None, note: str) -> None:
             name = name.lower()
             seen.add(name)
             used = path is not None and (
                 kind == "WA"
                 or name == chosen
-                or (kind == "BP" and self.badPixels is not None)
+                or (kind == "BP" and self.badPixels is not None and name not in skipped)
             )
             records.append(
                 {
@@ -1484,12 +1499,7 @@ class _Run:
             if name in seen:
                 continue
             kind = "AT" if candidate.artifacts is None else "VS"
-            add(
-                kind,
-                name,
-                self.library.localFile(kind, name) if kind == "AT" else None,
-                f"a candidate, {candidate.key}",
-            )
+            add(kind, name, candidate.path, f"a candidate, {candidate.key}")
         return records
 
     def _inputs(self) -> list[dict[str, object]]:

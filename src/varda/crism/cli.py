@@ -13,6 +13,7 @@ missing calibration files with nothing processed).
 
 import argparse
 import json
+import logging
 import math
 import sys
 from collections.abc import Sequence
@@ -46,6 +47,8 @@ from varda.crism.validation_report import validate
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 DEFAULT_OUTPUT = "crism-products"
+
+_log = logging.getLogger(__name__)
 
 
 def defaultCache() -> Path:
@@ -184,6 +187,7 @@ def _run(args: argparse.Namespace) -> int:
             _error(f"{observation.name}: {error}")
         except Exception as error:  # one bad observation must not stop the rest
             failed += 1
+            _log.exception("Processing %s failed", observation.name)
             _error(f"{observation.name}: {type(error).__name__}: {error}")
         else:
             done += 1

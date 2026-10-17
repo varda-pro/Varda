@@ -5,6 +5,7 @@ checked (and fetched) first, so a missing file stops the batch before any pass."
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -55,7 +56,8 @@ STEP_TITLES = {
     "projection": "Map projection",
     "output": "Outputs",
 }
-_HIDDEN = {("smile", "method")}  # a single option: nothing to choose
+_HIDDEN = {("smile", "method")}
+_log = logging.getLogger(__name__)  # a single option: nothing to choose
 
 
 def _copyValues(source: ParameterGroup, target: ParameterGroup) -> None:
@@ -426,6 +428,7 @@ class ProcessCrismDialog(QDialog):
             except ProcessCancelled:
                 report(row, 0.0, CANCELED)
             except Exception as error:  # noqa: BLE001 - one failure must not end the batch
+                _log.exception("Processing %s failed", observation.name)
                 report(row, 0.0, f"failed: {error}")
             else:
                 report(row, 1.0, "done")

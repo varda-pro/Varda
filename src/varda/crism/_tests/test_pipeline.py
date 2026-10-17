@@ -22,7 +22,7 @@ from varda.crism import pipeline
 from varda.crism._tests.synthetic import makeSyntheticCube, writeSyntheticObservation
 from varda.crism._tests.test_calibration import copyCdr
 from varda.crism.brightness import segmentIds
-from varda.crism.calibration import CalibrationLibrary, atTable
+from varda.crism.calibration import CalibrationLibrary, TransmissionSource, atTable
 from varda.crism.labels import readLabel
 from varda.crism.observation import CrismObservation
 from varda.crism.pipeline import ProcessCancelled, ProcessResult, process
@@ -733,4 +733,48 @@ def test_mismatched_ddr_and_missing_incidence_are_clear(tmp_path: Path) -> None:
             Recipe(),
             tmp_path / "o2",
             library=_library(tmp_path / "c", tmp_path),
+        )
+
+
+def test_chosen_vs_adr_is_recorded(
+    cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review, Important 5: the provenance names the VS ADR the
+    atmosphere used, with its path and SHA-256 (it said "not used")."""
+    library = _library(cropDir, tmp_path)
+    trr3 = readTrr3(cropDir / (_CROP_FILES[0] + ".lbl"))
+    (at,) = library.transmissions(trr3, TransmissionSource.PDS_AT)
+    adr = tmp_path / "ADR42086284801_08608_VS00L_8.IMG"
+    adr.write_bytes(b"a stand-in for the ADR's image")
+    vs = attrs.evolve(
+        at,
+        sourceName=adr.stem.upper(),
+        artifacts=np.zeros((2, *at.values.shape)),
+        path=adr,
+    )
+    monkeypatch.setattr(library, "transmissions", lambda trr3, source: [vs])
+    recipe = Recipe()
+    recipe.atmosphere.source.set(TransmissionSource.CAT_VS_ADR)
+    result = process(
+        CrismObservation.fromFolder(cropDir), recipe, tmp_path / "out", library=library
+    )
+    provenance = json.loads(result.provenance.read_text())
+    assert provenance["steps"]["atmosphere"]["chosen"]["key"] == vs.key
+    (record,) = [r for r in provenance["calibration"] if r["kind"] == "VS"]
+    assert record["name"] == adr.stem.lower()
+    assert record["path"] == str(adr) and record["sha256"] == sha256File(adr)
+    assert record["used"] is True and record["required"] is True
+
+
+def test_vs_source_without_cat_aux_folder_says_so(
+    cropDir: Path, tmp_path: Path
+) -> None:
+    recipe = Recipe()
+    recipe.atmosphere.source.set(TransmissionSource.CAT_VS_ADR)
+    with pytest.raises(ValueError, match="CAT aux folder"):
+        process(
+            CrismObservation.fromFolder(cropDir),
+            recipe,
+            tmp_path / "out",
+            library=_library(cropDir, tmp_path),
         )

@@ -3,6 +3,7 @@
 import json
 import shutil
 import threading
+import logging
 from pathlib import Path
 
 import pytest
@@ -62,7 +63,7 @@ def _run(qtbot, dialog: ProcessCrismDialog) -> None:
         dialog.run()
 
 
-def test_batch_continues_after_failure(qtbot, tmp_path, monkeypatch):
+def test_batch_continues_after_failure(qtbot, tmp_path, monkeypatch, caplog):
     def fake(observation, recipe, outputFolder, **kwargs):
         if observation.name == "b":
             raise ValueError("bad cube")
@@ -72,9 +73,13 @@ def test_batch_continues_after_failure(qtbot, tmp_path, monkeypatch):
     dialog = _dialog(qtbot, tmp_path, ["a", "b", "c"])
     results: list[ProcessResult] = []
     dialog.sigProcessed.connect(results.append)
-    _run(qtbot, dialog)
+    with caplog.at_level(logging.ERROR, logger=process_dialog.__name__):
+        _run(qtbot, dialog)
     assert dialog.statuses() == ["done", "failed: bad cube", "done"]
     assert len(results) == 2
+    # the traceback goes to the log (final review, Important 7)
+    (record,) = [r for r in caplog.records if r.exc_info is not None]
+    assert "Traceback" in caplog.text and "bad cube" in caplog.text
 
 
 def test_cancel_stops_batch(qtbot, tmp_path, monkeypatch):
