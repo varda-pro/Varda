@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from varda.crism.photometry import fitIncidence, lambert
 
@@ -49,3 +50,10 @@ def test_chunk_consistency():
     full = fit.evaluate(np.arange(128)[:, None], np.arange(80)[None, :])
     chunk = fit.evaluate(np.arange(32, 64)[:, None], np.arange(80)[None, :])
     np.testing.assert_array_equal(chunk, full[32:64])
+
+
+def test_too_few_valid_incidences_raise():
+    incidence = np.full((10, 10), np.nan)
+    incidence[0, :4] = 40.0  # four pixels for five coefficients
+    with pytest.raises(ValueError, match="valid"):
+        fitIncidence(incidence)

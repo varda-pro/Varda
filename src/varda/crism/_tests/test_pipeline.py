@@ -14,6 +14,7 @@ import shutil
 import warnings
 from pathlib import Path
 
+import attrs
 import numpy as np
 import pytest
 
@@ -25,7 +26,8 @@ from varda.crism.calibration import CalibrationLibrary, atTable
 from varda.crism.labels import readLabel
 from varda.crism.observation import CrismObservation
 from varda.crism.pipeline import ProcessCancelled, ProcessResult, process
-from varda.crism.readers import readTrr3, usableLines
+from varda.crism.projection import mtrdrGrid
+from varda.crism.readers import DdrBand, readTrr3, usableLines
 from varda.crism.recipe import Recipe, Resampling
 from varda.crism.smile import linearWeights, resample, sourceSegments, standardVector
 from varda.crism.writers import NODATA, sha256File
@@ -602,3 +604,65 @@ def test_git_commit_only_for_vardas_checkout(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "varda"\n')
     assert pipeline._isVardaCheckout(str(tmp_path))
     assert not pipeline._isVardaCheckout(str(tmp_path / "missing"))
+
+
+def test_slew_lines_stay_off_the_map(tmp_path: Path) -> None:
+    """Final review, Important 1: the slew lines ``usableLines`` drops carry
+    no I/F, so they must not shape the grid (FRS00031442's 13 made it 756 ×
+    903 instead of 702 × 295) or leave a strip of DE and IN without I/F."""
+    slew = 6
+    cube, truth = makeSyntheticCube(lines=40, seed=2, artifactAmplitude=0.0)
+    observation = writeSyntheticObservation(
+        tmp_path / "obs", cube, truth, slewLines=slew
+    )
+    _, ddr = observation.readIr()
+    usable = usableLines(ddr)  # a step is to the previous line: one more is out
+    assert not usable[: slew + 1].any() and usable[slew + 1 :].all()
+    recipe = Recipe()
+    for step in ("despike", "atmosphere"):
+        getattr(recipe, step).enabled.set(False)
+    result = process(
+        observation,
+        recipe,
+        tmp_path / "out",
+        library=_library(tmp_path / "obs", tmp_path),
+    )
+    assert result.mapProjected is not None and result.geometry is not None
+    assert result.info is not None
+    lat = ddr.band(DdrBand.LATITUDE)[usable]
+    lon = ddr.band(DdrBand.LONGITUDE)[usable]
+    expected = mtrdrGrid(lat, lon, pipeline.PIXEL_SIZE_M)
+    header = _header(result.mapProjected)
+    assert (_number(header, "samples"), _number(header, "lines")) == (
+        expected.width,
+        expected.height,
+    )
+    hasData = np.isfinite(_read(result.mapProjected)).any(axis=2)
+    for product in (result.geometry, result.info):
+        np.testing.assert_array_equal(
+            np.isfinite(_read(product)).any(axis=2), hasData, err_msg=product.name
+        )
+
+
+def test_mismatched_ddr_and_missing_incidence_are_clear(tmp_path: Path) -> None:
+    """A DDR of another size, and a DDR without incidence, stop the run with
+    an error that says so (not an index error halfway through)."""
+    cube, truth = makeSyntheticCube(lines=24, seed=3)
+    first = writeSyntheticObservation(tmp_path / "a", cube, truth)
+    shorter, shortTruth = makeSyntheticCube(lines=20, seed=3)
+    second = writeSyntheticObservation(tmp_path / "b", shorter, shortTruth)
+    mixed = attrs.evolve(first, irDdr=second.irDdr)
+    with pytest.raises(ValueError, match=r"24 × 120.*20 × 120"):
+        process(
+            mixed, Recipe(), tmp_path / "o1", library=_library(tmp_path / "a", tmp_path)
+        )
+
+    blind = attrs.evolve(truth, incidenceDeg=np.full(truth.incidenceDeg.shape, np.nan))
+    observation = writeSyntheticObservation(tmp_path / "c", cube, blind)
+    with pytest.raises(ValueError, match="no valid incidence in the DDR"):
+        process(
+            observation,
+            Recipe(),
+            tmp_path / "o2",
+            library=_library(tmp_path / "c", tmp_path),
+        )

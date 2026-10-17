@@ -338,6 +338,7 @@ SCENE_CENTER_DEG = (18.3, 77.4)  # (latitude N, longitude E)
 SCENE_PIXEL_M = 18.0
 SCENE_ROTATION_DEG = 8.0
 _MARS_RADIUS_M = 3396190.0
+_SLEW_STEP = 10.0  # line spacings between slew lines (usableLines flags > 4)
 _NODATA = 65535.0
 _LABEL_NOTE = "/* Varda synthetic observation, written by writeSyntheticObservation */"
 # DDR backplanes the synthetic does not model: constants
@@ -403,10 +404,15 @@ def _writeProduct(
     )
 
 
-def _geometry(lines: int, samples: int) -> tuple[np.ndarray, np.ndarray]:
+def _geometry(
+    lines: int, samples: int, slewLines: int = 0
+) -> tuple[np.ndarray, np.ndarray]:
     """Latitude and longitude of the pixel centers ``(l, s)``: lines run
-    south, samples east, both turned by ``SCENE_ROTATION_DEG``."""
+    south, samples east, both turned by ``SCENE_ROTATION_DEG``. The first
+    ``slewLines`` lines are a slew: ``_SLEW_STEP`` line spacings apart, they
+    reach far north of the scene."""
     rows, cols = np.mgrid[0:lines, 0:samples].astype(np.float64)
+    rows[:slewLines] = slewLines + _SLEW_STEP * (rows[:slewLines] - slewLines)
     rows -= (lines - 1) / 2
     cols -= (samples - 1) / 2
     angle = math.radians(SCENE_ROTATION_DEG)
@@ -419,7 +425,7 @@ def _geometry(lines: int, samples: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def writeSyntheticObservation(
-    folder: Path, cube: np.ndarray, truth: SyntheticTruth
+    folder: Path, cube: np.ndarray, truth: SyntheticTruth, *, slewLines: int = 0
 ) -> CrismObservation:
     """Write ``cube`` and its truth as a raw observation the readers accept:
     the TRR3 (``trdr/``, I/F times cos i, since the synthetic cube carries no
@@ -428,7 +434,8 @@ def writeSyntheticObservation(
     of ~18 m pixels turned by 8°; the other backplanes constant), and the
     calibration ``CalibrationLibrary`` finds offline in ``CRISM_CDR/``: the
     crop's WA and an AT holding the truth's transmission. The labels are the
-    crops', with their line counts, records and pointers rewritten."""
+    crops', with their line counts, records and pointers rewritten. The
+    first ``slewLines`` lines are given the geometry of a slew (``_geometry``)."""
     folder = Path(folder)
     lines, samples, bands = cube.shape
     trr3 = readTrr3(_TRR3)
@@ -449,7 +456,7 @@ def writeSyntheticObservation(
     _writeProduct(_TRR3, irCube, stored, layout, table)
 
     ddrLayout = readLabel(_DDR).image
-    lat, lon = _geometry(lines, samples)
+    lat, lon = _geometry(lines, samples, slewLines)
     planes = np.full((len(DdrBand), lines, samples), _NODATA)
     planes[DdrBand.INCIDENCE_AREOID] = truth.incidenceDeg
     planes[DdrBand.INCIDENCE_MOLA] = truth.incidenceDeg

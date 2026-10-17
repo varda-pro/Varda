@@ -9,6 +9,7 @@ import numpy as np
 from attrs import frozen
 
 _MAX_INCIDENCE_DEG = 90.0
+_COEFFICIENTS = 5
 
 
 @frozen
@@ -38,7 +39,8 @@ def _design(x: np.ndarray, t: np.ndarray, c: np.ndarray) -> np.ndarray:
 
 
 def fitIncidence(incidenceDeg: np.ndarray) -> IncidenceFit:
-    """Least-squares fit to the finite pixels of ``incidenceDeg`` ``(l, s)``."""
+    """Least-squares fit to the finite pixels of ``incidenceDeg`` ``(l, s)``.
+    Raises ValueError with fewer valid pixels than the 5 coefficients."""
     lines, samples = incidenceDeg.shape
     center = ((lines - 1) / 2, (samples - 1) / 2)
     scale = (max(lines - 1, 1) / 2, max(samples - 1, 1) / 2)
@@ -48,10 +50,15 @@ def fitIncidence(incidenceDeg: np.ndarray) -> IncidenceFit:
         indexing="ij",
     )
     valid = np.isfinite(incidenceDeg)
+    if valid.sum() < _COEFFICIENTS:
+        raise ValueError(
+            f"{int(valid.sum())} valid incidence angles; the polynomial needs at "
+            f"least {_COEFFICIENTS}"
+        )
     xv, tv, y = x[valid], t[valid], incidenceDeg[valid].astype(float)
     design = np.stack([np.ones_like(xv), xv, xv**2, tv, tv**2], axis=1)
     coefficients, *_ = np.linalg.lstsq(design, y, rcond=None)
-    rms = float(np.sqrt(np.mean((design @ coefficients - y) ** 2))) if y.size else 0.0
+    rms = float(np.sqrt(np.mean((design @ coefficients - y) ** 2)))
     return IncidenceFit(coefficients, center, scale, rms)
 
 

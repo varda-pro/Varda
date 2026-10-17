@@ -23,7 +23,8 @@ Four passes over the lines:
   resampled memmap's bland pixels), into a second memmap; ``bbl`` (S7); the
   sensor-space product when asked for, or when the projection is off.
 - **D**: the projection (the nearest-neighbor GLT, or area weights) of the
-  I/F and σ, the 14 DDR backplanes (DE, always through the GLT, also when the
+  I/F and σ, from the usable lines' positions only (slew lines hold no I/F),
+  the DDR's 13 backplanes and its spare (DE, always through the GLT, also when the
   I/F is area weighted: averaging longitudes or azimuths across their wrap is
   meaningless), and the IN backplanes.
 
@@ -358,6 +359,13 @@ class _Run:
         self.trr3, self.ddr = observation.readIr()
         self.observation = observation
         self.lines, self.samples, self.bands = self.trr3.shape
+        ddrShape = (self.ddr.label.image.lines, self.ddr.label.image.samples)
+        if ddrShape != (self.lines, self.samples):
+            raise ValueError(
+                f"{self.trr3.id.stem} is {self.lines} × {self.samples} (lines × "
+                f"samples) but its DDR {self.ddr.id.stem} is {ddrShape[0]} × "
+                f"{ddrShape[1]}: they must come from the same observation and crop"
+            )
         self.vector = standardVector()
         self.created = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.wallTimes: dict[str, float] = {}
@@ -446,7 +454,13 @@ class _Run:
         if self.recipe.photometry.incidence.get() is IncidenceSource.AREOID_POLYNOMIAL:
             incidence = self.ddr.band(DdrBand.INCIDENCE_AREOID)
             incidence[~self.usable] = np.nan
-            self.incidenceFit = fitIncidence(incidence)
+            try:
+                self.incidenceFit = fitIncidence(incidence)
+            except ValueError as error:
+                raise ValueError(
+                    f"{self.trr3.id.stem}: no valid incidence in the DDR "
+                    f"{self.ddr.id.stem} ({error}); photometry needs it"
+                ) from error
         self.progress.report("calibration", 1.0, "Calibration files found")
 
     def _read(self, lo: int, hi: int, tally: tuple[int, int] | None) -> np.ndarray:
@@ -1208,10 +1222,18 @@ class _Run:
 
     # --- pass D --------------------------------------------------------------
 
+    def _position(self, band: DdrBand) -> np.ndarray:
+        """A DDR latitude or longitude, NaN on the slew lines: they hold no
+        I/F, so they must not widen the grid or reach the map through the
+        GLT (FRS00031442's 13 made its grid 756 × 903 for 702 × 295)."""
+        values = self.ddr.band(band)
+        values[~self.usable] = np.nan
+        return values
+
     def _passD(self) -> None:
         projection = self.recipe.projection
-        lat = self.ddr.band(DdrBand.LATITUDE)
-        lon = self.ddr.band(DdrBand.LONGITUDE)
+        lat = self._position(DdrBand.LATITUDE)
+        lon = self._position(DdrBand.LONGITUDE)
         pixelSize = projection.pixelSize.get() or PIXEL_SIZE_M * self.trr3.binning
         self.progress.report("passD", 0.0, "Pass D: the map grid")
         grid = self.grid = mtrdrGrid(
@@ -1221,7 +1243,9 @@ class _Run:
         del lat, lon
         area = (
             areaWeights(
-                grid, self.ddr.band(DdrBand.LATITUDE), self.ddr.band(DdrBand.LONGITUDE)
+                grid,
+                self._position(DdrBand.LATITUDE),
+                self._position(DdrBand.LONGITUDE),
             )
             if projection.resampling.get() is Resampling.AREA
             else None
