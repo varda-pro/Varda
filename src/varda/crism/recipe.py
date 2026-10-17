@@ -168,7 +168,6 @@ class ProjectionStep(ParameterGroup):
 
 
 class OutputStep(ParameterGroup):
-    enabled = _enabled(True, "Write the products.")
     sensorSpace = BoolParameter(
         "Also write sensor space",
         False,

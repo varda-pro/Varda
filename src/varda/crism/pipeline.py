@@ -17,7 +17,7 @@ Four passes over the lines:
   samples, columns without a wavelength, slew lines; not the BP-flagged
   elements, which the calibration already interpolated), σ,
   photometry, despike and the atmospheric fit and correction, into a float32
-  work memmap of I/F and σ under ``.work/``.
+  work memmap of I/F and σ in the run's work folder.
 - **C**: the destripe frame (estimated from the work memmap, off by default),
   resampling to the MTRDR vector, and the ESC frame (estimated from the
   resampled memmap's bland pixels), into a second memmap; ``bbl`` (S7); the
@@ -28,10 +28,15 @@ Four passes over the lines:
   I/F is area weighted: averaging longitudes or azimuths across their wrap is
   meaningless), and the IN backplanes.
 
-Products are written into ``.work/out`` and moved into the output folder
-only when everything succeeded, so a failure or a cancel leaves the folder as
-it was, a previous run's products included. ``.work/`` is removed in every
-case (two runs must not share an output folder at the same time).
+Each run works in its own folder, ``.work-<run id>`` in the output folder,
+so two runs into one folder do not touch each other's work. Products are
+written into its ``out`` and moved into the output folder only when
+everything succeeded, as one transaction (``_publish``), so a failure, a
+cancel, or a product open in another program leaves the folder as it was, a
+previous run's products included. The work folder is removed in every case;
+when it cannot be, a warning names it. A work folder left by a run that was
+killed is removed by a later run once it is a day old
+(``STALE_WORK_SECONDS``), never sooner: it may belong to a run in progress.
 
 ``fitPixels`` is called one line at a time. It weighs a column's complete
 lines by their mean σ, which would make β depend on how the lines are
@@ -149,7 +154,8 @@ from varda.version import vardaVersion
 
 CHUNK_LINES = 64
 SELECTION_LINES = 64
-WORK_FOLDER = ".work"
+WORK_PREFIX = ".work-"
+STALE_WORK_SECONDS = 86400.0
 PIXEL_SIZE_M = 18.0  # per unit of PIXEL_AVERAGING_WIDTH (36 m for HRL/HRS)
 VALID_BAND_FRACTION = 0.5  # S7: a band valid in fewer of the scene's pixels is bad
 SIGMA_KIND = "instrument-noise"
@@ -194,6 +200,11 @@ _STAGES = {
 
 class ProcessCancelled(Exception):
     """The caller's ``cancelled()`` returned True; nothing was written."""
+
+
+class ProductInUseError(OSError):
+    """A product of an earlier run could not be replaced (on Windows: it is
+    open in another program); the earlier products were restored."""
 
 
 @frozen
@@ -421,7 +432,7 @@ class _Run:
         self.progress.check()
         self._timed("passB", self._passB)
         self._timed("passC", self._passC)
-        projected = self.recipe.projection.enabled.get() and self._writing()
+        projected = self.recipe.projection.enabled.get()
         if projected:
             self._timed("passD", self._passD)
         else:
@@ -438,9 +449,6 @@ class _Run:
         result = step()
         self.wallTimes[stage] = time.perf_counter() - start
         return result
-
-    def _writing(self) -> bool:
-        return bool(self.recipe.output.enabled.get())
 
     # --- calibration and masks -----------------------------------------------
 
@@ -969,7 +977,7 @@ class _Run:
         sensor = self.recipe.output.sensorSpace.get() or not (
             self.recipe.projection.enabled.get()
         )
-        if sensor and self._writing():
+        if sensor:
             self._writeSensorSpace()
 
     def _escFrame(self, bland: np.ndarray) -> EscFrame:
@@ -1503,7 +1511,7 @@ class _Run:
     def _finish(self) -> ProcessResult:
         self.progress.report("sidecars", 0.0, "Writing the recipe and provenance")
         name = self.names["map"]
-        if self._writing() and self.recipe.output.cog.get() and name in self.outputs:
+        if self.recipe.output.cog.get() and name in self.outputs:
             tif = self.staging / f"{name}.tif"
             writeCog(self.outputs[name], tif)
             self.outputs[f"{name}.tif"] = tif
@@ -1566,20 +1574,50 @@ def _publish(
     staging: Path,
     outputFolder: Path,
     names: Mapping[str, str],
+    runId: str,
 ) -> ProcessResult:
-    """Move every staged file into the output folder, images before their
-    headers and the sidecars last, then remove what an earlier run of this
-    observation left that this run did not write (Varda's own names only)."""
+    """Move every staged file into the output folder as one transaction.
+    First every file an earlier run of this observation left (Varda's own
+    names only: those this run writes, and those it no longer does) is
+    renamed to ``<name>.old-<runId>``; then the staged files are moved in,
+    images before their headers and the sidecars last. When any step fails
+    (on Windows a product open in another program cannot be renamed), every
+    step is undone, the earlier products are back under their names, and
+    ``ProductInUseError`` names the file. On success the ``.old`` files are
+    deleted."""
 
     def order(path: Path) -> tuple[bool, bool, str]:
         return (path.name.endswith(_SIDECARS), path.suffix == ".hdr", path.name)
 
     files = sorted((p for p in staging.iterdir() if p.is_file()), key=order)
-    for path in files:
-        os.replace(path, outputFolder / path.name)
-    written = {path.name for path in files}
-    for name in sorted(_productFiles(names) - written):
-        (outputFolder / name).unlink(missing_ok=True)
+    earlier = sorted(
+        name
+        for name in _productFiles(names) | {path.name for path in files}
+        if (outputFolder / name).is_file()
+    )
+    backups: list[tuple[Path, Path]] = []  # (product, its .old name)
+    placed: list[Path] = []
+    current = outputFolder
+    try:
+        for name in earlier:
+            current = outputFolder / name
+            backup = outputFolder / f"{name}.old-{runId}"
+            os.replace(current, backup)
+            backups.append((current, backup))
+        for path in files:
+            current = outputFolder / path.name
+            os.replace(path, current)
+            placed.append(current)
+    except OSError as error:
+        _undoPublish(placed, backups)
+        raise ProductInUseError(
+            f"{current.name} in {outputFolder} is in use; close it and rerun ({error})"
+        ) from error
+    for _, backup in backups:
+        try:
+            backup.unlink()
+        except OSError as error:
+            _log.warning("Could not remove the earlier product %s: %s", backup, error)
 
     def moved(path: Path | None) -> Path | None:
         return outputFolder / path.name if path is not None else None
@@ -1594,6 +1632,21 @@ def _publish(
         provenance=outputFolder / staged.provenance.name,
         diagnostics=outputFolder / staged.diagnostics.name,
     )
+
+
+def _undoPublish(placed: list[Path], backups: list[tuple[Path, Path]]) -> None:
+    """Remove the files a failed publish moved in and put the earlier
+    products back; what cannot be undone is logged (each step is tried)."""
+    for path in placed:
+        try:
+            path.unlink()
+        except OSError as error:
+            _log.error("Could not remove %s after a failed publish: %s", path, error)
+    for product, backup in reversed(backups):
+        try:
+            os.replace(backup, product)
+        except OSError as error:
+            _log.error("Could not restore %s from %s: %s", product, backup, error)
 
 
 def _releaseFrames(error: BaseException) -> None:
@@ -1615,16 +1668,33 @@ def _releaseFrames(error: BaseException) -> None:
 
 
 def _removeWork(work: Path, succeeded: bool) -> None:
-    """Remove the work folder; a failure is logged, and raised when the run
-    itself succeeded (it would otherwise go unnoticed)."""
+    """Remove the work folder; a failure is a warning, never the run's
+    failure (``succeeded`` says how the run ended, for the message)."""
     try:
         shutil.rmtree(work)
     except FileNotFoundError:
         pass
     except OSError as error:
-        _log.warning("Could not remove the CRISM work folder %s: %s", work, error)
-        if succeeded:
-            raise
+        ended = "succeeded" if succeeded else "failed"
+        _log.warning(
+            "The CRISM run %s, but its work folder %s could not be removed: %s",
+            ended,
+            work,
+            error,
+        )
+
+
+def _removeStaleWork(outputFolder: Path) -> None:
+    """Remove the work folders of runs that were killed, once they are
+    ``STALE_WORK_SECONDS`` old (a newer one may belong to a run in
+    progress); best effort."""
+    now = time.time()
+    for folder in outputFolder.glob(WORK_PREFIX + "*"):
+        try:
+            if folder.is_dir() and now - folder.stat().st_mtime > STALE_WORK_SECONDS:
+                shutil.rmtree(folder)
+        except OSError as error:
+            _log.warning("Could not remove the old work folder %s: %s", folder, error)
 
 
 @frozen(eq=False)
@@ -1698,18 +1768,19 @@ def process(
     from 0 to 1 that never decreases, and a message naming the pass.
     ``cancelled`` is asked between passes and chunks; when it returns True,
     ``ProcessCancelled`` is raised. On a cancel or any failure nothing is
-    written: the products already in the folder stay as they were."""
+    written: the products already in the folder stay as they were (also
+    when one is open in another program: ``ProductInUseError``)."""
     outputFolder = Path(outputFolder)
     outputFolder.mkdir(parents=True, exist_ok=True)
-    work = outputFolder / WORK_FOLDER
-    if work.exists():  # left by a run that was killed
-        shutil.rmtree(work)
-    (work / "out").mkdir(parents=True)
+    _removeStaleWork(outputFolder)
+    work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX, dir=outputFolder))
+    (work / "out").mkdir()
+    runId = work.name.removeprefix(WORK_PREFIX)
     run: _Run | None = None
     succeeded = False
     try:
         run = _Run(observation, recipe, work, library, _Progress(progress, cancelled))
-        result = _publish(run.run(), work / "out", outputFolder, run.names)
+        result = _publish(run.run(), work / "out", outputFolder, run.names, runId)
         succeeded = True
         return result
     except BaseException as error:

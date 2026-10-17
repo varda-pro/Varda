@@ -194,7 +194,7 @@ def test_crop_end_to_end(cropDir: Path, tmp_path: Path) -> None:
     # the σ write goes on from where the I/F write ended, it does not repeat
     projecting = [f for f, m in reports if m.startswith("Pass D: projecting")]
     assert len(projecting) == 2 and projecting[1] > projecting[0]
-    assert not (out / ".work").exists()
+    assert not list(out.glob(".work-*"))
     assert not list(out.glob("*.part"))
 
 
@@ -485,7 +485,6 @@ def test_cancel(cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             cancelled=cancelled,
         )
     assert len(calls) == 2
-    assert not (out / ".work").exists()
     assert list(out.rglob("*")) == []
 
 
@@ -506,7 +505,7 @@ def test_rerun_replaces_products(cropDir: Path, tmp_path: Path) -> None:
     assert not first.sensorSpace.with_suffix(".hdr").exists()
     assert second.mapProjected is not None and second.mapProjected.exists()
     assert (out / "notes.txt").read_text() == "mine"
-    assert not (out / ".work").exists()
+    assert not list(out.glob(".work-*")) and not list(out.glob("*.old-*"))
 
 
 def test_work_folder_left_behind_is_reported(
@@ -515,19 +514,22 @@ def test_work_folder_left_behind_is_reported(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # a work folder that cannot be removed is a warning: the run itself
+    # succeeded (or keeps its own error)
     def stuck(path: Path, *args: object, **kwargs: object) -> None:
         raise PermissionError(f"in use: {path}")
 
     out = tmp_path / "out"
     monkeypatch.setattr(pipeline.shutil, "rmtree", stuck)
-    with pytest.raises(PermissionError):  # the run succeeded: the leftover raises
-        process(
-            CrismObservation.fromFolder(cropDir),
-            Recipe(),
-            out,
-            library=_library(cropDir, tmp_path),
-        )
-    assert str(out / ".work") in caplog.text
+    result = process(
+        CrismObservation.fromFolder(cropDir),
+        Recipe(),
+        out,
+        library=_library(cropDir, tmp_path),
+    )
+    assert result.mapProjected is not None and result.mapProjected.exists()
+    (work,) = out.glob(".work-*")
+    assert str(work) in caplog.text and "WARNING" in caplog.text
     caplog.clear()
     with pytest.raises(ProcessCancelled):  # a failed run keeps its own error
         process(
@@ -537,7 +539,73 @@ def test_work_folder_left_behind_is_reported(
             library=_library(cropDir, tmp_path),
             cancelled=lambda: True,
         )
-    assert str(tmp_path / "other" / ".work") in caplog.text
+    (work,) = (tmp_path / "other").glob(".work-*")
+    assert str(work) in caplog.text
+
+
+def _fileHashes(folder: Path) -> dict[str, str]:
+    return {p.name: sha256File(p) for p in folder.iterdir() if p.is_file()}
+
+
+def test_two_runs_into_one_folder(cropDir: Path, tmp_path: Path) -> None:
+    """Final review, Important 2: each run has its own work folder, so a run
+    that starts while another runs (here, inside its progress callback) does
+    not remove or overwrite the other's work; another run's work folder,
+    such as one left by a crash, stays as it was."""
+    observation = CrismObservation.fromFolder(cropDir)
+    library = _library(cropDir, tmp_path)
+    out = tmp_path / "out"
+    stale = out / ".work-crashed"
+    stale.mkdir(parents=True)
+    (stale / "atmosphere.f32").write_bytes(b"left by a crash")
+    inner: list[ProcessResult] = []
+
+    def progress(fraction: float, message: str) -> None:
+        if message.startswith("Pass C") and not inner:
+            inner.append(process(observation, _sensorRecipe(), out, library=library))
+
+    outer = process(observation, Recipe(), out, library=library, progress=progress)
+    assert len(inner) == 1 and inner[0].sensorSpace is not None
+    assert outer.mapProjected is not None and outer.sensorSpace is None
+    assert np.isfinite(_read(outer.mapProjected)).any()
+    assert not inner[0].sensorSpace.exists()  # the later publish replaced it
+    assert (stale / "atmosphere.f32").read_bytes() == b"left by a crash"
+    assert [p.name for p in out.glob(".work-*")] == [stale.name]
+
+
+@pytest.mark.parametrize("failing", ["backup", "move"])
+def test_publish_failure_keeps_previous_product(
+    cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    """Final review, Important 3: on Windows a product open in another
+    program cannot be replaced. Publishing is a transaction: the earlier
+    products are renamed aside first, and any failure restores every one of
+    them (each image with its own header) and names the file in use."""
+    observation = CrismObservation.fromFolder(cropDir)
+    library = _library(cropDir, tmp_path)
+    out = tmp_path / "products"
+    first = process(observation, _sensorRecipe(), out, library=library)
+    assert first.mapProjected is not None
+    before = _fileHashes(out)
+    replace = pipeline.os.replace
+    busy = first.mapProjected.with_suffix(".hdr").name
+
+    def inUse(source: object, target: object) -> None:
+        source, target = Path(str(source)), Path(str(target))
+        backingUp = source.parent == out and ".old-" in target.name
+        movingIn = target.parent == out and source.parent != out
+        if target.name == busy and movingIn and failing == "move":
+            raise PermissionError(f"in use: {target}")
+        if source.name == busy and backingUp and failing == "backup":
+            raise PermissionError(f"in use: {source}")
+        replace(source, target)
+
+    monkeypatch.setattr(pipeline.os, "replace", inUse)
+    with pytest.raises(pipeline.ProductInUseError, match=f"{busy}.*in use; close it"):
+        process(observation, Recipe(), out, library=library)
+    monkeypatch.setattr(pipeline.os, "replace", replace)
+    assert _fileHashes(out) == before
+    assert not list(out.glob(".work-*"))
 
 
 def _mappedWorkFiles(work: Path) -> int:
@@ -563,7 +631,7 @@ def test_no_work_file_is_mapped_at_cleanup(
     cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     # finding 4: the frames of a cancel or failure must not keep the work
-    # memmaps (or views of them) alive when .work/ is removed
+    # memmaps (or views of them) alive when the work folder is removed
     monkeypatch.setattr(pipeline, "CHUNK_LINES", 7)
     seen: list[int] = []
     removeWork = pipeline._removeWork
@@ -595,7 +663,7 @@ def test_no_work_file_is_mapped_at_cleanup(
             cancelled=cancelled,
         )
     assert last[0].startswith("Pass") and seen == [0]
-    assert not (tmp_path / "out" / ".work").exists()
+    assert not list((tmp_path / "out").glob(".work-*"))
 
 
 def test_git_commit_only_for_vardas_checkout(tmp_path: Path) -> None:

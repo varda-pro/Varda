@@ -56,6 +56,8 @@ def test_recipe_rejects_unknown_keys():
 
 
 def test_removed_options_are_gone():
+    # writing nothing deleted the previous products (final review, Important 4)
+    assert "enabled" not in Recipe().output.params
     assert [member.name for member in SmileMethod] == ["LINEAR"]
     assert "continuumDegree" not in Recipe().atmosphere.params
 
