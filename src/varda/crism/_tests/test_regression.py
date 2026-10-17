@@ -1,5 +1,13 @@
 """Phase 1's definition of done: the spec's V2 and V3 ("Validation design",
-the tolerances Michael approved as D4) on the demo data; skipped without it.
+the tolerances Michael approved as D4) on the demo data.
+
+It takes about 10 minutes (seven pipeline runs), so it runs only when asked
+(controller ruling, Task 23 fix round 1)::
+
+    VARDA_REGRESSION=1 VARDA_DEMO_DATA=/path/to/varda-demo-data \
+        uv run pytest src/varda/crism/_tests/test_regression.py
+
+Without ``VARDA_REGRESSION=1``, or without the demo data, it is skipped.
 
 - **V2:** FRT00005850, processed with the default recipe, against its
   official MTRDR (``frt00005850_07_if167j_mtr3``). HRL000040FF has no TRR3 in
@@ -30,8 +38,7 @@ reproduces the prototype's registration residuals (0.559, 0.236, 1.070,
 0.587 px), its BD2300 repeatability (0.00139 against 0.00140) and its BD1900
 repeatability (0.00162 against 0.00162).
 
-Processing the four observations (seven runs) takes about 7 minutes; each
-module fixture runs once.
+Each module fixture runs once.
 """
 
 import itertools
@@ -57,17 +64,13 @@ from skimage.registration import phase_cross_correlation
 from varda.crism import validation_report as report
 from varda.crism.atmosphere import (
     ARTIFACT_EPOCH_MARGIN_SCLK,
-    AtmosphereModel,
-    ArtifactBasis,
-    artifactScale,
     bundledArtifactBasis,
     learnArtifactBasis,
-    shiftedLogTransmission,
 )
 from varda.crism.calibration import CalibrationLibrary
+from varda.crism.cli import columnCo2Median
 from varda.crism.observation import CrismObservation
 from varda.crism.pipeline import (
-    ColumnResiduals,
     ProcessResult,
     columnResiduals,
     process,
@@ -86,6 +89,11 @@ from varda.crism.validation import (
 from varda.image_loading.data_sources.envi_data_source import ENVIDataSource
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("VARDA_REGRESSION") != "1",
+    reason="the Phase 1 regression takes about 10 minutes: set VARDA_REGRESSION=1",
+)
 FRT = "FRT00005850"
 FRS = ("FRS00031442", "FRS0002FE75", "FRS00031260")
 PARAMETERS = ("D2300", "BD2290", "BD1900_2", "OLINDEX3", "BD2310")
@@ -125,14 +133,19 @@ CHOSEN_SCANS = {
 # --- causes of the criteria that are not met (measured; phase1-validation.md) --------
 
 _PEARSON_CAUSE = (
-    "DECISION PENDING, inside Phase 1: 52-91% of the difference's variance is "
-    "cross-track (per detector column); ours has 2-4x the MTRDR's column-to-"
-    "column scatter; the per-column spectral factor ours/MTRDR reproduces "
-    "89-94% of it and is band-structured, not smooth (EGN-like smooth factors "
-    "explain <= 9%); not noise (pixel-scale fluctuations are shared, r rises "
-    "<= 0.03 at 8x8 block means). Toggles: destripe on +0.01..+0.04, no fitted "
-    "shift +0.01..+0.08 (CO2 0.0067 -> 0.0123), ESC off -0.05..-0.14; none "
-    "reaches 0.90 (destripe + no shift: 0.804/0.837/0.734/0.908)"
+    "DECISION PENDING, inside Phase 1, unattributed: 52-91% of the "
+    "difference's variance is cross-track (per detector column); most of that "
+    "is a smooth trend (15-column running median: 84% of D2300's and 66% of "
+    "BD1900_2's column variance), the rest column-to-column scatter 2.1-3.8x "
+    "the MTRDR's. The per-column spectral factor ours/MTRDR reproduces 88-94% "
+    "of the column part for D2300, BD2290 and BD2310, 45% for BD1900_2; it is "
+    "band-structured (EGN-like smooth factors explain <= 9%). Not noise: "
+    "pixel-scale fluctuations are shared; r rises <= 0.025 at 4x4 and <= 0.049 "
+    "at 8x8 block means. Destripe on removes only the high-frequency part "
+    "(scatter 1.5-2.2x; smooth trend unchanged) and gives 0.795/0.801/0.663/"
+    "0.902 (BD2310 would pass); suspects for the trend ranked: the smile/ESC "
+    "frame (r = -0.55 for D2300), column beta and fitted shift (BD2310 +0.70, "
+    "-0.58); BD1900_2's trend follows no candidate (|r| <= 0.20)"
 )
 _PEARSON_CAUSES = {
     "D2300": _PEARSON_CAUSE,
@@ -149,7 +162,8 @@ _PEARSON_CAUSES = {
 _BIAS_CAUSES = {
     "D2300": (
         "DECISION PENDING, inside Phase 1: the cross-track structure behind "
-        "the Pearson shortfall; the per-column median difference is -0.0020, ours "
+        "the Pearson shortfall (the smooth trend); the per-column median "
+        "difference is -0.0020, ours "
         "0.5-1% low at 2120 and 2170 nm on columns > 480"
     ),
 }
@@ -163,15 +177,20 @@ _SHAPE_CAUSE = (
     "with phase (r = -0.72 at 2400 nm): EGN"
 )
 _OFFSET_CAUSE = (
-    "DECISION PENDING: FRS00031442's BD2310 is 0.0055 and 0.0051 above "
+    "DECISION PENDING, cause unattributed: FRS00031442's BD2310 is 0.0055 and 0.0051 above "
     "FRT00005C5E's and FRT000047A3's in their overlaps (0.0004 against "
     "HRL000040FF's); the same without the artifact basis (0.0057, 0.0053) and "
     "with a leave-one-out one; our pipeline's BD2310 bias against the MTRDR on "
-    "FRT00005850 is -0.0002 (V2), so it is between observations, not "
-    "attributed to a Phase 1 step; the MTRDR pairs themselves reach 0.0045 "
-    "(FRT00005C5E-HRL000040FF), above the spec's 0.004"
+    "FRT00005850 is -0.0002 (V2); the MTRDR pairs themselves reach 0.0045 "
+    "(FRT00005C5E-HRL000040FF), above the spec's 0.004, and the offset "
+    "exceeds that maximum too"
 )
 _MINERAL_CAUSES = {
+    ("FRS0002FE75", "BD1900_2"): (
+        "DECISION PENDING, inside Phase 1 (A6): the 0A93E basis moves "
+        "BD1900_2's median by +0.00176 (leave-one-out basis +0.00171), above "
+        "the spec's 0.0016"
+    ),
     ("FRS0002FE75", "D2300"): (
         "DECISION PENDING, inside Phase 1 (A6): the 0A93E basis moves D2300's "
         "median by -0.00177 (leave-one-out basis -0.00168), above the "
@@ -180,7 +199,7 @@ _MINERAL_CAUSES = {
     ("FRS00031260", "BD1900_2"): (
         "DECISION PENDING, inside Phase 1 (A6): the 08608 basis moves "
         "BD1900_2's median by +0.0035 (leave-one-out basis +0.0031), above "
-        "the repeatability 0.0019; it moves the FRS toward two of the three "
+        "the spec's 0.0016; it moves the FRS toward two of the three "
         "overlapping MTRDRs and away from the third"
     ),
 }
@@ -586,31 +605,6 @@ def test_frs_co2_residual(
 # --- the artifact basis (A6) --------------------------------------------------------
 
 
-def _columnCo2(column: ColumnResiduals, basis: ArtifactBasis | None) -> float:
-    """The CLI's leave-one-out metric: the median over columns of the M7 CO2
-    residual of the column spectra corrected for the transmission, and for
-    ``basis`` when given (c from ``artifactScale``)."""
-    fit = column.selection.fit
-    path = shiftedLogTransmission(
-        column.wavelengths, column.selection.chosen.values, fit.shiftNm
-    )
-    if basis is not None:
-        probe = AtmosphereModel(column.selection.chosen, fit.shiftNm, basis.spectra)
-        scale, _ = artifactScale(
-            column.spectra, column.spread, column.wavelengths, probe
-        )
-        assert math.isfinite(scale)
-        path = path + scale * basis.spectra
-    with np.errstate(invalid="ignore", over="ignore"):
-        corrected = column.spectra * np.exp(-fit.beta[:, None] * path)
-        window = (column.wavelengths > CO2_WINDOW_NM[0]) & (
-            column.wavelengths < CO2_WINDOW_NM[1]
-        )
-    covered = window.sum(axis=1) >= 4
-    residual = co2Residual(column.wavelengths[covered], corrected[covered])
-    return float(np.median(residual[np.isfinite(residual)]))
-
-
 @pytest.mark.parametrize("key", sorted(set(CHOSEN_SCANS.values())))
 def test_artifact_basis_leave_one_out(
     paper: Path, tmp_path_factory: pytest.TempPathFactory, key: str
@@ -643,8 +637,8 @@ def test_artifact_basis_leave_one_out(
             wavelengths=columns[others[0]].wavelengths,
             sclks=[columns[n].sclk for n in others],
         )
-        without = _columnCo2(column, None)
-        assert _columnCo2(column, basis) <= (1 - LEAVE_ONE_OUT_REDUCTION) * without
+        without = columnCo2Median(column, None)
+        assert columnCo2Median(column, basis) <= (1 - LEAVE_ONE_OUT_REDUCTION) * without
 
 
 def test_bundled_bases_serve_the_frss_only(
@@ -714,12 +708,13 @@ def test_artifact_basis_preserves_mineral_medians(
 ) -> None:
     """Task 14's review: the basis must not move the D2300, BD2290 and
     BD1900_2 medians by more than the between-observation repeatability
-    (measured here on the crater floor). Measured shifts: FRS00031442 −0.00071,
+    (V2's bounds: the crater-floor repeatability measured here, and the
+    spec's 0.0016 for BD1900_2). Measured shifts: FRS00031442 −0.00071,
     −0.00001, +0.00122; FRS0002FE75 −0.00177, −0.00007, +0.00176;
     FRS00031260 −0.00094, −0.00000, +0.00351."""
     with_, without = frsProducts[name]
     a, b = _parameterMedians(_mapped(with_), _mapped(without))[parameter]
-    assert abs(a - b) <= repeatability[parameter]
+    assert abs(a - b) <= _biasBound(parameter, repeatability)
 
 
 def test_artifact_basis_mineral_shift_achieved(

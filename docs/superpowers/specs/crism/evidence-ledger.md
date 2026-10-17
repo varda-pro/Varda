@@ -58,11 +58,16 @@ are written in Phase 1, test-first. Design:
 - **Decision:** 65535 (DPSIS App. L §2.2); values below 1e-6 (denormals
   such as 1.5e-44 occur, M3); columns outside the WA-valid range (29–632 for
   WA 490947778566, M4). Elements flagged in the BP CDRs are **not** invalid
-  (Task 23): the calibration already replaced each with the mean of its good
-  neighbors in the same detector row (DPSIS §2.6, the a priori mask, and
-  §2.15, the ex post facto correction), so the TRR3 holds interpolated I/F
-  there, as the MTRDRs use it. They are counted (`badPixelInterpolated` in the
-  provenance's mask record).
+  (Task 23): they were interpolated during calibration, in DN space, from the
+  neighboring columns of the same detector row (DPSIS §2.6, the a priori
+  mask, and §2.15, the ex post facto correction), so in the TRR3 they are
+  finite, non-outlier values, which the MTRDRs use. The Task 23 review checked
+  it on the data: the flagged elements' residual from their neighbors is
+  5.5e-3 against 6.5e-3 for the others, and the difference vanishes with a
+  column-mirrored frame. They are counted (`badPixelInterpolated` in the
+  provenance's mask record). σ treats them as independent samples, though
+  each is a mean of two neighbors (its noise is lower and correlated with
+  theirs).
 - **Why changed (Task 23):** the 2014 BPs flag 13.7% and 24.1% of the 280,320
   elements (the two background BPs of each FRS); masking their union dropped
   9.3 M (17%) of FRS00031442's samples and left 97–98% of the FRSs' map pixels
@@ -569,7 +574,8 @@ are written in Phase 1, test-first. Design:
     D2300 / BD2290 / BD1900_2 medians by −0.0007 / 0.0000 / +0.0012
     (FRS00031442), −0.0018 / −0.0001 / +0.0018 (FRS0002FE75) and −0.0009 /
     0.0000 / +0.0035 (FRS00031260), against crater-floor repeatabilities
-    0.0015 / 0.0010 / 0.0019: two of nine exceed it (decision D12 in
+    0.0015 / 0.0010 and the spec's 0.0016 for BD1900_2: three of nine exceed
+    them (decision D12 in
     `phase1-validation.md`). A leave-one-out basis shifts them nearly as much,
     so it is the basis, not in-sample learning.
   - **Epoch gate (fix round 1):** `bundledArtifactBasis(key, samples,
@@ -890,17 +896,23 @@ are written in Phase 1, test-first. Design:
   `phase1-validation.md`. Met: the grid, geolocation, CO2 (V2 and V3, with
   and without the basis), FRS00031442's shape χ² against the crater-floor
   MTRDRs, the artifact basis's leave-one-out check, four of five biases.
-  Not met, each an xfail with its measured cause: Pearson r ≥ 0.90 (OLINDEX3
-  EGN; the other four a cross-track, band-structured difference inside
-  Phase 1, not noise), the spectral shape (the 2 µm bowl, A7), the D2300
-  bias, the basis's effect on two mineral medians (A6), FRS00031442's BD2310
-  offset (between observations).
+  Not met, each an xfail with its measured cause:
+  - Pearson r ≥ 0.90. OLINDEX3 is EGN. For the other four it is a
+    cross-track difference inside Phase 1, not noise: mostly a smooth trend
+    across the columns, unattributed (suspects: residual smile/ESC, the
+    per-column ATM fit); destripe removes only its column-to-column part.
+  - The spectral shape (the 2 µm bowl, A7).
+  - The D2300 bias.
+  - The basis's effect on three of nine mineral medians (A6).
+  - FRS00031442's BD2310 offset (unattributed).
 - **Repeatability** (the prototype's code ported into the test, five
   crater-floor MTRDRs): BD2310 0.00139, D2300 0.00152, BD2290 0.00103,
   BD1900_2 0.00189, OLINDEX3 0.00595; the port reproduces the prototype's
   BD2300 (0.00140) and BD1900 (0.00162) values and registration residuals.
-- **Test:** `src/varda/crism/_tests/test_regression.py` (data-gated, about
-  10 minutes).
+- **Test:** `src/varda/crism/_tests/test_regression.py` (about 10 minutes).
+  It runs only with the demo data and `VARDA_REGRESSION=1`:
+  `VARDA_REGRESSION=1 VARDA_DEMO_DATA=… uv run pytest
+  src/varda/crism/_tests/test_regression.py`. The ordinary suite skips it.
 
 ## Measurements (2026-10-16)
 

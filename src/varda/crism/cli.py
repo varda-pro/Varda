@@ -245,10 +245,12 @@ def _calibration(args: argparse.Namespace) -> int:
 # --- learn-artifacts ---------------------------------------------------------------
 
 
-def _co2Median(column: ColumnResiduals, basis: ArtifactBasis | None) -> float:
+def columnCo2Median(column: ColumnResiduals, basis: ArtifactBasis | None) -> float:
     """The median over columns of the CO2 residual (``co2Residual``) of the
     column spectra corrected for the transmission, and for ``basis`` when given
-    (R / exp(β (ln T + c a)), c from ``artifactScale``)."""
+    (R / exp(β (ln T + c a)), c from ``artifactScale``): the leave-one-out
+    table's metric, also used by ``_tests/test_regression.py``. Columns
+    without wavelengths in the CO2 window are left out; NaN when none has."""
     fit = column.selection.fit
     path = shiftedLogTransmission(
         column.wavelengths, column.selection.chosen.values, fit.shiftNm
@@ -322,10 +324,10 @@ def _learnKey(key: str, columns: list[ColumnResiduals], out: Path) -> None:
     print(f"{'observation':<22}{'no basis':>12}{'leave-one-out':>15}{'in-sample':>12}")
     for held, column in enumerate(columns):
         others = columns[:held] + columns[held + 1 :]
-        leftOut = _co2Median(column, learn(others)) if others else math.nan
+        leftOut = columnCo2Median(column, learn(others)) if others else math.nan
         print(
-            f"{column.name:<22}{_co2Median(column, None):>12.5f}"
-            f"{leftOut:>15.5f}{_co2Median(column, full):>12.5f}"
+            f"{column.name:<22}{columnCo2Median(column, None):>12.5f}"
+            f"{leftOut:>15.5f}{columnCo2Median(column, full):>12.5f}"
         )
 
 

@@ -4,7 +4,8 @@ Status: run 2026-10-16 on the demo data. Design and tolerances:
 `../2026-10-16-crism-processing-design.md` ("Validation design", approved
 as D4). Decisions per step: `evidence-ledger.md`. Tests:
 `src/varda/crism/_tests/test_regression.py` (V2, V3, the artifact basis;
-data-gated, about 10 minutes) and the synthetic V1 tests. Scripts behind the
+about 10 minutes; it runs only with the demo data and `VARDA_REGRESSION=1`)
+and the synthetic V1 tests. Scripts behind the
 attribution: `measurements/task23/`. Processing outputs are outside the
 repository.
 
@@ -19,19 +20,22 @@ repository.
 - **Not met (10 xfails, each with its measured cause):**
   - **Pearson r ≥ 0.90 for all five parameters** (0.63–0.90). Not noise:
     the two products share their pixel-scale fluctuations. OLINDEX3 is EGN
-    (outside Phase 1). The other four are a cross-track, band-structured
-    difference inside Phase 1 that no single step toggle removes.
+    (outside Phase 1). The other four are a cross-track difference inside
+    Phase 1, mostly a *smooth* trend across the detector columns that no
+    step toggle removes and that is not attributed (suspects ranked below);
+    destripe removes only its column-to-column part.
   - **Spectral shape ±1%/±2%.** A 2 µm bowl of up to 3.4% that follows
     CAT's artifact patch, which the MTRDR has and we do not (inside Phase 1,
     ledger A6/A7); beyond 2.2 µm a 1–1.35% offset that follows the phase
     angle (EGN).
   - **D2300 bias** −0.0019 against a repeatability of 0.00152 (the same
     cross-track structure).
-  - **The basis's effect on the mineral parameters** exceeds the
-    repeatability in two of nine cases (D2300 on FRS0002FE75, BD1900_2 on
+  - **The basis's effect on the mineral parameters** exceeds V2's bounds in
+    three of nine cases (D2300 and BD1900_2 on FRS0002FE75, BD1900_2 on
     FRS00031260).
   - **FRS00031442's BD2310 offset** from two crater-floor MTRDRs (0.0055,
-    0.0051), against an MTRDR–MTRDR maximum of 0.0045 and the spec's 0.004.
+    0.0051), against an MTRDR–MTRDR maximum of 0.0045 and the spec's 0.004;
+    cause unattributed.
 - **Two defects found and fixed** (with regression tests):
   - The pipeline masked every element flagged in the BP CDRs. The
     calibration has already interpolated those elements (DPSIS §2.6), and
@@ -96,8 +100,9 @@ prototype: BD2300 0.00139 against its 0.00140, BD1900 0.00162 against
 - The ceiling that independent noise would set is meaningless here: it
   would be 0.77–0.98 (along-track noise ≈ 0.0008–0.0022), *below* the
   measured r for BD2290 and BD2310.
-- Block means barely help. r at 2×2, 4×4 and 8×8 is 0.790, 0.800 and
-  0.813 for D2300, and the other parameters rise by 0.03 at most.
+- Block means help little. r rises by at most 0.025 at 4×4 (D2300 +0.014,
+  BD2290 +0.024, BD1900_2 +0.024, OLINDEX3 0.000, BD2310 0.000) and by at
+  most 0.049 at 8×8 (+0.028, +0.049, +0.045, −0.001, +0.008).
 - Same-source pixels only: r changes by less than 0.01.
 
 **Where the difference sits** (ours − MTRDR, grouped by our source column
@@ -120,17 +125,24 @@ and line):
   not.
 - Removing it gives r = 0.999.
 
-**D2300, BD2290, BD1900_2, BD2310: cross-track, band-structured, inside
-Phase 1.**
-- Ours has 2–4× the MTRDR's column-to-column scatter: high-passed
-  per-column medians of D2300 0.00081 against 0.00039, BD2290 0.00062
-  against 0.00023, BD1900_2 0.00111 against 0.00029, BD2310 0.00066
-  against 0.00028.
-- D2300 also has a smooth trend in ours: 0.5–1% low at 2120 and 2170 nm on
-  columns above 480.
+**D2300, BD2290, BD1900_2, BD2310: cross-track, inside Phase 1, mostly
+unattributed.** The per-column difference has two parts
+(`figures/v2_column_profiles.png`; `measurements/task23/smooth_columns.py`):
+- **A smooth trend** (the 15-column running median of the per-column
+  medians): 84% of D2300's column variance (std 0.00173), 66% of
+  BD1900_2's (0.00163), 38% of BD2290's and 49% of BD2310's. Our D2300
+  falls to about −0.010 below column 100 and toward column 630 while the
+  MTRDR's stays flat; it is 0.5–1% low at 2120 and 2170 nm on columns
+  above 480.
+- **Column-to-column scatter** (the rest): ours has 2.1–3.8× the MTRDR's
+  (high-passed per-column medians: D2300 0.00081 against 0.00039, BD2290
+  0.00062 against 0.00023, BD1900_2 0.00111 against 0.00029, BD2310 0.00066
+  against 0.00028).
 - The per-column spectral factor q(x, λ) = median(ours ÷ MTRDR) reproduces
-  the column component when it is applied to the MTRDR. It explains 94% of
-  it for D2300, 88% for BD2290, 93% for BD2310 and 45% for BD1900_2.
+  the column component when it is applied to the MTRDR: 94% for D2300, 88%
+  for BD2290 and 93% for BD2310, but only **45% for BD1900_2**, whose cause
+  is the least explained (the no-shift and hydration-mask toggles move it,
+  which points at the ATM fit).
 - All of that is in q's band-to-band structure: a smooth cubic in λ per
   column, which is what EGN would be, explains 0–1% (9% for OLINDEX3).
 - q varies most across columns in the CO2 window (0.4–0.6% std at
@@ -140,6 +152,42 @@ Phase 1.**
   patch (r = −0.5, −0.3), which the MTRDR has. At 2.1–2.4 µm, where the
   patch is zero, it follows neither the patch nor T.
 
+**The smooth trend against per-column candidates** (correlation of the
+15-column running medians; and how much of the trend's variance each toggle
+removes, negative where it grows):
+
+| Candidate | D2300 | BD1900_2 | BD2290 | BD2310 |
+|---|---|---|---|---|
+| smile offset (WA − target) at 2300 nm (1930 nm: the same within 0.02) | −0.55 | +0.14 | −0.47 | +0.15 |
+| ESC frame at 2290 nm (2120, 1930, 1985 nm: the same within 0.02 in size) | +0.54 | −0.14 | +0.47 | −0.15 |
+| column β | +0.35 | −0.01 | −0.13 | **+0.70** |
+| fitted shift δ_x (smoothed) | −0.06 | +0.07 | +0.32 | **−0.58** |
+| column fit reduced χ² / residual RMS | −0.20 / +0.07 | −0.20 / −0.11 | +0.05 / +0.10 | +0.20 / +0.19 |
+| toggle: destripe on | removes 5% | 5% | 8% | 9% |
+| toggle: no fitted shift | 5% | −54% | 43% | −16% |
+| toggle: ESC off | −66% | −168% | 16% | −1000% |
+| toggle: hydration mask off | −15% | −14% | −4% | −2% |
+| toggle: CAT's 11D87:VS | 19% | 20% | 31% | −35% |
+| toggle: β per pixel | 0% | 0% | 0% | 0% |
+
+- **The fitted shift's edge extrapolation is not it:** `smoothShift`
+  extrapolates only into the 36 columns without wavelengths (0–28,
+  633–639), which carry no data. On the valid columns the smoothed δ spans
+  −0.92 to −0.58 nm and correlates −0.06 with the D2300 trend.
+- **Hydration mask:** turning it off makes every trend 2–15% larger, so it
+  does not cause them.
+- **ESC removes part of the trend:** with ESC off the D2300 trend is 1.3×
+  larger. What remains still follows the smile's parabola (r = −0.55 with
+  the offset; the ESC frame is the same parabola, so the two cannot be told
+  apart). An ESC model linear in the offset may leave a quadratic residual
+  at the edges, where the offset reaches +15 nm. Changing that is an ESC
+  design change, not a small fix, and the correlation is moderate.
+- **Verdict: unattributed; suspects ranked by correlation.**
+  - D2300 and BD2290: the residual smile/ESC (|r| 0.47–0.55).
+  - BD2310: the per-column ATM fit (β +0.70, δ −0.58).
+  - BD1900_2: none above |r| = 0.20. CAT's scan removes 20%, and the ATM
+    toggles (no shift, ESC off) enlarge it.
+
 Step toggles (FRT00005850, each from the default recipe; Pearson / median
 bias; CO2 per-pixel median; the shape ratio's minimum):
 
@@ -147,6 +195,7 @@ bias; CO2 per-pixel median; the shape ratio's minimum):
 |---|---|---|---|---|---|---|---|
 | default | 0.785/−0.0019 | 0.774/+0.0002 | 0.627/−0.0004 | 0.895/−0.0038 | 0.883/−0.0002 | 0.00665 | 0.966 |
 | destripe on | 0.795/−0.0019 | 0.801/+0.0002 | 0.663/−0.0005 | 0.895/−0.0038 | **0.902**/−0.0002 | 0.00653 | 0.966 |
+| apply the fitted shift to the wavelengths (`smile.applyFittedShift`; the review's run, Pearson only) | 0.789 | 0.782 | 0.638 | 0.896 | 0.883 | 0.00631 | |
 | no fitted shift | 0.799/−0.0038 | 0.826/−0.0000 | 0.709/−0.0057 | 0.893/−0.0034 | 0.899/−0.0012 | **0.01226** | 0.957 |
 | destripe on, no shift | 0.804/−0.0038 | 0.837/−0.0000 | 0.734/−0.0058 | 0.893/−0.0035 | 0.908/−0.0013 | 0.01223 | 0.957 |
 | ESC off | 0.731/−0.0029 | 0.793/+0.0006 | 0.522/+0.0010 | 0.902/−0.0026 | 0.748/−0.0019 | 0.00576 | 0.967 |
@@ -159,14 +208,20 @@ bias; CO2 per-pixel median; the shape ratio's minimum):
 
 - The artifact model is off for this observation anyway: no basis serves
   2007.
-- A post hoc classic column-ratio destripe of ours (each band ÷ its column
-  median over a 15-column running median) does not help: r changes by
-  −0.01 to +0.02.
-- So the column-to-column scatter is not the whole story. The fitted shift
-  and the missing destripe each cost a few hundredths. The rest is
-  per-band, per-column structure that the MTRDR's own processing removes
-  and that no Phase 1 toggle reproduces: CAT's per-column artifact patch
-  explains part of it in the CO2 window.
+- **What destripe on does.** It removes only the high-frequency part:
+  ours' column-to-column scatter falls from 2.1–3.8× the MTRDR's to
+  1.5–2.2×, while the smooth trends stay (D2300 0.00173 → 0.00169).
+- **The post hoc classic column-ratio destripe agrees.** It divides each
+  band by its column median over a 15-column running median,
+  unconditionally, and changes r by −0.01 to +0.02. It also divides out
+  real sub-15-column structure that the MTRDR keeps. Both say the
+  high-frequency scatter is worth at most about 0.04 of r; the smooth trend
+  is the larger part.
+- **The fitted shift applied to the wavelengths is not the cause** (the
+  review's run: r within +0.01).
+- **So the shortfall is mostly the smooth cross-track trend:**
+  unattributed, with the suspects ranked above. CAT's per-column artifact
+  patch explains part of it in the CO2 window.
 
 ### Attribution: the spectral shape and the brightness
 
@@ -264,17 +319,17 @@ Every leave-one-out reduction is at least 30% (smallest: 33%), so
 `artifactModel` stays on by default.
 
 **The basis's effect on the mineral parameters** (median with − without,
-over the pixels valid in both; the bound is the crater-floor
-repeatability):
+over the pixels valid in both; the bounds are V2's: the crater-floor
+repeatability, and the spec's 0.0016 for BD1900_2):
 
-| FRS (scan) | D2300 (≤ 0.00152) | BD2290 (≤ 0.00103) | BD1900_2 (≤ 0.00189) | BD2310 | OLINDEX3 |
+| FRS (scan) | D2300 (≤ 0.00152) | BD2290 (≤ 0.00103) | BD1900_2 (≤ 0.0016) | BD2310 | OLINDEX3 |
 |---|---|---|---|---|---|
 | FRS00031442 (061C4) | −0.00071 | −0.00001 | +0.00122 | −0.00013 | −0.00001 |
-| FRS0002FE75 (0A93E) | **−0.00177** | −0.00007 | +0.00176 | −0.00117 | −0.00001 |
+| FRS0002FE75 (0A93E) | **−0.00177** | −0.00007 | **+0.00176** | −0.00117 | −0.00001 |
 | FRS00031260 (08608) | −0.00094 | −0.00000 | **+0.00351** | −0.00063 | +0.00001 |
 
-- A leave-one-out basis gives nearly the same shifts (−0.00168 and +0.00313
-  for the two that fail), so this is the basis itself, not in-sample
+- A leave-one-out basis gives nearly the same shifts (−0.00168, +0.00171 and
+  +0.00313 for the three that fail), so this is the basis itself, not in-sample
   learning.
 - Against the overlapping MTRDRs, the basis moves FRS00031260's BD1900_2
   by about 0.0033 toward FRT000047A3 and HRL000040FF and away from
@@ -332,24 +387,43 @@ Each is a tolerance or design decision. The tests mark the shortfalls
 marker should go.
 
 - **D9. V2 Pearson ≥ 0.90.**
-  - OLINDEX3 (0.895) is EGN. Proposed: accept it until proxy EGN
+  - **OLINDEX3** (0.895) is EGN. Proposed: accept it until proxy EGN
     (Phase 4), or gate OLINDEX3 on r after removing the along-track
     component (0.999).
-  - D2300, BD2290, BD1900_2 and BD2310 (0.63–0.88) are inside Phase 1.
-    The shortfall is the MTRDR's cross-track, band-structured processing
-    (CAT's per-column artifact patch, its RSC) that ours does not
-    reproduce. No toggle reaches 0.90. Destripe on and no fitted shift
-    together give 0.804, 0.837, 0.734 and 0.908, but no shift doubles the
-    CO2 residual (0.0123, failing V2's CO2 criterion).
-  - Options:
-    - (a) Accept the tolerance as not met for Phase 1 and gate on the
-      parameter biases, which pass except D2300.
-    - (b) Reconsider destripe's default: it helps every parameter here
-      (+0.01–0.04, CO2 0.00665 → 0.00653), against Task 15's slight
-      cross-validated harm on FRS00031442.
-    - (c) A Phase 1.5 task to apply CAT's VS ADR artifact spectra when the
-      aux files are present (D3).
-  - The fitted shift trades r against the CO2 residual. Keep it?
+  - **D2300, BD2290, BD1900_2 and BD2310** (0.63–0.88) are inside Phase 1.
+    The shortfall is mostly a smooth cross-track trend in ours that the
+    MTRDR does not have. It is unattributed; suspects: residual smile/ESC
+    for D2300 and BD2290, the per-column ATM fit for BD2310, none clear
+    for BD1900_2. The rest is column-to-column scatter.
+  - **Destripe on** (`toggle-destripe`):
+    - r 0.795 / 0.801 / 0.663 / 0.895 / 0.902 (D2300, BD2290, BD1900_2,
+      OLINDEX3, BD2310), CO2 0.00665 → 0.00653;
+    - our column-to-column scatter 2.1–3.8× → 1.5–2.2× the MTRDR's;
+    - the smooth trend unchanged (D2300 0.00173 → 0.00169).
+  - **No combination reaches 0.90 for D2300, BD2290 or BD1900_2.**
+    Destripe on with no fitted shift gives 0.804 / 0.837 / 0.734, but no
+    shift nearly doubles the CO2 residual (0.0123, failing V2's CO2
+    criterion). Applying the fitted shift to the wavelengths (the review's
+    run): 0.789 / 0.782 / 0.638 / 0.896 / 0.883, CO2 0.00631.
+  - **Options and their consequences:**
+    - **(a) Accept the Pearson tolerance as not met for Phase 1.** Gate on
+      the biases (all pass but D2300). For low-contrast parameters use a
+      scale-aware criterion: the MTRDR maps' own spread is only 1.1–1.6×
+      the repeatability for BD2290 and BD1900_2, which makes Pearson harsh.
+      One such criterion is the RMS of ours − MTRDR against the
+      repeatability. Measured: BD2310 0.78×, BD2290 1.07×, OLINDEX3 1.36×,
+      BD1900_2 1.47×, D2300 1.94× (destripe on: 0.69, 0.99, 1.36, 1.34,
+      1.90).
+    - **(b) Turn destripe on by default.** It helps every parameter here
+      and the CO2 residual, against Task 15's slight cross-validated harm
+      on FRS00031442 (M11 0.69% → 0.72%). BD2310 then passes, so its strict
+      xfail would XPASS and the marker must go. The other three stay below
+      0.90.
+    - **(c) A follow-up diagnosis of the smooth trend.** Candidates: an ESC
+      residual quadratic in the smile offset; CAT's per-column artifact
+      patch from the aux files (D3) for the CO2 window.
+    - **(d) Keep the fitted shift.** It halves the CO2 residual and costs
+      0.01–0.08 of r.
 - **D10. The 2 µm bowl** (shape ±1/±2%): up to 3.4%, following CAT's patch.
   - (a) Accept as a known difference from CAT (A6/A7).
   - (b) Add the VS ADR artifact spectra as an optional low-pass patch (aux
@@ -358,19 +432,36 @@ marker should go.
     would need the MTRDRs as its truth.
 - **D11. D2300 bias** −0.0019 against 0.00152: the same cross-track cause as
   D9.
-- **D12. The basis and the mineral parameters.** It halves the FRS CO2
-  residual (0.0074–0.0077 → 0.0040–0.0052 per pixel), but moves D2300 on
-  FRS0002FE75 (−0.0018) and BD1900_2 on FRS00031260 (+0.0035) beyond the
-  repeatability. V3 passes without it.
+- **D12. The basis and the mineral parameters.**
+  - **The trade:** it halves the FRS CO2 residual (0.0074–0.0077 →
+    0.0040–0.0052 per pixel), but moves three of nine medians beyond V2's
+    bounds:
+    - D2300 on FRS0002FE75: −0.0018, against the repeatability 0.00152;
+    - BD1900_2 on FRS0002FE75: +0.0018, against the spec's 0.0016;
+    - BD1900_2 on FRS00031260: +0.0035, against the spec's 0.0016.
+
+    With the crater-floor repeatability 0.0019 as BD1900_2's bound instead
+    of the spec's 0.0016, it would be two of nine. V3 passes without the
+    basis.
   - (a) Keep it on, and treat BD1900_2 and D2300 on the rim with the shift
     as a systematic term.
   - (b) Turn `artifactModel` off by default.
   - (c) Mask the basis outside the CO2 lines, for example 1940–2100 nm.
     That needs a re-test.
-- **D13. V3 BD2310 offset** (0.0055 against 0.0045/0.004): between
-  observations, not processing. The MTRDR pairs already exceed 0.004.
-  Proposed: compare against the MTRDR–MTRDR maximum only, measured, and
-  read the offset as a per-observation term for fusion (F2).
+- **D13. V3 BD2310 offset.** FRS00031442 is 0.0055 and 0.0051 from
+  FRT00005C5E and FRT000047A3; the bounds are the MTRDR–MTRDR maximum
+  (0.0045) and the spec's 0.004. The cause is unattributed: the pipeline's
+  own bias is −0.0002 on FRT00005850, the basis changes nothing, and the
+  medians over different overlap areas do not add up around loops.
+  Comparing against the MTRDR–MTRDR maximum alone **still fails**
+  (0.0055 > 0.0045). Options:
+  - (a) Accept it as a per-observation systematic term. The fusion stage's
+    offset correction (F2) absorbs it, and the test stays an xfail until
+    then.
+  - (b) Bound it by the MTRDR maximum plus a stated margin, for example the
+    pair-to-pair scatter of the MTRDR offsets or 0.001 (0.0055 passes from
+    a margin of 0.0010). That is a tolerance change Michael must approve,
+    since it loosens the criterion.
 - **V1 note.** The δ z-score std on seed 1 is 0.875, outside the spec's
   1.00 ± 0.10; the test asserts 0.8–1.25. Tighten the test or accept the
   spread?

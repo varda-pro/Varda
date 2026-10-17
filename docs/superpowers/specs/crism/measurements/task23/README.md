@@ -19,6 +19,7 @@ Order: process with `python -m varda.crism process ... --out S/default
 | `maps.py` | ours and the MTRDR's parameter maps, albedo and CO2 on the overlap, with both source backplanes |
 | `attribution.py`, `columns.py` | block means, the independent-noise ceiling, shared pixel-scale fluctuations, the column and line components of the difference |
 | `factor.py` | the per-column spectral factor ours ÷ MTRDR, split into smooth and structured parts, recomputed into each parameter |
+| `smooth_columns.py` | fix round 1: the smooth cross-track trend against the smile, ESC, δ_x, the column fit and each toggle |
 | `own_columns.py` | each product's own per-column parameter profile and its column-to-column scatter |
 | `lines.py`, `shape_lines.py` | the along-track components against the DDR geometry (EGN) |
 | `bowl.py`, `patch_columns.py` | the 2 µm bowl and the per-column structure against CAT's VS ADR artifact spectra |

@@ -453,13 +453,14 @@ class _Run:
         """TRR3 lines [lo, hi) with every masked sample NaN; ``tally`` (start,
         stop) counts each mask reason over those lines.
 
-        Elements flagged in the BP CDRs are not masked: the calibration has
-        already replaced each with the mean of its good neighbors in the same
-        detector row (DPSIS §2.6, the a priori mask, and §2.15), so the TRR3
-        holds interpolated I/F there, as the MTRDRs do. Masking them dropped 17%
-        of FRS00031442's samples (the 2014 BPs flag 14–24% of the elements) and
-        left 98% of its pixels with a gap in the CO2 window. They are counted
-        (``badPixelInterpolated``)."""
+        Elements flagged in the BP CDRs are not masked: they were interpolated
+        during calibration, in DN space, from the neighboring columns of the
+        same detector row (DPSIS §2.6, the a priori mask, and §2.15), so in the
+        TRR3 they are finite, non-outlier values, which the MTRDRs use. Masking
+        them dropped 17% of FRS00031442's samples (the 2014 BPs flag 14–24% of
+        the elements) and left 98% of its pixels with a gap in the CO2 window.
+        They are counted (``badPixelInterpolated``); σ treats them as
+        independent samples, though each is a mean of two neighbors."""
         cube = self.trr3.lines(slice(lo, hi))
         invalid = np.isnan(cube)
         inner = slice(tally[0] - lo, tally[1] - lo) if tally is not None else None

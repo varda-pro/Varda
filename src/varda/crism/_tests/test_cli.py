@@ -184,9 +184,9 @@ def test_leave_one_out_skips_columns_without_wavelengths(tmp_path: Path) -> None
     wavelengths = column.wavelengths.copy()
     wavelengths[:3] = np.nan
     edged = attrs.evolve(column, wavelengths=wavelengths)
-    assert math.isfinite(cli._co2Median(edged, None))
-    assert cli._co2Median(edged, None) == pytest.approx(
-        cli._co2Median(column, None), rel=0.05
+    assert math.isfinite(cli.columnCo2Median(edged, None))
+    assert cli.columnCo2Median(edged, None) == pytest.approx(
+        cli.columnCo2Median(column, None), rel=0.05
     )
 
 
