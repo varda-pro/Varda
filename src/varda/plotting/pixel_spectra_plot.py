@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from enum import Enum
-from pathlib import Path
 
 import attrs
 import matplotlib
@@ -24,10 +23,11 @@ from PyQt6.QtWidgets import QCheckBox, QPushButton, QWidget
 from varda.common.entities import Color, VardaRaster
 from varda.common.parameter import EnumParameter, IntParameter, ParameterGroup
 from varda.common.ui import ButtonBuilder, HBoxBuilder, SectionBox, VBoxBuilder
-from varda.plotting.library_spectra import DEFAULT_LIBRARY_PATH
 from varda.plotting.plot import Curve, VardaPlotWidget
 from varda.rois.region_statistics import boxPolygonPixels, computeRegionStatistics
 from varda.common.parameter_widgets import groupWidget
+from varda.spectral_libraries.spectrum import SpectrumOrigin
+from varda.spectral_libraries.store import LibraryStore
 
 logger = logging.getLogger(__name__)
 
@@ -139,9 +139,9 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
     def __init__(
         self,
         parent: QWidget | None = None,
-        libraryPath: Path = DEFAULT_LIBRARY_PATH,
+        store: LibraryStore | None = None,
     ):
-        super().__init__(parent, libraryPath)
+        super().__init__(parent, store)
         self.pixelConfig = PixelSpectraConfig()
         self.pixelCurves: list[Curve] = []
         # Where each pixel curve was read from (spectra added by other means,
@@ -262,9 +262,11 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
     def _addOrigin(self, origin: PixelOrigin, label: str) -> Curve | None:
         """Plot one pixel's spectrum, or a window's mean with a ±1 σ band."""
         image = origin.image
+        where = f"(col {origin.x}, row {origin.y})"
         if origin.width == origin.height == 1:
             values = image.getSpectrum(origin.x, origin.y).values
             curve = self._addTracked(self.xValuesFor(image, len(values)), values, label)
+            region, pixelCount = f"pixel {where}", 1
         else:
             statistics = computeRegionStatistics(origin.corners(), image)
             if not statistics["pixel_count"]:
@@ -286,7 +288,12 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
                 name=label,
             )
             self._track(curve)
+            region = f"{origin.width}×{origin.height} px box at {where}"
+            pixelCount = int(np.asarray(statistics["pixel_count"]))
         self.pixelOrigins[curve] = origin
+        curve.origin = SpectrumOrigin(
+            image.name, image.filePath or "", region, pixelCount
+        )
         return curve
 
     def addSpectrum(self, wavelengths, values, label: str) -> Curve:

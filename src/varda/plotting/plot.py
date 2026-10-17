@@ -36,20 +36,28 @@ from varda.common.ui import (
     ButtonBuilder,
     WrapperWidget,
     PanelScrollArea,
-    ElidingComboBox,
     MutedLabel,
 )
 from varda.common.vec2 import Vec2
-from varda.common.spectral_axis import SpectralUnit, fromNanometres, unitLabel
-from varda.plotting.plot_export import EXPORT_FILTER, exportPlot
-from varda.plotting.library_spectra import (
-    DEFAULT_LIBRARY_PATH,
-    listSpectra,
-    loadSpectrum,
+from varda.common.spectral_axis import (
+    SpectralUnit,
+    fromNanometres,
+    toNanometres,
+    unitLabel,
 )
+from varda.library_manager.add_to_library_dialog import AddToLibraryDialog
+from varda.library_manager.reference_picker import ReferenceSpectraPicker
+from varda.plotting.plot_export import EXPORT_FILTER, exportPlot
 from varda.plotting.spectrum_matching import (
     matchToReference,
 )
+from varda.spectral_libraries.spectrum import (
+    LibrarySpectrum,
+    SpectrumOrigin,
+    copiedSpectrum,
+    spectrumFromImage,
+)
+from varda.spectral_libraries.store import LibraryStore, defaultStore
 from varda.plotting.view_box import ModifierDragViewBox
 from varda.common.parameter import (
     ParameterGroup,
@@ -121,6 +129,10 @@ class Curve(QObject):
         # in the data's units (before the Y scale/offset); exported with it.
         self.std: np.ndarray | None = None
         self.count: np.ndarray | None = None
+        # Where it came from, recorded when it's added to a library: the image
+        # region it was read from, or the library spectrum it shows
+        self.origin: SpectrumOrigin | None = None
+        self.librarySpectrum: LibrarySpectrum | None = None
         self._pointSize: int | None = None  # None: samples not marked
 
         self.config.sigParameterChanged.connect(self.onConfigChanged)
@@ -362,12 +374,12 @@ class VardaPlotWidget(QWidget):
     def __init__(
         self,
         parent: QWidget | None = None,
-        libraryPath: Path = DEFAULT_LIBRARY_PATH,
+        store: LibraryStore | None = None,
     ):
         super().__init__(parent)
         self.selectedCurve: Curve | None = None
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # for Backspace/Delete
-        self.libraryPath = libraryPath
+        self.libraryStore = defaultStore() if store is None else store
 
         self.plots: list[Curve] = []
         # The spectral unit of the x axis, from the images plotted (None: band
@@ -488,26 +500,19 @@ class VardaPlotWidget(QWidget):
         self.viewBox.sigRangeChanged.connect(lambda *_: self._layoutMarkerLabels())
         self.viewBox.sigResized.connect(lambda *_: self._layoutMarkerLabels())
 
-        spectraNames = listSpectra(libraryPath) if libraryPath else []
-        if spectraNames:
-            self.libraryCombo = ElidingComboBox()  # long names are elided
-            self.libraryCombo.addItems(spectraNames)
-            libraryHint = MutedLabel(
-                "Added spectra are scaled to overlay the selected curve "
-                "within the visible wavelength range."
+        self.referencePicker = ReferenceSpectraPicker(self.libraryStore)
+        self.referencePicker.sigAddRequested.connect(self._addLibrarySpectra)
+        libraryHint = MutedLabel(
+            "Added spectra are scaled to overlay the selected curve "
+            "within the visible wavelength range."
+        )
+        libraryHint.setWordWrap(True)
+        sidebar.withWidget(
+            SectionBox(
+                "Library Spectra",
+                VBoxBuilder().withWidget(self.referencePicker).withWidget(libraryHint),
             )
-            libraryHint.setWordWrap(True)
-            sidebar.withWidget(
-                SectionBox(
-                    "Library Spectra",
-                    VBoxBuilder()
-                    .withWidget(self.libraryCombo)
-                    .withWidget(
-                        ButtonBuilder("Add to Plot").onClick(self._addLibrarySpectrum)
-                    )
-                    .withWidget(libraryHint),
-                )
-            )
+        )
 
         sidebar.withWidget(self.curveSettingsBox)
         sidebar.withWidget(SectionBox("Appearance", groupWidget(self.appearanceConfig)))
@@ -817,9 +822,20 @@ class VardaPlotWidget(QWidget):
             WrapperWidget(
                 VBoxBuilder(Qt.AlignmentFlag.AlignTop)
                 .withWidget(groupWidget(curve.config))
-                .withWidget(
-                    ButtonBuilder("Remove Curve").onClick(
-                        lambda: self.removePlot(curve)
+                .withLayout(
+                    HBoxBuilder()
+                    .withWidget(
+                        ButtonBuilder("Add to Library…")
+                        .onClick(lambda: self._openAddToLibrary(curve))
+                        .withToolTip(
+                            "Save this spectrum (its own values, not as scaled) "
+                            "in one of your spectral libraries, with where it came from"
+                        )
+                    )
+                    .withWidget(
+                        ButtonBuilder("Remove Curve").onClick(
+                            lambda: self.removePlot(curve)
+                        )
                     )
                 )
             )
@@ -838,10 +854,64 @@ class VardaPlotWidget(QWidget):
         self.selectedCurve = None
         self.sigSelectedCurveChanged.emit(None)
 
-    def _addLibrarySpectrum(self) -> None:
-        folderName = self.libraryCombo.currentText()
-        name, wavelengths, reflectance = loadSpectrum(self.libraryPath, folderName)
-        self.addReferenceSpectrum(name, wavelengths, reflectance)
+    def _addLibrarySpectra(self, spectra: list[LibrarySpectrum]) -> None:
+        for spectrum in spectra:
+            self.addLibrarySpectrum(spectrum)
+
+    def addLibrarySpectrum(self, spectrum: LibrarySpectrum) -> Curve:
+        """Plot a library spectrum as a reference (see ``addReferenceSpectrum``);
+        the curve remembers it, so it can be copied into another library."""
+        curve = self.addReferenceSpectrum(
+            spectrum.name, spectrum.wavelengths, spectrum.reflectance
+        )
+        curve.librarySpectrum = spectrum
+        return curve
+
+    # --- adding curves to a library ------------------------------------------------------
+
+    def librarySpectrumFor(self, curve: Curve) -> LibrarySpectrum | None:
+        """``curve`` as a library spectrum: its own values (not as scaled), in
+        nm, with where it came from. None when the plot's x axis is band
+        numbers, not wavelengths."""
+        name = curve.plotDataItem.name() or "Spectrum"
+        if curve.librarySpectrum is not None:
+            return copiedSpectrum(
+                curve.librarySpectrum, curve.librarySpectrum.source, name=name
+            )
+        if self.spectralUnit is None:
+            return None
+        x, y = curve.data()
+        origin = curve.origin or SpectrumOrigin(
+            imageName="",
+            region=f"plotted curve “{name}”",
+            pixelCount=0,
+            note="added from a plot; its source wasn't recorded",
+        )
+        return spectrumFromImage(
+            name, toNanometres(x, self.spectralUnit), y, origin, std=curve.std
+        )
+
+    def addToLibraryDialog(self, curve: Curve) -> AddToLibraryDialog | None:
+        spectrum = self.librarySpectrumFor(curve)
+        if spectrum is None:
+            return None
+        dialog = AddToLibraryDialog([spectrum], self.libraryStore, parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        return dialog
+
+    def _openAddToLibrary(self, curve: Curve) -> None:
+        dialog = self.addToLibraryDialog(curve)
+        if dialog is None:
+            QMessageBox.information(
+                self,
+                "Add to Library",
+                "This plot shows band numbers, not wavelengths, and a library "
+                "spectrum needs wavelengths. Set the image's wavelengths "
+                "(right-click it in the image list → Properties…) and plot it "
+                "again.",
+            )
+            return
+        dialog.open()
 
     def addReferenceSpectrum(self, name: str, x, y) -> Curve:
         """Plot a reference (e.g. library) spectrum so it is immediately comparable.

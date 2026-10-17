@@ -120,6 +120,7 @@ source_modules = [
     "varda.points.point_collection",
     "varda.workspaces.spectral_hourglass.hourglass_model",
     "varda.common.spectral_axis",
+    "varda.spectral_libraries",
     "varda.common.expressions",
     "varda.common.grid",
     "varda.common.provenance",
