@@ -62,6 +62,8 @@ a = Analysis(
     + collect_data_files("pyproj")
     + collect_data_files("pyogrio")
     + collect_data_files("hypyrameter")
+    # CRISM processing's PDS tables and learned artifact bases
+    + [("src/varda/crism/resources", "varda/crism/resources")]
     + [("resources", "resources")]
     # the cited small-body table varda.geo.bodies reads beside itself
     + [("src/varda/geo/small_bodies.toml", "varda/geo")]

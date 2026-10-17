@@ -114,5 +114,6 @@ Bug reports, ideas and pull requests are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
 
 Varda is free software under the [GNU General Public License v3 or later](LICENSE).
+Third-party material is acknowledged in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 Developed at the Space Imagery Center, Lunar and Planetary Laboratory,
 University of Arizona.

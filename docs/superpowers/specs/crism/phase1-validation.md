@@ -17,7 +17,7 @@ repository.
   the spectral-shape χ² of FRS00031442 against the crater-floor MTRDRs; the
   artifact basis's leave-one-out check under every scan the pipeline
   chooses; four of five parameter biases.
-- **Not met (10 xfails, each with its measured cause):**
+- **Not met (11 xfails, each with its measured cause):**
   - **Pearson r ≥ 0.90 for all five parameters** (0.63–0.90). Not noise:
     the two products share their pixel-scale fluctuations. OLINDEX3 is EGN
     (outside Phase 1). The other four are a cross-track difference inside

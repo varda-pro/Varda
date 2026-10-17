@@ -1,9 +1,16 @@
 # CRISM processing: from TRR3 I/F to MTRDR-consistent products — Design
 
 Status: approved 2026-10-16, with the recommended option for every decision
-D1–D8 (see "Decisions for Michael" at the end). FRT00005850's TRR3 + DDR and
-CAT 7.4's aux files are downloaded for comparison (D3, D6). The Phase 1 plan
-is `../plans/2026-10-16-crism-processing-phase1.md`.
+D1–D8 (see "Decisions for Michael" at the end). FRT00005850's TRR3 + DDR and CAT 7.4's aux files are downloaded for comparison (D3, D6). The Phase 1 plan is `../plans/2026-10-16-crism-processing-phase1.md`.
+
+**Phase 1 is built** (2026-10-16): the pipeline, the CLI, the dialogs and the
+validation. Against the MTRDR it meets the grid, the geolocation and the CO2
+residual, and the synthetic checks pass in the suite. It does not yet meet
+the Pearson r of 0.90 for the five mineral parameters (0.63–0.90), the
+spectral-shape ±1%/±2% near 2 µm and beyond 2.2 µm, or a few parameter-bias
+and basis-effect checks: 11 strict xfails, each with a measured cause.
+Decisions D9–D13 are pending Michael. See
+[`crism/phase1-validation.md`](crism/phase1-validation.md).
 
 Companion files:
 - `crism/evidence-ledger.md`: one entry per algorithmic decision (source,

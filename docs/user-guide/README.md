@@ -27,6 +27,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Factor Analysis Target Transformation](fatt.md): which library spectra are components of an image, and where they fit
 - [CRISM ratio cubes](crism-ratio.md): dividing a CRISM I/F cube by a bland denominator spectrum per detector column, and the CRISM Ratio workspace for judging regions by clicking numerator and denominator boxes
 - [Mosaicking](mosaicking.md): joining overlapping images, aligning them with nudges and tie points, exporting
+- [CRISM processing](crism-processing.md): TRR3 I/F to MTRDR-consistent, map-projected products with σ and provenance, from the dialog or the command line
 - [Optional features](optional-features.md): HyPyRameter band parameters, PyTorch classifiers
 - [Kindle a Feature](kindle-a-feature.md): describe a feature and have your AI build it as a plugin
 

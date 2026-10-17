@@ -153,6 +153,20 @@ can alter results.
   now an Info finding worded as your choice, not a problem. Image
   Properties' OK no longer drops a corrected transform. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#reporting-a-crs-built-from-the-label).
+- **CRISM processing** (Processing → CRISM → Process CRISM Observation…, or
+  `Varda --crism process`): turns a CRISM IR observation's TRR3 I/F into a
+  map-projected, MTRDR-consistent I/F on the MTRDR's own grid, with a σ file
+  (instrument noise, per band), the geometry (`_de`) and processing (`_in`)
+  backplanes, and a recipe and provenance record. Steps: photometry,
+  despike, atmospheric correction (fitted transmission with a shift and an
+  elevation prior, and learned instrument-artifact bases for their epoch),
+  optional destriping, smile and empirical shift correction, projection.
+  Calibration files (WA, BP, atmospheric transmission) are found beside the
+  observation, in CAT's `aux_files` if you point to them, or fetched from the
+  PDS, and a missing one is reported before anything runs. Phase 1 is
+  IR-only with no EGN; it is not bit-for-bit CAT. See the
+  [guide](docs/user-guide/crism-processing.md) and the
+  [validation report](docs/superpowers/specs/crism/phase1-validation.md).
 - **FITS images and ALTWG/SPC terrain cubes open.** `.fits`, `.fit`, `.fts`
   and `.fz` files are read with astropy. The image is the primary HDU or the
   first image extension, and each plane is a band. OSIRIS-REx ALTWG/SPC cubes
