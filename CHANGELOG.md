@@ -139,6 +139,12 @@ can alter results.
 
 ### Changed
 
+- **Scrolling over a spectral plot's Y axis stretches the spectra, and the
+  stretch stays**, as in the FATT window. Over an axis the wheel zooms only
+  that axis, about the cursor. In **Fit Y To X Range** a Y stretch, or a
+  drag on the Y axis, used to be refitted away at once; now it switches the
+  plot to **Manual**, keeping the view until **Fit to Data**. The plot's
+  hint mentions both.
 - Results record their whole chain of inputs, not only the immediate one,
   and the one-line description in exported files names the plugin.
 - **Help → Copy System Info** includes Spectral Python's version.
