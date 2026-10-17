@@ -1,10 +1,13 @@
 """The Process CRISM Observation dialog: a batch over the pipeline."""
 
 import json
+import shutil
+import threading
 from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
+from PyQt6.QtWidgets import QMessageBox
 
 from varda._actions import ALL_ACTIONS, PROCESSING_SUBMENUS
 from varda._actions._processing_actions import (
@@ -115,7 +118,9 @@ def test_progress_shows_on_the_running_row(qtbot, tmp_path, monkeypatch):
 
 
 def test_missing_calibration_stops_before_any_pass(qtbot, tmp_path, monkeypatch):
-    missing = CalibrationFileStatus("wa0000000l_3", "WA", None, "https://x/wa", True)
+    missing = CalibrationFileStatus(
+        "wa0000000l_3", "WA", None, "https://x/wa", True, "no network"
+    )
 
     def absent(observation, library):
         raise MissingCalibrationError([missing])
@@ -130,6 +135,7 @@ def test_missing_calibration_stops_before_any_pass(qtbot, tmp_path, monkeypatch)
     _run(qtbot, dialog)
     assert dialog.statuses()[0].startswith("failed: missing calibration")
     assert "wa0000000l_3" in dialog.progressLabel.text()
+    assert "no network" in dialog.progressLabel.text()
     assert not dialog.getCalibrationButton.isHidden()
 
 
@@ -152,11 +158,11 @@ def test_each_step_has_its_own_titled_box(qtbot, tmp_path):
     assert dialog.stepTitles() == [
         "Photometry",
         "Despike",
-        "Atmosphere",
+        "Atmospheric correction",
         "Destripe",
         "Smile",
-        "Projection",
-        "Output",
+        "Map projection",
+        "Outputs",
     ]
 
 
@@ -240,3 +246,99 @@ def test_real_process_opens_in_varda(qtbot, tmp_path, demoData):
     assert result.mapProjected is not None
     source = openDataSource(str(result.mapProjected))
     assert source.width > 0 and source.height > 0
+
+
+def test_closing_mid_run_cancels_the_rest(qtbot, tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+
+    def fake(observation, recipe, outputFolder, **kwargs):
+        started.set()
+        assert release.wait(10)
+        return _result(tmp_path, observation.name)
+
+    monkeypatch.setattr(process_dialog, "process", fake)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes
+    )
+    dialog = _dialog(qtbot, tmp_path, ["a", "b", "c"])
+    results: list[ProcessResult] = []
+    dialog.sigProcessed.connect(results.append)
+    dialog.run()
+    qtbot.waitUntil(started.is_set, timeout=10000)
+    dialog.reject()  # asks, cancels, and waits for the worker
+    assert dialog.statuses()[1:] == ["queued", "queued"]  # not stopped yet
+    with qtbot.waitSignal(dialog.sigFinished, timeout=10000):
+        release.set()
+    assert dialog.statuses()[1:] == ["canceled", "canceled"]
+    assert results == []
+
+
+def test_declining_the_close_prompt_keeps_the_batch(qtbot, tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+
+    def fake(observation, recipe, outputFolder, **kwargs):
+        started.set()
+        assert release.wait(10)
+        return _result(tmp_path, observation.name)
+
+    monkeypatch.setattr(process_dialog, "process", fake)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No
+    )
+    dialog = _dialog(qtbot, tmp_path, ["a"])
+    dialog.run()
+    qtbot.waitUntil(started.is_set, timeout=10000)
+    dialog.reject()
+    with qtbot.waitSignal(dialog.sigFinished, timeout=10000):
+        release.set()
+    assert dialog.statuses() == ["done"]
+
+
+def test_duplicate_observations_are_skipped(qtbot, tmp_path):
+    dialog = _dialog(qtbot, tmp_path, ["a", "b"])
+    dialog.addObservations([_observation("a"), _observation("c")])
+    assert [o.name for o in dialog.observations()] == ["a", "b", "c"]
+
+
+def test_library_folders_of_a_folder_without_cdrs_is_just_that_folder(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    observation = CrismObservation("o", 1, folder / "a.img", folder / "b.img")
+    assert calibration_dialog.libraryFolders([observation]) == [folder]
+
+
+def test_calibration_is_fetched_then_the_batch_runs(
+    qtbot, tmp_path, monkeypatch, demoData
+):
+    """Only the TRR3 and DDR are local: the dialog fetches the CDRs (a fake
+    fetch copies them from another folder) and then processes."""
+    data = demoData / "data-for-paper"
+    source = data / "ATO0004EC45"
+    if not source.is_dir():
+        raise pytest.skip.Exception("ATO0004EC45 not found")
+    fetched: list[str] = []
+
+    def fakeFetch(url: str, target: Path) -> None:
+        name = url.rsplit("/", 1)[-1].lower()
+        match = next((p for p in source.rglob("*") if p.name.lower() == name), None)
+        if match is None:
+            raise OSError("not found")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(match, target)
+        fetched.append(name)
+
+    obs = CrismObservation.discover(data / "FRS00031442")
+    monkeypatch.setattr(
+        process_dialog, "process", lambda o, r, out, **k: _result(tmp_path, o.name)
+    )
+    monkeypatch.setattr(
+        process_dialog, "ensureCalibration", calibration_dialog.ensureCalibration
+    )
+    library = CalibrationLibrary([], tmp_path / "cache", fetch=fakeFetch)
+    dialog = ProcessCrismDialog(libraryFor=lambda _: library)
+    qtbot.addWidget(dialog)
+    dialog.addObservations(obs)
+    dialog.outputFolder.setText(str(tmp_path / "out"))
+    _run(qtbot, dialog)
+    assert dialog.statuses() == ["done"], dialog.progressLabel.text()
+    assert any(name.endswith(".img") for name in fetched)

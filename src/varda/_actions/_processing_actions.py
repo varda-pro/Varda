@@ -28,6 +28,7 @@ from varda.analysis.runner import AnalysisRunner
 from varda.analysis.transforms import TRANSFORM_METADATA_KEY, InverseTransformAnalysis
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
+from varda.crism import ProcessResult
 from varda.crism_ui.calibration_dialog import CalibrationDialog
 from varda.crism_ui.process_dialog import ProcessCrismDialog
 from varda.context_keys import EXPR_HAS_IMAGES, EXPR_NEVER
@@ -289,12 +290,15 @@ def openSpectralLibraries(mainGui: MainGUI) -> None:
 def openCrismProcess(images: ProjectImages, mainGui: MainGUI) -> None:
     """Process CRISM observations; each map-projected product joins the project."""
     dialog = ProcessCrismDialog(parent=mainGui)
-    dialog.sigProcessed.connect(
-        lambda result: result.mapProjected
-        and ImageLoadingService.load_images(
-            file_paths=[str(result.mapProjected)], on_success_callback=images.append
-        )
-    )
+
+    def load(result: ProcessResult) -> None:
+        if result.mapProjected is not None:
+            ImageLoadingService.load_images(
+                file_paths=[str(result.mapProjected)],
+                on_success_callback=images.append,
+            )
+
+    dialog.sigProcessed.connect(load)
     dialog.show()
 
 

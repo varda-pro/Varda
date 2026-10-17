@@ -5,9 +5,10 @@ checked (and fetched) first, so a missing file stops the batch before any pass."
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import QStandardPaths, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -45,6 +46,15 @@ from varda.utilities.background import onMainThread, runInBackground
 
 QUEUED = "queued"
 CANCELED = "canceled"
+STEP_TITLES = {
+    "photometry": "Photometry",
+    "despike": "Despike",
+    "atmosphere": "Atmospheric correction",
+    "destripe": "Destripe",
+    "smile": "Smile",
+    "projection": "Map projection",
+    "output": "Outputs",
+}
 _HIDDEN = {("smile", "method")}  # a single option: nothing to choose
 
 
@@ -76,6 +86,7 @@ class ProcessCrismDialog(QDialog):
         self._cancelRequested = False
         self._running = False
         self._missingFolder: Path | None = None
+        self._closing = False
         self.recipe = Recipe()
 
         self.table = QTableWidget(0, 2)
@@ -103,7 +114,7 @@ class ProcessCrismDialog(QDialog):
         stepsLayout.setContentsMargins(0, 0, 0, 0)
         for key, group in self.recipe.params.items():
             assert isinstance(group, ParameterGroup)
-            box = QCollapsible(key.capitalize())
+            box = QCollapsible(STEP_TITLES.get(key, key.capitalize()))
             box.setContent(self._stepWidget(key, group))
             box.collapse(animate=False)
             self._steps.append(box)
@@ -168,7 +179,17 @@ class ProcessCrismDialog(QDialog):
         self._updateButtons()
 
         # progress reports come from the worker; each lands on the GUI thread
-        self._report = onMainThread(self._onReport)
+        self._report = onMainThread(self._guarded(self._onReport))
+        self._emitProcessedOnMain = onMainThread(self._guarded(self._emitResult))
+
+    def _guarded(self, callback: Callable[..., None]) -> Callable[..., None]:
+        """``callback``, skipped once Qt has deleted this dialog."""
+
+        def call(*args) -> None:
+            if not sip.isdeleted(self):
+                callback(*args)
+
+        return call
 
     # --- recipe -----------------------------------------------------------------
 
@@ -225,6 +246,8 @@ class ProcessCrismDialog(QDialog):
 
     def addObservations(self, observations: Sequence[CrismObservation]) -> None:
         for observation in observations:
+            if observation in self._observations:
+                continue
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(observation.name))
@@ -236,12 +259,28 @@ class ProcessCrismDialog(QDialog):
         folder = QFileDialog.getExistingDirectory(self, "Observation Folder")
         if not folder:
             return
-        found = CrismObservation.discover(Path(folder))
+        self.addButton.setEnabled(False)
+        self.progressLabel.setText(f"Looking for observations in {folder}…")
+        runInBackground(
+            lambda: CrismObservation.discover(Path(folder)),
+            lambda found: self._discovered(folder, found),
+            lambda error: self._discoverFailed(folder, error),
+            description="CRISM observation discovery",
+            owner=self,
+        )
+
+    def _discovered(self, folder: str, found: list[CrismObservation]) -> None:
+        self.progressLabel.setText("")
+        self._updateButtons()
         if not found:
             QMessageBox.information(
                 self, "Add Folder", f"No CRISM IR TRR3 observation found in {folder}."
             )
         self.addObservations(found)
+
+    def _discoverFailed(self, folder: str, error: Exception) -> None:
+        self.progressLabel.setText(f"Could not read {folder}: {error}")
+        self._updateButtons()
 
     def removeSelected(self) -> None:
         if self._running:
@@ -271,6 +310,20 @@ class ProcessCrismDialog(QDialog):
         """Ask the batch to stop; safe to call from any thread."""
         self._cancelRequested = True
 
+    def reject(self) -> None:
+        """Close; a running batch is canceled first (after asking), and the
+        dialog closes once the worker has stopped."""
+        if not self._running:
+            super().reject()
+            return
+        answer = QMessageBox.question(
+            self, "Process CRISM Observation", "Cancel the running batch?"
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._closing = True
+        self._cancelClicked()
+
     def _cancelClicked(self) -> None:
         self.requestCancel()
         self.cancelButton.setEnabled(False)
@@ -293,7 +346,8 @@ class ProcessCrismDialog(QDialog):
         self._cancelRequested = False
         self.getCalibrationButton.hide()
         self.progressBar.setValue(0)
-        self.progressLabel.setText("Checking calibration files…")
+        self.progressBar.setRange(0, 0)  # busy
+        self.progressLabel.setText("Getting calibration files…")
         for row in range(self.table.rowCount()):
             self._setStatus(row, QUEUED)
         self._updateButtons()
@@ -313,12 +367,14 @@ class ProcessCrismDialog(QDialog):
         library: CalibrationLibrary,
         missing: dict[int, MissingCalibrationError],
     ) -> None:
+        self.progressBar.setRange(0, 100)
         if missing:
             lines = []
             for row, error in missing.items():
                 self._setStatus(row, "failed: missing calibration files")
                 lines += [
                     f"{observations[row].name}: {f.kind} {f.name} ({f.url or 'no known source'})"
+                    + (f": {f.note}" if f.note else "")
                     for f in error.files
                 ]
             first = observations[min(missing)]
@@ -377,7 +433,11 @@ class ProcessCrismDialog(QDialog):
 
     def _emitProcessed(self, result: ProcessResult) -> None:
         # called from the worker: hop to the GUI thread to emit
-        onMainThread(self.sigProcessed.emit)(result)
+        self._emitProcessedOnMain(result)
+
+    def _emitResult(self, result: ProcessResult) -> None:
+        if not self._closing:
+            self.sigProcessed.emit(result)
 
     def _batchDone(self) -> None:
         self.progressBar.setValue(100)
@@ -392,6 +452,7 @@ class ProcessCrismDialog(QDialog):
         self._finish()
 
     def _failed(self, error: Exception) -> None:
+        self.progressBar.setRange(0, 100)
         self.progressLabel.setText(f"Failed: {error}")
         self._finish()
 
@@ -399,6 +460,9 @@ class ProcessCrismDialog(QDialog):
         self._running = False
         self._updateButtons()
         self.sigFinished.emit()
+        if self._closing:
+            self._closing = False
+            super().reject()
 
     def _openCalibration(self) -> None:
         dialog = CalibrationDialog(

@@ -92,13 +92,11 @@ class CalibrationDialog(QDialog):
         self.setMinimumSize(720, 420)
         self._libraryFor = libraryFor
         self._observation: CrismObservation | None = None
-        self._busy = False
+        self._folder: Path | None = None
 
         self.folderEdit = QLineEdit()
         self.folderEdit.setPlaceholderText("An observation folder")
-        self.folderEdit.editingFinished.connect(
-            lambda: self.setFolder(Path(self.folderEdit.text()))
-        )
+        self.folderEdit.editingFinished.connect(self._folderEdited)
         browse = QPushButton("Browse…")
         browse.clicked.connect(self._browseFolder)
         self.table = QTableWidget(0, 5)
@@ -115,6 +113,10 @@ class CalibrationDialog(QDialog):
         self.fetchButton.clicked.connect(self.fetchMissing)
         self.fetchButton.setEnabled(False)
         self.catAux = QLineEdit(str(catAuxFolder() or ""))
+        self.catAux.setToolTip(
+            "Optional: the CRISM Analysis Toolkit (CAT) data folder. Its volcano "
+            "scans give extra atmospheric transmission spectra."
+        )
         self.catAux.setPlaceholderText("Optional: the CAT aux_files folder")
         self.catAux.editingFinished.connect(self._saveCatAux)
         browseAux = QPushButton("Browse…")
@@ -155,32 +157,49 @@ class CalibrationDialog(QDialog):
         text = self.catAux.text().strip()
         setCatAuxFolder(Path(text) if text else None)
 
+    def _folderEdited(self) -> None:
+        text = self.folderEdit.text().strip()
+        if text and Path(text) != self._folder:
+            self.setFolder(Path(text))
+
     def setFolder(self, folder: Path) -> None:
         """Show the calibration files of the observation under ``folder``."""
         self.folderEdit.setText(str(folder))
-        try:
-            found = CrismObservation.discover(folder)
-        except OSError as error:
-            found = []
-            self.message.setText(str(error))
+        self._folder = folder
+        self._observation = None
+        self.table.setRowCount(0)
+        self.fetchButton.setEnabled(False)
+        self.message.setText("Looking for observations…")
+        runInBackground(
+            lambda: CrismObservation.discover(folder),
+            lambda found: self._found(folder, found),
+            lambda error: self._lookupFailed(folder, error),
+            description="CRISM observation discovery",
+            owner=self,
+        )
+
+    def _found(self, folder: Path, found: list[CrismObservation]) -> None:
+        if folder != self._folder:  # the folder changed meanwhile
+            return
         if not found:
-            self._observation = None
-            self.table.setRowCount(0)
-            self.fetchButton.setEnabled(False)
             self.message.setText(f"No CRISM IR observation found under {folder}.")
             return
         self._observation = found[0]
         self.message.setText(
-            f"{found[0].name}" + (f" (first of {len(found)})" if len(found) > 1 else "")
+            found[0].name + (f" (first of {len(found)})" if len(found) > 1 else "")
         )
         self._refresh()
+
+    def _lookupFailed(self, folder: Path, error: Exception) -> None:
+        if folder == self._folder:
+            self.message.setText(f"Could not read {folder}: {error}")
 
     def _refresh(self) -> None:
         observation = self._observation
         if observation is None:
             return
         library = self._libraryFor([observation])
-        self._runTask(lambda: library.status(observation.readIr()[0]), self._showStatus)
+        self._runTask(lambda: library.status(observation.readIr()[0]))
 
     def fetchMissing(self) -> None:
         observation = self._observation
@@ -195,18 +214,22 @@ class CalibrationDialog(QDialog):
             except MissingCalibrationError:
                 return library.status(observation.readIr()[0])
 
-        self._runTask(fetch, self._showStatus)
+        self._runTask(fetch)
 
-    def _runTask(
-        self, task: Callable[[], list[CalibrationFileStatus]], show: Callable
-    ) -> None:
+    def _runTask(self, task: Callable[[], list[CalibrationFileStatus]]) -> None:
+        folder = self._folder
         self.fetchButton.setEnabled(False)
+
+        def show(statuses: list[CalibrationFileStatus]) -> None:
+            if folder == self._folder:
+                self._showStatus(statuses)
+
+        def failed(error: Exception) -> None:
+            if folder == self._folder:
+                self.message.setText(f"Failed: {error}")
+
         runInBackground(
-            task,
-            show,
-            lambda error: self.message.setText(f"Failed: {error}"),
-            description="CRISM calibration status",
-            owner=self,
+            task, show, failed, description="CRISM calibration status", owner=self
         )
 
     def _showStatus(self, statuses: list[CalibrationFileStatus]) -> None:
