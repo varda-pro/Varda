@@ -140,6 +140,12 @@ can alter results.
 
 ### Fixed
 
+- **The FATT detection map no longer runs out of memory.** It copied every
+  window of the image into one array before fitting any (about 15 GiB per
+  window shape for a CRISM scene), which crashed a 16 GB laptop and the
+  programs around it. Windows are now cut out in chunks, keeping the map's
+  working memory near 1 GiB whatever the image size. Results are unchanged,
+  bit for bit.
 - **Find Data's ODE searches with no matches** said `'str' object has no
   attribute 'get'` instead of "Nothing found here.": where nothing matches,
   ODE answers with a message in place of the product list, which Varda

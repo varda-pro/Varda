@@ -75,6 +75,11 @@ ranking table, so a target's map doesn't depend on which other targets are
 ticked. A target covering fewer than 5 of the image's bands in the range
 stops the map, naming it.
 
+The map fits a few hundred thousand windows per shape for a typical CRISM
+scene, so it takes a while. Its working memory stays near 1 GiB whatever the
+image size (the windows are cut from the image in chunks), so it runs on a
+laptop without crowding out other programs.
+
 The result joins the image list. Its first band is the number of targets
 detected at each pixel; then there's one band per target with its
 normalized RMSE, so you can threshold a target differently later.

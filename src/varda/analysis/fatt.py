@@ -45,7 +45,10 @@ DEFAULT_RANGE_NM = (1700.0, 2600.0)
 DEFAULT_WINDOW_SHAPES = ((7, 7), (5, 10), (10, 5))
 DEFAULT_WINDOW_FACTORS = 15
 MIN_BANDS = 5
-_WINDOW_CHUNK = 2048
+# Memory for the windows being fitted at once, across all threads. The
+# windows are cut from the image chunk by chunk, so this bounds the map's
+# working memory whatever the image size.
+WINDOW_MEMORY_BUDGET = 2**30
 
 
 class FactorMethod(LabeledEnum):
@@ -283,6 +286,7 @@ def windowedNrmse(
     factors: int = DEFAULT_WINDOW_FACTORS,
     shapes: Sequence[tuple[int, int]] = DEFAULT_WINDOW_SHAPES,
     progress=None,
+    memoryBudget: int = WINDOW_MEMORY_BUDGET,
 ) -> np.ndarray:
     """DAFA/TT (Lin, Tarnas et al. 2021): target transformation in every
     window of each shape (rows, cols), stepped one pixel at a time.
@@ -295,13 +299,15 @@ def windowedNrmse(
     NaN where none is left. Returns (targets, rows, cols).
 
     ``targets`` is (count, bands), finite at every band. ``progress(fraction)``
-    is called as windows are done.
+    is called as windows are done. ``memoryBudget`` (bytes) bounds the
+    windows in work at once; it changes the speed, never the result.
     """
     cube = np.asarray(cube, dtype=np.float64)
     targets = np.atleast_2d(np.asarray(targets, dtype=np.float64))
     if not np.isfinite(targets).all():
         raise ValueError("Targets must cover every band of the window analysis.")
-    rows, cols, _ = cube.shape
+    rows, cols, bands = cube.shape
+    workers = os.cpu_count() or 1
     unit = targets / targets.sum(axis=1, keepdims=True)
     consensus = np.full((len(targets), rows, cols), -np.inf)
     totals = [(rows - h + 1) * (cols - w + 1) for h, w in shapes]
@@ -309,31 +315,47 @@ def windowedNrmse(
     for (h, w), total in zip(shapes, totals, strict=True):
         if h > rows or w > cols:
             raise ValueError(f"A {h}×{w} window doesn't fit the {rows}×{cols} image.")
+        # a view: (window rows, window cols, bands, h, w), no copy
         windows = sliding_window_view(cube, window_shape=(h, w), axis=(0, 1))
         windowRows, windowCols = windows.shape[:2]
-        # (windows, pixels in a window, bands)
-        stacked = windows.reshape(windowRows * windowCols, -1, h * w).transpose(0, 2, 1)
-        perWindow = np.full((len(stacked), len(targets)), np.nan)
+        perWindow = np.full((total, len(targets)), np.nan)
         k = min(factors, h * w)
+        size = _chunkSize(h * w, bands, memoryBudget, workers)
 
         def chunk(start: int) -> int:
-            x = stacked[start : start + _WINDOW_CHUNK]
+            index = np.arange(start, min(start + size, total))
+            # Only this chunk's windows are copied out: copying them all at
+            # once took (windows x bands x h x w) doubles, about 15 GiB per
+            # shape for a CRISM scene, more than a laptop has.
+            x = windows[index // windowCols, index % windowCols]
+            # band-major, as the windows were always laid out: the products
+            # sum in that order, so results match earlier versions bit for bit
+            x = np.ascontiguousarray(x.reshape(len(index), bands, h * w))
+            x = x.transpose(0, 2, 1)
             ok = np.isfinite(x).all(axis=(1, 2))
             if ok.any():
-                perWindow[start : start + len(x)][ok] = _windowNrmse(
+                perWindow[start : start + len(index)][ok] = _windowNrmse(
                     x[ok], targets, unit, k
                 )
-            return len(x)
+            return len(index)
 
         # numpy's batched linear algebra releases the GIL, so threads scale
-        with ThreadPoolExecutor(os.cpu_count()) as pool:
-            for count in pool.map(chunk, range(0, len(stacked), _WINDOW_CHUNK)):
+        with ThreadPoolExecutor(workers) as pool:
+            for count in pool.map(chunk, range(0, total, size)):
                 done += count
                 if progress is not None:
                     progress(done / sum(totals))
         best = _coveringMinimum(perWindow.reshape(windowRows, windowCols, -1), h, w)
         consensus = np.maximum(consensus, best.transpose(2, 0, 1))
     return consensus
+
+
+def _chunkSize(pixels: int, bands: int, budget: int, workers: int) -> int:
+    """Windows per chunk so that every worker's chunk fits the budget. A
+    window needs its spectra (copied out, then transposed for the products)
+    and its pixels x pixels Gram matrix, eigenvectors and LAPACK workspace."""
+    perWindow = 8 * (3 * pixels * bands + 4 * pixels * pixels)
+    return max(1, budget // (workers * perWindow))
 
 
 def _windowNrmse(
