@@ -248,7 +248,9 @@ result.mapProjected   # Path to the ENVI .img; result.sensorSpace, result.sigma,
   - the transmission-selection spread (the score margin between the best
     and next-best scan, propagated);
   - the artifact-model amplitude uncertainty;
-  - the destripe frame uncertainty.
+  - the atmosphere's β excess: |ln T′| times the empirical σ_β's excess over
+    the formal one (Task 20 ruling);
+  - the destripe frame uncertainty (the frame only divides σ).
 
   Mixing the two would repeat the prototype's finding that
   instrument-noise χ² understates disagreement (shape χ² ≈ 5.6).
@@ -341,8 +343,8 @@ W = 1850–2200 nm in log space:
 
     ln R_p(λ) = Σ_k c_pk P_k(λ) + β_p ln T_x(λ + δ_x) + ε
 
-- P_k is a smooth continuum basis (Legendre polynomials, degree 3 by
-  default).
+- P_k is a smooth continuum basis (Legendre polynomials of degree 3, fixed;
+  the provenance records it).
 - T_x(λ) is the candidate transmission for column x. AT CDRs are stored per
   detector element, so scene column x uses AT column x directly, with no
   resampling. This is the TER rule.
@@ -506,8 +508,10 @@ covariance of β with the data it corrects (`atmosphere.correct`).
     15 columns spanning the whole strip passes as a detector pattern.
 - **Records and σ.** The factor frame is written to the sidecar. σ is a
   moving-block bootstrap over lines (50 resamples of 16-line blocks, drawn
-  within each half, so the same resamples give σ of the halves' difference);
-  the frame's σ is added in quadrature to σ, multiplicatively.
+  within each half, so the same resamples give σ of the halves' difference).
+  The frame's σ is a systematic term, reported per band in the provenance; σ
+  itself is only divided by the factors, σ′ = σ/f (controller ruling,
+  Task 20: σ is random only, N2).
 - **Improvement over CAT:** CAT's RST and CIRRUS destripe remove column
   means indiscriminately (the 2008 destriper subtracted column median −
   global median). Ours separates detector from geology, uses only bland
@@ -523,7 +527,7 @@ covariance of β with the data it corrects (`atmosphere.correct`).
 - **Resampling.** Each column is resampled from WA(x, λ) to the target by
   **linear interpolation**. The shift is at most 1.6 bands (M4). Linear
   interpolation has exact two-tap σ propagation, σ² = Σ w²σ², and no
-  ringing. A cubic spline is an option.
+  ringing. (A cubic spline is not offered in Phase 1; Task 20 ruling.)
   - The resulting column-dependent variance reduction is carried in σ, and
     the band-to-band correlation it introduces is documented.
 - **ESC residual step** (TER, optional, on by default):

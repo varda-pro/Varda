@@ -136,6 +136,27 @@ def test_write_band_blocks(tmp_path: Path) -> None:
     np.testing.assert_array_equal(_read(path), expected.astype(np.float32))
 
 
+def test_writes_without_a_memmap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # a memmap of the whole product would dirty its pages in memory (GBs for a
+    # map-projected FRT); blocks go to the file directly, and what was never
+    # written (band 0 of lines 1-2 here) is no-data at close
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("EnviCubeWriter must not memory-map the product")
+
+    monkeypatch.setattr(np, "memmap", refuse)
+    path = tmp_path / "x_vmtr.img"
+    cube = _cube()
+    with EnviCubeWriter(path, 3, 4, _bands(), _grid(), "", {}) as writer:
+        writer.writeBands(1, cube[:, :, 1:])
+        writer.write(0, cube[:1])
+    monkeypatch.undo()
+    expected = np.where(np.isfinite(cube), cube, NODATA).transpose(2, 0, 1)
+    expected[0, 1:] = NODATA
+    np.testing.assert_array_equal(_read(path), expected.astype(np.float32))
+
+
 def test_unwritten_lines_are_nodata(tmp_path: Path) -> None:
     path = tmp_path / "x_vmtr.img"
     with EnviCubeWriter(path, 3, 4, _bands(), None, "", {}) as writer:

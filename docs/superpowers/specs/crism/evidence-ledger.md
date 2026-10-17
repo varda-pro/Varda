@@ -173,15 +173,26 @@ are written in Phase 1, test-first. Design:
 - **Source:** fusion prototype: instrument-noise χ² understates
   disagreement (shape χ² ≈ 5.6, M9).
 - **Confidence:** high, as a design principle.
+- **Systematic terms in the provenance** (per band, relative to I/F): scan
+  choice, artifact amplitude, the atmosphere's β excess (|ln T′| ·
+  √max(σ²_β,emp − σ²_β,formal, 0)) and the destripe frame's bootstrap σ
+  (controller rulings, Task 20 fix round 1: the frame only divides σ, σ/f).
 - **Measured (Task 20):** on the synthetic cube (seeds 0–3), the
-  sensor-space product's χ² against the truth, on the bland basalt unit and
-  about each band's mean residual, is 0.98–1.01 in every band group. What is
-  left in those means is systematic, as N2 intends: the shift fit is
-  +0.17 nm off on the library surfaces (A1) and β about 1% low, which offsets
-  single CO2 bands by up to 0.82σ; the raw χ² of 1900–2100 nm is 1.04–1.08 on
-  basalt and 1.38–1.53 on the hydrated and smectite units (A5). The
-  provenance reports the scan-choice, artifact-amplitude and destripe terms
-  per band; this fit bias is not among them.
+  sensor-space product's χ² against the truth:
+  - about each band's mean residual, on the bland basalt unit: 0.98–1.01 in
+    every band group;
+  - raw on basalt: 1.04–1.08 in 1900–2100 nm, 0.99–1.01 elsewhere;
+  - raw on every unit outside 1880–2100 nm: 0.995–1.013;
+  - raw on the hydrated and smectite units in 1900–2100 nm: 1.50 (seed 0),
+    1.66–1.72 (seeds 1–3); the test's < 1.6 is a regression bound on the A5
+    systematic that only seed 0 meets;
+  - the despike-replaced samples (σ = σ_p; about 300 per seed, all injected
+    spikes): 0.92–0.96.
+
+  What the per-band means hold is systematic, as N2 intends: the shift fit
+  is +0.17 nm off on the library surfaces (A1) and β about 1% low, which
+  offsets single CO2 bands by up to 0.82σ. No provenance term covers this
+  fit bias.
 - **Test:** `test_pipeline.py::test_sigma_chi2_synthetic`.
 
 ### Despike
@@ -475,6 +486,13 @@ are written in Phase 1, test-first. Design:
     deviant pixels 0.00694 / 0.00691, the 5% most coherently deviant
     0.00586 / 0.00582. With 08608:AT 0.00597 / 0.0071 / 0.0048 (column /
     pixel / scene); with 2815C:VS 0.00573 / 0.0069 / 0.0044.
+- **End to end (Task 20):** the pipeline's sensor-space product on the
+  synthetic's hydrated and smectite units has a raw χ² of 1.50–1.72 (seeds
+  0–3) in 1900–2100 nm against 1.04–1.08 on basalt: the β bias the prior only
+  partly removes. `test_pipeline.py::test_sigma_chi2_synthetic` holds it
+  below 1.6 on seed 0 as a regression bound (N2). Without the prior (or with
+  a rejected elevation model) the empirical σ_β the pipeline reports is the
+  formal one times the model's along-track `sigmaRatio`.
 - **Confidence:** medium on the synthetic; low-medium on real scenes until
   the scan dependence of H is understood and more scenes are measured.
 - **Test:** `test_atmosphere.py::test_beta_regularization_resists_h2o_band`
@@ -643,8 +661,10 @@ are written in Phase 1, test-first. Design:
   per-column cubic in λ within each filter segment (s) and the rest (h).
   Remove s where present (RMS s/σ_s ≥ 3) and the same in both halves of the
   lines (RMS (s₁ − s₂)/σ ≤ 2); remove h per element where |h| > 3σ_h and
-  |h₁ − h₂| ≤ 3σ. σ is a moving-block bootstrap over lines (50 resamples,
-  16-line blocks, within each half). The spec's "h always" is gated because
+  |h₁ − h₂| ≤ 3σ. The frame's σ is a moving-block bootstrap over lines (50
+  resamples, 16-line blocks, within each half); it is a systematic term in
+  the provenance, and σ is only divided by the factors (σ/f; Task 20 ruling,
+  N2). The spec's "h always" is gated because
   on FRS00031442 h is not persistent: removing it everywhere raised the
   cross-validated M11 to 0.75%.
 - **Source:** Parente 2008 (robust low-pass in the cross-track–spectral

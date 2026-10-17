@@ -167,18 +167,14 @@ def test_no_harm_at_default_snr() -> None:
     )
 
 
-def test_sigma_includes_frame_uncertainty() -> None:
-    # σ′² = (σ/f)² + (R σ_f / f²)²: relative to the corrected signal, σ′ is
-    # never below the input's relative σ, and it is at least σ/f
+def test_sigma_is_scaled_frame_uncertainty_is_systematic() -> None:
+    # σ is random only (N2): the frame divides it, σ′ = σ/f, and the frame's
+    # own bootstrap σ is a systematic term reported apart (the provenance)
     cube, sigma, _, _, frame = _scene()
     corrected, sigmaOut = applyStripes(cube, sigma, frame)
     valid = np.isfinite(cube) & np.isfinite(sigma)
-    assert np.isfinite(sigmaOut[valid]).all()
     assert np.isnan(corrected[~np.isfinite(cube)]).all()
-    relativeIn = (sigma / np.abs(cube))[valid]
-    relativeOut = (sigmaOut / np.abs(corrected))[valid]
-    assert np.all(relativeOut >= relativeIn * (1 - 1e-12))
-    assert np.all(sigmaOut[valid] >= (sigma / frame.factors)[valid] * (1 - 1e-12))
+    np.testing.assert_allclose(sigmaOut[valid], (sigma / frame.factors)[valid])
     estimated = frame.sigma > 0
     assert estimated.mean() > 0.8
     assert np.all(frame.sigma >= 0) and np.isfinite(frame.sigma).all()

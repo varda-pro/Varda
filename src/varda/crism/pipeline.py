@@ -39,22 +39,38 @@ chunked; per line the weights are the pixel's own and nothing depends on
 The systematic uncertainty is not in σ (N2). The provenance reports it per
 output band, relative to I/F, as the median over columns of: the scan choice
 (the column spectra corrected with the chosen transmission against the
-runner-up), the artifact amplitude (the scale's σ times β times the basis)
-and the destripe frame's σ. The spec's Monte Carlo over δ, the scan and the
-amplitude on 1,000 pixels is not done here.
+runner-up), the artifact amplitude (the scale's σ times β times the basis),
+the atmosphere's β excess (|ln T′| times the empirical σ_β's excess over the
+formal one, √max(σ²_emp − σ²_formal, 0)) and the destripe frame's bootstrap
+σ (the frame divides σ, σ/f, and adds no variance to it). The spec's Monte
+Carlo over δ, the scan and the amplitude on 1,000 pixels is not done here.
+The empirical σ_β is ``PixelFit.betaSigmaEmpirical`` with the elevation
+prior, and the formal σ_β times the elevation model's along-track
+``sigmaRatio`` without it.
+
+Memory: anonymous memory does not grow with the scene's length (Pass A reads
+``SELECTION_LINES``, the other passes a chunk, a block of output rows or a
+block of 16 columns at a time). The work memmaps are flushed after every
+chunk, so the OS may reclaim their pages, and the products are written with
+plain file I/O (``EnviCubeWriter``), the I/F and its σ one after the other.
 """
 
+import logging
 import math
 import os
+import platform
 import shutil
+import subprocess
 import time
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
 import attrs
 import numpy as np
+import rasterio
+import scipy
 from attrs import frozen
 
 from varda.common.provenance import PROVENANCE_KEY
@@ -100,7 +116,6 @@ from varda.crism.recipe import (
     IncidenceSource,
     Recipe,
     Resampling,
-    SmileMethod,
     recipeToDict,
 )
 from varda.crism.smile import (
@@ -148,11 +163,15 @@ type ProgressCallback = Callable[[float, str], None]
 _ESC_BIN_NM = {"HRL": 0.25, "HRS": 0.25}  # binned classes; 0.125 nm otherwise
 _DEFAULT_ESC_BIN_NM = 0.125
 _DEFAULT_BANDS_NM = (2529.0, 1506.0, 1080.0)  # the IR false-color browse
-_COLUMN_BLOCK = 32
+_COLUMN_BLOCK = 16  # columns per ESC column-spectrum block: (lines, 16, 411)
 _MAP_ROWS = 64
 _BAND_BLOCK = 32
 _PLANES = ("beta", "betaSigma", "residualRms", "artifactAmplitude")
 _SIDECARS = (".recipe.json", ".provenance.json", ".diagnostics.npz")
+_AREA_IN_NAMES = {"Spike count": "Mean spike count", "Leask count": "Mean Leask count"}
+_GIT_TIMEOUT_S = 5
+
+_log = logging.getLogger(__name__)
 # the share of the run each stage reports, in order
 _STAGES = {
     "calibration": (0.0, 0.03),
@@ -206,19 +225,6 @@ class _Progress:
             raise ProcessCancelled("CRISM processing was canceled")
 
 
-def _checkRecipe(recipe: Recipe) -> None:
-    """Options the recipe offers that Phase 1 does not implement."""
-    if recipe.smile.method.get() is SmileMethod.CUBIC:
-        raise ValueError(
-            "Cubic spline resampling is not available yet; use linear resampling."
-        )
-    if recipe.atmosphere.continuumDegree.get() != CONTINUUM_DEGREE:
-        raise ValueError(
-            f"The atmospheric fit's continuum degree is fixed at {CONTINUUM_DEGREE} "
-            f"for now, not {recipe.atmosphere.continuumDegree.get()}."
-        )
-
-
 def _nanMedian(values: np.ndarray, axis: int) -> np.ndarray:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN slices
@@ -265,6 +271,39 @@ def _defaultBands(vector: StandardVector) -> tuple[int, int, int]:
     return first, second, third
 
 
+def _git(*args: str) -> str | None:
+    """A git command's output in this package's checkout, or None (no git, not
+    a checkout, a frozen bundle)."""
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip()
+
+
+def _software() -> dict[str, object]:
+    """Versions, and the git commit (with a dirty flag) when Varda runs from
+    a checkout; best effort."""
+    commit = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain", "--untracked-files=no") if commit else None
+    return {
+        "varda": vardaVersion(),
+        "gitCommit": commit,
+        "gitDirty": bool(status) if status is not None else None,
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "scipy": scipy.__version__,
+        "rasterio": rasterio.__version__,
+    }
+
+
 @frozen(eq=False)
 class _Atmosphere:
     """What Pass A decided for the atmospheric correction."""
@@ -274,6 +313,9 @@ class _Atmosphere:
     model: AtmosphereModel
     artifact: dict[str, object]
     priorUsed: bool
+    # the elevation model's empirical over formal σ_β (1 when undefined); the
+    # empirical σ_β of a fit without the prior is the formal one times it
+    sigmaRatio: float
 
 
 class _Run:
@@ -306,6 +348,26 @@ class _Run:
             "badPixel": 0,
             "slewLine": 0,
         }
+        # set by the passes, in order
+        self.status: list[CalibrationFileStatus] = []
+        self.wavelengths = np.empty((0, 0))  # (s, b) the WA
+        self.bandWavelengths = np.empty(0)  # (b,) its median over columns
+        self.badPixels: np.ndarray | None = None
+        self.usable = np.empty(0, dtype=bool)
+        self.incidenceFit: IncidenceFit | None = None
+        self.noise: NoiseModel | None = None
+        self.scanChoice = np.empty((0, 0))
+        self.artifactTerm = np.empty((0, 0))
+        self.planes: dict[str, np.ndarray] = {}
+        self.betaSigmaFormal = np.empty((0, 0))
+        self.spikeCount = np.empty((0, 0))
+        self.leaskCount = np.empty((0, 0))
+        self.memmaps: dict[str, np.memmap] = {}  # the work files, by name
+        self.weights: ResampleWeights | None = None
+        self.footprint = np.empty((0, 0), dtype=bool)
+        self.validFraction = np.empty(0)
+        self.bbl = np.empty(0, dtype=np.uint8)
+        self.grid: MapGrid | None = None
         self.atmosphere: _Atmosphere | None = None
         self.stripes: StripeFrame | None = None
         self.esc: EscFrame | None = None
@@ -336,6 +398,11 @@ class _Run:
             self.steps["projection"] = {"enabled": False}
         return self._timed("sidecars", self._finish)
 
+    def close(self) -> None:
+        """Drop every work memmap, so the work folder can be removed (Windows
+        cannot delete a mapped file)."""
+        self.memmaps.clear()
+
     def _timed[T](self, stage: str, step: Callable[[], T]) -> T:
         start = time.perf_counter()
         result = step()
@@ -349,12 +416,11 @@ class _Run:
 
     def _calibration(self) -> None:
         self.progress.report("calibration", 0.0, "Checking the calibration files")
-        self.status: list[CalibrationFileStatus] = self.library.ensure(self.trr3)
+        self.status = self.library.ensure(self.trr3)
         self.wavelengths = self.library.wavelengths(self.trr3)  # (s, b)
         self.bandWavelengths = _nanMedian(self.wavelengths, axis=0)
         self.badPixels = self.library.badPixels(self.trr3)
         self.usable = usableLines(self.ddr)
-        self.incidenceFit: IncidenceFit | None = None
         if self.recipe.photometry.incidence.get() is IncidenceSource.AREOID_POLYNOMIAL:
             incidence = self.ddr.band(DdrBand.INCIDENCE_AREOID)
             incidence[~self.usable] = np.nan
@@ -400,6 +466,7 @@ class _Run:
         halo = ALONG_TRACK_HALO if recipe.despike.enabled.get() else 0
         lo, hi = max(start - halo, 0), min(stop + halo, self.lines)
         cube = self._read(lo, hi, (start, stop) if tally else None)
+        assert self.noise is not None  # Pass A
         sigma = self.noise.sigma(cube)
         if recipe.photometry.enabled.get():
             cube, sigma = lambert(cube, sigma, self._incidence(lo, hi))
@@ -455,12 +522,12 @@ class _Run:
         span = [central.start, central.stop - 1]
         self.progress.report("passA", 0.0, "Pass A: the noise model")
         raw = self._read(central.start, central.stop, None)
-        self.noise: NoiseModel = estimateNoise(raw, wavelengths=self.bandWavelengths)
-        noiseSpectrum = _nanMedian(self.noise.sigma(raw).reshape(-1, self.bands), 0)
+        noise = self.noise = estimateNoise(raw, wavelengths=self.bandWavelengths)
+        noiseSpectrum = _nanMedian(noise.sigma(raw).reshape(-1, self.bands), 0)
         self.diagnostics |= {
-            "noiseFloor": self.noise.floor,
-            "noiseShot": self.noise.shot,
-            "noiseAchromaticFraction": self.noise.achromaticFraction,
+            "noiseFloor": noise.floor,
+            "noiseShot": noise.shot,
+            "noiseAchromaticFraction": noise.achromaticFraction,
             "noiseSpectrum": noiseSpectrum,
             "bandWavelengths": self.bandWavelengths,
         }
@@ -471,7 +538,7 @@ class _Run:
             "columnGroup": 16,
             "quietFraction": 0.5,
             "medianSigma": float(np.nanmedian(noiseSpectrum)),
-            "achromaticFraction": self.noise.achromaticFraction,
+            "achromaticFraction": noise.achromaticFraction,
         }
         self.steps["photometry"] = self._photometryRecord()
         if not self.recipe.atmosphere.enabled.get():
@@ -502,6 +569,7 @@ class _Run:
             model,
             record,
             withPrior and elevation.accepted,
+            elevation.sigmaRatio if math.isfinite(elevation.sigmaRatio) else 1.0,
         )
         self._systematicNative(selection, spectra, spread)
         self.steps["atmosphere"] = self._atmosphereRecord(span, elevation)
@@ -638,6 +706,7 @@ class _Run:
         return {
             "enabled": True,
             "selectionLines": span,
+            "continuumDegree": CONTINUUM_DEGREE,
             "source": self.recipe.atmosphere.source.get().name,
             "candidates": [
                 {
@@ -675,19 +744,23 @@ class _Run:
     # --- pass B --------------------------------------------------------------
 
     def _memmap(self, name: str, bands: int) -> np.memmap:
-        return np.memmap(
-            self.work / name,
+        """A float32 ``(l, s, bands)`` work file, kept in ``memmaps``."""
+        memmap = np.memmap(
+            self.work / f"{name}.f32",
             dtype=np.float32,
             mode="w+",
             shape=(self.lines, self.samples, bands),
         )
+        self.memmaps[name] = memmap
+        return memmap
 
     def _passB(self) -> None:
-        self.cube = self._memmap("atmosphere.f32", self.bands)
-        self.sigma = self._memmap("atmosphere_sigma.f32", self.bands)
+        work = self._memmap("atmosphere", self.bands)
+        workSigma = self._memmap("atmosphereSigma", self.bands)
         self.planes = {
             name: np.full((self.lines, self.samples), np.nan) for name in _PLANES
         }
+        self.betaSigmaFormal = np.full((self.lines, self.samples), np.nan)
         self.spikeCount = np.zeros((self.lines, self.samples))
         self.leaskCount = np.zeros((self.lines, self.samples))
         positions: list[np.ndarray] = []
@@ -709,14 +782,21 @@ class _Run:
                 fit = self._fitLines(cube, sigma, model, elevation)
                 cube, sigma = correct(cube, sigma, self.wavelengths, model, fit)
                 self.planes["beta"][start:stop] = fit.beta
-                self.planes["betaSigma"][start:stop] = fit.betaSigmaEmpirical
+                assert self.atmosphere is not None
+                atmosphere = self.atmosphere
+                self.planes["betaSigma"][start:stop] = (
+                    fit.betaSigmaEmpirical
+                    if atmosphere.priorUsed
+                    else fit.betaSigma * atmosphere.sigmaRatio
+                )
+                self.betaSigmaFormal[start:stop] = fit.betaSigma
                 self.planes["residualRms"][start:stop] = fit.residualRms
                 self.planes["artifactAmplitude"][start:stop] = fit.artifactAmplitude
-            self.cube[start:stop] = cube
-            self.sigma[start:stop] = sigma
+            work[start:stop] = cube
+            workSigma[start:stop] = sigma
+            work.flush()  # the OS may reclaim the written pages
+            workSigma.flush()
             self.progress.check()
-        self.cube.flush()
-        self.sigma.flush()
         found = np.vstack(positions) if positions else np.zeros((0, 3), np.int32)
         self.diagnostics["spikePositions"] = found.astype(np.int32)
         self.diagnostics["spikesPerBand"] = np.bincount(
@@ -773,25 +853,26 @@ class _Run:
         recipe = self.recipe
         vector = self.vector
         count = len(vector.wavelengths)
-        self.weights = self._resampleWeights()
+        weights = self.weights = self._resampleWeights()
+        work, workSigma = self.memmaps["atmosphere"], self.memmaps["atmosphereSigma"]
         destriping = bool(recipe.destripe.enabled.get())
         escOn = bool(recipe.smile.enabled.get() and recipe.smile.esc.get())
         bland = None
         if destriping or escOn:
             self.progress.report("passC", 0.0, "Pass C: finding bland pixels")
-            bland = blandMask(self.cube, self.wavelengths)
+            bland = blandMask(work, self.wavelengths)
         if destriping:
             assert bland is not None
             self.progress.report("passC", 0.05, "Pass C: estimating the stripe frame")
             self.stripes = estimateStripes(
-                self.cube,
-                self.sigma,
+                work,
+                workSigma,
                 self.wavelengths,
                 bland,
                 splitHalf=bool(recipe.destripe.splitHalf.get()),
             )
-        self.resampled = self._memmap("resampled.f32", count)
-        self.resampledSigma = self._memmap("resampled_sigma.f32", count)
+        resampled = self._memmap("resampled", count)
+        resampledSigma = self._memmap("resampledSigma", count)
         for start, stop in _chunks(self.lines, CHUNK_LINES):
             self.progress.report(
                 "passC",
@@ -799,13 +880,15 @@ class _Run:
                 f"Pass C: {'destripe and ' if destriping else ''}resampling, "
                 f"lines {start + 1}–{stop}",
             )
-            cube = np.asarray(self.cube[start:stop], dtype=np.float64)
-            sigma = np.asarray(self.sigma[start:stop], dtype=np.float64)
+            cube = np.asarray(work[start:stop], dtype=np.float64)
+            sigma = np.asarray(workSigma[start:stop], dtype=np.float64)
             if self.stripes is not None:
                 cube, sigma = applyStripes(cube, sigma, self.stripes)
-            cube, sigma = resample(cube, sigma, self.weights)
-            self.resampled[start:stop] = cube
-            self.resampledSigma[start:stop] = sigma
+            cube, sigma = resample(cube, sigma, weights)
+            resampled[start:stop] = cube
+            resampledSigma[start:stop] = sigma
+            resampled.flush()
+            resampledSigma.flush()
             self.progress.check()
         if escOn:
             assert bland is not None
@@ -818,15 +901,15 @@ class _Run:
                     f"Pass C: ESC, lines {start + 1}–{stop}",
                 )
                 cube, sigma = applyEsc(
-                    np.asarray(self.resampled[start:stop], dtype=np.float64),
-                    np.asarray(self.resampledSigma[start:stop], dtype=np.float64),
+                    np.asarray(resampled[start:stop], dtype=np.float64),
+                    np.asarray(resampledSigma[start:stop], dtype=np.float64),
                     self.esc,
                 )
-                self.resampled[start:stop] = cube
-                self.resampledSigma[start:stop] = sigma
+                resampled[start:stop] = cube
+                resampledSigma[start:stop] = sigma
+                resampled.flush()
+                resampledSigma.flush()
                 self.progress.check()
-        self.resampled.flush()
-        self.resampledSigma.flush()
         self._bandList()
         self._recordPassC(destriping, escOn)
         sensor = self.recipe.output.sensorSpace.get() or not (
@@ -841,10 +924,12 @@ class _Run:
         target = self.vector.wavelengths
         spectra = np.full((self.samples, len(target)), np.nan)
         wavelengths = np.broadcast_to(target, spectra.shape)
+        resampled = self.memmaps["resampled"]
+        resampledSigma = self.memmaps["resampledSigma"]
         for first in range(0, self.samples, _COLUMN_BLOCK):
             columns = slice(first, min(first + _COLUMN_BLOCK, self.samples))
-            cube = np.array(self.resampled[:, columns], dtype=np.float64)
-            sigma = np.array(self.resampledSigma[:, columns], dtype=np.float64)
+            cube = np.array(resampled[:, columns], dtype=np.float64)
+            sigma = np.array(resampledSigma[:, columns], dtype=np.float64)
             cube[~bland[:, columns]] = np.nan
             spectra[columns], _ = columnSpectra(cube, sigma, wavelengths[columns])
         offsets = escOffsets(self._alignedToVector(), target)
@@ -871,7 +956,7 @@ class _Run:
         valid = np.zeros(count)
         self.footprint = np.zeros((self.lines, self.samples), dtype=bool)
         for start, stop in _chunks(self.lines, CHUNK_LINES):
-            finite = np.isfinite(self.resampled[start:stop])
+            finite = np.isfinite(self.memmaps["resampled"][start:stop])
             valid += finite.sum(axis=(0, 1))
             self.footprint[start:stop] = finite.any(axis=2)
         pixels = int(self.footprint.sum())
@@ -959,9 +1044,8 @@ class _Run:
             ]
             steps.append(f"ATM({';'.join(parts)})")
             sigmaSteps.append("ATM")
-        if self.stripes is not None:
+        if self.stripes is not None:  # σ/f only: the frame's σ is systematic
             steps.append("RSC(frame)")
-            sigmaSteps.append("RSC")
         # resampling to the vector always shapes σ; with the smile step off it
         # is from the bands' nominal wavelengths
         if not recipe.smile.enabled.get():
@@ -974,6 +1058,7 @@ class _Run:
         if mapped:
             projection = recipe.projection
             kind = "nn" if projection.resampling.get() is Resampling.NEAREST else "area"
+            assert self.grid is not None
             projectionName = "eqc" if self.grid.kind == "equirectangular" else "ps"
             steps.append(f"MAP({projectionName};{self.grid.pixelSize:g}m;{kind})")
             sigmaSteps.append("MAP")
@@ -1020,33 +1105,54 @@ class _Run:
             _defaultBands(self.vector),
         )
 
-    def _writeSensorSpace(self) -> None:
-        name = self.names["sensor"]
+    def _writeSpectral(
+        self,
+        name: str,
+        grid: MapGrid | None,
+        what: str,
+        blocks: Callable[[np.memmap], Iterator[tuple[int, np.ndarray, bool]]],
+    ) -> None:
+        """An I/F product, then its σ, one after the other: ``blocks`` turns a
+        resampled work memmap into (first, block, whole lines?) pieces, written
+        with ``write`` (lines) or ``writeBands`` (bands)."""
+        lines = grid.height if grid is not None else self.lines
+        samples = grid.width if grid is not None else self.samples
         bands = self._spectralBands()
-        what = "CRISM IR I/F on the MTRDR wavelength vector, sensor space"
-        with (
-            self._writer(
-                name, self.lines, self.samples, bands, None, what, withSigma=True
-            ) as data,
-            self._writer(
+        for key, product, description, withSigma in (
+            ("resampled", name, what, True),
+            (
+                "resampledSigma",
                 f"{name}_sigma",
-                self.lines,
-                self.samples,
-                bands,
-                None,
                 f"1-sigma ({SIGMA_KIND}) of {name}",
-                withSigma=False,
-            ) as sigma,
+                False,
+            ),
         ):
+            with self._writer(
+                product, lines, samples, bands, grid, description, withSigma
+            ) as writer:
+                for first, block, byLines in blocks(self.memmaps[key]):
+                    if byLines:
+                        writer.write(first, block)
+                    else:
+                        writer.writeBands(first, block)
+                    self.progress.check()
+
+    def _writeSensorSpace(self) -> None:
+        def blocks(source: np.memmap) -> Iterator[tuple[int, np.ndarray, bool]]:
             for start, stop in _chunks(self.lines, CHUNK_LINES):
                 self.progress.report(
                     "passC",
                     0.8 + 0.2 * start / self.lines,
                     f"Pass C: writing the sensor-space product, lines {start + 1}–{stop}",
                 )
-                data.write(start, self.resampled[start:stop])
-                sigma.write(start, self.resampledSigma[start:stop])
-                self.progress.check()
+                yield start, np.asarray(source[start:stop]), True
+
+        self._writeSpectral(
+            self.names["sensor"],
+            None,
+            "CRISM IR I/F on the MTRDR wavelength vector, sensor space",
+            blocks,
+        )
 
     # --- pass D --------------------------------------------------------------
 
@@ -1056,68 +1162,62 @@ class _Run:
         lon = self.ddr.band(DdrBand.LONGITUDE)
         pixelSize = projection.pixelSize.get() or PIXEL_SIZE_M * self.trr3.binning
         self.progress.report("passD", 0.0, "Pass D: the map grid")
-        self.grid = mtrdrGrid(lat, lon, pixelSize, bool(projection.snapToLattice.get()))
-        grid = self.grid
+        grid = self.grid = mtrdrGrid(
+            lat, lon, pixelSize, bool(projection.snapToLattice.get())
+        )
         glt = nearestNeighborGlt(grid, lat, lon, projection.maxDistanceFactor.get())
+        del lat, lon
         area = (
-            areaWeights(grid, lat, lon)
+            areaWeights(
+                grid, self.ddr.band(DdrBand.LATITUDE), self.ddr.band(DdrBand.LONGITUDE)
+            )
             if projection.resampling.get() is Resampling.AREA
             else None
         )
-        bands = self._spectralBands()
-        name = self.names["map"]
-        what = "CRISM IR I/F on the MTRDR wavelength vector, map projected"
-        with (
-            self._writer(
-                name, grid.height, grid.width, bands, grid, what, withSigma=True
-            ) as data,
-            self._writer(
-                f"{name}_sigma",
-                grid.height,
-                grid.width,
-                bands,
-                grid,
-                f"1-sigma ({SIGMA_KIND}) of {name}",
-                withSigma=False,
-            ) as sigma,
-        ):
+        count = len(self.vector.wavelengths)
+
+        def blocks(source: np.memmap) -> Iterator[tuple[int, np.ndarray, bool]]:
             if area is None:
                 for start, stop in _chunks(grid.height, _MAP_ROWS):
                     self.progress.report(
                         "passD",
-                        0.1 + 0.7 * start / grid.height,
+                        0.05 + 0.75 * start / grid.height,
                         f"Pass D: projecting rows {start + 1}–{stop} of {grid.height}",
                     )
-                    part = Glt(glt.sourceLine[start:stop], glt.sourceSample[start:stop])
-                    data.write(start, applyGlt(self.resampled, part))
-                    sigma.write(start, applyGlt(self.resampledSigma, part))
-                    self.progress.check()
-            else:
-                count = len(self.vector.wavelengths)
-                for first in range(0, count, _BAND_BLOCK):
-                    block = slice(first, min(first + _BAND_BLOCK, count))
-                    self.progress.report(
-                        "passD",
-                        0.1 + 0.7 * first / count,
-                        f"Pass D: area weighting bands {block.start + 1}–{block.stop}",
-                    )
-                    mean, meanSigma = applyAreaWeights(
-                        self.resampled[:, :, block],
-                        self.resampledSigma[:, :, block],
-                        area,
-                    )
-                    data.writeBands(first, mean)
-                    sigma.writeBands(first, meanSigma)
-                    self.progress.check()
+                    yield start, applyGlt(source, _rows(glt, start, stop)), True
+                return
+            sigma = self.memmaps["resampledSigma"]
+            for first in range(0, count, _BAND_BLOCK):
+                block = slice(first, min(first + _BAND_BLOCK, count))
+                self.progress.report(
+                    "passD",
+                    0.05 + 0.75 * first / count,
+                    f"Pass D: area weighting bands {block.start + 1}–{block.stop}",
+                )
+                mean, meanSigma = applyAreaWeights(
+                    source[:, :, block], sigma[:, :, block], area
+                )
+                yield first, (meanSigma if source is sigma else mean), False
+
+        self._writeSpectral(
+            self.names["map"],
+            grid,
+            "CRISM IR I/F on the MTRDR wavelength vector, map projected",
+            blocks,
+        )
         self.progress.report(
             "passD", 0.85, "Pass D: geometry and processing backplanes"
         )
         self._writeBackplanes(glt, area)
-        self._recordProjection(glt)
+        self._recordProjection(grid, glt)
 
     def _writeBackplanes(self, glt: Glt, area: AreaWeights | None) -> None:
+        """DE through the GLT and IN, in blocks of output rows."""
+        assert self.grid is not None
         grid = self.grid
-        ddr = np.stack([self.ddr.band(band) for band in DdrBand], axis=-1)
+        ddr = np.stack([self.ddr.band(band) for band in DdrBand], axis=-1).astype(
+            np.float32
+        )
         with self._writer(
             self.names["geometry"],
             grid.height,
@@ -1127,46 +1227,59 @@ class _Run:
             "CRISM DDR backplanes, map projected (nearest neighbor)",
             withSigma=False,
         ) as writer:
-            writer.write(0, applyGlt(ddr, glt))
+            for start, stop in _chunks(grid.height, _MAP_ROWS):
+                writer.write(start, applyGlt(ddr, _rows(glt, start, stop)))
+                self.progress.check()
+        del ddr
         # the bands derived from the data are no-data where the source pixel
         # has none (Review Focus 2); its geometry and position are still known
-        filled = glt.sourceLine >= 0
         hasData = np.where(self.footprint, 1.0, np.nan)
         planes = np.stack(
             [self.planes[name] for name in _PLANES]
-            + [self.spikeCount * hasData, self.leaskCount * hasData],
+            + [self.spikeCount * hasData, self.leaskCount * hasData, hasData],
             axis=-1,
         )
-        if area is None:
-            mapped = applyGlt(planes, glt)
-            looks = applyGlt(hasData, glt)
-        else:
-            mapped, _ = applyAreaWeights(planes, np.zeros(planes.shape), area)
-            covered, _ = applyAreaWeights(hasData, np.zeros(hasData.shape), area)
-            looks = np.where(np.isfinite(covered), area.looks, np.nan)
-        info = np.concatenate(
-            [
-                np.where(filled, glt.sourceSample, np.nan)[..., None],
-                np.where(filled, glt.sourceLine, np.nan)[..., None],
-                mapped,
-                looks[..., None],
-            ],
-            axis=-1,
-        )
+        names = IN_BAND_NAMES
+        if area is not None:  # the counts are area-weighted means there
+            names = tuple(_AREA_IN_NAMES.get(n, n) for n in IN_BAND_NAMES)
         with self._writer(
             self.names["info"],
             grid.height,
             grid.width,
-            EnviBands(IN_BAND_NAMES, defaultBands=(1, 1, 1)),
+            EnviBands(names, defaultBands=(1, 1, 1)),
             grid,
             "Varda CRISM processing backplanes (source sample and line are "
             "0-based and nearest neighbor; looks is the effective number)",
             withSigma=False,
         ) as writer:
-            writer.write(0, info)
+            for start, stop in _chunks(grid.height, _MAP_ROWS):
+                part = _rows(glt, start, stop)
+                filled = part.sourceLine >= 0
+                if area is None:
+                    mapped = applyGlt(planes, part)
+                    looks = mapped[..., -1]
+                else:
+                    rows = slice(start * grid.width, stop * grid.width)
+                    weights = AreaWeights(area.matrix[rows], area.looks[start:stop])
+                    mapped, _ = applyAreaWeights(
+                        planes, np.zeros(planes.shape), weights
+                    )
+                    looks = np.where(
+                        np.isfinite(mapped[..., -1]), area.looks[start:stop], np.nan
+                    )
+                info = np.concatenate(
+                    [
+                        np.where(filled, part.sourceSample, np.nan)[..., None],
+                        np.where(filled, part.sourceLine, np.nan)[..., None],
+                        mapped[..., :-1],
+                        looks[..., None],
+                    ],
+                    axis=-1,
+                )
+                writer.write(start, info)
+                self.progress.check()
 
-    def _recordProjection(self, glt: Glt) -> None:
-        grid = self.grid
+    def _recordProjection(self, grid: MapGrid, glt: Glt) -> None:
         projection = self.recipe.projection
         record: dict[str, object] = {
             "enabled": True,
@@ -1197,12 +1310,34 @@ class _Run:
 
     # --- sidecars ------------------------------------------------------------
 
+    def _betaExcess(self) -> np.ndarray:
+        """``(s, b)``: |ln T′| times each column's median excess of the
+        empirical σ_β over the formal one, √max(σ²_emp − σ²_formal, 0): the
+        β uncertainty the per-band σ does not carry (ln T′ includes a
+        path-scaled artifact)."""
+        if self.atmosphere is None:
+            return np.zeros((self.samples, self.bands))
+        model = self.atmosphere.model
+        logT = shiftedLogTransmission(
+            self.wavelengths, model.transmission.values, model.shiftNm
+        )
+        if model.artifact is not None and model.artifactScale is not None:
+            logT = logT + model.artifactScale * model.artifact
+        with np.errstate(invalid="ignore"):
+            excess = np.sqrt(
+                np.fmax(self.planes["betaSigma"] ** 2 - self.betaSigmaFormal**2, 0.0)
+            )
+        excess[~np.isfinite(self.planes["betaSigma"])] = np.nan
+        return np.abs(logT) * _nanMedian(excess, axis=0)[:, None]
+
     def _systematic(self) -> dict[str, object]:
         """The systematic terms per output band (relative to I/F)."""
+        assert self.weights is not None  # Pass C
         zeros = np.zeros((self.samples, self.bands))
         terms = {
             "scanChoice": self.scanChoice,
             "artifactAmplitude": self.artifactTerm,
+            "atmosphereBetaExcess": self._betaExcess(),
             "destripeFrame": (
                 self.stripes.sigma / self.stripes.factors
                 if self.stripes is not None
@@ -1220,30 +1355,45 @@ class _Run:
             "note": "relative to I/F, per output band, the median over columns; "
             "not part of σ (N2). scanChoice: the chosen transmission against the "
             "runner-up on the column spectra; artifactAmplitude: σ of the scale "
-            "times β times the basis; destripeFrame: the frame's σ",
+            "times β times the basis; atmosphereBetaExcess: |ln T′| times the "
+            "empirical σ_β's excess over the formal one; destripeFrame: the "
+            "frame's bootstrap σ",
         }
 
     def _calibrationRecord(self) -> list[dict[str, object]]:
+        """Every calibration file: ``required`` means needed for this
+        processing (the WA, and the AT the atmosphere used), ``used`` that its
+        data went in (also the bad-pixel maps found)."""
+        chosen = (
+            self.atmosphere.selection.chosen.sourceName.lower()
+            if self.atmosphere is not None
+            else None
+        )
         records: list[dict[str, object]] = []
         seen: set[str] = set()
 
-        def add(
-            kind: str, name: str, path: Path | None, required: bool, note: str
-        ) -> None:
-            seen.add(name.lower())
+        def add(kind: str, name: str, path: Path | None, note: str) -> None:
+            name = name.lower()
+            seen.add(name)
+            used = path is not None and (
+                kind == "WA"
+                or name == chosen
+                or (kind == "BP" and self.badPixels is not None)
+            )
             records.append(
                 {
                     "kind": kind,
-                    "name": name.lower(),
+                    "name": name,
                     "path": path,
                     "sha256": sha256File(path) if path is not None else None,
-                    "required": required,
+                    "required": kind == "WA" or name == chosen,
+                    "used": used,
                     "note": note,
                 }
             )
 
         for entry in self.status:
-            add(entry.kind, entry.name, entry.localPath, entry.required, entry.note)
+            add(entry.kind, entry.name, entry.localPath, entry.note)
         for candidate in self._candidatesUsed:
             name = candidate.sourceName.lower()
             if name in seen:
@@ -1253,8 +1403,7 @@ class _Run:
                 kind,
                 name,
                 self.library.localFile(kind, name) if kind == "AT" else None,
-                False,
-                f"used as the candidate {candidate.key}",
+                f"a candidate, {candidate.key}",
             )
         return records
 
@@ -1285,6 +1434,7 @@ class _Run:
         history, sigmaSteps = self._history(mapped)
         provenance = {
             "vardaVersion": vardaVersion(),
+            "software": _software(),
             "created": self.created,
             "observation": self.observation.name,
             "counter": self.observation.counter,
@@ -1321,11 +1471,38 @@ class _Run:
         )
 
 
-def _publish(staged: ProcessResult, staging: Path, outputFolder: Path) -> ProcessResult:
-    """Move every staged file into the output folder, the sidecars last."""
-    files = sorted(p for p in staging.iterdir() if p.is_file())
-    for path in sorted(files, key=lambda p: p.name.endswith(_SIDECARS)):
+def _rows(glt: Glt, start: int, stop: int) -> Glt:
+    """Output rows [start, stop) of a GLT."""
+    return Glt(glt.sourceLine[start:stop], glt.sourceSample[start:stop])
+
+
+def _productFiles(names: Mapping[str, str]) -> set[str]:
+    """Every file name a run can write for these product names."""
+    stems = [names[key] for key in ("map", "geometry", "info", "sensor")]
+    stems += [f"{names['map']}_sigma", f"{names['sensor']}_sigma"]
+    files = {f"{stem}{suffix}" for stem in stems for suffix in (".img", ".hdr")}
+    return files | {f"{names['map']}.tif"} | {names["map"] + s for s in _SIDECARS}
+
+
+def _publish(
+    staged: ProcessResult,
+    staging: Path,
+    outputFolder: Path,
+    names: Mapping[str, str],
+) -> ProcessResult:
+    """Move every staged file into the output folder, images before their
+    headers and the sidecars last, then remove what an earlier run of this
+    observation left that this run did not write (Varda's own names only)."""
+
+    def order(path: Path) -> tuple[bool, bool, str]:
+        return (path.name.endswith(_SIDECARS), path.suffix == ".hdr", path.name)
+
+    files = sorted((p for p in staging.iterdir() if p.is_file()), key=order)
+    for path in files:
         os.replace(path, outputFolder / path.name)
+    written = {path.name for path in files}
+    for name in sorted(_productFiles(names) - written):
+        (outputFolder / name).unlink(missing_ok=True)
 
     def moved(path: Path | None) -> Path | None:
         return outputFolder / path.name if path is not None else None
@@ -1340,6 +1517,19 @@ def _publish(staged: ProcessResult, staging: Path, outputFolder: Path) -> Proces
         provenance=outputFolder / staged.provenance.name,
         diagnostics=outputFolder / staged.diagnostics.name,
     )
+
+
+def _removeWork(work: Path, succeeded: bool) -> None:
+    """Remove the work folder; a failure is logged, and raised when the run
+    itself succeeded (it would otherwise go unnoticed)."""
+    try:
+        shutil.rmtree(work)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        _log.warning("Could not remove the CRISM work folder %s: %s", work, error)
+        if succeeded:
+            raise
 
 
 def process(
@@ -1360,16 +1550,20 @@ def process(
     ``cancelled`` is asked between passes and chunks; when it returns True,
     ``ProcessCancelled`` is raised. On a cancel or any failure nothing is
     written: the products already in the folder stay as they were."""
-    _checkRecipe(recipe)
     outputFolder = Path(outputFolder)
     outputFolder.mkdir(parents=True, exist_ok=True)
     work = outputFolder / WORK_FOLDER
-    shutil.rmtree(work, ignore_errors=True)
+    if work.exists():  # left by a run that was killed
+        shutil.rmtree(work)
     (work / "out").mkdir(parents=True)
+    run: _Run | None = None
+    succeeded = False
     try:
         run = _Run(observation, recipe, work, library, _Progress(progress, cancelled))
-        staged = run.run()
-        del run  # closes the work memmaps before the folder goes
-        return _publish(staged, work / "out", outputFolder)
+        result = _publish(run.run(), work / "out", outputFolder, run.names)
+        succeeded = True
+        return result
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        if run is not None:
+            run.close()
+        _removeWork(work, succeeded)

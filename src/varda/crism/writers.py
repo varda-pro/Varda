@@ -1,7 +1,9 @@
 """MTRDR-style ENVI products, their sidecar files and the optional COG.
 
-Qt-free. ``EnviCubeWriter`` writes a BSQ float32 cube line block by line block
-through a memmap of ``<image>.part``, so the full cube is never held; the
+Qt-free. ``EnviCubeWriter`` writes a BSQ float32 cube block by block (lines
+or bands) into ``<image>.part`` with plain file I/O at each block's offset, so
+the cube is never held and no memory-mapped page of it is ever dirtied in the
+process; lines never written are filled with no-data when it closes. The
 header (also through a ``.part``) and the image are renamed into place only
 when the whole product was written. If anything raises, the parts are deleted
 and a product already in the folder is left untouched. NaN and inf are written
@@ -15,7 +17,7 @@ import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import BinaryIO, Self
 
 import numpy as np
 import numpy.typing as npt
@@ -29,6 +31,8 @@ from varda.utilities.proj_lock import PROJ_LOCK
 
 NODATA = 65535.0
 _LIST_COLUMNS = 6
+_DTYPE = np.dtype("<f4")
+_SAMPLE_BYTES = _DTYPE.itemsize
 
 
 @frozen
@@ -63,6 +67,11 @@ def _floats(values: npt.ArrayLike) -> list[str]:
     return [f"{v:.6f}" for v in np.asarray(values, dtype=np.float64)]
 
 
+def _clean(block: np.ndarray) -> np.ndarray:
+    """float32 with NaN and inf as no-data."""
+    return np.where(np.isfinite(block), block, NODATA).astype(_DTYPE)
+
+
 def _partOf(path: Path) -> Path:
     return path.with_name(path.name + ".part")
 
@@ -93,7 +102,9 @@ class EnviCubeWriter:
         self._description = description
         self._extra = dict(extraHeader)
         self._count = max(len(bands.names), self._bandCount(bands))
-        self._map: np.memmap | None = None
+        self._file: BinaryIO | None = None
+        self._linesWritten = np.zeros(lines, dtype=bool)
+        self._bandsWritten = np.zeros(self._count, dtype=bool)
 
     @staticmethod
     def _bandCount(bands: EnviBands) -> int:
@@ -103,31 +114,46 @@ class EnviCubeWriter:
         return 0
 
     def __enter__(self) -> Self:
-        self._map = np.memmap(
-            _partOf(self._path),
-            dtype="<f4",
-            mode="w+",
-            shape=(self._count, self._lines, self._samples),
-        )
-        self._map[:] = NODATA
+        self._file = _partOf(self._path).open("w+b")
+        self._file.truncate(self._count * self._lines * self._samples * _SAMPLE_BYTES)
         return self
+
+    def _rows(self, band: int, firstLine: int, rows: np.ndarray) -> None:
+        """Lines of one band, contiguous in BSQ, at their offset in the file."""
+        if self._file is None:
+            raise RuntimeError("EnviCubeWriter used outside its with block")
+        self._file.seek(
+            (band * self._lines + firstLine) * self._samples * _SAMPLE_BYTES
+        )
+        self._file.write(np.ascontiguousarray(rows, dtype=_DTYPE).tobytes())
 
     def write(self, firstLine: int, block: np.ndarray) -> None:
         """Write ``block`` (lines, samples, bands) from image line ``firstLine``."""
-        if self._map is None:
-            raise RuntimeError("EnviCubeWriter used outside its with block")
-        clean = np.where(np.isfinite(block), block, NODATA).astype(np.float32)
-        self._map[:, firstLine : firstLine + clean.shape[0], :] = clean.transpose(
-            2, 0, 1
-        )
+        clean = _clean(block)
+        for band in range(clean.shape[2]):
+            self._rows(band, firstLine, clean[:, :, band])
+        self._linesWritten[firstLine : firstLine + clean.shape[0]] = True
 
     def writeBands(self, firstBand: int, block: np.ndarray) -> None:
         """Write ``block`` (lines, samples, bands): every line of the bands from
         ``firstBand`` on, e.g. one band block of an area-weighted product."""
-        if self._map is None:
-            raise RuntimeError("EnviCubeWriter used outside its with block")
-        clean = np.where(np.isfinite(block), block, NODATA).astype(np.float32)
-        self._map[firstBand : firstBand + clean.shape[2]] = clean.transpose(2, 0, 1)
+        clean = _clean(block)
+        for k in range(clean.shape[2]):
+            self._rows(firstBand + k, 0, clean[:, :, k])
+        self._bandsWritten[firstBand : firstBand + clean.shape[2]] = True
+
+    def _fillUnwritten(self) -> None:
+        """No-data in every line of every band that neither ``write`` nor
+        ``writeBands`` reached (the truncated file holds zeros there)."""
+        missing = ~self._linesWritten
+        if not missing.any():
+            return
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], missing.astype(int), [0]))))
+        runs = list(zip(edges[::2], edges[1::2]))
+        for band in np.flatnonzero(~self._bandsWritten):
+            for first, stop in runs:
+                rows = np.full((stop - first, self._samples), NODATA, dtype=_DTYPE)
+                self._rows(int(band), int(first), rows)
 
     def __exit__(
         self,
@@ -136,11 +162,18 @@ class EnviCubeWriter:
         tb: TracebackType | None,
     ) -> None:
         image, header = _partOf(self._path), _partOf(self._header)
-        if self._map is not None:
-            self._map.flush()
-            self._map = None
-        if excType is not None:
-            image.unlink(missing_ok=True)
+        complete = False
+        try:
+            if excType is None:
+                self._fillUnwritten()
+                complete = True
+        finally:
+            if self._file is not None:
+                self._file.close()
+                self._file = None
+            if not complete:
+                image.unlink(missing_ok=True)
+        if not complete:
             return
         try:
             header.write_text(self._headerText())

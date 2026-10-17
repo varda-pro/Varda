@@ -157,13 +157,30 @@ def test_crop_end_to_end(cropDir: Path, tmp_path: Path) -> None:
     assert provenance["inputs"][0]["sha256"] == digest
     scanId = next(row.scanId for row in atTable() if row.name == _AT)
     assert provenance["steps"]["atmosphere"]["chosen"]["scanId"] == scanId
-    assert provenance["steps"]["atmosphere"]["scores"] == {
-        f"{scanId}:AT": pytest.approx(
-            provenance["steps"]["atmosphere"]["scores"][f"{scanId}:AT"]
-        )
-    }
+    scores = provenance["steps"]["atmosphere"]["scores"]
+    assert list(scores) == [f"{scanId}:AT"]  # the crop's one local AT
+    assert 0 < scores[f"{scanId}:AT"] < 0.05
+    assert provenance["steps"]["atmosphere"]["continuumDegree"] == 3
     assert set(provenance["wallTimes"]) >= {"passA", "passB", "passC", "passD"}
-    assert any(c["name"] == _AT and c["sha256"] for c in provenance["calibration"])
+    calibration = {c["name"]: c for c in provenance["calibration"]}
+    assert calibration[_AT]["sha256"] and calibration[_AT]["used"]
+    assert calibration[_AT]["required"]
+    unused = [c for c in calibration.values() if c["kind"] == "AT" and c["name"] != _AT]
+    assert unused and not any(c["used"] or c["required"] for c in unused)
+    assert calibration["cdr490947778566_wa0000000l_3"]["used"]
+    software = provenance["software"]
+    assert software["numpy"] == np.__version__ and "rasterio" in software
+    systematic = provenance["systematic"]
+    for key in (
+        "scanChoice",
+        "artifactAmplitude",
+        "atmosphereBetaExcess",
+        "destripeFrame",
+    ):
+        assert len(systematic[key]) == 411, key
+    # 0 here: the crop's empirical σ_β is not above the formal one (ratio 0.99)
+    assert min(systematic["atmosphereBetaExcess"]) >= 0
+    assert "gitCommit" in software and "gitDirty" in software
 
     # progress runs from 0 to 1 without going back, every report has a message
     fractions = [fraction for fraction, _ in reports]
@@ -236,8 +253,7 @@ def test_invalid_regions_become_nodata(cropDir: Path, tmp_path: Path) -> None:
 
 def test_sigma_chi2_synthetic(tmp_path: Path) -> None:
     """N2, V1: the sensor-space product against the truth resampled to the
-    target vector with the same weights, in units of the product's σ, has a
-    reduced χ² of 1 per band group.
+    target vector with the same weights, in units of the product's σ.
 
     The recipe's steps match the physics the synthetic injects: photometry,
     despike (its spikes) and the atmosphere (its transmission, shift and
@@ -245,18 +261,28 @@ def test_sigma_chi2_synthetic(tmp_path: Path) -> None:
     artifact basis exists for its AT; destripe stays off as by default, so
     the truth keeps its stripes (truth = surface · stripes, resampled); and
     the ESC step is off, because the truth has no residual smile error for it
-    to remove (on this scene's units it would add one, Task 16). Samples whose
-    interpolation taps a spiked sample are left out.
+    to remove (on this scene's units it would add one, Task 16).
 
-    σ is the random part only (N2), so it is scored where the atmospheric
-    model holds, on the bland basalt unit, and against each band's own mean
-    residual: what is left in that mean is the fit's systematic error on these
-    library surfaces, not noise. Measured on seeds 0–3: the shift fit is
-    +0.17 nm off (ledger A1) and β about 1% low, which offsets single CO2
-    bands by up to 0.82σ (bounded below), and the raw χ² of the 1900–2100 nm
-    group is 1.04–1.08 on basalt; on the hydrated and smectite units, whose
-    β the prior only partly protects (ledger A5), it is 1.38–1.53. With those
-    offsets removed, χ² is 0.98–1.01 in every group."""
+    σ is the random part only (N2). The atmosphere fit has a systematic error
+    on these library surfaces: the shift is +0.17 nm off (ledger A1) and β
+    about 1% low, offsetting single CO2 bands by up to 0.82σ on basalt, and
+    the 1.9 µm bands of the hydrated and smectite units bias their β further
+    (A5). So, measured on seeds 0–3:
+
+    1. about each band's mean residual, on the bland basalt unit: χ²
+       0.98–1.01 in every group (1.00 ± 0.05), the offsets bounded;
+    2. raw on basalt: 1.04–1.08 in 1900–2100 nm (≤ 1.10), 0.99–1.01 elsewhere
+       (1.00 ± 0.05);
+    3. raw on every unit outside 1880–2100 nm: 0.995–1.013 (1.00 ± 0.05);
+    4. raw on the hydrated and smectite units in 1900–2100 nm: 1.50 on this
+       seed, 1.66–1.72 on seeds 1–3; < 1.6 is a regression bound on the known
+       A5 systematic for seed 0;
+    5. the despike-replaced samples (σ = σ_p; about 300, every one an
+       injected spike): 0.92–0.96, held to 1.00 ± 0.25, looser because the χ²
+       of 300 unit normals alone scatters by 0.08.
+
+    1–4 leave out the samples whose interpolation taps an injected spike or
+    a replaced sample."""
     cube, truth = makeSyntheticCube(lines=64, seed=0, artifactAmplitude=0.0)
     observation = writeSyntheticObservation(tmp_path / "obs", cube, truth)
     recipe = _sensorRecipe()
@@ -271,6 +297,8 @@ def test_sigma_chi2_synthetic(tmp_path: Path) -> None:
     assert result.sensorSpace is not None
     product = _read(result.sensorSpace)
     sigma = _read(_sigmaOf(result.sensorSpace))
+    with np.load(result.diagnostics) as diagnostics:
+        replacedAt = diagnostics["spikePositions"]
 
     vector = standardVector()
     wavelengths = truth.columnWavelengths
@@ -282,24 +310,52 @@ def test_sigma_chi2_synthetic(tmp_path: Path) -> None:
     )
     zeros = np.zeros(cube.shape)
     expected, _ = resample(truth.surface * truth.stripes, zeros, weights)
-    spiked = np.zeros(cube.shape)
-    spiked[tuple(truth.spikes.T)] = 1.0
-    touched, _ = resample(spiked, zeros, weights)
+
+    def tapping(positions: np.ndarray) -> np.ndarray:
+        marked = np.zeros(cube.shape)
+        marked[tuple(np.asarray(positions).T)] = 1.0
+        return resample(marked, zeros, weights)[0] > 0
+
+    replaced = tapping(replacedAt)
     z = (product - expected) / sigma
-    usable = np.isfinite(z) & ~(touched > 0) & (truth.units == 0)[..., None]
+    good = np.isfinite(z) & (vector.bbl == 1)
+    clean = good & ~tapping(truth.spikes) & ~replaced
+    basalt = (truth.units == 0)[..., None]
+    co2 = (vector.wavelengths >= 1900.0) & (vector.wavelengths < 2100.0)
+
+    def chi2(mask: np.ndarray) -> float:
+        assert mask.sum() > 10_000
+        return float(np.mean(z[mask] ** 2))
+
     for low, high in _GROUPS_NM:
         group = (vector.wavelengths >= low) & (vector.wavelengths < high)
         squares, count, offsets = 0.0, 0, []
         for band in np.nonzero(group & (vector.bbl == 1))[0]:
-            values = z[..., band][usable[..., band]]
+            values = z[..., band][(clean & basalt)[..., band]]
             offsets.append(float(np.mean(values)))
             squares += float(np.sum((values - offsets[-1]) ** 2))
             count += values.size
         assert count > 100_000
-        chi2 = squares / count
-        assert chi2 == pytest.approx(1.0, abs=0.05), (low, high, chi2)
+        about = squares / count
+        assert about == pytest.approx(1.0, abs=0.05), (low, high, about)  # 1
         bound = 1.0 if low == 1900.0 else 0.25  # the systematic, in σ
         assert max(np.abs(offsets)) < bound, (low, high, max(np.abs(offsets)))
+        raw = chi2(clean & basalt & group)  # 2
+        if low == 1900.0:
+            assert raw <= 1.10, raw
+        else:
+            assert raw == pytest.approx(1.0, abs=0.05), (low, high, raw)
+        outside = group & ~(
+            (vector.wavelengths >= 1880.0) & (vector.wavelengths < 2100.0)
+        )
+        if outside.any():
+            every = chi2(clean & outside)  # 3
+            assert every == pytest.approx(1.0, abs=0.05), (low, high, every)
+    hydrated = np.isin(truth.units, (1, 2))[..., None]
+    assert chi2(clean & hydrated & co2) < 1.6  # 4
+    assert replaced.sum() > 100
+    spikes = float(np.mean(z[good & replaced] ** 2))  # 5
+    assert spikes == pytest.approx(1.0, abs=0.25), spikes
 
 
 def test_chunking_invariance(
@@ -374,6 +430,10 @@ def test_recipe_toggles(cropDir: Path, tmp_path: Path) -> None:
     provenance = json.loads(result.provenance.read_text())
     assert provenance["steps"]["destripe"]["enabled"] is True
     assert "RSC(frame)" in provenance["history"] and "area" in provenance["history"]
+    assert "RSC" not in provenance["sigma"]["steps"]  # σ/f only, no variance added
+    frame = provenance["systematic"]["destripeFrame"]  # the crop has too few
+    assert len(frame) == 411 and min(frame) >= 0  # bland lines for a frame
+    assert "Mean spike count" in _header(result.info)
     with np.load(result.diagnostics) as diagnostics:
         assert diagnostics["stripeFactors"].shape == (120, 438)
 
@@ -398,3 +458,54 @@ def test_cancel(cropDir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert len(calls) == 2
     assert not (out / ".work").exists()
     assert list(out.rglob("*")) == []
+
+
+def test_rerun_replaces_products(cropDir: Path, tmp_path: Path) -> None:
+    # Review Focus 4 at the run level: a second run into the folder replaces
+    # the products, removes those of the first run it does not write (only
+    # Varda's own names) and leaves other files alone
+    observation = CrismObservation.fromFolder(cropDir)
+    library = _library(cropDir, tmp_path)
+    out = tmp_path / "out"
+    first = process(observation, _sensorRecipe(), out, library=library)
+    assert first.sensorSpace is not None and first.sensorSpace.exists()
+    (out / "notes.txt").write_text("mine")
+    second = process(observation, Recipe(), out, library=library)
+    assert second.sensorSpace is None
+    assert not first.sensorSpace.exists()
+    assert not _sigmaOf(first.sensorSpace).exists()
+    assert not first.sensorSpace.with_suffix(".hdr").exists()
+    assert second.mapProjected is not None and second.mapProjected.exists()
+    assert (out / "notes.txt").read_text() == "mine"
+    assert not (out / ".work").exists()
+
+
+def test_work_folder_left_behind_is_reported(
+    cropDir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def stuck(path: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(f"in use: {path}")
+
+    out = tmp_path / "out"
+    monkeypatch.setattr(pipeline.shutil, "rmtree", stuck)
+    with pytest.raises(PermissionError):  # the run succeeded: the leftover raises
+        process(
+            CrismObservation.fromFolder(cropDir),
+            Recipe(),
+            out,
+            library=_library(cropDir, tmp_path),
+        )
+    assert str(out / ".work") in caplog.text
+    caplog.clear()
+    with pytest.raises(ProcessCancelled):  # a failed run keeps its own error
+        process(
+            CrismObservation.fromFolder(cropDir),
+            Recipe(),
+            tmp_path / "other",
+            library=_library(cropDir, tmp_path),
+            cancelled=lambda: True,
+        )
+    assert str(tmp_path / "other" / ".work") in caplog.text

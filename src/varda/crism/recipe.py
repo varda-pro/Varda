@@ -10,7 +10,6 @@ from varda.common.parameter import (
     BoolParameter,
     EnumParameter,
     FloatParameter,
-    IntParameter,
     LabeledEnum,
     Parameter,
     ParameterGroup,
@@ -18,8 +17,12 @@ from varda.common.parameter import (
 )
 from varda.crism.calibration import TransmissionSource
 
-RECIPE_VERSION = 1
+RECIPE_VERSION = 2
 VERSION_KEY = "recipeVersion"
+# Version 1 offered options Phase 1 never implemented. A version-1 recipe
+# loads when it sets them to what actually ran (they then change nothing) and
+# is rejected, naming the key, otherwise.
+_REMOVED_IN_2 = {("atmosphere", "continuumDegree"): 3, ("smile", "method"): "LINEAR"}
 
 
 class IncidenceSource(LabeledEnum):
@@ -34,7 +37,6 @@ class BetaMode(LabeledEnum):
 
 class SmileMethod(LabeledEnum):
     LINEAR = "Linear"
-    CUBIC = "Cubic spline"
 
 
 class Resampling(LabeledEnum):
@@ -98,13 +100,6 @@ class AtmosphereStep(ParameterGroup):
         True,
         "Fit the known artifact spectra of the volcano scans. Skipped, with the "
         "reason recorded, when no basis matches the observation's epoch.",
-    )
-    continuumDegree = IntParameter(
-        "Continuum degree",
-        3,
-        (1, 5),
-        None,
-        "Degree of the polynomial that models the continuum in the fit window.",
     )
 
 
@@ -257,6 +252,29 @@ def recipeFromDict(data: Mapping[str, object]) -> Recipe:
             f"Recipe version {version} is newer than this Varda supports "
             f"({RECIPE_VERSION})"
         )
+    values = {key: v for key, v in data.items() if key != VERSION_KEY}
+    if version < 2:
+        values = _fromVersion1(values)
     recipe = Recipe()
-    _fillGroup(recipe, {key: v for key, v in data.items() if key != VERSION_KEY}, "")
+    _fillGroup(recipe, values, "")
     return recipe
+
+
+def _fromVersion1(data: Mapping[str, object]) -> dict[str, object]:
+    """Version-1 data without the options version 2 removed (see
+    ``_REMOVED_IN_2``); a value other than the one that ran raises."""
+    values = dict(data)
+    for (group, key), ran in _REMOVED_IN_2.items():
+        raw = values.get(group)
+        if not isinstance(raw, Mapping):
+            continue
+        section = {str(k): v for k, v in raw.items()}
+        if key not in section:
+            continue
+        if section[key] != ran:
+            raise ValueError(
+                f"Recipe key {group}.{key!r} = {section[key]!r} is no longer "
+                f"offered (it always ran as {ran!r}); remove it or set it to {ran!r}"
+            )
+        values[group] = {k: v for k, v in section.items() if k != key}
+    return values

@@ -59,8 +59,10 @@ tests above) it raised the cross-validated M11 scatter from 0.69% to 0.82%.
 (``BOOTSTRAP_RESAMPLES`` resamples of ``BOOTSTRAP_BLOCK_LINES``-line blocks,
 within each half, the same lines for every band), so it sees what is common
 to the bands, such as texture, and what is correlated along the track; the
-same resamples give σ of the halves' difference. ``applyStripes`` adds the
-frame's σ in quadrature, σ′² = (σ/f)² + (R·σ_f/f²)².
+same resamples give σ of the halves' difference. It is a systematic term:
+σ holds the random uncertainty only (ledger N2), so ``applyStripes`` divides
+σ by the factors, σ′ = σ/f, and the pipeline reports σ_f/f per band in the
+provenance's systematic table.
 
 ``cube`` and ``sigma`` may be ``(l, s, b)`` memmaps: they are read in blocks
 of ``_BAND_BLOCK`` bands (``estimateStripes``) or ``_LINE_CHUNK`` lines
@@ -649,9 +651,8 @@ def estimateStripes(
 def applyStripes(
     cube: np.ndarray, sigma: np.ndarray, frame: StripeFrame
 ) -> tuple[np.ndarray, np.ndarray]:
-    """``(R / f, σ′)`` for a ``(l, s, b)`` chunk, with
-    σ′² = (σ/f)² + (R·σ_f/f²)², σ_f the frame's σ. NaN stays NaN."""
+    """``(R / f, σ / f)`` for a ``(l, s, b)`` chunk. The frame's own σ is
+    systematic and not added (module docstring). NaN stays NaN."""
     cube = np.asarray(cube, dtype=np.float64)
     sigma = np.asarray(sigma, dtype=np.float64)
-    f, sigmaF = frame.factors, frame.sigma
-    return cube / f, np.sqrt((sigma / f) ** 2 + (cube * sigmaF / f**2) ** 2)
+    return cube / frame.factors, sigma / frame.factors
