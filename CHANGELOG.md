@@ -161,10 +161,11 @@ can alter results.
   despike, atmospheric correction (fitted transmission with a shift and an
   elevation prior, and learned instrument-artifact bases for their epoch),
   optional destriping, smile and empirical shift correction, projection.
-  Calibration files (WA, BP, atmospheric transmission) are found beside the
+  Calibration files (WA and atmospheric transmission) are found beside the
   observation, in CAT's `aux_files` if you point to them, or fetched from the
-  PDS, and a missing one is reported before anything runs. Phase 1 is
-  IR-only with no EGN; it is not bit-for-bit CAT. See the
+  PDS (bad-pixel maps are used when local), and a missing one is reported
+  before anything runs. Phase 1 is IR-only with no EGN; it is not
+  bit-for-bit CAT. See the
   [guide](docs/user-guide/crism-processing.md) and the
   [validation report](docs/superpowers/specs/crism/phase1-validation.md).
 - **FITS images and ALTWG/SPC terrain cubes open.** `.fits`, `.fit`, `.fts`

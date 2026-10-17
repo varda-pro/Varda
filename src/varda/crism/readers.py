@@ -133,7 +133,8 @@ class DdrBand(IntEnum):
 
 @define(frozen=True, eq=False)
 class Ddr:
-    """A derived data record: 14 backplanes in BSQ order (see ``DdrBand``)."""
+    """A derived data record: 14 bands in BSQ order, 13 backplanes and a
+    spare (see ``DdrBand``)."""
 
     id: ProductId
     label: ProductLabel

@@ -67,7 +67,11 @@ are written in Phase 1, test-first. Design:
   column-mirrored frame. They are counted (`badPixelInterpolated` in the
   provenance's mask record). σ treats them as independent samples, though
   each is a mean of two neighbors (its noise is lower and correlated with
-  theirs).
+  theirs). Since they only count, the BPs are used **only when local and
+  never fetched** (final review): PDS files them by acquisition day, so
+  their URLs could only be guessed, and a BP that cannot be read or whose
+  columns differ from the cube's is skipped with a note in the calibration
+  status, never failing the run.
 - **Why changed (Task 23):** the 2014 BPs flag 13.7% and 24.1% of the 280,320
   elements (the two background BPs of each FRS); masking their union dropped
   9.3 M (17%) of FRS00031442's samples and left 97–98% of the FRSs' map pixels
@@ -81,7 +85,9 @@ are written in Phase 1, test-first. Design:
   in every data product, nothing non-finite is written)
   `src/varda/crism/_tests/test_pipeline.py::test_invalid_regions_become_nodata`;
   BP-flagged elements kept:
-  `src/varda/crism/_tests/test_pipeline.py::test_bad_pixel_elements_are_kept`.
+  `src/varda/crism/_tests/test_pipeline.py::test_bad_pixel_elements_are_kept`;
+  BPs local only: `src/varda/crism/_tests/test_calibration.py::test_missing_bad_pixels_do_not_block`,
+  `::test_bad_pixels_of_other_columns_are_skipped`.
 
 **R4. DDR.**
 - **Decision:** 14 bands, BSQ, in label order: INA areoid, EMA areoid,
@@ -123,7 +129,10 @@ are written in Phase 1, test-first. Design:
   files that cite different WA references, so they are defined on detector
   elements.
 - **Confidence:** high.
-- **Test:** `test_atmosphere.py::test_transmission_indexing` *(planned)*.
+- **Test:** `src/varda/crism/_tests/test_readers.py::test_detector_frame_alignment`
+  (a CDR frame is taken by detector row, never resampled in λ) and
+  `src/varda/crism/_tests/test_calibration.py::test_binned_observation_selects_binned_cdrs`
+  (an AT whose columns do not match the cube's is an error, not a silent fit).
 
 **C3. Transmission candidates.**
 - **Decision:** by default, the 6 distinct PDS AT scans. Optionally, the 17
@@ -261,14 +270,26 @@ are written in Phase 1, test-first. Design:
   0.87–0.98 per sample; on FRS00031442 lines 0–63 the overall flag rate is
   2.7e-4 with the instrument-only σ (Task 9b; 1.7e-3 before this fix, from
   per-element multiplicative band patterns of about 1%: bands 12, 16, 46, 48
-  one-signed, 27 and 116 of both signs, against σ ≈ 0.09%). Not validated against known real spikes.
-- **Expected on FRS00031442 lines 0–63:** three bands exceed 10× the overall
-  rate, all clustered detector-element defects that the despiker should
-  replace (not structure being eaten, which would spread over many columns):
-  band 27 (1180 nm, 28 flags in 15 columns, mostly 58–64), band 210 (2386 nm,
-  26 flags in 14 columns, 248–250 and 281–287) and band 189 (2247 nm, 24 flags
-  in 7 columns, 10 in column 116). `test_real_chunk_has_no_hot_bands` fails a
-  band only above 10× overall with flags in 20 or more columns.
+  one-signed, 27 and 116 of both signs, against σ ≈ 0.09%). The test's bound
+  is 3e-4, so the margin is thin (2.66e-4, 11% below it); unseen chunks give
+  2.49e-4 (FRS0002FE75), 2.85e-4 (FRS00031260) and 2.57e-4 (FRS00031442
+  lines 120–183, Task 9b+11b review). **On real data the recall is low:**
+  spikes injected into FRS00031442 are caught at 0.13 at 8σ and 0.57 at 20σ
+  (the Task 9b+11b review), against 0.95–0.98 on the synthetic cube. The
+  limit is σ_p: on real spectra the two predictors disagree more than the
+  instrument σ, the disagreement widening raises σ_p, and only spikes far
+  above it pass the score. So the step removes the clear outliers and is not
+  validated against known real spikes.
+- **Measured on FRS00031442 lines 0–63 (final review, 2026-10-16):** 4,269
+  flags in 16.0 M valid samples (2.66e-4). No band with 20 or more flags
+  exceeds 10× the overall rate: the highest are bands 187 (2234 nm, 78
+  flags in 54 columns, 7.8×), 111 (1732 nm, 73 in 53, 7.3×), 210 (2386 nm,
+  67 in 47, 6.7×) and 113 (1746 nm, 65 in 48, 6.5×), then a group at 5.8–6.2×
+  (bands 48, 185, 186, 202, 205), each spread over 42–54 columns. Band 434
+  (3925 nm) holds 3 flags in its 232 valid samples. The three clustered
+  defect bands this entry expected before Task 11b (27, 210, 189 above 10×)
+  are no longer hot. `test_real_chunk_has_no_hot_bands` fails a band only
+  above 10× overall with 20 or more flags in 20 or more columns.
 - **Known limits:** the isolation test rejects a spike hitting two adjacent
   bands; single-spike recall inside the CO₂ band (1950–2080 nm) is about 0.94;
   the onset and end of a long element offset look like a train and are
@@ -555,10 +576,14 @@ are written in Phase 1, test-first. Design:
     the variation across columns is kept). 0 outside the fit window and in
     the hydration mask (no data there). One basis per transmission key
     (`ArtifactBasis.transmissionKey`, `"061C4:AT"`; an AT and a VS ADR of
-    one scan differ), stored as `resources/artifacts/<scan>_<AT|VS>.npz`
-    (`artifactFileName`: ':' becomes '_') with a JSON metadata entry (key,
-    source observations, the training SCLK span, Varda version), compressed.
-  - **Bundled (Task 23):** `061C4_AT.npz`, `0A93E_AT.npz`, `08608_AT.npz`, the
+    one scan differ), stored as
+    `<scan>_<AT|VS>_<sclkStart>-<sclkStop>.npz` (`artifactFileName`: ':'
+    becomes '_', and the training span, floored and ceiled to whole seconds,
+    lets one folder hold a key's bases of several epochs; final review) with
+    a JSON metadata entry (key, source observations, the training SCLK span,
+    Varda version), compressed.
+  - **Bundled (Task 23):** `061C4_AT_1084995594-1090233682.npz` and the same
+    for 0A93E and 08608 in `resources/artifacts/`, the
     scans the pipeline chooses for FRS00031442, FRS0002FE75 and FRS00031260.
     Each is learned from all three FRSs under that scan (`learn-artifacts
     --scan`): with the pipeline's own choice each key holds one observation,
@@ -578,13 +603,22 @@ are written in Phase 1, test-first. Design:
     them (decision D12 in
     `phase1-validation.md`). A leave-one-out basis shifts them nearly as much,
     so it is the basis, not in-sample learning.
-  - **Epoch gate (fix round 1):** `bundledArtifactBasis(key, samples,
-    bands, sclk)` returns a `BasisLookup(basis, reason)`: the basis only
-    when the file's key is the transmission's, its columns and bands are the
-    cube's, and the SCLK is within the training span ± 180 days
+  - **Epoch gate (fix round 1):** `findArtifactBasis(key, samples, bands,
+    sclk, folders)` returns a `BasisLookup(basis, reason, path)`: a basis
+    only when the file's key is the transmission's, its columns and bands
+    are the cube's, and the SCLK is within the training span ± 180 days
     (`ARTIFACT_EPOCH_MARGIN_SCLK` = 15.55·10⁶ s); otherwise None and the
     reason, for the provenance. The 2014 FRS basis made FRT00005850 (2007)
     worse (below), so a basis does not carry across epochs.
+  - **Other epochs (final review):** bases learned with `learn-artifacts`
+    go in a folder named by the recipe's `atmosphere.artifactFolder` (CLI:
+    `process --artifacts DIR`; "" = bundled only). The lookup searches that
+    folder, then the bundled one, and of the files that pass the gate takes
+    the nearest span (0 when it holds the SCLK), the earlier folder on ties;
+    the provenance's artifact record names the file. `learn-artifacts` warns
+    when a key's group holds one observation. Test:
+    `src/varda/crism/_tests/test_atmosphere.py::test_artifact_folder_and_epochs`,
+    `src/varda/crism/_tests/test_cli.py::test_cli_learn_artifacts`.
   - **α ∝ β as a constraint:** α = c·β with one scene-level c, so the
     per-pixel atmosphere is β (ln T_x(λ + δ_x) + c a_x), one linear term:
     `AtmosphereModel(artifact=basis.spectra, artifactScale=c)`. c is
@@ -823,8 +857,18 @@ are written in Phase 1, test-first. Design:
   0.1 m rounding reproduces `map info` character for character.
 - **Confidence:** high (two observations, 18 m and 36 m; 0.1 m rounding
   versus truncation cannot be told apart on them).
+- **Only the usable lines (final review):** the grid, the GLT and the area
+  weights take the DDR centers of the lines `usableLines` keeps; the slew
+  lines' latitude and longitude are NaN for them. The slew lines hold no
+  I/F (the mask drops them), but their positions spread the grid:
+  FRS00031442's 13 slew lines made it 756 × 903 instead of 702 × 295
+  (FRS0002FE75 750 × 836 → 699 × 244, 13 lines; FRS00031260 748 × 617 →
+  730 × 248, 8; FRT00005850 has none), and the DE and IN backplanes kept a
+  strip without I/F. V3's numbers move only in the last digits
+  (`phase1-validation.md`).
 - **Test:** `src/varda/crism/_tests/test_projection.py::test_tie_point_rule`,
-  `::test_grid_from_sensor_ddr_matches_mtrdr` (data-gated).
+  `::test_grid_from_sensor_ddr_matches_mtrdr` (data-gated);
+  `src/varda/crism/_tests/test_pipeline.py::test_slew_lines_stay_off_the_map`.
 
 **G3. Resampling.**
 - **Decision:** nearest neighbor (GLT-equivalent) by default, with

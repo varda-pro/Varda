@@ -1,6 +1,7 @@
 # CRISM Phase 1 validation (Task 23)
 
-Status: run 2026-10-16 on the demo data. Design and tolerances:
+Status: run 2026-10-16 on the demo data; V2 and V3 re-run after the final
+review's fixes (the slew lines left off the map grid, see V3). Design and tolerances:
 `../2026-10-16-crism-processing-design.md` ("Validation design", approved
 as D4). Decisions per step: `evidence-ledger.md`. Tests:
 `src/varda/crism/_tests/test_regression.py` (V2, V3, the artifact basis;
@@ -251,7 +252,19 @@ spec's 15–20% expectation is met.
 
 ## V3: the rim FRSs
 
-The products of the default recipe, with the BP fix:
+The products of the default recipe, with the BP fix. Since the final review
+the map grid, GLT and area weights take only the usable lines (ledger G2):
+the slew lines hold no I/F but their positions spread the grid, and left a
+strip of DE and IN without I/F. The FRS grids shrink from 756 × 903 to
+702 × 295 (FRS00031442, 13 slew lines), 750 × 836 to 699 × 244
+(FRS0002FE75, 13) and 748 × 617 to 730 × 248 (FRS00031260, 8);
+FRT00005850 has none, so V2 is unchanged. On the re-run (27 passed, 11
+xfailed, as before) the CO2 residuals and the BD2310 offsets are the same to
+the digits given; the grid origins move by a fraction of a pixel, so the
+nearest-neighbor maps, and with them the shape χ² and the basis's effect,
+change in the last digits (before: shape χ² 64.1, 5.6, 12.1 against 171.3;
+after the gains 5.7, 3.6, 5.3 against 9.5; the MTRDR–MTRDR values move too,
+because the joint gains and the noise model include the FRS).
 
 | FRS | Scan (relative margin) | H | Artifact basis (c) |
 |---|---|---|---|
@@ -267,9 +280,9 @@ The products of the default recipe, with the BP fix:
 | CO2 scene RMS, FRS0002FE75 | ≤ 0.0080 | 0.00362 (0.00619; 0.00386) | pass |
 | CO2 per pixel, FRS00031260 | ≤ 0.0083 | 0.00420 (0.00731; 0.00457) | pass |
 | CO2 scene RMS, FRS00031260 | ≤ 0.0080 | 0.00203 (0.00597; 0.00257) | pass |
-| FRS00031442 overlap (ruling P4) | ≥ 1000 px at 18 m | 48,488 (FRT00005C5E), 22,627 (FRT000047A3), 46,057 (HRL000040FF) | pass |
-| Shape χ², as delivered | ≤ max MTRDR–MTRDR (171.3) | 64.1, 5.6, 12.1 | pass |
-| Shape χ², after the gains | ≤ max MTRDR–MTRDR (9.5) | 5.7, 3.6, 5.3 | pass |
+| FRS00031442 overlap (ruling P4) | ≥ 1000 px at 18 m | 48,488 (FRT00005C5E), 22,627 (FRT000047A3), 46,057 (HRL000040FF), measured before the slew-line fix, which does not change the I/F footprint; the test's own count (36 m pixels valid in both, ×4) on the re-run: 85,576, 35,260, 80,792 | pass |
+| Shape χ², as delivered | ≤ max MTRDR–MTRDR (188.7) | 66.8, 5.6, 12.8 | pass |
+| Shape χ², after the gains | ≤ max MTRDR–MTRDR (10.7) | 6.1, 3.6, 5.3 | pass |
 | BD2310 median offset | ≤ max MTRDR–MTRDR (0.0045) and ≤ 0.004 | **0.0055, 0.0051**, 0.0004 | `test_frs31442_overlap_bd2310_offset` **xfail**; `_achieved` pass |
 
 - Every pixel in the footprints is scored: ≥ 99% is asserted, 100% is
@@ -300,7 +313,8 @@ allows no leave-one-out and would bundle a basis learned from a scene
 alone. So each chosen key is learned from all three FRSs under that scan
 (`--scan`).
 
-The bundled files are `resources/artifacts/{061C4,0A93E,08608}_AT.npz`
+The bundled files are
+`resources/artifacts/{061C4,0A93E,08608}_AT_1084995594-1090233682.npz`
 (0.21 MB each, compressed). Their training span is SCLK
 1084995594–1090233681 (2014-05-19 to 2014-07-19), so the ±180-day gate
 serves 2014 only. FRT00005850 is excluded: a 2007 basis would rest on one
@@ -324,13 +338,15 @@ repeatability, and the spec's 0.0016 for BD1900_2):
 
 | FRS (scan) | D2300 (≤ 0.00152) | BD2290 (≤ 0.00103) | BD1900_2 (≤ 0.0016) | BD2310 | OLINDEX3 |
 |---|---|---|---|---|---|
-| FRS00031442 (061C4) | −0.00071 | −0.00001 | +0.00122 | −0.00013 | −0.00001 |
-| FRS0002FE75 (0A93E) | **−0.00177** | −0.00007 | **+0.00176** | −0.00117 | −0.00001 |
-| FRS00031260 (08608) | −0.00094 | −0.00000 | **+0.00351** | −0.00063 | +0.00001 |
+| FRS00031442 (061C4) | −0.00072 | −0.00001 | +0.00121 | −0.00013 | −0.00001 |
+| FRS0002FE75 (0A93E) | **−0.00176** | −0.00007 | **+0.00176** | −0.00117 | −0.00001 |
+| FRS00031260 (08608) | −0.00094 | −0.00000 | **+0.00350** | −0.00063 | +0.00001 |
 
 - A leave-one-out basis gives nearly the same shifts (−0.00168, +0.00171 and
   +0.00313 for the three that fail), so this is the basis itself, not in-sample
-  learning.
+  learning. (D2300, BD2290 and BD1900_2 are from the re-run after the
+  slew-line fix; BD2310, OLINDEX3 and the leave-one-out shifts from before
+  it, not re-measured.)
 - Against the overlapping MTRDRs, the basis moves FRS00031260's BD1900_2
   by about 0.0033 toward FRT000047A3 and HRL000040FF and away from
   FRT00005C5E. It moves FRS00031442's by about 0.0015 away from FRT00005C5E

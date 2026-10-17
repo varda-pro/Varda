@@ -709,9 +709,9 @@ def test_artifact_basis_preserves_mineral_medians(
     """Task 14's review: the basis must not move the D2300, BD2290 and
     BD1900_2 medians by more than the between-observation repeatability
     (V2's bounds: the crater-floor repeatability measured here, and the
-    spec's 0.0016 for BD1900_2). Measured shifts: FRS00031442 −0.00071,
-    −0.00001, +0.00122; FRS0002FE75 −0.00177, −0.00007, +0.00176;
-    FRS00031260 −0.00094, −0.00000, +0.00351."""
+    spec's 0.0016 for BD1900_2). Measured shifts: FRS00031442 −0.00072,
+    −0.00001, +0.00121; FRS0002FE75 −0.00176, −0.00007, +0.00176;
+    FRS00031260 −0.00094, −0.00000, +0.00350."""
     with_, without = frsProducts[name]
     a, b = _parameterMedians(_mapped(with_), _mapped(without))[parameter]
     assert abs(a - b) <= _biasBound(parameter, repeatability)
@@ -1162,7 +1162,8 @@ def test_frs31442_overlap_shape_chi_square(
 ) -> None:
     """V3: the shape χ² of FRS00031442 against each overlapping MTRDR at most
     the largest MTRDR–MTRDR value, as delivered and after the gains (measured:
-    64.1, 5.6, 12.1 against 171.3; 5.7, 3.6, 5.3 against 9.5)."""
+    66.8, 5.6, 12.8 against 188.7; 6.1, 3.6, 5.3 against 10.7; the grid
+    without the slew lines, final review)."""
     ours, theirs = _split(overlapPairs)
     assert len(ours) >= 3 and len(theirs) >= 6
     assert max(p.chiSquare for p in ours) <= max(p.chiSquare for p in theirs)

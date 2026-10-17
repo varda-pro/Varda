@@ -1,7 +1,9 @@
 # CRISM processing: from TRR3 I/F to MTRDR-consistent products — Design
 
 Status: approved 2026-10-16, with the recommended option for every decision
-D1–D8 (see "Decisions for Michael" at the end). FRT00005850's TRR3 + DDR and CAT 7.4's aux files are downloaded for comparison (D3, D6). The Phase 1 plan is `../plans/2026-10-16-crism-processing-phase1.md`.
+D1–D8 (see "Decisions for Michael" at the end). FRT00005850's TRR3 + DDR and
+CAT 7.4's aux files are downloaded for comparison (D3, D6). The Phase 1 plan
+is `../plans/2026-10-16-crism-processing-phase1.md`.
 
 **Phase 1 is built** (2026-10-16): the pipeline, the CLI, the dialogs and the
 validation. Against the MTRDR it meets the grid, the geolocation and the CO2
@@ -9,7 +11,9 @@ residual, and the synthetic checks pass in the suite. It does not yet meet
 the Pearson r of 0.90 for the five mineral parameters (0.63–0.90), the
 spectral-shape ±1%/±2% near 2 µm and beyond 2.2 µm, or a few parameter-bias
 and basis-effect checks: 11 strict xfails, each with a measured cause.
-Decisions D9–D13 are pending Michael. See
+One synthetic check passes only with a bound wider than V1's: the δ z-score
+std is 0.875 on seed 1 against 1.00 ± 0.10 (the test asserts 0.8–1.25).
+Decisions D9–D13 (and that V1 bound) are pending Michael. See
 [`crism/phase1-validation.md`](crism/phase1-validation.md).
 
 Companion files:
@@ -608,7 +612,7 @@ product type:
 |---|---|
 | `<obs>_<ctr>_if<mac>l_vmtr.img/.hdr` | Map-projected corrected I/F, 411 IR bands on the MTRDR vector |
 | `..._vmtr_sigma.img` | 1σ, same grid and bands |
-| `..._de<mac>l_vmtr.img` | The 14 DDR backplanes, projected (like MTRDR DE) |
+| `..._de<mac>l_vmtr.img` | The DDR's 13 backplanes and its spare band, projected (like MTRDR DE) |
 | `..._in<mac>l_vmtr.img` | Source sample, source line, β, σ_β, ATM residual RMS, artifact amplitude, spike count, Leask flag, look count |
 | `..._if<mac>l_vter.img` (+ `_sigma`) | Optional sensor-space product (TER-like), with the DDR as geometry |
 | `.recipe.json`, `.provenance.json`, `.diagnostics.npz` | Recipe, provenance, frames and tables |
@@ -624,7 +628,7 @@ product type:
 | WA CDR (L) | wavelengths, smile | PDS EDR volume `mrocr_0001/cdr/wa/`; already local for the TRR3s' WA 490947778566 |
 | AT CDR (L) | ATM | PDS `mrocr_0001/cdr/at/` (6 distinct scans; all local) |
 | SW CDR | target vector check | PDS `cdr/sw` |
-| BP CDR | bad elements | PDS `cdr/bp` (named in the TRR3 SOURCE_PRODUCT_ID) |
+| BP CDR | bad elements (counted only) | local only: named in the TRR3 SOURCE_PRODUCT_ID, never fetched (final review: their PDS paths are by acquisition day and could only be guessed) |
 | VS ADRs (17 scans + artifact spectra) | optional ATM candidates, comparison | CAT 7.4 aux zip (513 MB; not on PDS) — **D3** |
 | CAT `obs_info` (precomputed VS choices) | comparison only | CAT aux zip — **D3** |
 
@@ -634,8 +638,9 @@ product type:
      out);
   3. Varda's app-data cache;
   4. a CAT `aux_files` folder, if the user points Varda at one.
-- **Fetching.** Missing PDS files are fetched over HTTP with the existing
-  `catalogs/http`, and their SHA-256 is recorded.
+- **Fetching.** A missing WA or AT is fetched over HTTP into the cache,
+  and the SHA-256 of every file used is recorded. The cache is shared by
+  the command line and the dialogs (`calibration.defaultCacheFolder`).
 - **Selection rules.** Sensor, binning, wavelength filter and the SCLK
   validity period. For an observation after the last period (all 2014 FRSs
   postdate the 2014-01-09 end of the last AT period, M5), the latest period
