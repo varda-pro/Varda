@@ -12,9 +12,10 @@ import functools
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
+import attrs
 import numpy as np
 from psygnal import SignalInstance
-from PyQt6.QtCore import QObject, QPointF
+from PyQt6.QtCore import QObject, QPointF, pyqtSignal
 from PyQt6.QtGui import QColor
 from shapely.geometry import Polygon
 
@@ -41,6 +42,18 @@ from varda.common.parameter_widgets import groupWidget
 
 NUMERATOR_ROI_COLOR = Color(0.0, 0.86, 0.0, 0.5)
 DENOMINATOR_ROI_COLOR = Color(1.0, 0.0, 1.0, 0.5)
+
+
+@attrs.frozen
+class RatioComponents:
+    """A measured selection on one image: the box means and their ratio."""
+
+    image: VardaRaster
+    wavelengths: np.ndarray
+    numerator: np.ndarray
+    denominator: np.ndarray
+    ratio: np.ndarray
+    selection: RatioSelection
 
 
 class RatioExplorerConfig(ParameterGroup):
@@ -80,6 +93,8 @@ class DenominatorOwner(Protocol):
 
 
 class RatioExplorerController(QObject):
+    sigComponents = pyqtSignal(object)  # RatioComponents, one per measured image
+
     def __init__(
         self,
         collection: ROICollection,
@@ -90,10 +105,12 @@ class RatioExplorerController(QObject):
         *,
         imagesFor: Callable[[VardaRaster], Sequence[VardaRaster]] | None = None,
         labelWithImageName: bool = False,
+        showComponents: bool = False,
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
-        images uses it to apply its Spectrum Source setting."""
+        images uses it to apply its Spectrum Source setting. ``showComponents``
+        also plots the numerator and denominator spectra next to the ratio."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -101,6 +118,7 @@ class RatioExplorerController(QObject):
         self._docks = docks
         self._imagesFor = imagesFor or (lambda clicked: [clicked])
         self._labelWithImageName = labelWithImageName
+        self._showComponents = showComponents
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -132,6 +150,7 @@ class RatioExplorerController(QObject):
             lambda: (int(self.config.boxWidth.value), int(self.config.boxHeight.value))
         )
         tool.setDenominatorPlacer(functools.partial(self._placeDenominator, image))
+        tool.setDenominatorFollower(functools.partial(self._followNumerator, image))
         tool.sigSelectionChanged.connect(functools.partial(self._onSelection, image))
         tool.sigSelectionChanged.connect(
             functools.partial(self._mirrorSelection, tool.viewport)
@@ -214,6 +233,16 @@ class RatioExplorerController(QObject):
         )
         return fallback if shift is None else numerator + np.array(shift)
 
+    def _followNumerator(
+        self, image: VardaRaster, numerator: np.ndarray, denominator: np.ndarray
+    ) -> np.ndarray | None:
+        """With column lock on, the denominator moves into the new numerator's
+        column, keeping its row (and the numerator's size)."""
+        if not self._roiManager.lockColumn:
+            return None
+        col, row = _centerPixel(denominator)
+        return self._placeDenominator(image, numerator, row, col)
+
     def _onSelection(self, image: VardaRaster, selection: RatioSelection) -> None:
         self._current = (image, selection)
         if selection.numerator is None or selection.denominator is None:
@@ -229,17 +258,46 @@ class RatioExplorerController(QObject):
             ratio = computeRatioSpectrum(numerator, denominator)
             wavelengths = VardaPlotWidget.getPlottableWavelengths(source, len(ratio))
             entries.append((wavelengths, ratio, self._label(source, selection)))
+            if self._showComponents:
+                entries.append(
+                    (
+                        wavelengths,
+                        numerator,
+                        self._label(source, selection, "numerator"),
+                    )
+                )
+                entries.append(
+                    (
+                        wavelengths,
+                        denominator,
+                        self._label(source, selection, "denominator"),
+                    )
+                )
+            self.sigComponents.emit(
+                RatioComponents(
+                    source, wavelengths, numerator, denominator, ratio, selection
+                )
+            )
         # one batch, so Replace mode keeps every image of this selection
         self._docks.addSpectra(entries)
 
-    def _label(self, image: VardaRaster, selection: RatioSelection) -> str:
+    def _label(
+        self,
+        image: VardaRaster,
+        selection: RatioSelection,
+        part: str = "ratio",
+    ) -> str:
         assert selection.numerator is not None and selection.denominator is not None
         nc, nr = _centerPixel(selection.numerator)
         dc, dr = _centerPixel(selection.denominator)
-        boxes = f"({nc}, {nr}) / ({dc}, {dr})"
+        boxes = {
+            "ratio": f"({nc}, {nr}) / ({dc}, {dr})",
+            "numerator": f"({nc}, {nr})",
+            "denominator": f"({dc}, {dr})",
+        }[part]
         if self._labelWithImageName:
-            return f"{image.name} ratio {boxes}"
-        return f"Ratio {boxes}"
+            return f"{image.name} {part} {boxes}"
+        return f"{part.capitalize()} {boxes}"
 
     @staticmethod
     def _geometryFor(image: VardaRaster, pixels: np.ndarray) -> Polygon:

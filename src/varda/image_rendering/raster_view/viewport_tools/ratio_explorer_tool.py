@@ -27,6 +27,9 @@ DENOMINATOR_COLOR = QColor(255, 0, 255)
 
 # (numerator polygon, clicked row, clicked col) -> denominator polygon
 DenominatorPlacer = Callable[[np.ndarray, int, int], np.ndarray]
+# (new numerator polygon, current denominator polygon) -> new denominator
+# polygon, or None to keep the denominator where it is
+DenominatorFollower = Callable[[np.ndarray, np.ndarray], np.ndarray | None]
 
 
 @attrs.frozen
@@ -66,6 +69,7 @@ class RatioExplorerTool(ViewportTool):
         super().__init__(viewport, parent)
         self._boxSize: Callable[[], tuple[int, int]] = lambda: (5, 5)
         self._placeDenominator: DenominatorPlacer | None = None
+        self._followDenominator: DenominatorFollower | None = None
         self.selection = RatioSelection(None, None)
         self._numeratorOverlay: ROIOverlayHandle | None = None
         self._denominatorOverlay: ROIOverlayHandle | None = None
@@ -79,6 +83,10 @@ class RatioExplorerTool(ViewportTool):
 
     def setDenominatorPlacer(self, placer: DenominatorPlacer | None) -> None:
         self._placeDenominator = placer
+
+    def setDenominatorFollower(self, follower: DenominatorFollower | None) -> None:
+        """Let the denominator move when a new numerator is placed."""
+        self._followDenominator = follower
 
     def activate(self):
         super().activate()
@@ -104,9 +112,12 @@ class RatioExplorerTool(ViewportTool):
         col, row = int(event.imagePos.x()), int(event.imagePos.y())
         if event.button == Qt.MouseButton.LeftButton:
             width, height = self._boxSize()
-            self._setSelection(
-                boxPolygonPixels(col, row, width, height), self.selection.denominator
-            )
+            numerator = boxPolygonPixels(col, row, width, height)
+            denominator = self.selection.denominator
+            if denominator is not None and self._followDenominator is not None:
+                moved = self._followDenominator(numerator, denominator)
+                denominator = denominator if moved is None else moved
+            self._setSelection(numerator, denominator)
             return True
 
         numerator = self.selection.numerator

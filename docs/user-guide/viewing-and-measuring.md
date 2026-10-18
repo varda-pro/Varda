@@ -248,6 +248,12 @@ denominator box. **Box Width** and **Box Height** (5 px each by default,
 With **Lock to sensor column** (in the ROI Manager) on, the denominator box
 moves to the numerator's detector column, using the CRISM geometry file
 found beside the image. Without that file, the box stays where you clicked.
+Placing a new numerator with the lock on also moves the existing denominator
+into the new numerator's column, keeping its row and box size.
+
+The plot shows the numerator and denominator spectra (their box means, with
+the same units as the image) next to the ratio, labeled "Numerator (col, row)"
+and "Denominator (col, row)", so you can see which one a feature comes from.
 
 The ratio is, band by band, the **mean of the numerator box divided by the
 mean of the denominator box** (not the mean of pixel-by-pixel ratios). A band

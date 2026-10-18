@@ -8,6 +8,10 @@ can alter results.
 
 ### Added
 
+- **Ratio Explorer numerator and denominator curves:** General Image
+  Analysis and the dual-image workspace now plot the numerator and
+  denominator box spectra next to the ratio, so you can see which one a
+  feature comes from.
 - **Ratio Cube (Column Denominators)** (Processing → CRISM): divides a CRISM
   I/F cube by one denominator spectrum per sensor detector column, read
   from the DDR/DE backplane next to the cube, so the result can replace the
@@ -203,6 +207,9 @@ can alter results.
 
 ### Fixed
 
+- **Ratio Explorer, column lock:** placing a new numerator now moves the
+  existing denominator into the new numerator's detector column (keeping its
+  row and box size), where before only a denominator click was snapped.
 - **The FATT window's plot fits each mineral you pick**, also after you've
   zoomed or panned it; a zoom used to turn the fitting off, so the next
   mineral could be drawn off the plot.

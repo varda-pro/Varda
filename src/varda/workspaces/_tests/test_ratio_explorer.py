@@ -286,3 +286,93 @@ def test_mirrored_boxes_are_removed_when_the_tool_deactivates(setup):
 
     assert all(overlay.removed for overlay in other.overlays)
     tool.activate()  # so the fixture's deactivate is balanced
+
+
+def _lockedColumns(setup, monkeypatch, lock=True):
+    image, tool, _c, _d, roiManager, ctrl = setup
+    roiManager.lockColumn = lock
+    # IR sample == column index // 10: four detector strips of ten columns
+    geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0) // 10, (40, 1)))
+    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    monkeypatch.setattr(type(image), "filePath", property(lambda self: "/fake/x.img"))
+    return tool, ctrl
+
+
+def test_a_new_numerator_pulls_the_denominator_into_its_column(setup, monkeypatch):
+    tool, _ctrl = _lockedColumns(setup, monkeypatch)
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
+
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 3.0, 21.0))
+
+    # the denominator keeps its row (5) and size, now in the numerator's strip
+    center = _center(tool.selection.denominator)
+    assert center[1] == 5
+    strip = np.arange(40) // 10
+    assert strip[center[0]] == strip[3]
+    assert ratio_explorer.boxSize(tool.selection.denominator) == (5, 5)
+
+
+def test_a_new_numerator_leaves_the_denominator_when_the_lock_is_off(
+    setup, monkeypatch
+):
+    tool, _ctrl = _lockedColumns(setup, monkeypatch, lock=False)
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 3.0, 21.0))
+    np.testing.assert_array_equal(
+        tool.selection.denominator, boxPolygonPixels(31, 5, 5, 5)
+    )
+
+
+def _center(polygon):
+    return ratio_explorer._centerPixel(polygon)
+
+
+def test_components_carry_the_numerator_denominator_and_ratio(setup):
+    image, tool, _c, _d, _m, ctrl = setup
+    received = []
+    ctrl.sigComponents.connect(received.append)
+
+    _selectBoxes(tool)
+
+    (components,) = received
+    numerator = np.asarray(
+        computeRegionStatistics(boxPolygonPixels(11, 21, 5, 5), image)["mean"]
+    )
+    denominator = np.asarray(
+        computeRegionStatistics(boxPolygonPixels(31, 5, 5, 5), image)["mean"]
+    )
+    assert components.image is image
+    np.testing.assert_allclose(components.numerator, numerator)
+    np.testing.assert_allclose(components.denominator, denominator)
+    np.testing.assert_allclose(components.ratio, numerator / denominator)
+    assert len(components.wavelengths) == len(components.ratio)
+    assert components.selection is tool.selection
+
+
+def test_both_spectra_are_plotted_next_to_the_ratio_when_asked(qtbot):
+    image = generate_random_image((40, 40, 10))
+    viewport = ImageViewport(ImageRenderer(image=image))
+    qtbot.addWidget(viewport)
+    tool = RatioExplorerTool(viewport)
+    tool.activate()
+    docks = FakeDocks()
+    controller = RatioExplorerController(
+        ROICollection.fromImage(image),
+        FakeROIManager(),
+        docks,
+        RatioExplorerConfig(),
+        showComponents=True,
+    )
+    controller.bindTool(tool)
+
+    _selectBoxes(tool)
+
+    assert [entry[2] for entry in docks.batches[-1]] == [
+        "Ratio (11, 21) / (31, 5)",
+        "Numerator (11, 21)",
+        "Denominator (31, 5)",
+    ]
+    tool.deactivate()
+    del viewport
