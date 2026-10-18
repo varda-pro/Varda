@@ -66,8 +66,10 @@ CRS (described in words, as in
 was measured, the projection's distortion along each line (not used in the
 distances), the distances' limits, and the band with its unit when Varda knows it (results of
 Varda's analyses carry one; most files don't). Spreadsheets and pandas
-(`comment="#"`) skip or read these lines. For the real CRISM MTRDR
-coordinate system (a 3394.84 km sphere) the distance lines read, e.g.:
+(`comment="#"`) skip or read these lines. For one real CRISM MTRDR,
+whose CRS is a sphere of the local radius under its scene (3394.84 km for
+that scene; each CRISM product has its own, and the header gives the
+file's), the distance lines read, e.g.:
 
 ```
 # distance unit: m (geodesic, Karney 2013, on sphere R = 3394.84 km; IAU 2015 reference ellipsoid differs by 0.017%)
@@ -95,7 +97,8 @@ for what applies to every process.
   give the end points' map coordinates from the CSV.
 - How distance was measured: geodesic (Karney, 2013) on the sphere or
   ellipsoid of the image's CRS, named with its radius as the CSV header
-  gives it (e.g. "on the 3394.84 km sphere of the CRISM MTRDR CRS"), in any
+  gives it (e.g. "on the 3394.84 km sphere of the CRISM MTRDR CRS", that
+  scene's local radius; two CRISM scenes generally differ), in any
   projection; the body-model difference from the header, with the
   reference it compares to (the IAU 2015 ellipsoid; Archinal et al., 2018);
   and that distances are horizontal, not along topography. For example:

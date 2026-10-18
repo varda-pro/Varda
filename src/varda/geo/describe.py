@@ -1,6 +1,8 @@
 """A coordinate system in words a scientist recognizes, e.g. "Mars, sphere
-R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px", and the fields
-behind it, read from the CRS's PROJ definition.
+R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px" (one CRISM MTRDR:
+the local radius under its scene; every CRISM product has its own, read
+from its file), and the fields behind it, read from the CRS's PROJ
+definition.
 
 Conventions (Archinal et al., 2018; Seidelmann et al., 2002): latitude on a
 sphere is planetocentric, and on a flattened ellipsoid it is PROJ's geodetic

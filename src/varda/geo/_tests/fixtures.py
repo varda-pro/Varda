@@ -16,7 +16,8 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.proj_lock import PROJ_LOCK
 
 # A real CRISM MTRDR (FRT000107A7_07_IF166J_MTR3) as GDAL's PDS3 driver reads
-# its .LBL: a sphere of Mars's local radius at the standard parallel, 15°N
+# its .LBL: a sphere of Mars's local radius under this scene, with standard
+# parallel 15°N. The radius is this scene's, not CRISM's: every MTRDR has its own
 CRISM_MTRDR_WKT = (
     'PROJCS["EQUIRECTANGULAR MARS",'
     'GEOGCS["GCS_MARS",'
@@ -25,6 +26,23 @@ CRISM_MTRDR_WKT = (
     'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],'
     'PROJECTION["Equirectangular"],'
     'PARAMETER["standard_parallel_1",15],'
+    'PARAMETER["central_meridian",0],'
+    'PARAMETER["false_easting",0],'
+    'PARAMETER["false_northing",0],'
+    'UNIT["metre",1,AUTHORITY["EPSG","9001"]],'
+    'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+)
+# Another CRISM-like MTRDR, constructed (not a real product) in the same form:
+# each MTRDR's sphere is Mars's local radius under its own scene, so a
+# southern scene has its own radius and standard parallel
+CRISM_MTRDR_SOUTH_WKT = (
+    'PROJCS["EQUIRECTANGULAR MARS",'
+    'GEOGCS["GCS_MARS",'
+    'DATUM["D_MARS",SPHEROID["MARS_localRadius",3392500,0]],'
+    'PRIMEM["Reference_Meridian",0],'
+    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],'
+    'PROJECTION["Equirectangular"],'
+    'PARAMETER["standard_parallel_1",-40],'
     'PARAMETER["central_meridian",0],'
     'PARAMETER["false_easting",0],'
     'PARAMETER["false_northing",0],'

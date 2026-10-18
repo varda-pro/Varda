@@ -21,7 +21,13 @@ from varda.common.grid import (
     sameGrid,
     sameGridChoices,
 )
-from varda.geo._tests.fixtures import MARS_EQC_PDS3_WKT, WGS84
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_SOUTH_WKT,
+    CRISM_MTRDR_WKT,
+    MARS_EQC_PDS3_WKT,
+    WGS84,
+    makeImage,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 UTM = CRS.from_epsg(32612)
@@ -232,3 +238,14 @@ def test_longitudes_0_to_360_and_minus_180_to_180_overlap():
     placed = onGridOf(east, west)[..., 0]
     assert np.nansum(placed) == pytest.approx(values.sum())
     np.testing.assert_array_equal(placed, values)
+
+
+def test_two_crism_scenes_need_reprojecting_not_one_grid():
+    # each MTRDR is on the sphere of Mars's local radius under its own scene
+    north = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, -40.0), pixelSize=18.0)
+    south = makeImage(CRISM_MTRDR_SOUTH_WKT, centerLonLat=(10.0, -40.0), pixelSize=18.0)
+    southCrs = CRS.from_wkt(CRISM_MTRDR_SOUTH_WKT)
+    sameNumbers = _raster(np.zeros((64, 64)), "south", north.transform, southCrs)
+    assert not sameGrid(north, sameNumbers)  # same transform, other surface
+    assert not sameGrid(north, south)
+    assert placementProblem(south, north) is None  # reprojected onto it

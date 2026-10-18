@@ -17,8 +17,12 @@ example:
 
 > Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px
 
-That is a real CRISM MTRDR: equirectangular on a sphere of Mars's local
-radius at its standard parallel, 15°N. The parts, in order:
+That is one real CRISM MTRDR (FRT000107A7): equirectangular, standard
+parallel 15°N, on a sphere of Mars's local radius under that scene.
+3394.84 km is that scene's radius, not CRISM's: each MTRDR's label gives
+the local radius under its own scene, so two CRISM scenes generally have
+different spheres. Varda reads each file's own radius and never assumes
+one (see [Two CRISM scenes](#two-crism-scenes)). The parts, in order:
 
 | Part | Meaning | Where it comes from |
 |---|---|---|
@@ -174,7 +178,7 @@ of five classes:
 **Names don't matter.** The same coordinate system is written many ways:
 GDAL reads a CRISM MTRDR's PDS3 label as datum `D_MARS` and its ENVI
 header as `D_Mars_2000_IAU_IAG_custom_sphere_lat15`; the Ames Stereo
-Pipeline writes `+proj=eqc +lat_ts=15 … +R=3394839.81331631`; PROJ's
+Pipeline writes it `+proj=eqc +lat_ts=15 … +R=3394839.81331631`; PROJ's
 database calls the Mars 2000 sphere "Mars (2015) - Sphere". PROJ alone
 treats some of these as different because their names differ. Varda calls
 two CRSs **equivalent** when everything that places a pixel on the body
@@ -196,8 +200,9 @@ product. These are **not** the same, and images on them are reprojected:
 - a different standard parallel (a CTX DEM's `lat_ts = 18.4` vs `0`), center
   or central meridian;
 - a different surface, even on one body: the Mars 2000 sphere (3396.19 km)
-  vs the mean-radius sphere (3389.5 km), or a CRISM MTRDR's local-radius
-  sphere vs the Mars 2000 sphere. A radius rounded to the centimeter
+  vs the mean-radius sphere (3389.5 km), a CRISM MTRDR's local-radius
+  sphere vs the Mars 2000 sphere, or two CRISM MTRDRs, each on the
+  local-radius sphere of its own scene. A radius rounded to the centimeter
   (3394839.81 m instead of 3394839.8133 m) also differs: radii are compared
   to a millimeter;
 - longitude east-positive vs west-positive (`IAU_2015:49900` vs
@@ -238,10 +243,30 @@ Here a and c are the ellipsoid's equatorial and polar radii. The latitude
 type is read from each CRS as described under [Conventions](#conventions).
 Round trips are exact to 1e-9°. A west-positive longitude stays
 west-positive in its CRS, and x is always the east–west coordinate.
-Between two spheres of different radii (a CRISM product's 3394.84 km and
-the 3396.19 km Mars 2000 sphere) the longitude and latitude are the same
-numbers, though the distances from the center differ, so ground distances
-measured on each differ by the ratio of the radii (0.04% there).
+Between two spheres of different radii (the CRISM product above, on its
+scene's 3394.84 km sphere, and the 3396.19 km Mars 2000 sphere) the
+longitude and latitude are the same numbers, though the distances from the
+center differ, so ground distances measured on each differ by the ratio of
+the radii (0.04% there).
+
+#### Two CRISM scenes
+
+Each CRISM map-projected product (MTRDR and the others) is on a sphere of
+Mars's local radius under its own scene, read from its own file. The
+3394.84 km above is one scene's; a scene elsewhere has another, e.g.
+3392.50 km with standard parallel 40°S (a constructed example). Both are
+identified as Mars, but their surfaces and standard parallels differ, so
+they are **Same body**, not equivalent: two different grids, never treated
+as one. Tools that need one grid (Band Math, say) don't offer one scene
+for the other, and mosaicking refuses them until one is reprojected to the
+other's projection. Masks and DEMs are resampled onto the other scene's
+grid, and Linked Images, ROIs applied to the other scene, points and lines
+reproject between them; each point keeps its planetocentric longitude and
+latitude exactly (both are spheres, so the same numbers; round trips to
+1e-9°). Ground distances measured in each scene are on that scene's own
+sphere, so the same line measured in the two differs by the ratio of their
+radii (0.07% for these two). State the radius of each product you measure
+on.
 
 ### Different bodies are never combined
 
@@ -610,8 +635,8 @@ skipped.
 | `SCALE_STRONG` | 0.10 | Scale error above 10% → "badly distorted" wording |
 | `ANGLE_STRONG_DEG` | 10.0 | ω above 10° → "badly distorted" wording |
 
-Examples: a CRISM MTRDR (equirectangular, standard parallel 15°, on a
-3394.84 km sphere) at 18.4°N has k = cos 15° / cos 18.4° ≈ 1.018: 1.8%
+Examples: the CRISM MTRDR above (equirectangular, standard parallel 15°,
+on its scene's 3394.84 km sphere) at 18.4°N has k = cos 15° / cos 18.4° ≈ 1.018: 1.8%
 east–west and ω ≈ 1.0°, a tip. An equirectangular image with standard
 parallel 0° at 60°N has k ≈ 2: 100% east–west and ω ≈ 39°, badly
 distorted. A CTX DEM whose standard parallel is its own center latitude
