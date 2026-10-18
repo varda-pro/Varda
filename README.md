@@ -100,8 +100,12 @@ classifiers. In the app, **Help → Documentation** opens it.
 
 If Varda helps your research, please cite it: GitHub's **Cite this
 repository** button (from [CITATION.cff](CITATION.cff)) gives APA and BibTeX,
-and so does **Help → Cite Varda** in the app. A DOI for each release will
-follow.
+and so does **Help → Cite Varda** in the app. Varda is archived on Zenodo:
+[10.5281/zenodo.23447208](https://doi.org/10.5281/zenodo.23447208) cites
+every version (it resolves to the latest), and each release has its own DOI
+on the [Zenodo record](https://doi.org/10.5281/zenodo.23447208) (v0.10.0:
+[10.5281/zenodo.23447209](https://doi.org/10.5281/zenodo.23447209)). Cite
+the version you used.
 
 ## Contributing and license
 
