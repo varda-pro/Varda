@@ -2,11 +2,18 @@
 
 from types import SimpleNamespace
 
+import geopandas as gpd
 import numpy as np
 import pytest
 from shapely.geometry import Polygon, box
 
 from varda.common.entities import ROIMode, VardaROI, Color
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_ENVI_WKT,
+    CRISM_MTRDR_WKT,
+    WGS84,
+    makeImage,
+)
 from varda.rois.roi_collection import ROICollection
 
 RED = Color(1.0, 0.0, 0.0, 0.5)
@@ -469,6 +476,29 @@ class TestApplyToImage:
         target = SimpleNamespace(crs=None, transform=None)
         with pytest.raises(ValueError, match="pixel-space"):
             collection.applyToImage(target)
+
+    def test_apply_rois_to_other_body_refused(self) -> None:
+        mars = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+        earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+        source = ROICollection.fromImage(mars)
+        source.addROI(box(0, 0, 10, 10), "A", RED, ROIMode.RECTANGLE)
+        with pytest.raises(ValueError, match="Mars and Earth are different bodies"):
+            source.applyToImage(earth)
+
+    def test_apply_rois_to_an_equivalent_crs_copies_them(self, monkeypatch) -> None:
+        pds3 = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+        envi = makeImage(
+            CRISM_MTRDR_ENVI_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0
+        )
+        source = ROICollection.fromImage(pds3)
+        poly = box(0, 0, 10, 10)
+        source.addROI(poly, "A", RED, ROIMode.RECTANGLE)
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("an equivalent CRS needs no reprojection")
+
+        monkeypatch.setattr(gpd.GeoDataFrame, "to_crs", refuse)
+        assert source.applyToImage(envi).getROI(0).geometry.equals(poly)
 
 
 class TestRatioSpectrum:

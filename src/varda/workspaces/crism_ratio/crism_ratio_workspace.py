@@ -706,7 +706,7 @@ class CrismRatioWorkspace(QMainWindow):
             description = " ".join(
                 d for d in (f"Class: {className}.", description) if d
             )
-        self.pointCollection.addPixel(
+        self.pointManager.addPixel(
             self.data, col, row, name=name, description=description
         )
 

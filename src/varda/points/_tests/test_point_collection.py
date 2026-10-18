@@ -7,6 +7,13 @@ from affine import Affine
 from pyproj import CRS
 
 from varda.common.entities import Color, VardaRaster
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_WKT,
+    CTX_DEM_PROJ,
+    WGS84,
+    makeImage,
+)
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.points.point_collection import PointCollection
 
@@ -88,3 +95,35 @@ def test_export_writes_a_gis_file_with_the_pixel_and_image_as_attributes(tmp_pat
 def test_export_of_an_empty_collection_is_refused(tmp_path):
     with pytest.raises(ValueError, match="No points"):
         PointCollection().toFile(tmp_path / "points.geojson")
+
+
+def test_points_from_two_mars_projections_share_one_crs(tmp_path):
+    """The same ground spot is the same planetocentric lon/lat on each
+    image's own body model (CTX's 3396.19 km sphere, CRISM's 3394.84 km
+    one), as Varda places points: each image's center pixel (odd sizes) is
+    centered on (77.5°E, 18°N)."""
+    spot = (77.5, 18.0)
+    ctx = makeImage(
+        CTX_DEM_PROJ, centerLonLat=spot, pixelSize=20.0, width=65, height=65
+    )
+    crism = makeImage(
+        CRISM_MTRDR_WKT, centerLonLat=spot, pixelSize=18.0, width=65, height=65
+    )
+    points = PointCollection()
+    points.addPixel(ctx, 32, 32, name="ctx")
+    points.addPixel(crism, 32, 32, name="crism")
+
+    assert sameCrs(points.crs, ctx.crs)
+    path = points.toFile(tmp_path / "points.gpkg")
+    first, second = gpd.read_file(path).geometry
+    assert first.distance(second) <= 1e-6
+
+
+def test_point_from_other_body_refused():
+    mars = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    points = PointCollection()
+    points.addPixel(mars, 3, 4)
+    with pytest.raises(ValueError, match="Earth and Mars are different bodies"):
+        points.addPixel(earth, 3, 4)
+    assert len(points) == 1

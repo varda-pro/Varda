@@ -4,6 +4,7 @@ import numpy as np
 from PyQt6.QtCore import Qt
 
 from varda.common.entities import Color, VardaRaster
+from varda.geo._tests.fixtures import CRISM_MTRDR_WKT, WGS84, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.points.point_collection import PointCollection
 from varda.points.point_manager_widget import PointManagerWidget
@@ -60,3 +61,19 @@ def test_selecting_a_row_reports_its_fid(qtbot):
     widget.table.selectRow(1)
 
     assert seen[-1] == fid
+
+
+def test_a_point_from_another_body_is_refused_in_the_status_line(qtbot):
+    points = PointCollection()
+    widget = PointManagerWidget(points)
+    qtbot.addWidget(widget)
+    mars = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+
+    assert widget.addPixel(mars, 3, 4, name="rock") is not None
+    assert widget.status.isHidden()
+    assert widget.addPixel(earth, 3, 4) is None
+
+    assert len(points) == 1
+    assert "Earth and Mars are different bodies" in widget.status.text()
+    assert not widget.status.isHidden()

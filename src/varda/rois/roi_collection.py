@@ -18,8 +18,10 @@ from shapely.geometry import mapping as shapely_mapping
 from shapely.geometry.base import BaseGeometry
 
 from varda.common.entities import ROIMode, Spectrum, VardaROI, VardaRaster, Color
+from varda.geo.equivalence import canTransform, sameCrs
 from varda.rois.ratio import computeRatioSpectrum
 from varda.rois.region_statistics import computeRegionStatistics
+from varda.utilities.proj_lock import PROJ_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -516,8 +518,9 @@ class ROICollection:
     def applyToImage(self, targetImage: VardaRaster) -> ROICollection:
         """Create a new collection with ROIs mapped to the target image.
 
-        If both source and target have a CRS, geometries are reprojected.
-        If CRS is the same, geometries transfer directly.
+        If both source and target have a CRS on one body, geometries are
+        reprojected; if the CRSs are the same (``sameCrs``: names may
+        differ), geometries transfer directly.
 
         Args:
             targetImage: A VardaRaster with crs and transform properties.
@@ -526,7 +529,9 @@ class ROICollection:
             A new ROICollection in the target image's CRS/transform.
 
         Raises:
-            ValueError: If either the source or target lacks a CRS.
+            ValueError: If either the source or target lacks a CRS, or they
+                are on different bodies (or bodies Varda can't tell apart);
+                the message names both.
         """
         if self._crs is None:
             raise ValueError(
@@ -537,15 +542,20 @@ class ROICollection:
         if target_crs is None:
             raise ValueError("Cannot apply ROIs to an image without a CRS.")
 
+        reason = canTransform(self._crs, target_crs)
+        if reason is not None:
+            raise ValueError(reason)
+
         target_collection = ROICollection(
             crs=target_crs, transform=targetImage.transform
         )
 
-        # Reproject if CRS differs, otherwise copy geometries directly
-        if self._crs != target_crs:
-            reprojected_gdf = self._gdf.to_crs(target_crs)
-        else:
+        # Reproject unless the CRSs are the same (names may differ)
+        if sameCrs(self._crs, target_crs):
             reprojected_gdf = self._gdf
+        else:
+            with PROJ_LOCK:
+                reprojected_gdf = self._gdf.to_crs(target_crs)
 
         for fid, row in reprojected_gdf.iterrows():
             extra = {

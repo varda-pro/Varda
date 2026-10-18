@@ -85,7 +85,7 @@ def canTransform(a: CRS | str | None, b: CRS | str | None) -> str | None:
     the same body), else why not."""
     match = compatibility(a, b)
     if match == Compatibility.DIFFERENT_BODY:
-        reason = f"{_bodyLabel(a)} and {_bodyLabel(b)} are different bodies"
+        reason = f"{bodyLabel(a)} and {bodyLabel(b)} are different bodies"
         return reason[0].upper() + reason[1:]
     if match != Compatibility.UNKNOWN:
         return None
@@ -94,7 +94,7 @@ def canTransform(a: CRS | str | None, b: CRS | str | None) -> str | None:
         if problem is not None:
             return f"The {which} image{problem}"
     return (
-        f"Can't tell whether {_bodyLabel(a)} and {_bodyLabel(b)} are the same "
+        f"Can't tell whether {bodyLabel(a)} and {bodyLabel(b)} are the same "
         "body (unknown body, different radii)"
     )
 
@@ -153,7 +153,7 @@ def _body(key: str) -> Body | None:
     return identifyBody(key).body
 
 
-def _bodyLabel(crs: CRS | str | None) -> str:
+def bodyLabel(crs: CRS | str | None) -> str:
     """ "Mars", or "an unknown body (sphere R = 3000.00 km)"."""
     if crs is None:
         return "no body"

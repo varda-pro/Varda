@@ -9,7 +9,14 @@ from affine import Affine
 from pyproj import CRS
 
 from varda.common.entities import VardaRaster
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_ENVI_WKT,
+    CRISM_MTRDR_WKT,
+    WGS84,
+    makeImage,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.workspaces.linked_images import linking
 from varda.workspaces.linked_images.linking import (
     Link,
     bitPlanes,
@@ -140,3 +147,28 @@ def test_negative_signed_values_show_their_own_bits():
     assert np.isnan(planes[:, 3]).all()
     assert highestBit(values, np.dtype(np.int16)) == 16
     assert highestBit(np.array([3.0]), np.dtype(np.int16)) == 2
+
+
+def test_cross_body_link_does_not_raise():
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01, name="earth")
+    mars = makeImage(
+        CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0, name="crism"
+    )
+    onMars, onEarth = linkedPoints([mars, earth], 0, [[3, 4], [5, 6]], Link.MAP)
+    np.testing.assert_allclose(onMars, [[3, 4], [5, 6]])
+    assert np.isnan(onEarth).all() and onEarth.shape == (2, 2)
+    (warning,) = linkWarnings([mars, earth], Link.MAP)
+    assert warning == "earth: on Earth, not Mars; not linked"
+
+
+def test_equivalent_crs_links_without_transform(monkeypatch):
+    pds3 = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    envi = makeImage(CRISM_MTRDR_ENVI_WKT, centerLonLat=(10.0, 15.0), pixelSize=9.0)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("an equivalent CRS needs no transform")
+
+    monkeypatch.setattr(linking.Transformer, "from_crs", refuse)
+    _, there = linkedPoints([pds3, envi], 0, [[48, 48]], Link.MAP)
+    np.testing.assert_allclose(there, [[64, 64]], atol=1e-6)
+    assert linkWarnings([pds3, envi], Link.MAP) == []

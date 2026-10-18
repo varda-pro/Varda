@@ -9,12 +9,13 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QLabel,
     QMessageBox,
     QTableView,
     QWidget,
 )
 
-from varda.common.entities import VardaRaster
+from varda.common.entities import Color, VardaRaster
 from varda.common.ui import ButtonBuilder, FlowLayout, VBoxBuilder
 from varda.points.point_collection import EXPORT_FILE_FILTER, PointCollection
 from varda.vector_import import ImportPlan, Target, addToPoints
@@ -106,6 +107,10 @@ class PointManagerWidget(QWidget):
             if image is not None
             else "Open an image to import points onto"
         )
+        # Why the last point wasn't saved (another body); hidden otherwise
+        self.status = QLabel(self)
+        self.status.setWordWrap(True)
+        self.status.hide()
         self.setLayout(
             VBoxBuilder()
             .withLayout(
@@ -115,6 +120,7 @@ class PointManagerWidget(QWidget):
                 .withWidget(self.exportButton)
             )
             .withWidget(self.table)
+            .withWidget(self.status)
         )
         selectionModel = self.table.selectionModel()
         if selectionModel is not None:
@@ -127,14 +133,47 @@ class PointManagerWidget(QWidget):
         rows = selectionModel.selectedRows() if selectionModel is not None else []
         return self.model.fidAt(rows[0].row()) if rows else None
 
+    def addPixel(
+        self,
+        image: VardaRaster,
+        x: int,
+        y: int,
+        *,
+        name: str | None = None,
+        color: Color = Color.white(),
+        description: str = "",
+    ) -> int | None:
+        """Save pixel (x, y) of ``image`` (``PointCollection.addPixel``);
+        None, with the reason in the status line, when it can't be (an
+        image of another body than the points')."""
+        try:
+            fid = self._collection.addPixel(
+                image, x, y, name=name, color=color, description=description
+            )
+        except ValueError as error:
+            self._showStatus(f"Point not saved: {error}.")
+            return None
+        self._showStatus("")
+        return fid
+
+    def _showStatus(self, text: str) -> None:
+        self.status.setText(text)
+        self.status.setVisible(bool(text))
+
     def _deleteSelected(self) -> None:
         fid = self.selectedFid()
         if fid is not None:
             self._collection.removePoint(fid)
 
     def _addImported(self, plan: ImportPlan) -> None:
-        if self._image is not None:
+        if self._image is None:
+            return
+        try:
             addToPoints(self._collection, self._image, plan)
+        except ValueError as error:
+            self._showStatus(f"Points not imported: {error}.")
+            return
+        self._showStatus("")
 
     def _export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

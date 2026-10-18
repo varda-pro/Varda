@@ -91,6 +91,7 @@ def makeImage(
     height: int = 64,
     bands: int = 1,
     label: str | None = None,
+    name: str = "fixture",
 ) -> VardaRaster:
     """A north-up image of ``width`` × ``height`` pixels of ``pixelSize``
     (in the CRS's units) centered on ``centerLonLat`` (degrees on the CRS's
@@ -115,4 +116,4 @@ def makeImage(
         crs=crs,
         extraMetadata={"pds3Label": label} if label is not None else None,
     )
-    return VardaRaster(source, name="fixture")
+    return VardaRaster(source, name=name)

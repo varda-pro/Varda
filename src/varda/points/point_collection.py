@@ -9,10 +9,12 @@ from pathlib import Path
 import attrs
 import geopandas as gpd
 from psygnal import Signal
-from pyproj import CRS
+from pyproj import CRS, Transformer
 from shapely.geometry import Point
 
 from varda.common.entities import Color, VardaRaster
+from varda.geo.equivalence import canTransform, sameCrs
+from varda.utilities.proj_lock import PROJ_LOCK
 
 EXPORT_FILE_FILTER = "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)"
 _DRIVERS = {
@@ -21,6 +23,18 @@ _DRIVERS = {
     ".gpkg": "GPKG",
     ".shp": "ESRI Shapefile",
 }
+
+
+def _converted(geometry: Point, crs: CRS, target: CRS) -> Point:
+    """``geometry`` on ``crs`` as a point on ``target``: the same longitude
+    and latitude on each CRS's own body model. ValueError, naming both
+    bodies, when they aren't one body."""
+    reason = canTransform(crs, target)
+    if reason is not None:
+        raise ValueError(reason)
+    with PROJ_LOCK:
+        transformer = Transformer.from_crs(crs, target, always_xy=True)
+        return Point(transformer.transform(geometry.x, geometry.y))
 
 
 @attrs.frozen
@@ -41,7 +55,8 @@ class VardaPoint:
 
 class PointCollection:
     """Points in insertion order; the CRS is that of the first georeferenced
-    image a point was saved from (a workspace's images are co-registered)."""
+    image a point was saved from, and points from images on other CRSs (of
+    the same body) are converted to it."""
 
     sigPointAdded = Signal(int)
     sigPointRemoved = Signal(int)
@@ -67,12 +82,18 @@ class PointCollection:
         """Save pixel (x, y) of ``image``; returns the point's fid. The point
         is at the pixel's center, or at ``geometry`` (in the image's CRS, or
         in pixel coordinates when it has none) for a point known more
-        precisely than its pixel, such as an imported one."""
+        precisely than its pixel, such as an imported one.
+
+        A point from an image on another CRS is converted to the
+        collection's; from another body (or one Varda can't tell is the
+        same) it raises ValueError naming both bodies, and isn't saved."""
         if image.hasGeospatialData:
             if geometry is None:
                 geometry = Point(*image.pixelToGeo(x, y))
             if self.crs is None:
                 self.crs = image.crs
+            elif image.crs is not None and not sameCrs(image.crs, self.crs):
+                geometry = _converted(geometry, image.crs, self.crs)
         elif geometry is None:
             geometry = Point(x + 0.5, y + 0.5)
         fid = self._nextFid

@@ -348,7 +348,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         """Save a pixel curve's pixel to the Points Manager, in the curve's color."""
         origin = plot.pixelOrigins.get(curve)
         if origin is not None:
-            self.pointCollection.addPixel(
+            self.pointManagerWidget.addPixel(
                 origin.image,
                 origin.x,
                 origin.y,

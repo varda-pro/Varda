@@ -106,6 +106,24 @@ image is georeferenced. **Export…** there writes the points as GeoJSON,
 GeoPackage or a shapefile; **Import…** adds points from a GIS file or a CSV of
 coordinates (see [Importing vector data](importing-vector-data.md)).
 
+The points share one coordinate system: that of the first georeferenced image
+a point was saved from, which **Export…** writes with them. A point saved
+from an image on another projection of the same body is converted to it with
+PROJ (through pyproj). Between two models of one body (e.g. a CRISM product's
+3394.84 km sphere and a CTX DEM's 3396.19 km sphere) PROJ has no datum
+shift, so it keeps the numbers of longitude and latitude ("ballpark
+geographic offset"): a point is at the same longitude and latitude, in
+degrees, on each image's own model. Between a sphere and a flattened
+ellipsoid that means a planetocentric latitude becomes the same number of
+planetographic degrees (up to about 0.3° apart on Mars at mid-latitudes), so
+check that the images' latitude types match (Image Properties, **Coordinate
+system**) before combining their points. Report the exported CRS with the
+points. Images whose coordinate systems differ only in
+names need no conversion. A point from an image of another body (or one whose
+body can't be told and whose radii differ) isn't saved: the line under the
+Points Manager's table names both bodies. Points from an image without
+georeferencing are kept in pixel coordinates (pixel centers), unconverted.
+
 ### Moving around a spectral plot
 
 In the spectral plots (pixel, ROI and ratio spectra, and the Spectral

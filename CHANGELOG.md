@@ -113,6 +113,18 @@ can alter results.
   Mars image, say) is never placed on another, and degree images with
   longitudes 0–360 and −180–180 now overlap where they cover the same
   ground. A mosaic's projection error names both projections.
+- **Linking or transferring between images of different bodies (or with an
+  Earth CRS on planetary data) no longer crashes; it says why it can't.**
+  Linked Images (and the CRISM Ratio workspace's browse view) linked by map
+  location leave an image of another body unlinked, with a notice such as
+  "EARTH: on Earth, not Mars; not linked"; applying ROIs to such an image
+  and saving a point from it are refused with a message naming both bodies.
+  Points saved from images on other projections of the same body are now
+  converted to the Points Manager's coordinate system (that of the first
+  image a point was saved from); before, their coordinates were stored
+  unconverted and exported under the wrong CRS. Images whose coordinate
+  systems differ only in names are linked and given ROIs without
+  reprojection.
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never

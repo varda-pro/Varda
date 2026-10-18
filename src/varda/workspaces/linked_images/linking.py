@@ -6,7 +6,8 @@ each image holds there. No Qt.
 An image without georeferencing can only be linked by pixel, so map links
 fall back to the pixel for it; and linking by pixel pairs different places
 on images that aren't on one grid. ``linkWarnings`` says when either
-happens, for the workspace to show.
+happens, for the workspace to show. Images of different bodies are never
+linked by map location: their points are NaN.
 """
 
 from __future__ import annotations
@@ -16,10 +17,11 @@ from collections.abc import Sequence
 import numpy as np
 import numpy.typing as npt
 from attrs import frozen
-from pyproj import CRS, Transformer
+from pyproj import Transformer
 
 from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
+from varda.geo.equivalence import bodyLabel, canTransform, sameCrs
 from varda.common.parameter import LabeledEnum
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -36,29 +38,33 @@ def linkedPoints(
     link: Link,
 ) -> list[np.ndarray]:
     """``points`` (n, 2; image coordinates, x = column) on ``images[source]``
-    in each image's own coordinates."""
+    in each image's own coordinates; NaN on an image of another body (or
+    one whose body can't be told), which has no such place."""
     xy = np.asarray(points, dtype=np.float64).reshape(-1, 2)
     origin = images[source]
     if link is Link.PIXEL or not origin.hasGeospatialData:
         return [xy.copy() for _ in images]
     mapped = origin.imageToGeo(xy)
-    originCrs = CRS.from_user_input(origin.crs)
     out = []
     for image in images:
         if not image.hasGeospatialData:
             out.append(xy.copy())
-            continue
-        crs = CRS.from_user_input(image.crs)
-        there = mapped
-        if crs != originCrs:
+        elif canTransform(origin.crs, image.crs) is not None:
+            # another body: no place there is this one
+            out.append(np.full_like(xy, np.nan))
+        elif sameCrs(origin.crs, image.crs):
+            out.append(image.geoToImage(mapped))
+        else:
             with PROJ_LOCK:
-                transformer = Transformer.from_crs(originCrs, crs, always_xy=True)
+                transformer = Transformer.from_crs(
+                    origin.crs, image.crs, always_xy=True
+                )
                 # lists, not arrays: pyproj takes a one-element array for a
                 # scalar, which NumPy deprecates
                 there = np.column_stack(
                     transformer.transform(mapped[:, 0].tolist(), mapped[:, 1].tolist())
                 )
-        out.append(image.geoToImage(there))
+            out.append(image.geoToImage(there))
     return out
 
 
@@ -68,20 +74,12 @@ def _names(images: Sequence[VardaRaster]) -> str:
 
 def linkWarnings(images: Sequence[VardaRaster], link: Link) -> list[str]:
     """What isn't linked the way ``link`` says: images without
-    georeferencing (linked by pixel, even by map location), or images not on
-    the first image's grid (linked by pixel, so the same pixel is a
+    georeferencing (linked by pixel, even by map location), images on
+    another body than the first georeferenced image (not linked by map
+    location), or images not on the first image's grid (linked by pixel, so the same pixel is a
     different place)."""
     if link is Link.MAP:
-        plain = [image for image in images if not image.hasGeospatialData]
-        if not plain:
-            return []
-        if len(plain) == len(images):
-            return ["No image has georeferencing, so they're linked by pixel."]
-        return [
-            f"Linked by pixel, not map location: {_names(plain)} "
-            "(no georeferencing). Placing the cursor on one of them links "
-            "every image by pixel."
-        ]
+        return _plainWarnings(images) + _bodyWarnings(images)
     first = images[0]
     other = [image for image in images[1:] if not sameGrid(image, first)]
     if not other:
@@ -90,6 +88,37 @@ def linkWarnings(images: Sequence[VardaRaster], link: Link) -> list[str]:
         f"Not on {first.name}'s grid: {_names(other)} (size or georeferencing "
         "differ). Linked by pixel, the same pixel there is a different place; "
         "link by map location instead."
+    ]
+
+
+def _plainWarnings(images: Sequence[VardaRaster]) -> list[str]:
+    plain = [image for image in images if not image.hasGeospatialData]
+    if not plain:
+        return []
+    if len(plain) == len(images):
+        return ["No image has georeferencing, so they're linked by pixel."]
+    return [
+        f"Linked by pixel, not map location: {_names(plain)} "
+        "(no georeferencing). Placing the cursor on one of them links "
+        "every image by pixel."
+    ]
+
+
+def _bodyWarnings(images: Sequence[VardaRaster]) -> list[str]:
+    """Georeferenced images that can't be put on the first georeferenced
+    image's body (another body, or one Varda can't tell), by body."""
+    mapped = [image for image in images if image.hasGeospatialData]
+    if not mapped:
+        return []
+    origin = mapped[0]
+    byBody: dict[str, list[VardaRaster]] = {}
+    for image in mapped[1:]:
+        if canTransform(origin.crs, image.crs) is not None:
+            byBody.setdefault(bodyLabel(image.crs), []).append(image)
+    originBody = bodyLabel(origin.crs)
+    return [
+        f"{_names(others)}: on {body}, not {originBody}; not linked"
+        for body, others in byBody.items()
     ]
 
 
@@ -105,6 +134,8 @@ class LinkedSpectrum:
 def spectrumAt(image: VardaRaster, x: float, y: float) -> LinkedSpectrum | None:
     """The spectrum of the pixel containing image point (``x``, ``y``), or
     None off the image."""
+    if not (np.isfinite(x) and np.isfinite(y)):
+        return None  # not linked (another body)
     col, row = int(np.floor(x)), int(np.floor(y))
     if not (0 <= col < image.width and 0 <= row < image.height):
         return None
