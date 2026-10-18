@@ -67,9 +67,13 @@ names another body (see
   CRS each image uses, as WKT, among its edits (`"crs"` in the image's
   `overrides`). Reopening the session uses that CRS, even when the
   automatic check would choose another, and checks it again; a session
-  that names the file's own CRS (`"crs": null`) keeps the file's. A
-  session saved before Varda checked CRSs doesn't say, so the check made
-  when the image opens stands.
+  that names the file's own CRS (`"crs": null`) keeps the file's. The
+  image's `crsFix` record is saved beside its edits (`"crsFix"`) and
+  restored with them, so a fix applied by hand, a CRS set by hand and an
+  undone fix are recorded the same way after reopening. A session saved
+  before Varda checked CRSs doesn't say, so the check made when the image
+  opens stands; one saved before Varda kept the records restores the CRS
+  without a record of how it was chosen.
 - **Editing other metadata keeps it.** Saving edits in Image Properties
   doesn't drop the corrected CRS; **Reset to the File's** returns the image
   to how it opened, including the automatic correction.

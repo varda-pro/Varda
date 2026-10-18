@@ -8,12 +8,17 @@ import pytest
 from varda import session
 from shapely.geometry import box
 
+from varda.analysis.band_math import BandMathAnalysis
+from varda.analysis.provenance import recordProvenance
 from varda.common.di_types import ProjectImages
 from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.geo._tests.fixtures import writeWgs84
 from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.image_loading.image_loading_service import loadRaster
+from varda.common.provenance import PROVENANCE_KEY
+from varda.image_loading.crs_check import chooseCrs, undoCrsFix
+from varda.image_loading.image_loading_service import loadRaster, openDataSource
+from varda.image_loading.raster_writer import writeRaster
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_json import roisFromJson, roisToJson
 from varda.session import (
@@ -246,3 +251,54 @@ def test_a_session_crs_proj_cant_read_falls_back_to_the_loaded_one(qtbot, tmp_pa
     _restore(qtbot, state, fixed)  # finishes
     assert fixed.crs is not None and sameCrs(fixed.crs, "IAU_2015:49900")
     assert fixed.name == "x"
+
+
+def _automatic(image: VardaRaster) -> None:
+    pass  # the fix made at load
+
+
+def _appliedByHand(image: VardaRaster) -> None:
+    fix = undoCrsFix(image).issues[0].fix
+    assert fix is not None
+    chooseCrs(image, fix.wkt, fix.reason)
+
+
+def _setByHand(image: VardaRaster) -> None:
+    chooseCrs(image, "IAU_2015:49910", "Its producer's projection")
+
+
+def _undone(image: VardaRaster) -> None:
+    undoCrsFix(image)
+
+
+@pytest.mark.parametrize("decide", [_automatic, _appliedByHand, _setByHand, _undone])
+def test_a_crs_decision_survives_a_session_into_provenance(qtbot, tmp_path, decide):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    decide(image)
+    record, crs = dict(image.extraMetadata["crsFix"]), image.crs
+    state = _saveAndRead(image, tmp_path)
+
+    again = loadRaster(str(image.filePath))  # the automatic fix applies again
+    _restore(qtbot, state, again)
+
+    assert again.extraMetadata["crsFix"] == record
+    assert sameCrs(again.crs, crs)
+    result = BandMathAnalysis()
+    result.expression.set("b2 - b1")
+    made = result.run(again, lambda p, m: None)
+    recordProvenance(made, result, again)
+    written = writeRaster(made, tmp_path / "result.tif")
+    entry = openDataSource(str(written)).extraMetadata[PROVENANCE_KEY]["inputs"][0]
+    assert entry["crsFix"] == record
+
+
+def test_a_session_without_records_still_loads(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    state = SessionState(  # saved before Varda kept crsFix records
+        (image.filePath,),
+        (),
+        {image.filePath: {"name": "x", "overrides": {"crs": "IAU_2015:49910"}}},
+    )
+    _restore(qtbot, state, image)
+    assert sameCrs(image.crs, "IAU_2015:49910") and image.name == "x"
+    assert "crsFix" not in image.extraMetadata  # the load-time fix's no longer applies

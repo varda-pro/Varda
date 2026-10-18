@@ -109,10 +109,8 @@ class MainGUI(QModelMainWindow):
         if not problems:
             return
         if len(problems) == 1:
-            finding = headline(problems[0].crsHealth) or ""
-            if finding.startswith("Its "):
-                finding = "i" + finding[1:]
-            message = f"{problems[0].name}: {finding} Details in Image Properties."
+            finding = headline(problems[0].crsHealth)
+            message = f"{problems[0].name} — {finding} Details in Image Properties."
         else:
             message = (
                 f"{len(problems)} images have coordinate-system problems (a dot "

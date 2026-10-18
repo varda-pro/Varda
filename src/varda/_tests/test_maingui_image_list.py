@@ -52,7 +52,7 @@ def test_a_crs_problem_is_announced_once_per_image(gui, tmp_path):
     gui.app.images.refresh()  # a second change: not announced again
     shown = [m for m in messages if m]
     assert shown == [
-        "scene.tif: its CRS says Earth; read as Mars (from its label). "
+        "scene.tif — Its CRS says Earth; read as Mars (from its label). "
         "Details in Image Properties."
     ]
 

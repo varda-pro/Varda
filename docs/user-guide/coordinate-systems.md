@@ -380,7 +380,7 @@ dialogs. Each finding has a severity:
   the file's CRS is still wrong, and the dot says so.
 - **The status bar.** When an image with a problem (the automatic fix
   included) joins the image list, the main window's status bar says so for
-  15 seconds, e.g. "scene.tif: its CRS says Earth; read as Mars (from its
+  15 seconds, e.g. "scene.tif — Its CRS says Earth; read as Mars (from its
   label). Details in Image Properties." Several such images added at once
   give one message, "3 images have coordinate-system problems (a dot on
   their thumbnails). Details in Image Properties." Each image is announced
@@ -389,10 +389,13 @@ dialogs. Each finding has a severity:
   checked, so they get neither the dot nor a message.
 - **Image Properties.** The **Coordinate system** group lists every
   finding, info included, as its severity and message ("Problem: Its CRS
-  says Earth, but its label says Mars."), with what to do below it. A fix
-  in use has a note saying who applied it and why ("Varda applied this fix
-  when the image opened: …", or "You applied this fix: …") and an **Undo**
-  button; a fix offered but not in use has an **Apply** button. **Set
+  says Earth, but its label says Mars."), with what to do below it. A
+  finding whose fix is in use reads **Fixed** instead ("Fixed: Its CRS says
+  Earth, but its label says Mars."), with a note saying who applied it
+  ("Varda applied this fix when the image opened.", or "You applied this
+  fix."; hover over it for the fix's reason) and an **Undo** button; a fix
+  offered but not in use (after Undo) has an **Apply** button, and the
+  finding reads **Problem** again. **Set
   coordinate system…** is always there.
 
 Varda never opens a dialog about a finding on its own: the dot, the
@@ -516,11 +519,11 @@ image's `overrides`; see
   *image* (Set coordinate system…)". **Reset to the File's** returns the
   image to how it opened, the automatic fix included.
 
-A session keeps the CRS you chose, but not the record of how you chose it:
-reopened, a CRS you set by hand has no `crsFix` record, the automatic
-fix's CRS applied by hand is recorded as automatic again, and an undone
-fix's record is gone. Results made before saving keep their records. Note
-your choice and its reason when you make it.
+A session keeps both the CRS you chose and its `crsFix` record (automatic,
+applied or set by hand, or undone), so results made after reopening record
+the same decision as results made before. A record is kept only while it
+still describes the CRS in use: choosing another CRS, or **Reset to the
+File's**, replaces it.
 
 ### Reporting a corrected CRS
 

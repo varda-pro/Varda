@@ -113,7 +113,9 @@ class CrsIssueRow(QWidget):
         self.button: QPushButton | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(wrapped(f"{issue.severity.value.title()}: {issue.message}"))
+        fixed = issue.fix is not None and issue.fix.automatic  # resolved
+        severity = "Fixed" if fixed else issue.severity.value.title()
+        layout.addWidget(wrapped(f"{severity}: {issue.message}"))
         suggestion = MutedLabel(issue.suggestion)
         suggestion.setWordWrap(True)
         layout.addWidget(suggestion)
@@ -121,12 +123,13 @@ class CrsIssueRow(QWidget):
             return
         row = FlowLayout()
         if issue.fix.automatic:
-            who = (
-                "You applied this fix"
+            note = wrapped(
+                "You applied this fix."
                 if chosen
-                else ("Varda applied this fix when the image opened")
+                else "Varda applied this fix when the image opened."
             )
-            layout.addWidget(wrapped(f"{who}: {issue.fix.reason}."))
+            note.setToolTip(issue.fix.reason)  # the message says the rest
+            layout.addWidget(note)
             self.button = QPushButton("Undo")
             self.button.setToolTip("Use the file's own coordinate system")
             self.button.clicked.connect(self.sigUndo)
@@ -153,6 +156,12 @@ class ImagePropertiesDialog(QDialog):
         self.image = image
         self.images = images
         self.setCrsDialog: SetCrsDialog | None = None
+        # the Coordinate system group's controls, made by _coordinateSystem
+        self.applyButtons: list[QPushButton] = []
+        self.undoButton: QPushButton | None = None
+        self.setCrsButton = QPushButton()
+        self.wktToggle = QPushButton()
+        self.wktEdit = QPlainTextEdit()
         self.setWindowTitle(f"Properties of {image.name}")
         source = image.dataSource
         about = QFormLayout()
@@ -311,8 +320,8 @@ class ImagePropertiesDialog(QDialog):
         crs = image.crs if image.hasGeospatialData else None
         description = describeCrs(crs, image.transform, image.width, image.height)
         form.addRow(wrapped(description.text))
-        self.applyButtons: list[QPushButton] = []
-        self.undoButton: QPushButton | None = None
+        self.applyButtons = []
+        self.undoButton = None
         health = image.crsHealth
         record = image.extraMetadata.get(CRS_FIX_KEY)
         chosen = isinstance(record, dict) and record.get("automatic") is False

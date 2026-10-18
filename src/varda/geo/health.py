@@ -232,7 +232,12 @@ def headline(health: CrsHealth | None) -> str | None:
             if issue.severity is not severity:
                 continue
             body = health.body.body
-            if issue.fix is not None and issue.fix.automatic and body is not None:
+            if (
+                issue.code == "earth-crs-on-body"
+                and issue.fix is not None
+                and issue.fix.automatic
+                and body is not None
+            ):
                 return f"Its CRS says Earth; read as {body.name} (from its label)."
             return issue.message
     return None

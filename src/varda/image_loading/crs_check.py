@@ -33,10 +33,13 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
 
     The file's CRS is checked against its label (read once, kept as
     ``image.labelHints``) and its Varda provenance. Without a ``crs``
-    override, an automatic fix becomes one, with its ``crsFix`` record. An
-    override that is the fix keeps the record; any other (a CRS chosen by
-    hand, or None for the file's own) drops it, and the health is of the
-    CRS the image uses (with a declined fix offered again)."""
+    override, an automatic fix becomes one, with its ``crsFix`` record.
+    With one, the health is of the CRS the image uses (a declined fix is
+    offered again), and an image's ``crsFix`` record is kept while it still
+    says what happened: a record of the CRS in use (the fix applied by
+    hand, a CRS set by hand, a record from the file of an exported
+    corrected image), or of the fix undone when the file's own CRS is in
+    use. Any other record is dropped, or replaced by the automatic fix's."""
     if image.labelHints is None:
         image.labelHints = imageLabelHints(image)
     hints = provenanceHints(image.extraMetadata.get(PROVENANCE_KEY), image.labelHints)
@@ -47,27 +50,34 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
     record = fixRecord(health, declared) if declared is not None else None
     overrides = image.metadataOverrides
     metadata = source.extraMetadata
+    kept = metadata.get(CRS_FIX_KEY)
+    kept = kept if isinstance(kept, dict) else None
+    keep = False
     if record is None:
         chosen = overrides.get("crs")
         if chosen is not None:
             health = checkCrs(chosen, *size, hints)
-            # a record from the file (an exported corrected image) no longer
-            # applies to a CRS chosen since
-            kept = metadata.get(CRS_FIX_KEY)
-            if isinstance(kept, dict) and not sameCrs(chosen, str(kept.get("to"))):
-                metadata.pop(CRS_FIX_KEY)
-    elif "crs" not in overrides or _isFix(overrides["crs"], health):
-        if "crs" not in overrides:
-            fixed = next(i.fix for i in health.issues if i.fix and i.fix.automatic)
-            image.setMetadataOverrides({**overrides, "crs": fixed.wkt})
+        keep = _describes(kept, chosen if chosen is not None else declared)
+    elif "crs" not in overrides:  # as opened: the automatic fix
+        fixed = next(i.fix for i in health.issues if i.fix and i.fix.automatic)
+        image.setMetadataOverrides({**overrides, "crs": fixed.wkt})
         metadata[CRS_FIX_KEY] = record
-    else:  # the user's choice: the fix's record no longer applies
-        metadata.pop(CRS_FIX_KEY, None)
+        keep = True
+    elif _isFix(overrides["crs"], health):  # the fix, at load or by hand
+        byHand = kept is not None and kept.get("automatic") is False
+        if not (byHand and _describes(kept, overrides["crs"])):
+            metadata[CRS_FIX_KEY] = record
+        keep = True
+    else:  # another CRS, or the file's own (the fix declined: offered again)
         chosen = overrides["crs"]
-        if chosen is None:  # the file's own, the fix declined: offered again
+        if chosen is None:
             health = checkCrs(declared, *size, hints, applyFix=False)
+            keep = kept is not None and kept.get("undone") is True
         else:
             health = checkCrs(chosen, *size, hints)
+            keep = _describes(kept, chosen)
+    if not keep:
+        metadata.pop(CRS_FIX_KEY, None)
     image.crsHealth = health
     return health
 
@@ -75,8 +85,9 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
 def chooseCrs(image: VardaRaster, crs: str, reason: str) -> CrsHealth:
     """Use ``crs`` (WKT, or any text PROJ reads) for ``image`` instead of its
     file's, checked, and recorded as a ``crsFix`` that isn't automatic (the
-    user's choice, with their ``reason``). Raises ValueError when PROJ
-    can't read ``crs``."""
+    user's choice, with their ``reason``). Raises ValueError, changing
+    nothing, when PROJ can't read ``crs`` (``setMetadataOverrides`` parses
+    it first)."""
     declared = image.dataSource.crs
     image.setMetadataOverrides({**image.metadataOverrides, "crs": crs})
     health = checkImageCrs(image)
@@ -110,6 +121,13 @@ def _recordText(crs: CRS | str | None) -> str:
         return authority
     with PROJ_LOCK:
         return CRS.from_user_input(crs).to_wkt()
+
+
+def _describes(record: dict | None, crs: CRS | str | None) -> bool:
+    """Whether ``record`` (a ``crsFix``, not undone) is of ``crs`` in use."""
+    if record is None or crs is None or record.get("undone"):
+        return False
+    return sameCrs(crs, str(record.get("to")))
 
 
 def _isFix(chosen: str | None, health: CrsHealth) -> bool:

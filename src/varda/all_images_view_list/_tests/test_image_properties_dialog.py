@@ -189,7 +189,7 @@ def test_the_issues_are_listed_with_the_automatic_fix_and_undo(qtbot, tmp_path):
     dialog = ImagePropertiesDialog(image)
     qtbot.addWidget(dialog)
     texts = _crsTexts(dialog)
-    assert "Problem: Its CRS says Earth, but its label says Mars." in texts
+    assert "Fixed: Its CRS says Earth, but its label says Mars." in texts
     assert any(t.startswith("Varda reads it as degrees") for t in texts)
     assert any(
         t.startswith("Varda applied this fix when the image opened") for t in texts
@@ -208,7 +208,8 @@ def test_undo_keeps_the_files_crs_and_the_issue(qtbot, tmp_path):
     assert flagged(image.crsHealth)  # still a problem: the badge stays
     texts = _crsTexts(dialog)
     assert any("you chose to keep the file's CRS" in t for t in texts)
-    assert any(t.startswith("WGS 84") or "Earth" in t for t in texts)
+    assert any(t.startswith("Earth, ellipsoid a = 6378.14") for t in texts)
+    assert any(t.startswith("Problem: Its CRS says Earth") for t in texts)
     assert dialog.undoButton is None and len(dialog.applyButtons) == 1
     dialog.applyButtons[0].click()  # and back
     assert sameCrs(image.crs, "IAU_2015:49900")
