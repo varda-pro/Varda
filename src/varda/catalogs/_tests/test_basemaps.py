@@ -19,7 +19,7 @@ from varda.catalogs.basemaps import (
     TileCache,
     assemble,
     bundledImage,
-    fetchTile,
+    loadTile,
     layerById,
     layersFor,
     streamTiles,
@@ -147,11 +147,11 @@ def test_cache_hit_and_miss(tmp_path):
 
     def fetch(url: str) -> bytes:
         calls.append(url)
-        return b"tile"
+        return png((1, 2, 3))
 
     assert cache.get(MOLA, tile) is None
-    assert fetchTile(MOLA, tile, cache, fetch) == b"tile"
-    assert fetchTile(MOLA, tile, cache, fetch) == b"tile"
+    assert loadTile(MOLA, tile, cache, fetch)[0, 0, 2] == 3
+    assert loadTile(MOLA, tile, cache, fetch)[0, 0, 2] == 3
     assert calls == [MOLA.tileUrl(tile)]  # the second came from disk
     assert cache.path(MOLA, tile) == (
         tmp_path / "Mars" / MOLA.layerId / "4" / "3" / "9.jpg"
@@ -179,8 +179,48 @@ def test_a_failed_fetch_is_not_cached(tmp_path):
         raise CatalogError("trek.nasa.gov couldn't be reached.")
 
     with pytest.raises(CatalogError):
-        fetchTile(MOLA, Tile(1, 0, 0), cache, offline)
+        loadTile(MOLA, Tile(1, 0, 0), cache, offline)
     assert cache.get(MOLA, Tile(1, 0, 0)) is None
+
+
+def test_a_reply_that_isnt_an_image_is_not_cached(tmp_path):
+    cache = TileCache(tmp_path)
+    portal = b"<html>Log in to the hotel Wi-Fi</html>"
+    with pytest.raises(ValueError):
+        loadTile(MOLA, Tile(1, 0, 0), cache, lambda url: portal)
+    assert cache.get(MOLA, Tile(1, 0, 0)) is None
+
+
+def test_a_cached_tile_that_doesnt_decode_is_deleted_and_fetched_again(tmp_path):
+    cache = TileCache(tmp_path)
+    tile = Tile(2, 1, 1)
+    cache.put(MOLA, tile, b"not an image")  # e.g. cached by an older Varda
+    pixels = loadTile(MOLA, tile, cache, lambda url: png((9, 9, 9)))
+    assert pixels[0, 0, 0] == 9
+    assert cache.get(MOLA, tile) == png((9, 9, 9))
+    # offline, a bad cached tile is dropped rather than kept forever
+    cache.put(MOLA, tile, b"broken again")
+
+    def offline(url: str) -> bytes:
+        raise CatalogError("offline")
+
+    with pytest.raises(CatalogError):
+        loadTile(MOLA, tile, cache, offline)
+    assert cache.get(MOLA, tile) is None
+
+
+def test_tiles_use_a_short_timeout(monkeypatch):
+    seen: list[float] = []
+
+    def fetchBytes(
+        url: str, headers=None, limit: int = 0, timeout: float = 60
+    ) -> bytes:
+        seen.append(timeout)
+        return b""
+
+    monkeypatch.setattr(basemaps, "fetchBytes", fetchBytes)
+    basemaps.fetchTileBytes("https://trek.nasa.gov/x.jpg")
+    assert seen == [basemaps.TILE_TIMEOUT_S] and basemaps.TILE_TIMEOUT_S <= 10
 
 
 # --- streaming and offline fallback --------------------------------------------------
@@ -192,6 +232,22 @@ def test_stream_assembles_fetched_tiles(tmp_path):
     assert rgba.failed == 0
     assert rgba.bounds == (0.0, 0.0, 45.0, 22.5)
     assert (rgba.rgba[..., 1] == 200).all() and (rgba.rgba[..., 3] == 255).all()
+
+
+def test_a_superseded_stream_skips_the_tiles_it_hasnt_fetched(tmp_path):
+    tiles = tilesFor((0.0, 0.0, 90.0, 45.0), 4)  # 32 tiles
+    fetched: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return png((0, 0, 0))
+
+    # canceled after the first few tiles: the rest are never requested
+    streamTiles(
+        MOLA, tiles, TileCache(tmp_path), fetch, cancelled=lambda: len(fetched) >= 3
+    )
+    assert len(fetched) < len(tiles)
+    assert len(fetched) <= 3 + basemaps.FETCH_THREADS
 
 
 def test_offline_tiles_are_transparent_over_the_bundled_image(tmp_path):

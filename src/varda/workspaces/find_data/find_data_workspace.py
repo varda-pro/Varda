@@ -8,6 +8,7 @@ from collections.abc import MutableSequence
 from datetime import datetime, time, timezone
 
 import geopandas as gpd
+import numpy as np
 import PyQt6Ads as ads
 import shapely
 from PyQt6.QtCore import (
@@ -73,10 +74,12 @@ from varda.common.ui import (
 from varda.image_loading.image_loading_service import ImageLoadingService
 from varda.utilities.background import runInBackground
 from varda.workspaces.find_data.basemap import (
+    MapFrame,
     basemap,
     globalBasemap,
     imageBody,
     imageBounds,
+    imageMapBounds,
 )
 from varda.workspaces.find_data.catalog_dialogs import (
     CredentialsDialog,
@@ -87,7 +90,7 @@ from varda.workspaces.find_data.collection_picker import CollectionCombo
 from varda.workspaces.find_data.downloads_panel import DownloadsPanel
 from varda.workspaces.find_data.map_view import ADD, REMOVE, FootprintMap
 from varda.workspaces.find_data.imagery import ImageryStreamer
-from varda.workspaces.find_data.projection import MapProjection
+from varda.workspaces.find_data.projection import Bounds, MapProjection
 from varda.workspaces.find_data.results_model import SORT_ROLE, ResultsModel
 
 AREA_VIEW, AREA_BOX, AREA_IMAGE = "Map view", "Box on the map", "An image's footprint"
@@ -138,6 +141,7 @@ class FindDataWorkspace(QMainWindow):
         self._nextPage: object | None = None
         self.overlayPaths: list[str] = []
         self._pendingLayer: str | None = None  # a session's basemap layer id
+        self._basemapRequest = 0  # the latest basemap drawing asked for
 
         self.map = FootprintMap()
         self.map.sigSelect.connect(self._onMapSelect)
@@ -807,6 +811,9 @@ class FindDataWorkspace(QMainWindow):
         self._onBasemap()
 
     def _onBasemap(self) -> None:
+        # a newer choice drops the result of any drawing still under way
+        self._basemapRequest += 1
+        request = self._basemapRequest
         image = self.basemapBox.currentData()
         layer = image if isinstance(image, BasemapLayer) else None
         self.streamer.setLayer(layer)
@@ -815,10 +822,12 @@ class FindDataWorkspace(QMainWindow):
             self.map.setBasemap(None)
             return
         projector = self.map.projector
+        # pyproj objects stay on this thread: workers get plain values
+        frame = MapFrame.of(projector)
         if layer is not None:
             runInBackground(
-                lambda: globalBasemap(bundledImage(layer), projector),
-                lambda result: self._showGlobalBasemap(projector, *result),
+                lambda: globalBasemap(bundledImage(layer), frame),
+                lambda result: self._showGlobalBasemap(request, *result),
                 lambda error: self.status.showMessage(
                     f"The basemap couldn't be drawn: {error}", 8000
                 ),
@@ -826,10 +835,16 @@ class FindDataWorkspace(QMainWindow):
                 owner=self,
             )
             return
+        try:
+            bounds = imageMapBounds(image, projector)
+        except ValueError as error:
+            self.map.setBasemap(None)
+            self.status.showMessage(f"The basemap couldn't be drawn: {error}", 8000)
+            return
         self.status.showMessage(f"Reprojecting {image.name} for the map…")
         runInBackground(
-            lambda: basemap(image, projector),
-            lambda result: self._showBasemap(projector, *result),
+            lambda: basemap(image, frame.crs, bounds),
+            lambda result: self._showBasemap(request, *result),
             lambda error: self.status.showMessage(
                 f"The basemap couldn't be drawn: {error}", 8000
             ),
@@ -837,16 +852,18 @@ class FindDataWorkspace(QMainWindow):
             owner=self,
         )
 
-    def _showBasemap(self, projector, rgba, bounds) -> None:
-        if projector is not self.map.projector:
-            return  # drawn for a projection the map has left
+    def _showBasemap(self, request: int, rgba: np.ndarray, bounds: Bounds) -> None:
+        if request != self._basemapRequest:
+            return  # drawn for a choice or projection the map has left
         self.map.setBasemap(rgba, bounds)
         self.status.clearMessage()
         if not self.results.products:
             self.map.zoomToMap(bounds, padding=0.05)
 
-    def _showGlobalBasemap(self, projector, rgba, bounds) -> None:
-        if projector is self.map.projector:  # not a projection the map has left
+    def _showGlobalBasemap(
+        self, request: int, rgba: np.ndarray, bounds: Bounds
+    ) -> None:
+        if request == self._basemapRequest:  # still the choice and projection
             self.map.setBasemap(rgba, bounds)
 
     def _showCredit(self) -> None:
@@ -872,10 +889,17 @@ class FindDataWorkspace(QMainWindow):
             if name.strip():
                 self.status.showMessage(f"No feature called {name.strip()!r}.", 5000)
             return False
-        self.map.zoomTo(featureView(gazetteer, hits[0]), padding=0)
-        self.status.showMessage(
-            f"{gazetteer.names[hits[0]]} ({gazetteer.kinds[hits[0]]})", 5000
-        )
+        found = gazetteer.names[hits[0]]
+        view = featureView(gazetteer, hits[0])
+        if self.map.projector.mapBounds(view) is None:
+            self.status.showMessage(
+                f"{found} is in the other hemisphere; choose Equirectangular "
+                "or the other polar view.",
+                8000,
+            )
+            return False
+        self.map.zoomTo(view, padding=0)
+        self.status.showMessage(f"{found} ({gazetteer.kinds[hits[0]]})", 5000)
         return True
 
     def _chooseOverlay(self) -> None:

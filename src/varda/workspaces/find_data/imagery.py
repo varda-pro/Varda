@@ -3,7 +3,9 @@ Equirectangular, is zoomed in past the bundled image's detail, the tiles
 for the view (and only those) are fetched in the background from NASA's
 Solar System Treks, or read from Varda's tile cache, and drawn over the
 bundled image. A failed fetch leaves the bundled image showing and says so
-in a short status note."""
+in a short status note. One request is in flight at a time: a newer view
+cancels it (its remaining tiles are skipped) and runs when it ends, so tile
+fetches hold at most one of the app's background threads."""
 
 from __future__ import annotations
 
@@ -43,6 +45,8 @@ class ImageryStreamer(QObject):
         self.layer: BasemapLayer | None = None
         self.cache = TileCache(cacheFolder())
         self._request = 0  # the latest view asked for; older replies are dropped
+        self._busy = False  # a request is in flight
+        self._again = False  # a newer view waits for it
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(DEBOUNCE_MS)
@@ -56,26 +60,39 @@ class ImageryStreamer(QObject):
     def refresh(self) -> None:
         """Fetch the tiles for the current view, or clear them when the
         bundled image is enough (or the map isn't equirectangular)."""
-        self._request += 1
+        self._request += 1  # cancels the request in flight, if any
         request, layer = self._request, self.layer
-        if layer is None or self.map.projector.polar:
+        tiles = []
+        if layer is not None and not self.map.projector.polar:
+            pixels = self.map.viewBox.width() * self.map.devicePixelRatioF()
+            _, tiles = tilesToStream(layer, self.map.viewBounds(), pixels)
+        if layer is None or not tiles:
             self.map.setTiles(None)
             return
-        pixels = self.map.viewBox.width() * self.map.devicePixelRatioF()
-        _, tiles = tilesToStream(layer, self.map.viewBounds(), pixels)
-        if not tiles:
-            self.map.setTiles(None)
+        if self._busy:
+            self._again = True  # runs once the request in flight ends
             return
         cache = self.cache
+        self._busy = True
         runInBackground(
-            lambda: streamTiles(layer, tiles, cache),
+            lambda: streamTiles(
+                layer, tiles, cache, cancelled=lambda: request != self._request
+            ),
             lambda result: self._show(request, result),
             lambda error: self._failed(request, error),
             description="Fetching basemap tiles",
             owner=self,
         )
 
+    def _finished(self) -> None:
+        """The request in flight ended; run the newest view if one waits."""
+        self._busy = False
+        if self._again:
+            self._again = False
+            self.refresh()
+
     def _show(self, request: int, result: StreamedImagery) -> None:
+        self._finished()
         if request != self._request:
             return  # the view moved on
         self.map.setTiles(result.rgba, result.bounds)
@@ -86,6 +103,7 @@ class ImageryStreamer(QObject):
             )
 
     def _failed(self, request: int, error: Exception) -> None:
+        self._finished()
         if request == self._request:
             self.map.setTiles(None)
             self.sigStatus.emit(f"Sharper basemap tiles couldn't be shown: {error}")

@@ -26,7 +26,8 @@ def isolatedSettings(tmp_path):
 @pytest.fixture(autouse=True)
 def offlineTiles(tmp_path, monkeypatch):
     """No test reaches Trek: tile fetches fail as if offline (a test may
-    patch ``basemaps.fetchBytes`` itself), and tiles are cached in a
+    patch ``basemaps.fetchBytes`` itself; this works because
+    ``fetchTileBytes`` looks it up when called), and tiles are cached in a
     throwaway folder."""
 
     def offline(url: str, *args, **kwargs) -> bytes:

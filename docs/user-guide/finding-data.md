@@ -93,8 +93,11 @@ mosaics, the first chosen by default. Each comes in two parts:
   Varda works out the zoom whose pixels are no larger than the screen's
   (up to the layer's deepest), fetches only the tiles in view (at most 48;
   a coarser zoom beyond that), and draws them over the bundled image. Tiles
-  are fetched in the background a third of a second after the view stops
-  moving; the map never waits for them.
+  are fetched in the background, six at a time, a third of a second after
+  the view stops moving; the map never waits for them. One view's tiles are
+  fetched at a time: when you move on, tiles not yet started for the old
+  view are skipped. A tile that hasn't arrived within 10 seconds is left to
+  the bundled image. Only replies that are images are cached.
 
 | Body | Layer (Trek identifier) | Deepest zoom | Credit |
 |---|---|---|---|
@@ -128,8 +131,8 @@ names. The map shows the active layer's credit under it.
 
 **Projections.** Tiles are streamed only in **Equirectangular**. In the
 polar projections, Varda reprojects the bundled image to the view
-(nearest neighbor, 1500 × 1500 pixels for the hemisphere), so the polar
-basemap is no sharper than the bundled image.
+(nearest neighbor, 1500 × 1500 pixels for the hemisphere, clear beyond the
+equator), so the polar basemap is no sharper than the bundled image.
 
 **Offline.** When a tile can't be fetched (no connection, or Trek is down),
 the bundled image shows in its place and the status bar says how many tiles
@@ -266,8 +269,8 @@ date, the version or the search. To keep that record:
 - STAC specification: https://stacspec.org
 - Basemap imagery: NASA Solar System Treks, https://trek.nasa.gov, with the
   data credits in the table above; each layer's description on Trek names
-  its source products. NASA and USGS data are in the public domain; credit them
-  as given.
+  its source products. The mosaics are released through NASA's PDS and served by
+  Trek without use restrictions; credit them as given.
 - Feature names: Gazetteer of Planetary Nomenclature, IAU Working Group for
   Planetary System Nomenclature (WGPSN), https://planetarynames.wr.usgs.gov,
   center points from USGS Astrogeology's GIS downloads

@@ -1,7 +1,8 @@
 # Find Data basemaps and feature names
 
-Made by `scripts/build_basemaps.py` on 2026-10-17. NASA and USGS data are in
-the public domain; please credit them as below.
+Made by `scripts/build_basemaps.py` on 2026-10-17. The mosaics are released
+through NASA's PDS and served by Trek without use restrictions, and the
+Gazetteer is a US government work; please credit them as below.
 
 ## Global images (`<layer>.jpg`)
 

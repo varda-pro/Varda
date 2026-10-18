@@ -340,6 +340,8 @@ def test_a_polar_view_reprojects_the_bundled_image(workspace, qtbot):
     qtbot.waitUntil(lambda: workspace.map.basemapItem.image is not None, timeout=10000)
     image = workspace.map.basemapItem.image
     assert image is not None and image.shape[:2] == (1500, 1500)
+    assert image[750, 750, 3] == 255  # the pole
+    assert image[0, 0, 3] == 0 and image[-1, -1, 3] == 0  # beyond the equator
     assert workspace.map.tilesItem.image is None  # no tiles off equirectangular
 
 
@@ -413,3 +415,84 @@ def test_the_basemap_choice_comes_back_from_a_session(workspace, qtbot):
     qtbot.waitUntil(lambda: reopened.collectionBox.count() == 1, timeout=5000)
     qtbot.waitUntil(lambda: reopened.basemapBox.currentIndex() == 2, timeout=5000)
     assert not reopened.namesCheck.isChecked()
+
+
+class HeldTasks:
+    """Stands in for runInBackground: tasks wait until the test finishes
+    them, in any order."""
+
+    def __init__(self) -> None:
+        self.tasks: list[tuple] = []
+
+    def __call__(self, task, onDone, onFailed, **kwargs):
+        self.tasks.append((task, onDone, onFailed))
+
+    def finish(self, index: int) -> None:
+        task, onDone, onFailed = self.tasks[index]
+        try:
+            result = task()
+        except Exception as error:
+            onFailed(error)
+            return
+        onDone(result)
+
+
+def test_a_late_basemap_never_replaces_a_newer_choice(workspace, monkeypatch):
+    held = HeldTasks()
+    monkeypatch.setattr(
+        "varda.workspaces.find_data.find_data_workspace.runInBackground", held
+    )
+    workspace.basemapBox.setCurrentIndex(0)  # None: nothing to draw
+    assert held.tasks == []
+    workspace.basemapBox.setCurrentIndex(1)  # MOLA, 2048 px
+    workspace.basemapBox.setCurrentIndex(2)  # Viking, 1024 px
+    held.finish(1)  # Viking first...
+    held.finish(0)  # ...then MOLA's late result
+    image = workspace.map.basemapItem.image
+    assert image is not None and image.shape[1] == 1024
+    assert "Viking" in workspace.map.credit.text()
+    workspace.basemapBox.setCurrentIndex(1)
+    workspace.basemapBox.setCurrentIndex(0)  # None before MOLA's result
+    held.finish(2)
+    assert workspace.map.basemapItem.image is None
+    assert "Imagery" not in workspace.map.credit.text()
+
+
+def test_a_late_loaded_image_basemap_never_replaces_a_newer_choice(
+    workspace, monkeypatch
+):
+    held = HeldTasks()
+    monkeypatch.setattr(
+        "varda.workspaces.find_data.find_data_workspace.runInBackground", held
+    )
+    workspace.projectImages.append(_marsImage("mars image"))
+    workspace._onCollection()
+    workspace.basemapBox.setCurrentIndex(3)  # the image
+    workspace.basemapBox.setCurrentIndex(0)  # None, before it's drawn
+    for index in range(len(held.tasks)):
+        held.finish(index)
+    assert workspace.map.basemapItem.image is None
+
+
+def test_tile_streaming_keeps_one_request_in_flight(workspace, monkeypatch):
+    held = HeldTasks()
+    monkeypatch.setattr("varda.workspaces.find_data.imagery.runInBackground", held)
+    streamer = workspace.streamer
+    workspace.goToFeature("Gale")
+    streamer.refresh()
+    workspace.goToFeature("Aeolis Mons")
+    streamer.refresh()
+    streamer.refresh()
+    assert len(held.tasks) == 1  # the others wait for it
+    held.finish(0)  # superseded: skips its tiles, and the latest view runs
+    assert len(held.tasks) == 2
+
+
+def test_go_to_a_feature_in_the_other_hemisphere_says_so(workspace):
+    workspace.projectionBox.setCurrentIndex(
+        workspace.projectionBox.findData(MapProjection.NORTH_POLAR)
+    )
+    view = workspace.map.mapView()
+    assert not workspace.goToFeature("Hellas Planitia")  # about 42°S
+    assert workspace.map.mapView() == view
+    assert "other hemisphere" in workspace.status.currentMessage()

@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import math
 import os
+import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from varda.catalogs.http import fetchBytes
 from varda.utilities.resources import resource_path
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north (degrees)
+GLOBE: Bounds = (-180.0, -90.0, 180.0, 90.0)
 
 TREK = "https://trek.nasa.gov/tiles"
 TILE_MATRIX_SET = "default028mm"
@@ -39,6 +41,7 @@ TREK_CREDIT = "NASA Solar System Treks"
 BUNDLED_FOLDER = "resources/basemaps"
 MAX_TILES = 48  # per view; a coarser zoom is used beyond this
 FETCH_THREADS = 6
+TILE_TIMEOUT_S = 10.0  # a tile that takes longer is left to the bundled image
 CACHE_CAP_BYTES = 200 * 1024 * 1024
 
 
@@ -289,7 +292,10 @@ def tilesToStream(
     if not layer.streams:
         return layer.bundledZoom, []
     west, _, east, _ = view
-    zoom = zoomFor(min(east, 180.0) - max(west, -180.0), pixelsWide, layer.maxZoom)
+    clipped = min(east, 180.0) - max(west, -180.0)
+    # the screen's pixels over the part of the view on the globe
+    pixelsOnGlobe = pixelsWide * clipped / (east - west) if east > west else 0.0
+    zoom = zoomFor(clipped, pixelsOnGlobe, layer.maxZoom)
     while zoom > layer.bundledZoom:
         tiles = tilesFor(view, zoom)
         if len(tiles) <= MAX_TILES:
@@ -299,9 +305,13 @@ def tilesToStream(
 
 
 def decodeImage(data: bytes) -> np.ndarray:
-    """A JPEG or PNG as RGBA, rows north to south."""
-    with Image.open(io.BytesIO(data)) as image:
-        return np.asarray(image.convert("RGBA"))
+    """A JPEG or PNG as RGBA, rows north to south. Raises ValueError for
+    anything else (a captive portal's web page, say)."""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            return np.asarray(image.convert("RGBA"))
+    except (OSError, Image.DecompressionBombError) as error:
+        raise ValueError(f"Not an image: {error}") from error
 
 
 def assemble(tiles: Mapping[Tile, np.ndarray | None]) -> tuple[np.ndarray, Bounds]:
@@ -348,6 +358,7 @@ class TileCache:
         self.folder = Path(folder)
         self.capBytes = capBytes
         self._total: int | None = None  # bytes, counted on first use
+        self._lock = threading.Lock()  # tiles are fetched on several threads
 
     def path(self, layer: BasemapLayer, tile: Tile) -> Path:
         return (
@@ -372,18 +383,21 @@ class TileCache:
         path = self.path(layer, tile)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            partial = path.with_suffix(path.suffix + ".part")
+            # one temporary name per thread, so two writers never collide
+            partial = path.with_suffix(f"{path.suffix}.{threading.get_ident()}.part")
             partial.write_bytes(data)
             partial.replace(path)
         except OSError:
             return  # a cache that can't be written is only slower
-        self._total = (
-            self.size() + len(data)
-            if self._total is None
-            else (self._total + len(data))
-        )
-        if self._total > self.capBytes:
-            self.evict()
+        with self._lock:
+            self._total = self.size() + len(data)
+            if self._total > self.capBytes:
+                self.evict()
+
+    def discard(self, layer: BasemapLayer, tile: Tile) -> None:
+        """Delete a cached tile (one that turned out not to be an image)."""
+        self.path(layer, tile).unlink(missing_ok=True)
+        self._total = None  # recounted when next needed
 
     def _files(self) -> list[Path]:
         if not self.folder.exists():
@@ -392,15 +406,24 @@ class TileCache:
 
     def size(self) -> int:
         if self._total is None:
-            self._total = sum(p.stat().st_size for p in self._files())
+            self._total = sum(size for _, size, _ in self._stats())
         return self._total
+
+    def _stats(self) -> list[tuple[float, int, Path]]:
+        """Each file's modification time and size (skipping any deleted
+        meanwhile)."""
+        stats = []
+        for path in self._files():
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            stats.append((info.st_mtime, info.st_size, path))
+        return stats
 
     def evict(self) -> None:
         """Delete the least recently used tiles until under 90% of the cap."""
-        files = sorted(
-            ((p.stat().st_mtime, p.stat().st_size, p) for p in self._files()),
-            key=lambda entry: entry[0],
-        )
+        files = sorted(self._stats(), key=lambda entry: entry[0])
         total = sum(size for _, size, _ in files)
         target = int(self.capBytes * 0.9)
         for _, size, path in files:
@@ -417,18 +440,29 @@ class TileCache:
 Fetch = Callable[[str], bytes]
 
 
-def fetchTile(
-    layer: BasemapLayer, tile: Tile, cache: TileCache, fetch: Fetch = fetchBytes
-) -> bytes:
-    """A tile from the cache, or from Trek (and then cached). Raises
-    CatalogError when it can't be fetched."""
+def fetchTileBytes(url: str) -> bytes:
+    """A tile from Trek, with a short timeout (``fetchBytes`` is looked up
+    when called, so tests can replace it)."""
+    return fetchBytes(url, timeout=TILE_TIMEOUT_S)
+
+
+def loadTile(
+    layer: BasemapLayer, tile: Tile, cache: TileCache, fetch: Fetch = fetchTileBytes
+) -> np.ndarray:
+    """A tile's pixels, from the cache or from Trek. Only a reply that
+    decodes as an image is cached; a cached file that doesn't decode is
+    deleted and fetched again. Raises CatalogError when it can't be fetched
+    and ValueError when the reply isn't an image."""
     data = cache.get(layer, tile)
-    if data is None:
-        data = fetch(layer.tileUrl(tile))
-        if not data:
-            raise CatalogError(f"{layer.title}: an empty tile.")
-        cache.put(layer, tile, data)
-    return data
+    if data is not None:
+        try:
+            return decodeImage(data)
+        except ValueError:
+            cache.discard(layer, tile)
+    data = fetch(layer.tileUrl(tile))
+    pixels = decodeImage(data)
+    cache.put(layer, tile, data)
+    return pixels
 
 
 @dataclass(frozen=True)
@@ -442,16 +476,19 @@ def streamTiles(
     layer: BasemapLayer,
     tiles: list[Tile],
     cache: TileCache,
-    fetch: Fetch | None = None,
+    fetch: Fetch = fetchTileBytes,
+    cancelled: Callable[[], bool] = lambda: False,
 ) -> StreamedImagery:
-    """Fetch (or read from the cache) and assemble the tiles of one view, a
-    few at a time. Tiles that fail are left transparent and counted.
-    ``fetch`` defaults to ``fetchBytes`` (looked up when called)."""
-    get = fetch or fetchBytes
+    """Fetch (or read from the cache) and assemble the tiles of one view,
+    FETCH_THREADS at a time. Tiles that fail are left transparent and
+    counted. Once ``cancelled()`` is true (the view has moved on), tiles not
+    yet started are skipped."""
 
     def one(tile: Tile) -> np.ndarray | None:
+        if cancelled():
+            return None
         try:
-            return decodeImage(fetchTile(layer, tile, cache, get))
+            return loadTile(layer, tile, cache, fetch)
         except (CatalogError, OSError, ValueError):
             return None
 
@@ -465,6 +502,3 @@ def bundledImage(layer: BasemapLayer) -> np.ndarray:
     """The layer's bundled global image as RGBA, rows north to south,
     covering -180° to 180° east and 90° to -90°."""
     return decodeImage(layer.bundledPath.read_bytes())
-
-
-GLOBE: Bounds = (-180.0, -90.0, 180.0, 90.0)
