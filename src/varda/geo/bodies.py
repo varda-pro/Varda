@@ -71,30 +71,38 @@ _KNOWN: dict[str, tuple[int, float]] = {
     "Enceladus": (602, 252_100.0),
     "Titan": (606, 2_574_730.0),
 }
-# Planetographic longitude is east positive only for these (Archinal et al., 2018)
-_EAST_POSITIVE_OGRAPHIC = {"Earth", "Moon", "Sun"}
+# Planetographic longitude is east positive for these when PROJ has no
+# planetographic CRS to say (Archinal et al., 2018): Earth and the Moon by
+# tradition, Venus as a retrograde rotator, and dwarf planets and asteroids
+# such as Vesta
+_EAST_POSITIVE_OGRAPHIC = {"Earth", "Moon", "Venus", "Vesta"}
 
 
-def _radii(naifId: int) -> tuple[float, float]:
-    """(a, c) of the body's planetographic ellipsoid, or of its sphere."""
+def _ographic(naifId: int) -> CRS | None:
     try:
-        crs = CRS.from_user_input(f"IAU_2015:{naifId * 100 + 1}")
+        return CRS.from_user_input(f"IAU_2015:{naifId * 100 + 1}")
     except CRSError:
-        crs = CRS.from_user_input(f"IAU_2015:{naifId * 100}")
-    ellipsoid = crs.ellipsoid
-    assert ellipsoid is not None
-    return ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre
+        return None
 
 
 def _body(name: str, naifId: int, meanRadius: float) -> Body:
-    a, c = _radii(naifId)
+    """The body, with a and c from its planetographic ellipsoid (or its
+    sphere) and its longitude direction from the planetographic CRS's axis."""
+    ographic = _ographic(naifId)
+    ellipsoid = (ographic or CRS.from_user_input(f"IAU_2015:{naifId * 100}")).ellipsoid
+    if ellipsoid is None:
+        raise ValueError(f"PROJ's IAU_2015 has no ellipsoid for {name}.")
+    if ographic is not None:
+        westPositive = any(axis.direction == "west" for axis in ographic.axis_info)
+    else:
+        westPositive = name not in _EAST_POSITIVE_OGRAPHIC
     return Body(
         name=name,
         naifId=naifId,
-        equatorialRadius=a,
-        polarRadius=c,
+        equatorialRadius=ellipsoid.semi_major_metre,
+        polarRadius=ellipsoid.semi_minor_metre,
         meanRadius=meanRadius,
-        westPositiveOgraphic=name not in _EAST_POSITIVE_OGRAPHIC,
+        westPositiveOgraphic=westPositive,
     )
 
 
@@ -166,9 +174,6 @@ def _fromCrs(crs: CRS) -> BodyMatch:
 
 def _iauCode(crs: CRS) -> int | None:
     authority = crs.to_authority(auth_name="IAU_2015")
-    if authority is None:
-        matches = crs.list_authority(auth_name="IAU_2015")
-        authority = (matches[0].auth_name, matches[0].code) if matches else None
     return int(authority[1]) if authority is not None else None
 
 
@@ -205,13 +210,18 @@ def _names(crs: CRS) -> list[tuple[str, str]]:
     return [(kind, name) for kind, name in names if name]
 
 
+# Words shorter than this never name a body on their own ("IO", "D")
+_MIN_WORD = 3
+
+
 def _namedIn(name: str) -> Body | None:
-    """The body ``name`` names, as a whole or by one of its words."""
+    """The body ``name`` names, as a whole or by one of its words (a whole
+    word of at least three letters, so a stray "IO" isn't Io)."""
     body = bodyNamed(name)
     if body is not None:
         return body
     for word in _WORD_SEPARATORS.split(name):
-        body = bodyNamed(word) if word else None
+        body = bodyNamed(word) if len(word) >= _MIN_WORD else None
         if body is not None:
             return body
     return None

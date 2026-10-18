@@ -2,6 +2,7 @@ import pytest
 
 from varda.geo.bodies import BODIES, bodyNamed, identifyBody
 from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_ENVI_WKT,
     CRISM_MTRDR_WKT,
     HIRISE_POLAR_PROJ,
     LRO_WAC_PROJ,
@@ -17,6 +18,23 @@ def test_crism_mtrdr_is_mars_by_datum():
     match = identifyBody(CRISM_MTRDR_WKT)
     assert match.body is not None and match.body.name == "Mars"
     assert "D_MARS" in match.evidence
+
+
+def test_crism_mtrdr_envi_header_is_mars_by_datum():
+    match = identifyBody(CRISM_MTRDR_ENVI_WKT)
+    assert match.body is not None and match.body.name == "Mars"
+    assert match.evidence.startswith("datum")
+
+
+def test_short_words_never_name_a_body():
+    # "IO" in a name must not make a Mars-sized sphere Io
+    wkt = (
+        'GEOGCS["IO test",DATUM["D_IO_custom",SPHEROID["X",3396190,0]],'
+        'PRIMEM["Reference_Meridian",0],UNIT["degree",0.0174532925199433]]'
+    )
+    match = identifyBody(wkt)
+    assert match.body is not None and match.body.name == "Mars"
+    assert match.evidence.startswith("radius")
 
 
 def test_hirise_polar_sphere_is_mars():
@@ -111,6 +129,9 @@ def test_geod_is_reference_ellipsoid():
 
 def test_west_positive_ographic():
     assert BODIES["Mars"].westPositiveOgraphic
+    assert not BODIES["Ceres"].westPositiveOgraphic  # PROJ's ographic axis
+    assert not BODIES["Vesta"].westPositiveOgraphic
+    assert not BODIES["Venus"].westPositiveOgraphic  # retrograde
     assert not BODIES["Earth"].westPositiveOgraphic
     assert not BODIES["Moon"].westPositiveOgraphic
 

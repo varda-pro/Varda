@@ -11,19 +11,37 @@ from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.proj_lock import PROJ_LOCK
 
-# GDAL's PDS3 driver, a CRISM MTRDR at Jezero (18 m/px, 18.4°N 77.5°E)
+# A real CRISM MTRDR (FRT000107A7_07_IF166J_MTR3) as GDAL's PDS3 driver reads
+# its .LBL: a sphere of Mars's local radius at the standard parallel, 15°N
 CRISM_MTRDR_WKT = (
     'PROJCS["EQUIRECTANGULAR MARS",'
     'GEOGCS["GCS_MARS",'
-    'DATUM["D_MARS",SPHEROID["MARS",3396190,0]],'
+    'DATUM["D_MARS",SPHEROID["MARS_localRadius",3394839.81331631,0]],'
     'PRIMEM["Reference_Meridian",0],'
-    'UNIT["degree",0.0174532925199433]],'
+    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],'
     'PROJECTION["Equirectangular"],'
-    'PARAMETER["standard_parallel_1",0],'
+    'PARAMETER["standard_parallel_1",15],'
     'PARAMETER["central_meridian",0],'
     'PARAMETER["false_easting",0],'
     'PARAMETER["false_northing",0],'
-    'UNIT["metre",1]]'
+    'UNIT["metre",1,AUTHORITY["EPSG","9001"]],'
+    'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+)
+# The same product as GDAL's ENVI driver reads its .HDR
+CRISM_MTRDR_ENVI_WKT = (
+    'PROJCS["MRO Mars Equirectangular [IAU 2000] [15.00N; 0.00E]",'
+    'GEOGCS["GCS_Mars_2000_IAU_IAG_custom_sphere_lat15",'
+    'DATUM["D_Mars_2000_IAU_IAG_custom_sphere_lat15",'
+    'SPHEROID["Mars_2000_IAU_IAG_custom_sphere_lat15",3394839.81331631,0]],'
+    'PRIMEM["Reference_Meridian",0],'
+    'UNIT["Degree",0.0174532925199433]],'
+    'PROJECTION["Equirectangular"],'
+    'PARAMETER["standard_parallel_1",15],'
+    'PARAMETER["central_meridian",0],'
+    'PARAMETER["false_easting",0],'
+    'PARAMETER["false_northing",0],'
+    'UNIT["Meter",1],'
+    'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
 )
 # The Ames Stereo Pipeline's point2dem, a CTX DEM (20 m/px)
 CTX_DEM_PROJ = (
