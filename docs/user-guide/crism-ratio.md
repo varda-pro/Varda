@@ -16,14 +16,37 @@ in for the I/F cube in other software.
 
 ### What it needs
 
-The column of each pixel comes from the cube's DDR or DE geometry file (the
-backplane), found next to the cube by name (for example `…_if…_trr3.img` and
-`…_de…_trr3.img`). Its "IR Sample" band is the detector column, so this also
-works for map-projected cubes. Where the backplane has "Target ID" and "Segment
-ID" bands, columns of different source strips are kept apart. A column is the
-pair (strip, column). Columns are `rint` of the backplane's sample value, so a
-value halfway between two columns rounds to the even one. Without a backplane
-(or with one of another size) the dialog says so instead of offering Run.
+The detector column of each pixel comes from one of two places, recorded as
+`geometry` in the output:
+
+- **A backplane**: a companion file found next to the cube by name, whose
+  "IR Sample" band is the detector column. This works for map-projected
+  cubes. The names Varda looks for (as on the PDS Geosciences Node; upper-case
+  names, as ODE downloads them, work too):
+
+  | Cube | Companion with detector columns | Other companion (DDR) |
+  | --- | --- | --- |
+  | MTRDR `frt000107a7_07_if166j_mtr3.img` (also `_sr`, `_su`) | `frt000107a7_07_in166j_mtr3.img` ("IR Sample", "IR Line") | `frt000107a7_07_de166l_mtr1.img` |
+  | TER3 `frt000107a7_07_if166j_ter3.img` | `frt000107a7_07_in166j_ter3.img` | `frt000107a7_07_de166l_ddr1.img` |
+  | TRR3 `frt000107a7_07_if166l_trr3.img` (or `…s_trr3`) | none: the cube is in sensor space | `frt000107a7_07_de166l_ddr1.img` (no sample band) |
+  | MRDR tile `…_mrral_…` / `…_vrral_…` | `…_mrrde_…` / `…_vrrde_…` | |
+
+  The first companion that has an IR Sample band is used. Where it has
+  "Target ID" and "Segment ID" bands (MRDR tiles), columns of different
+  source strips are kept apart. A TRR3's DDR is in the DDR volume, not next
+  to the cube; it gives the incidence angle but no detector column.
+- **The image columns of an unprojected cube.** A cube with no backplane
+  that is confidently unprojected (no map projection, and 640, 320 or 160
+  columns, a CRISM detector at 1×, 2× or 4× binning) is in sensor space, so
+  image column *c* is binned detector column *c*. This is how a TRR3 (or
+  TER3 without its IN file) is ratioed. The output records
+  `geometry: image columns (unprojected)` and the `binning` (detector
+  columns per image column).
+
+A column is the pair (strip, column). Backplane columns are `rint` of the
+sample value, so a value halfway between two columns rounds to the even one.
+Without either (for example a map-projected cube without its IN file), or
+with a backplane of another size, the dialog says so instead of offering Run.
 
 ### What it does
 
@@ -104,10 +127,13 @@ a preset, and Preset Limits does not affect Generic.
 
 ### VNIR bands
 
-The backplane's column is the IR (L) detector's. Bands below 1000 nm lie on
-the VNIR (S) detector, whose columns match only approximately, so a ratio
-there is only approximately column-matched. The record sets `vnirApproximate`
-when the cube has such bands, and the description says so.
+The backplane's column (the IR Sample band), and the image columns of a
+joined (J) cube, are the IR (L) detector's. In a cube with bands on both
+detectors, the bands below 1000 nm lie on the VNIR (S) detector, whose
+columns match only approximately, so a ratio there is only approximately
+column-matched. The record sets `vnirApproximate` in that case, and the
+description says so. A VNIR-only (S) cube ratioed by its own image columns
+is column-matched and not flagged.
 
 ### Outputs
 
@@ -116,8 +142,8 @@ when the cube has such bands, and the description says so.
   settings, and **how many columns fell back** (to neighbors, to the whole
   column, or had no data). Its `ratioCube` metadata record is kept when
   exporting to GeoTIFF or ENVI and holds the method, blandness name and
-  thresholds, run length, Minimum Pixels, Neighbor Radius, the geometry file,
-  the good bands used, and for every column `{strip, column, count, fallback,
+  thresholds, run length, Minimum Pixels, Neighbor Radius, where the columns
+  came from (`geometry`, `geometryFile`, `binning`), the good bands used, and for every column `{strip, column, count, fallback,
   spectrum, std}`.
 - **Denominators** (`… ratio denominators`): band 1 "Used as denominator" is 1
   where the pixel was pooled into at least one column's denominator, and 0
@@ -154,8 +180,8 @@ when the cube has such bands, and the description says so.
 ### Reporting it
 
 A methods section can say: "Each I/F spectrum was divided by the mean spectrum
-of the bland pixels of its detector column (column from the DDR/DE
-backplane's IR sample; blandness: <preset or Generic, with limits>, judged on
+of the bland pixels of its detector column (column from the <IN file's IR
+sample, or the unprojected cube's image columns>; blandness: <preset or Generic, with limits>, judged on
 means of <run length> pixels in the column; at least <Minimum Pixels> pixels,
 borrowing from columns within <Neighbor Radius> of the same strip, else the
 whole column)", then state how many columns fell back, taken from the
@@ -192,8 +218,8 @@ what it saves is ROIs and points.
   edge: click their tabs to open them.
 
 The dialog picks a browse image (the one whose name contains `_SR`, else the
-first image) and an I/F image (one with a geometry file found, else the next
-image); change either.
+first image) and an I/F image (one whose detector columns are known, else the
+next image); change either.
 
 ### Link modes
 
@@ -242,12 +268,13 @@ the I/F cube is refused with a message.
 Sensor artifacts are fixed per detector column, so a denominator is only a good
 reference if it lies in the same column as the numerator (see the top of this
 page). With **Lock denominator to the numerator's sensor column** on (the
-default when a geometry file is found), the right-clicked denominator is put on
+default when the detector columns are known), the right-clicked denominator is put on
 the numerator's sensor column in the clicked row, and the denominator then
 **follows**: each new numerator moves it into the new numerator's column,
-keeping its row. The column comes from the I/F cube's DDR or DE geometry file
-(found next to the cube, as for the Ratio Cube analysis) and strips are kept
-apart.
+keeping its row. The column comes from the I/F cube's backplane, or the image
+columns of an unprojected CRISM cube, exactly as for the Ratio Cube analysis
+(see [What it needs](#what-it-needs)), and strips are kept apart. The status
+bar says "Column lock on (image columns)" in the second case.
 
 Two cases where the lock cannot be met are said, never silent:
 
@@ -256,8 +283,10 @@ Two cases where the lock cannot be met are said, never silent:
   denominator is **kept where it is** and the view you clicked shows
   "Denominator left in place: …" for a few seconds. That ratio is not
   column-matched; move the denominator to a row the column reaches.
-- **No geometry file for the I/F cube**: the lock is unavailable (the check box
-  is disabled and unchecked) and the status bar says "Column lock unavailable".
+- **No detector columns for the I/F cube** (no backplane with an IR Sample
+  band, and not an unprojected CRISM cube): the lock is unavailable (the
+  check box is disabled and unchecked) and the status bar says "Column lock
+  unavailable".
   Ratioing still works; the denominator is simply where you click, so the
   ratio keeps whatever column-dependent artifacts the two columns differ by.
 
@@ -335,7 +364,8 @@ thresholds (see the Ratio Cube section).
 
 A methods section can say: "Spectra were the means of <width> × <height> pixel
 boxes of the <I/F cube>, ratioed band by band to a denominator box in the same
-sensor column (column from the <DDR/DE> backplane; lock on / off), whose
+sensor column (column from the <IN backplane / unprojected image columns>;
+lock on / off), whose
 spectrum was judged bland by <Generic or preset> (limits: <list; note any
 changes>), with boxes chosen on <browse image> linked by <pixel / map
 location>." Cite Viviano-Beck et al. (2014) when a preset is used. The session

@@ -165,9 +165,9 @@ def test_without_a_backplane_the_lock_is_unavailable_and_ratioing_works(
 @pytest.fixture
 def withBackplane(monkeypatch):
     geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0), (30, 1)))
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: geometry)
     monkeypatch.setattr(
-        crism_ratio_workspace, "resolveGeometryFile", lambda _path: "/fake/de.img"
+        crism_ratio_workspace, "columnGeometryFor", lambda *_args: geometry
     )
     monkeypatch.setattr(VardaRaster, "filePath", property(lambda self: "/fake/x.img"))
 
@@ -186,6 +186,19 @@ def test_the_lock_is_on_by_default_and_the_denominator_follows(
     tool(workspace).onPointerEvent(press(LEFT, 20.5, 21.5))  # a new column
     np.testing.assert_array_equal(
         tool(workspace).selection.denominator, boxPolygonPixels(20, 5, 5, 5)
+    )
+
+
+def test_an_unprojected_crism_cube_locks_by_its_image_columns(qtbot):
+    browse = raster("browse", (8, 640), georeferenced=False, seed=1)
+    data = raster("data", (8, 640), georeferenced=False, seed=2)
+    workspace = build(qtbot, browse, data, Link.PIXEL)
+    assert workspace.lockCheck.isEnabled() and workspace.lockCheck.isChecked()
+    assert "image columns" in workspace.lockStatus.text()
+    tool(workspace).onPointerEvent(press(LEFT, 100.5, 2.5))
+    tool(workspace).onPointerEvent(press(RIGHT, 300.5, 5.5))
+    np.testing.assert_array_equal(
+        tool(workspace).selection.denominator, boxPolygonPixels(100, 5, 5, 5)
     )
 
 
@@ -474,13 +487,13 @@ def test_the_lock_uses_the_if_geometry_under_a_map_link(qtbot, mapPair, monkeypa
     geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0), (30, 1)))
     seen = []
 
-    def load(path):
+    def load(path, *_args):
         seen.append(path)
         return geometry
 
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", load)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", load)
     monkeypatch.setattr(
-        crism_ratio_workspace, "resolveGeometryFile", lambda _path: "/fake/de.img"
+        crism_ratio_workspace, "columnGeometryFor", lambda *_args: geometry
     )
     browse, data = mapPair
     monkeypatch.setattr(

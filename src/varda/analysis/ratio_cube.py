@@ -2,8 +2,9 @@
 
 CRISM's artifacts (striping, column-dependent gain) are fixed per sensor
 column, so each pixel is divided by a spectrum built only from pixels of its own
-column. The column of a pixel comes from the DDR/DE backplane
-(``ColumnGeometry.ir_sample``), which also holds for map-projected cubes. A key
+column. The column of a pixel comes from the backplane
+(``ColumnGeometry.ir_sample``), which also holds for map-projected cubes, or
+from an unprojected cube's own image columns. A key
 is (strip, column); spectra are never averaged across columns of different
 keys except by the explicit, recorded neighbor fallback of
 :func:`columnDenominators`.

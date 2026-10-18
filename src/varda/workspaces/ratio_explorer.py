@@ -23,8 +23,8 @@ from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.common.parameter import IntParameter, ParameterGroup
 from varda.common.ui import ButtonBuilder, SectionBox, VBoxBuilder, MutedLabel
 from varda.image_loading.crism_geometry import (
+    columnGeometryFor,
     computeColumnLockedTranslation,
-    loadColumnGeometry,
 )
 from varda.image_rendering.raster_view.viewport_protocol import ROIOverlayHandle
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
@@ -241,12 +241,14 @@ class RatioExplorerController(QObject):
         self, image: VardaRaster, numerator: np.ndarray, row: int, col: int
     ) -> np.ndarray | None:
         """The numerator's box moved onto the clicked row in its own sensor
-        column, or None when the lock is off or can't be satisfied (no geometry
-        file, or the column's strip doesn't reach that row)."""
-        if not self._roiManager.lockColumn or not image.filePath:
+        column, or None when the lock is off or can't be satisfied (no detector
+        columns, or the column's strip doesn't reach that row)."""
+        if not self._roiManager.lockColumn:
             return None
-        geometry = loadColumnGeometry(image.filePath)
-        if geometry is None:
+        geometry = columnGeometryFor(
+            image.filePath, (image.height, image.width), image.crs is not None
+        )
+        if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
             return None
         shift = computeColumnLockedTranslation(
             numerator, clickRow=row, clickCol=col, geometry=geometry

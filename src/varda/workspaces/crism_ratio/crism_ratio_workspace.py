@@ -34,7 +34,7 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
 from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import ElidingComboBox, MutedLabel, VardaDockWidget
-from varda.image_loading.crism_geometry import resolveGeometryFile
+from varda.image_loading.crism_geometry import IMAGE_COLUMNS, columnGeometryFor
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -68,11 +68,21 @@ logger = logging.getLogger(__name__)
 LINK_LABELS = {Link.PIXEL: "Pixel match", Link.MAP: "Map link"}
 
 
-def hasBackplane(image: VardaRaster) -> bool:
-    """Whether a CRISM geometry file (the DDR or DE backplane) is found for the image."""
-    return (
-        bool(image.filePath) and resolveGeometryFile(image.filePath or "") is not None
+def columnSource(image: VardaRaster) -> str:
+    """Where the image's detector columns come from: the backplane file, or
+    :data:`IMAGE_COLUMNS` for an unprojected CRISM cube; "" when unknown."""
+    geometry = columnGeometryFor(
+        image.filePath, (image.height, image.width), image.crs is not None
     )
+    if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
+        return ""
+    return geometry.source or "backplane"
+
+
+def hasBackplane(image: VardaRaster) -> bool:
+    """Whether the image's detector columns are known (a CRISM backplane, or
+    an unprojected CRISM cube's own columns)."""
+    return bool(columnSource(image))
 
 
 class _NoSpectrumPlots:
@@ -162,15 +172,20 @@ class CrismRatioWorkspace(QMainWindow):
     # --- construction --------------------------------------------------------------
 
     def _initLock(self) -> None:
-        available = hasBackplane(self.data)
+        self.columnSource = columnSource(self.data)
+        available = bool(self.columnSource)
         self.lockCheck.setEnabled(available)
         self.lockCheck.setChecked(available)
         self.lockCheck.toggled.connect(self._showLockStatus)
         if not available:
             self.lockCheck.setToolTip(
-                f"No CRISM geometry file (DDR or DE backplane) was found next to "
-                f"{self.data.name}, so the denominator can't be placed by sensor column."
+                f"No CRISM backplane with detector columns (an IN or DDR file "
+                f"with an IR Sample band) was found next to {self.data.name}, and "
+                "it is not an unprojected CRISM cube (no map projection, 640, 320 "
+                "or 160 columns), so the denominator can't be placed by sensor column."
             )
+        else:
+            self.lockCheck.setToolTip(f"Detector columns from {self.columnSource}")
         status = self.statusBar()
         assert status is not None
         status.addPermanentWidget(self.lockStatus)
@@ -178,11 +193,13 @@ class CrismRatioWorkspace(QMainWindow):
 
     def _showLockStatus(self) -> None:
         if not self.lockCheck.isEnabled():
-            text = (
-                f"Column lock unavailable: no geometry file found for {self.data.name}"
-            )
+            text = f"Column lock unavailable: no detector columns for {self.data.name}"
         elif self.lockCheck.isChecked():
-            text = "Column lock on"
+            text = (
+                "Column lock on (image columns)"
+                if self.columnSource == IMAGE_COLUMNS
+                else "Column lock on"
+            )
         else:
             text = "Column lock off"
         self.lockStatus.setText(text)

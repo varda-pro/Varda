@@ -29,7 +29,9 @@ can alter results.
   feature comes from.
 - **Ratio Cube (Column Denominators)** (Processing → CRISM): divides a CRISM
   I/F cube by one denominator spectrum per sensor detector column, read
-  from the DDR/DE backplane next to the cube, so the result can replace the
+  from the backplane next to the cube (an MTRDR's or TER3's IN file) or, for
+  an unprojected cube such as a TRR3, from its own image columns (recorded),
+  so the result can replace the
   I/F cube in other software. The denominator is the mean of the whole
   column or of its bland pixels (a Generic check or a target preset), tested
   on runs of neighbors within the column, with recorded fallbacks to
@@ -232,6 +234,13 @@ can alter results.
 
 ### Fixed
 
+- **CRISM companion files are found by their real names:** a TRR3's DDR
+  (`…_if166l_trr3` → `…_de166l_ddr1`) and an MTRDR's DDR (`…_de166l_mtr1`)
+  are now found, also with ODE's upper-case names on case-sensitive disks,
+  so the Shadow Mask reads the incidence angle from them. Column lock (ROI
+  Manager, Ratio Explorer) uses the IN file's IR Sample band, or an
+  unprojected CRISM cube's image columns, and is no longer offered for a
+  companion that has no detector columns.
 - **Tool hints wrap in narrow views** instead of running off the right edge,
   including after the view is resized.
 - **Map links no longer trip a NumPy deprecation** when one point is mapped

@@ -149,7 +149,7 @@ def test_column_lock_places_the_denominator_on_the_numerators_sensor_column(
     roiManager.lockColumn = True
     # IR sample == column index, one strip everywhere
     geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0), (40, 1)))
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: geometry)
     monkeypatch.setattr(type(image), "filePath", property(lambda self: "/fake/x.img"))
 
     tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
@@ -293,7 +293,7 @@ def _lockedColumns(setup, monkeypatch, lock=True):
     roiManager.lockColumn = lock
     # IR sample == column index // 10: four detector strips of ten columns
     geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0) // 10, (40, 1)))
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: geometry)
     monkeypatch.setattr(type(image), "filePath", property(lambda self: "/fake/x.img"))
     return tool, ctrl
 
@@ -332,7 +332,7 @@ def test_an_unreachable_row_keeps_the_denominator_and_says_so(setup, monkeypatch
     geometry = ColumnGeometry(
         ir_sample=np.tile(np.arange(40.0) // 10, (40, 1)), segment_id=segment
     )
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: geometry)
     tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 31.0, 5.0))
     tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 30.0))
     before = tool.selection.denominator.copy()
@@ -349,7 +349,7 @@ def test_without_a_geometry_file_the_denominator_stays_and_it_says_so(
     setup, monkeypatch
 ):
     tool, _ctrl = _lockedColumns(setup, monkeypatch)
-    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: None)
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: None)
     tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
     tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
     before = tool.selection.denominator.copy()

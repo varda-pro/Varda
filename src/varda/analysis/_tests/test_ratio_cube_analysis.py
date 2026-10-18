@@ -20,12 +20,13 @@ from varda.image_loading.raster_writer import writeRaster
 
 QUIET = lambda percent, message: None  # noqa: E731
 ROWS, COLS, BANDS = 40, 6, 30
-PATH = "/data/frt0000_07_if165j_trr3.img"
+PATH = "/data/frt0000_07_if165j_mtr3.img"
+BACKPLANE = "/data/frt0000_07_in165j_mtr3.img"
 
 
 def _geometry(rows: int = ROWS, cols: int = COLS) -> ColumnGeometry:
     sample = np.tile(np.arange(cols, dtype=np.float64), (rows, 1))
-    return ColumnGeometry(ir_sample=sample)
+    return ColumnGeometry(ir_sample=sample, source=BACKPLANE, sampleBand="IR Sample")
 
 
 def _scene(rows: int = ROWS, cols: int = COLS, gain=None) -> VardaRaster:
@@ -47,14 +48,7 @@ def _scene(rows: int = ROWS, cols: int = COLS, gain=None) -> VardaRaster:
 @pytest.fixture
 def geometry(monkeypatch):
     geometry = _geometry()
-    monkeypatch.setattr(
-        ratio_cube_analysis, "loadColumnGeometry", lambda path: geometry
-    )
-    monkeypatch.setattr(
-        ratio_cube_analysis,
-        "resolveGeometryFile",
-        lambda path: "/data/frt0000_07_de165j_trr3.img",
-    )
+    monkeypatch.setattr(ratio_cube_analysis, "columnGeometryFor", lambda *_: geometry)
     return geometry
 
 
@@ -150,23 +144,43 @@ def test_the_record_holds_the_settings_and_each_columns_denominator(geometry):
     assert record["blandness"] == BLANDNESS_GENERIC
     assert record["thresholds"]["maxDepth"] == 0.02
     assert record["runLength"] == 9 and record["minimumPixels"] == 20
-    assert record["geometryFile"].endswith("de165j_trr3.img")
+    assert record["geometryFile"] == BACKPLANE
+    assert record["geometry"] == "backplane band 'IR Sample'"
     first = record["columns"][0]
     assert len(first["spectrum"]) == BANDS == len(first["std"])
     assert first["spectrum"][0] == pytest.approx(0.3 * 0.8, rel=0.01)
 
 
+def _cube(wavelengths, cols: int = COLS, path: str | None = PATH) -> VardaRaster:
+    source = ArrayDataSource(
+        np.full((ROWS, cols, len(wavelengths)), 0.3, np.float32),
+        wavelengths=np.asarray(wavelengths, dtype=np.float64),
+        wavelengthUnits="nm",
+        filePath=path,
+    )
+    return VardaRaster(source, name="cube")
+
+
 def test_vnir_bands_are_flagged_as_approximately_column_matched(geometry):
     assert _run(_scene())[0].extraMetadata["ratioCube"]["vnirApproximate"] is False
-    source = ArrayDataSource(
-        np.full((ROWS, COLS, 4), 0.3, np.float32),
-        wavelengths=np.array([500.0, 700.0, 1200.0, 1500.0]),
-        wavelengthUnits="nm",
-        filePath=PATH,
-    )
-    ratio, _ = _run(VardaRaster(source, name="vnir"))
+    ratio, _ = _run(_cube([500.0, 700.0, 1200.0, 1500.0]))
     assert ratio.extraMetadata["ratioCube"]["vnirApproximate"] is True
     assert "VNIR" in ratio.description
+
+
+def test_a_vnir_only_cube_is_not_flagged(geometry):
+    ratio, _ = _run(_cube([450.0, 600.0, 750.0, 900.0]))
+    assert ratio.extraMetadata["ratioCube"]["vnirApproximate"] is False
+    assert "VNIR" not in ratio.description
+
+
+def test_an_unprojected_crism_cube_without_a_backplane_uses_its_image_columns():
+    ratio, _ = _run(_cube(np.linspace(1100, 2500, 6), cols=320, path=None))
+    record = ratio.extraMetadata["ratioCube"]
+    assert record["geometry"] == "image columns (unprojected)"
+    assert record["binning"] == 2 and record["geometryFile"] == ""
+    assert len(record["columns"]) == 320
+    assert "image columns" in ratio.description
 
 
 def test_a_column_with_no_finite_pixels_is_flagged_not_silently_nan(geometry):
@@ -198,7 +212,7 @@ def test_the_whole_column_method_uses_every_finite_pixel(geometry):
 
 
 def test_without_a_backplane_the_reason_is_shown(monkeypatch):
-    monkeypatch.setattr(ratio_cube_analysis, "loadColumnGeometry", lambda path: None)
+    monkeypatch.setattr(ratio_cube_analysis, "columnGeometryFor", lambda *_: None)
     analysis = RatioCubeAnalysis()
     image = _scene()
     assert "backplane" in analysis.unavailableReason(image)
@@ -208,18 +222,17 @@ def test_without_a_backplane_the_reason_is_shown(monkeypatch):
 
 def test_a_backplane_of_another_size_is_refused(monkeypatch):
     monkeypatch.setattr(
-        ratio_cube_analysis, "loadColumnGeometry", lambda path: _geometry(ROWS + 1)
+        ratio_cube_analysis, "columnGeometryFor", lambda *_: _geometry(ROWS + 1)
     )
     assert "size" in RatioCubeAnalysis().unavailableReason(_scene())
 
 
-def test_an_image_without_a_file_has_no_backplane():
+def test_an_image_without_a_file_or_a_crism_width_has_no_columns():
     source = ArrayDataSource(
         np.ones((4, 4, 5), np.float32), wavelengths=np.arange(5) * 100.0 + 1000
     )
-    assert "file" in RatioCubeAnalysis().unavailableReason(
-        VardaRaster(source, name="x")
-    )
+    reason = RatioCubeAnalysis().unavailableReason(VardaRaster(source, name="x"))
+    assert "backplane" in reason and "unprojected" in reason
 
 
 def test_fewer_than_three_bands_are_refused_clearly(geometry):
@@ -440,10 +453,7 @@ def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch, preset):
     dominate the per-column records."""
     rows, cols = 120, 100
     geometry = _geometry(rows, cols)
-    monkeypatch.setattr(
-        ratio_cube_analysis, "loadColumnGeometry", lambda path: geometry
-    )
-    monkeypatch.setattr(ratio_cube_analysis, "resolveGeometryFile", lambda path: None)
+    monkeypatch.setattr(ratio_cube_analysis, "columnGeometryFor", lambda *_: geometry)
     analysis = RatioCubeAnalysis()
     image = _scene(rows, cols)
     analysis.prepareFor(image)

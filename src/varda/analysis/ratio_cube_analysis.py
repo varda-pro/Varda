@@ -1,8 +1,9 @@
 """Ratio Cube: a CRISM I/F cube divided by one denominator spectrum per sensor
 detector column, so it can stand in for the I/F cube in other software.
 
-The column of each pixel comes from the DDR/DE backplane (``ratio_cube``). No
-Qt.
+The column of each pixel comes from the cube's backplane (the IN file's IR
+Sample band), or for an unprojected cube from its own image columns
+(``crism_geometry.columnGeometryFor``). No Qt.
 """
 
 from __future__ import annotations
@@ -44,13 +45,18 @@ from varda.common.parameter import (
     LabeledEnum,
     StringParameter,
 )
-from varda.image_loading.crism_geometry import loadColumnGeometry, resolveGeometryFile
+from varda.image_loading.crism_geometry import (
+    IMAGE_COLUMNS,
+    ColumnGeometry,
+    columnGeometryFor,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 CATEGORY = "CRISM"
 NO_DATA = "no data"
-# CRISM's VNIR (S detector) bands lie below this; the DDR's column is the IR
-# (L) detector's, so there it is only approximately the right column
+# CRISM's VNIR (S detector) bands lie below this; the backplane's column is
+# the IR (L) detector's, so in a cube with bands on both detectors the VNIR
+# bands are only approximately column-matched
 VNIR_BELOW_NM = 1000.0
 MIN_BANDS = 3  # the continuum and the slope need at least three bands
 BLANDNESS_GENERIC = "Generic"
@@ -139,6 +145,16 @@ def parsePresetLimits(text: str, preset: Preset) -> Preset:
     )
 
 
+def _vnirApproximate(centersNm: np.ndarray, geometry: ColumnGeometry) -> bool:
+    """Whether the cube has bands on both detectors, with columns that are the
+    IR detector's (an IR sample band, or a joined cube's image columns): its
+    VNIR bands are then only approximately column-matched."""
+    bothDetectors = bool(
+        (centersNm < VNIR_BELOW_NM).any() and (centersNm >= VNIR_BELOW_NM).any()
+    )
+    return bothDetectors and not geometry.sampleBand.lower().startswith("vnir")
+
+
 def _numbers(values: np.ndarray) -> list[float | None]:
     """JSON-safe numbers (NaN as None), kept to six significant digits."""
     return [
@@ -175,7 +191,8 @@ class RatioCubeAnalysis(Analysis):
     memoryFactor = 7.0
     description = (
         "Divides a CRISM I/F cube by one denominator spectrum per sensor "
-        "detector column (read from the DDR/DE backplane next to the cube), "
+        "detector column (read from the backplane next to the cube, or the "
+        "image columns of an unprojected cube), "
         "which removes column-dependent artifacts such as striping. The "
         "denominator is the mean of the whole column or of its bland "
         "(featureless) pixels. The result can replace the I/F cube in other "
@@ -287,13 +304,18 @@ class RatioCubeAnalysis(Analysis):
             <= NEIGHBOR_RADIUS_RANGE[1]
         ):
             return "Neighbor Radius must be 0 or more."
-        if image.filePath is None:
-            return "The image has no file, so there is no DDR/DE backplane to read."
-        geometry = loadColumnGeometry(image.filePath)
+        geometry = self._geometry(image)
         if geometry is None:
+            where = (
+                f"next to {image.filePath}"
+                if image.filePath
+                else "(the image has no file)"
+            )
             return (
-                "No DDR/DE backplane (geometry file) was found next to "
-                f"{image.filePath}: it gives each pixel's detector column."
+                "No CRISM backplane with detector columns (an IN or DDR file with "
+                f"an IR Sample band) was found {where}, and the image is not an "
+                "unprojected CRISM cube (no map projection, 640, 320 or 160 "
+                "columns), so each pixel's detector column is unknown."
             )
         if geometry.ir_sample.shape != (image.height, image.width):
             return (
@@ -337,6 +359,12 @@ class RatioCubeAnalysis(Analysis):
             )
         return ""
 
+    @staticmethod
+    def _geometry(image: VardaRaster) -> ColumnGeometry | None:
+        return columnGeometryFor(
+            image.filePath, (image.height, image.width), image.crs is not None
+        )
+
     def unavailableReason(self, image: VardaRaster) -> str:
         return self._problem(image)
 
@@ -349,8 +377,7 @@ class RatioCubeAnalysis(Analysis):
         reason = self._problem(image)
         if reason:
             raise ValueError(reason)
-        assert image.filePath is not None
-        geometry = loadColumnGeometry(image.filePath)
+        geometry = self._geometry(image)
         assert geometry is not None
         reportProgress(0, "reading the image")
         cube, valid, bands = readGoodBands(image)
@@ -368,8 +395,14 @@ class RatioCubeAnalysis(Analysis):
             "runLength": int(self.runLength.get()),
             "minimumPixels": int(self.minimumPixels.get()),
             "neighborRadius": int(self.neighborRadius.get()),
-            "geometryFile": resolveGeometryFile(image.filePath) or "",
-            "vnirApproximate": bool((centers < VNIR_BELOW_NM).any()),
+            "geometry": (
+                IMAGE_COLUMNS
+                if geometry.source == IMAGE_COLUMNS
+                else f"backplane band '{geometry.sampleBand}'"
+            ),
+            "geometryFile": "" if geometry.source == IMAGE_COLUMNS else geometry.source,
+            "binning": int(geometry.binning),
+            "vnirApproximate": _vnirApproximate(centers, geometry),
             "vnirBelowNm": VNIR_BELOW_NM,
             "bands": [int(b) + 1 for b in bands],
         }
@@ -488,9 +521,19 @@ class RatioCubeAnalysis(Analysis):
                 parts.append(f"{n} of {total} columns {label}")
         if not fallback:
             parts.append("0 columns fell back")
+        if record["geometry"] == IMAGE_COLUMNS:
+            parts.append(
+                "detector columns are the image columns (unprojected cube, no "
+                f"backplane; {record['binning']} detector column(s) per image column)"
+            )
+        else:
+            parts.append(
+                f"detector columns from {record['geometry']} of "
+                f"{record['geometryFile']}"
+            )
         if record["vnirApproximate"]:
             parts.append(
                 f"VNIR bands (below {VNIR_BELOW_NM:g} nm) are only approximately "
-                "column-matched, since the backplane gives the IR detector's columns"
+                "column-matched, since the columns are the IR detector's"
             )
         return "; ".join(parts) + "."
