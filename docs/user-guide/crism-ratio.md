@@ -19,10 +19,11 @@ in for the I/F cube in other software.
 The detector column of each pixel comes from one of two places, recorded as
 `geometry` in the output:
 
-- **A backplane**: a companion file found next to the cube by name, whose
-  "IR Sample" band is the detector column. This works for map-projected
-  cubes. The names Varda looks for (as on the PDS Geosciences Node; upper-case
-  names, as ODE downloads them, work too):
+- **A backplane**: a CRISM geometry file whose "IR Sample" band is the
+  detector column (see [The geometry file](#the-geometry-file) for how it is
+  found, or chosen by hand). This works for map-projected cubes. The names
+  Varda looks for (as on the PDS Geosciences Node; upper-case names, as ODE
+  downloads them, work too):
 
   | Cube | Companion with detector columns | Other companion (DDR) |
   | --- | --- | --- |
@@ -46,7 +47,82 @@ The detector column of each pixel comes from one of two places, recorded as
 A column is the pair (strip, column). Backplane columns are `rint` of the
 sample value, so a value halfway between two columns rounds to the even one.
 Without either (for example a map-projected cube without its IN file), or
-with a backplane of another size, the dialog says so instead of offering Run.
+with a backplane that doesn't cover the image's pixels, the dialog says so
+instead of offering Run, and asks for the IN file in **Geometry File**.
+
+### The geometry file
+
+CRISM ships its per-pixel geometry in companion files beside the I/F cube.
+Which one a feature needs:
+
+| Companion | Holds | Used by |
+| --- | --- | --- |
+| **IN** (`…_in…`, e.g. `frt000107a7_07_in166j_mtr3.img`) | "IR Sample" and "IR Line" (the detector column and line of each map pixel) | column lock, the Ratio Cube |
+| **DDR/DE** (`…_de…`, e.g. `frt000107a7_07_de166l_mtr1.img`, `…_de166l_ddr1.img`) | "INA at areoid" (solar incidence) and the other angles; **no detector sample** | the Shadow Mask's sun elevation |
+
+**Automatic lookup.** For each need Varda tries, in order, and uses the first
+file that has the needed band and covers the image's pixels:
+
+1. **override**: the file chosen by hand for this image and need (below);
+2. **beside the file**: the companions named like the image's own file, in its
+   folder (the table above);
+3. **from source *path***: the companions beside a file the image was made
+   from, following its Varda provenance (kept in memory, and in the `VARDA`
+   metadata of files Varda writes) back up to 8 steps, e.g. an IOVF result
+   → its I/F cube, or a crop → an IOVF result → its I/F cube. A file chosen
+   by hand for a source image is used too (its record names it). Crops
+   (the Crop tool, Subset) shift the window read from the source's backplane;
+   the chain stops at a step that moves pixels (Resample, Rotate/Flip, Crop to
+   ROI). Only each step's primary input (the image it ran on) is followed, not
+   a second image such as Band Math's. A plugin process is assumed to keep the
+   pixel grid: check the recorded route if one warps or flips;
+4. for column lock and the Ratio Cube only, **image columns**: the cube's own
+   columns, for an unprojected CRISM cube (above).
+
+This is why an IOVF-filtered cube, whose name (`… Iterative Outlier Voting
+Filter (IOVF).img`) no longer matches the PDS pattern, still finds the IN file
+beside the I/F cube it was filtered from.
+
+**Choosing a file by hand.** When the lookup fails (the source was moved, the
+result was renamed, the companion is in another folder), point Varda to the
+file: **Choose Geometry File…** beside the column-lock control in the CRISM
+Ratio workspace and in the ROI Manager (General Image Analysis, Dual), or
+**Geometry File** in the Ratio Cube dialog (empty means automatic). The file
+dialog opens in the image's folder (or its source's). Choosing an ENVI `.hdr`
+uses its `.img`. The file is checked before it is used, and refused with the
+reason when:
+
+- it doesn't open as an image;
+- it lacks the needed band: column lock and the Ratio Cube need the IR
+  detector sample, so a DDR/DE file is refused with "looks like a DDR/DE file
+  … Choose the product's IN file"; the Shadow Mask needs "INA at areoid";
+- it doesn't cover the image's pixels: it must have the image's rows ×
+  columns, or be on the same map grid (same projection and pixel size, a
+  whole-pixel offset, no rotation) and cover the image, in which case the
+  image's window is read. Varda never resamples a backplane: detector
+  columns can't be interpolated meaningfully.
+
+An accepted file becomes the image's **override** for that need, one key
+each in its metadata: `crismColumnsFile` (the IN file, from Choose Geometry
+File… or the Ratio Cube's Geometry File) and `crismIncidenceFile` (the
+DDR/DE file, from the Shadow Mask's CRISM Geometry File). Every feature uses
+it; column lock becomes available in every workspace showing the image (and
+turns on in the CRISM Ratio workspace); both are saved and restored with the
+session (by path; a packaged project doesn't copy the geometry files, so
+keep them beside the data), kept in files Varda writes, and named in the
+records of images made from it. Clearing the field goes back to automatic.
+Choose Geometry File… asks for the IN file only. In the ROI Manager it is
+offered only for an image that looks like CRISM (a CRISM product name on it
+or a source, CRISM metadata, or an unprojected 640/320/128/64-column cube
+with a CRISM-like spectral axis), or one whose file was chosen by hand.
+
+**What's recorded.** The Ratio Cube's `ratioCube` record has `geometryFile`
+(the file read, "" for image columns) and `geometryRoute` (`override`,
+`beside the file`, `from source <path>` or `image columns`); its description
+says "detector columns from backplane band 'IR Sample' of <file> (found:
+<route>)", and every row of the column table has `geometryFile` and
+`geometryRoute`. The workspace's column-lock tooltip names the file and
+route. The Shadow Mask's sun elevation source names the DDR and its route.
 
 ### What it does
 
@@ -298,7 +374,8 @@ is column-matched and not flagged.
   `excludedNm`, `depthFloor`, `noiseMultiple`, `maxSlope`, the `continuum`,
   `smoothingBands` and `noise` methods, and `settings`, all of it as one
   sentence), run length, Minimum Pixels, Neighbor Radius, where the columns
-  came from (`geometry`, `geometryFile`, `binning`), how the oversampling
+  came from (`geometry`, `geometryFile`, `geometryRoute`, `binning`; see
+  [The geometry file](#the-geometry-file)), how the oversampling
   was found (`oversamplingFrom`), the good bands used, and for every column:
   - `strip`, `column`;
   - `count`: pixels that went into the denominator (with a value in at least
@@ -407,7 +484,8 @@ Empty cells are missing values.
 
 A methods section can say: "Each I/F spectrum was divided by the mean spectrum
 of the bland pixels of its detector column (column from the <IN file's IR
-sample, or the unprojected cube's image columns>; blandness: the
+sample (<geometryFile>, found <geometryRoute>), or the unprojected cube's image
+columns>; blandness: the
 <check> check of Varda <version>, in which every window (<windows and nm
 ranges>) of the continuum-removed spectrum (upper convex hull per window,
 5-band running mean), outside <excluded ranges> nm, had its deepest
@@ -512,8 +590,10 @@ the numerator's sensor column in the clicked row, and the denominator then
 **follows**: each new numerator moves it into the new numerator's column,
 keeping its row. The column comes from the I/F cube's backplane, or the image
 columns of an unprojected CRISM cube, exactly as for the Ratio Cube analysis
-(see [What it needs](#what-it-needs)), and strips are kept apart. The status
-bar says "Column lock on (image columns)" in the second case.
+(see [What it needs](#what-it-needs) and [The geometry file](#the-geometry-file)),
+and strips are kept apart. The status bar says "Column lock on (image columns)"
+in the second case; the check box's tooltip names the backplane file and how it
+was found.
 
 Two cases where the lock cannot be met are said, never silent:
 
@@ -523,9 +603,13 @@ Two cases where the lock cannot be met are said, never silent:
   "Denominator left in place: …" for a few seconds. That ratio is not
   column-matched; move the denominator to a row the column reaches.
 - **No detector columns for the I/F cube** (no backplane with an IR Sample
-  band, and not an unprojected CRISM cube): the lock is unavailable (the
-  check box is disabled and unchecked) and the status bar says "Column lock
-  unavailable".
+  band beside the cube or the file it was made from, and not an unprojected
+  CRISM cube): the lock is unavailable (the check box is disabled and
+  unchecked) and the status bar says "Column lock unavailable … (choose its
+  geometry file)". **Choose Geometry File…** under the check box points Varda
+  to the IN file by hand (see [The geometry file](#the-geometry-file)); once
+  accepted, the lock turns on at once. The button then reads **Change
+  Geometry File…**.
   Ratioing still works; the denominator is simply where you click, so the
   ratio keeps whatever column-dependent artifacts the two columns differ by.
 

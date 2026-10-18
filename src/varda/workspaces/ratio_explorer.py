@@ -245,9 +245,7 @@ class RatioExplorerController(QObject):
         columns, or the column's strip doesn't reach that row)."""
         if not self._roiManager.lockColumn:
             return None
-        geometry = columnGeometryFor(
-            image.filePath, (image.height, image.width), image.crs is not None
-        )
+        geometry = columnGeometryFor(image)
         if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
             return None
         shift = computeColumnLockedTranslation(

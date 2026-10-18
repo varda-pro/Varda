@@ -51,12 +51,22 @@ from varda.common.grid import (
 )
 from varda.common.parameter import (
     EnumParameter,
+    FilePathParameter,
     FloatParameter,
     ImageParameter,
     IntParameter,
     LabeledEnum,
 )
-from varda.image_loading.crism_geometry import sceneIncidence
+from varda.image_loading.crism_geometry import (
+    INCIDENCE,
+    Incidence,
+    checkGeometryFile,
+    geometryDataFile,
+    geometryOverride,
+    geometryStartFolder,
+    keepChosenFile,
+    sceneIncidenceFor,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 _CACHE = not getattr(sys, "frozen", False)  # see stretch_algorithms._CACHE
@@ -256,26 +266,37 @@ def _metadataAngle(metadata: dict, keys: tuple[str, ...]) -> tuple[float, str] |
     return None
 
 
-def solarGeometry(image: VardaRaster) -> SunAngles:
+def _ddrElevation(ddr: Incidence) -> tuple[float, str]:
+    return (
+        90.0 - ddr.mean,
+        f"90° − the mean incidence at the areoid in the CRISM DDR "
+        f"{ddr.path}, averaged over the image's own pixels ({ddr.low:.2f}–"
+        f"{ddr.high:.2f}° across the image's pixels; "
+        f"found: {ddr.route})",
+    )
+
+
+def solarGeometry(image: VardaRaster, geometryFile: str = "") -> SunAngles:
     """The sun's azimuth and elevation from the image's metadata (keys such as
     ``sun_azimuth``, ``sun_elevation`` or ``incidence_angle``), or the
     elevation from a CRISM product's DDR (90° minus the scene's mean
-    incidence at the areoid). What isn't known stays None."""
+    incidence at the areoid over the image): ``geometryFile`` when given
+    (it comes first), else one found automatically
+    (``crism_geometry.findGeometryFile``). What isn't known stays None."""
     metadata = dict(image.extraMetadata)
     azimuth = _metadataAngle(metadata, _AZIMUTH_KEYS)
-    elevation = _metadataAngle(metadata, _ELEVATION_KEYS)
+    chosen = sceneIncidenceFor(image, geometryFile) if geometryFile else None
+    elevation = None if chosen is None else _ddrElevation(chosen)
+    if elevation is None:
+        elevation = _metadataAngle(metadata, _ELEVATION_KEYS)
     if elevation is None:
         incidence = _metadataAngle(metadata, _INCIDENCE_KEYS)
         if incidence is not None:
             elevation = (90.0 - incidence[0], f"90° − incidence, {incidence[1]}")
-    if elevation is None and image.filePath:
-        ddr = sceneIncidence(image.filePath)
+    if elevation is None:
+        ddr = sceneIncidenceFor(image)
         if ddr is not None:
-            elevation = (
-                90.0 - ddr.mean,
-                f"90° − the mean incidence at the areoid in the CRISM DDR "
-                f"{ddr.path} ({ddr.low:.2f}–{ddr.high:.2f}° across the scene)",
-            )
+            elevation = _ddrElevation(ddr)
     return SunAngles(
         azimuth=None if azimuth is None else azimuth[0] % 360.0,
         elevation=None if elevation is None else float(np.clip(elevation[0], 0, 90)),
@@ -384,6 +405,16 @@ class ShadowMaskAnalysis(Analysis):
         showSlider=False,
         description="Height of the sun above the horizon (90° − incidence)",
     )
+    geometryFile = FilePathParameter(
+        "CRISM Geometry File",
+        "A CRISM DDR/DE file (…_de…) whose 'INA at areoid' band gives the sun "
+        "elevation (90° − the scene's mean incidence). Empty: found "
+        "automatically (beside the image or the file it was made from), "
+        "after the image's metadata",
+        fileFilter="CRISM geometry (*.img *.IMG *.hdr *.HDR *.tif *.TIF);;"
+        "All files (*)",
+        placeholder="Automatic",
+    )
     cosineThreshold = FloatParameter(
         "Self-Shadow cos(i) ≤",
         0.0,
@@ -411,6 +442,19 @@ class ShadowMaskAnalysis(Analysis):
         self.sunElevation.sigParameterChanged.connect(
             lambda _: self._entered("elevation")
         )
+        self._image: VardaRaster | None = None
+        self.geometryFile.sigParameterChanged.connect(self._useGeometryFile)
+
+    def _useGeometryFile(self, _path: str) -> None:
+        """A usable DDR chosen here is kept with the image (as the Ratio
+        Cube keeps its IN file), then the sun is read again."""
+        if self._image is not None:
+            keepChosenFile(self._image, INCIDENCE, self.geometryFile.get().strip())
+        self._readSun()
+
+    def _chosenFile(self) -> str:
+        path = self.geometryFile.get().strip()
+        return geometryDataFile(path) if path else ""
 
     def _entered(self, angle: str) -> None:
         self.sunSources[angle] = "entered"
@@ -429,21 +473,39 @@ class ShadowMaskAnalysis(Analysis):
         self.dem.setChoices(lambda: demCandidates(self.context.images, image))
         candidates = demCandidates(self.context.images, image).images
         self.dem.setOrClear(current if current in candidates else None)
-        angles = solarGeometry(image)
+        self._image = image
+        self.geometryFile.startFolder = geometryStartFolder(image)
+        with self.geometryFile.sigParameterChanged.blocked():
+            self.geometryFile.set(geometryOverride(image, INCIDENCE))
+        self._readSun()
+
+    def _readSun(self) -> None:
+        """Take the sun angles the image's metadata or geometry file give."""
+        image = self._image
+        if image is None:
+            return
+        chosen = self._chosenFile()
+        if chosen and checkGeometryFile(chosen, image, INCIDENCE):
+            chosen = ""  # unavailableReason says why
+        angles = solarGeometry(image, chosen)
         for angle, param, value, source in (
             ("azimuth", self.sunAzimuth, angles.azimuth, angles.azimuthSource),
             ("elevation", self.sunElevation, angles.elevation, angles.elevationSource),
         ):
             if value is not None:
-                with param.sigParameterChanged.blocked():
-                    param.set(value)
-                self.sunSources[angle] = source
+                param.set(value)  # shown at once; marked "entered", then
+                self.sunSources[angle] = source  # given its real source
             elif self.sunSources[angle] != "entered":
                 self.sunSources[angle] = ""
 
     def unavailableReason(self, image: VardaRaster) -> str:
         if not self.usesTerrain():
             return ""
+        chosen = self._chosenFile()
+        if chosen:
+            problem = checkGeometryFile(chosen, image, INCIDENCE)
+            if problem:
+                return f"CRISM Geometry File: {problem}"
         dem = self.dem.get()
         if dem is None:
             if not demCandidates(self.context.images, image).images:

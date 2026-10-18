@@ -17,6 +17,8 @@ import logging
 from collections.abc import MutableSequence, Sequence
 
 import PyQt6Ads as ads
+from PyQt6 import sip
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -34,7 +36,15 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
 from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import ElidingComboBox, MutedLabel, VardaDockWidget
-from varda.image_loading.crism_geometry import IMAGE_COLUMNS, columnGeometryFor
+from varda.image_loading.crism_geometry import (
+    IMAGE_COLUMNS,
+    ColumnGeometry,
+    columnGeometryFor,
+)
+from varda.image_loading.crism_geometry_chooser import (
+    CHOOSE_TEXT,
+    chooseGeometryButton,
+)
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -71,9 +81,10 @@ LINK_LABELS = {Link.PIXEL: "Pixel match", Link.MAP: "Map link"}
 def columnSource(image: VardaRaster) -> str:
     """Where the image's detector columns come from: the backplane file, or
     :data:`IMAGE_COLUMNS` for an unprojected CRISM cube; "" when unknown."""
-    geometry = columnGeometryFor(
-        image.filePath, (image.height, image.width), image.crs is not None
-    )
+    return _sourceOf(columnGeometryFor(image), image)
+
+
+def _sourceOf(geometry: ColumnGeometry | None, image: VardaRaster) -> str:
     if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
         return ""
     return geometry.source or "backplane"
@@ -172,28 +183,54 @@ class CrismRatioWorkspace(QMainWindow):
     # --- construction --------------------------------------------------------------
 
     def _initLock(self) -> None:
-        self.columnSource = columnSource(self.data)
-        available = bool(self.columnSource)
-        self.lockCheck.setEnabled(available)
-        self.lockCheck.setChecked(available)
+        self.columnSource = ""
+        self.chooseGeometryButton = chooseGeometryButton(self.data, parent=self)
         self.lockCheck.toggled.connect(self._showLockStatus)
-        if not available:
-            self.lockCheck.setToolTip(
-                f"No CRISM backplane with detector columns (an IN or DDR file "
-                f"with an IR Sample band) was found next to {self.data.name}, and "
-                "it is not an unprojected CRISM cube (no map projection, 640, 320, "
-                "128 or 64 columns), so the denominator can't be placed by sensor column."
-            )
-        else:
-            self.lockCheck.setToolTip(f"Detector columns from {self.columnSource}")
         status = self.statusBar()
         assert status is not None
         status.addPermanentWidget(self.lockStatus)
+        self._refreshLock()
+        # a geometry file chosen here or anywhere else enables the lock at once
+        self.data.sigMetadataChanged.connect(self._refreshLock)  # held weakly
+
+    def _refreshLock(self) -> None:
+        """Enable the lock when the I/F cube's detector columns are known
+        (and turn it on when it becomes available); otherwise say why and
+        offer to choose the geometry file."""
+        if sip.isdeleted(self):  # the image outlived the workspace
+            return
+        wasAvailable = bool(self.columnSource)
+        geometry = columnGeometryFor(self.data)
+        self.columnSource = _sourceOf(geometry, self.data)
+        available = bool(self.columnSource)
+        self.lockCheck.setEnabled(available)
+        if available != wasAvailable:
+            self.lockCheck.setChecked(available)
+        if not available:
+            self.lockCheck.setToolTip(
+                f"No CRISM geometry file with detector columns (the IN file, "
+                f"with an IR Sample band) was found beside {self.data.name} or "
+                "the file it was made from, and it is not an unprojected CRISM "
+                "cube (no map projection, 640, 320, 128 or 64 columns), so the "
+                "denominator can't be placed by sensor column. Choose the IN "
+                "file with “Choose Geometry File…”."
+            )
+        else:
+            route = f" ({geometry.route})" if geometry and geometry.route else ""
+            self.lockCheck.setToolTip(
+                f"Detector columns from {self.columnSource}{route}"
+            )
+        self.chooseGeometryButton.setText(
+            "Change Geometry File…" if available else CHOOSE_TEXT
+        )
         self._showLockStatus()
 
     def _showLockStatus(self) -> None:
         if not self.lockCheck.isEnabled():
-            text = f"Column lock unavailable: no detector columns for {self.data.name}"
+            text = (
+                f"Column lock unavailable: no detector columns for "
+                f"{self.data.name} (choose its geometry file)"
+            )
         elif self.lockCheck.isChecked():
             text = (
                 "Column lock on (image columns)"
@@ -241,6 +278,7 @@ class CrismRatioWorkspace(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(groupWidget(self.config))
         layout.addWidget(self.lockCheck)
+        layout.addWidget(self.chooseGeometryButton, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(hint)
         layout.addWidget(self.plots, 1)
         return controls

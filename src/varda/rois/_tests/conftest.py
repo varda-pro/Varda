@@ -7,6 +7,7 @@ from typing import Callable
 
 import numpy as np
 import pytest
+from psygnal import SignalInstance
 
 from varda.common.spectral_axis import BandModel
 
@@ -40,6 +41,9 @@ def make_split_image() -> Callable[[int, int, int, float, float], SimpleNamespac
             hasGeospatialData=False,
             filePath=None,
             crs=None,
+            extraMetadata={},
+            description="",
+            sigMetadataChanged=SignalInstance(),
             wavelengths=np.arange(bands, dtype=np.float64),
             wavelengthsType=float,
             bandModel=BandModel.empty(bands),  # band numbers, no spectral axis

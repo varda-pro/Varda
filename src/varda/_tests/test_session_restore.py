@@ -1,14 +1,28 @@
 """Restoring a session reloads its images and rebuilds workspaces with their ROIs."""
 
+import json
+
 import numpy as np
 from shapely.geometry import box
 
 from varda.common.di_types import ProjectImages
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.image_loading.crism_geometry import (
+    COLUMNS,
+    INCIDENCE,
+    geometryOverride,
+    setGeometryOverride,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_json import roisToJson
-from varda.session import SessionState, WorkspaceState
+from varda.session import (
+    SessionState,
+    WorkspaceState,
+    captureSession,
+    readSession,
+    writeSession,
+)
 from varda.session_restore import SessionRestorer
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
     DualImageWorkspace,
@@ -144,3 +158,32 @@ def test_metadata_edited_in_varda_comes_back_with_the_session(qtbot, tmp_path):
         restorer.restore(state)
     assert fresh.name == "scene" and fresh.nodata == 0.0
     assert fresh.wavelengthUnits == "nm"
+
+
+def test_a_chosen_crism_geometry_file_comes_back_with_the_session(qtbot, tmp_path):
+    imagePath = str(tmp_path / "data" / "iovf.img")
+    geometryPath = str(tmp_path / "data" / "frt000107a7_07_in166j_mtr3.img")
+    ddrPath = str(tmp_path / "frt000107a7_07_de166l_mtr1.img")
+    a = _image("a", imagePath)
+    setGeometryOverride(a, COLUMNS, geometryPath)
+    setGeometryOverride(a, INCIDENCE, ddrPath)
+    # saved relative to the session's folder, so a bundle can move
+    path = writeSession(
+        captureSession([a], []).state, tmp_path / "s.varda", relativeTo=tmp_path
+    )
+    stored = json.loads(path.read_text())["metadata"]["data/iovf.img"]
+    assert stored["crismColumnsFile"] == "data/frt000107a7_07_in166j_mtr3.img"
+    assert stored["crismIncidenceFile"] == "frt000107a7_07_de166l_mtr1.img"
+    state = readSession(path)
+    assert state.metadata[imagePath]["crismColumnsFile"] == geometryPath
+    assert state.metadata[imagePath]["crismIncidenceFile"] == ddrPath
+
+    fresh = _image("a", imagePath)  # as loaded from the file again
+    restorer = SessionRestorer(
+        ProjectImages(), FakeMainGui(), loadImage=_fakeLoader({imagePath: fresh})
+    )
+    with qtbot.waitSignal(restorer.sigFinished, timeout=10_000):
+        restorer.restore(state)
+    assert geometryOverride(fresh, COLUMNS) == geometryPath
+    assert geometryOverride(fresh, INCIDENCE) == ddrPath
+    assert fresh.metadataOverrides == {}  # nothing else was edited

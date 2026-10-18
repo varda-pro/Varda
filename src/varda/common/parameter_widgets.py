@@ -9,6 +9,7 @@ Widgets subscribe to their parameter only while they exist (see
 from __future__ import annotations
 
 import inspect
+import os
 import weakref
 from collections.abc import Callable, Iterable
 
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QLabel,
     QLineEdit,
@@ -35,6 +37,7 @@ from varda.common.parameter import (
     BoolParameter,
     ColorParameter,
     EnumParameter,
+    FilePathParameter,
     FloatParameter,
     ImageParameter,
     IntParameter,
@@ -305,6 +308,58 @@ class StringParameterWidget(QWidget):
         if self.lineEdit.text() != text:
             with QSignalBlocker(self.lineEdit):
                 self.lineEdit.setText(text)
+
+
+@widgetFor(FilePathParameter)
+class FilePathParameterWidget(QWidget):
+    """The path (typed, taken when editing finishes, or cleared with the
+    field's clear button) and Browse…, which opens in the parameter's
+    ``startFolder``."""
+
+    def __init__(self, param: FilePathParameter, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.param = param
+        self.lineEdit = QLineEdit(self)
+        self.lineEdit.setText(param.get())
+        self.lineEdit.setPlaceholderText(param.placeholder)
+        self.lineEdit.setClearButtonEnabled(True)
+        self.lineEdit.setToolTip(param.get())  # long paths show only a part
+        self.lineEdit.editingFinished.connect(
+            lambda: self._take(self.lineEdit.text().strip())
+        )
+        self.lineEdit.textChanged.connect(self._onTextChanged)
+        self.browseButton = QPushButton("Browse…", self)
+        self.browseButton.clicked.connect(self._browse)
+        # the path takes the form's width (long CRISM paths)
+        self.setLayout(
+            HBoxBuilder(margins=0)
+            .withWidget(self.lineEdit, 1)
+            .withWidget(self.browseButton)
+        )
+        connectWhileAlive(param.sigParameterChanged, self.onParamChanged, self)
+
+    def _onTextChanged(self, text: str) -> None:
+        if not text:  # cleared
+            self._take("")
+
+    def _take(self, path: str) -> None:
+        if path != self.param.get():
+            self.param.set(path)
+
+    def _browse(self) -> None:
+        current = self.param.get()
+        start = os.path.dirname(current) if current else self.param.startFolder
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.param.name, start, self.param.fileFilter
+        )
+        if path:
+            self._take(path)
+
+    def onParamChanged(self, path: str) -> None:
+        self.lineEdit.setToolTip(path)
+        if self.lineEdit.text() != path:
+            with QSignalBlocker(self.lineEdit):
+                self.lineEdit.setText(path)
 
 
 @widgetFor(BoolParameter)

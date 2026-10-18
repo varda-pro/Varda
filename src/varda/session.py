@@ -16,6 +16,7 @@ from pathlib import Path
 import attrs
 
 from varda.common.entities import VardaRaster
+from varda.common.provenance import CRISM_GEOMETRY_KEYS
 from varda.rois.roi_json import roisToJson
 from varda.workspaces.workspace_kinds import describeWorkspace
 
@@ -42,7 +43,9 @@ class WorkspaceState:
 class SessionState:
     images: tuple[str, ...] = attrs.field(converter=tuple)  # file paths in list order
     workspaces: tuple[WorkspaceState, ...] = attrs.field(converter=tuple)
-    # path -> {"name": ..., "overrides": {...}}: metadata edited in Varda
+    # path -> {"name": ..., "overrides": {...}, "crismColumnsFile"?: path,
+    # "crismIncidenceFile"?: path}: metadata edited in Varda, and the CRISM
+    # geometry files chosen by hand
     metadata: dict = attrs.field(factory=dict)
 
 
@@ -89,13 +92,27 @@ def captureSession(
             )
         )
     edited = {
-        pathOf[id(image)]: {"name": image.name, "overrides": image.metadataOverrides}
+        pathOf[id(image)]: _imageMetadata(image)
         for image in images
-        if id(image) in pathOf and image.metadataOverrides
+        if id(image) in pathOf and (image.metadataOverrides or _geometryFiles(image))
     }
     return SessionCapture(
         SessionState(tuple(pathOf.values()), tuple(states), edited), tuple(unsaved)
     )
+
+
+def _imageMetadata(image: VardaRaster) -> dict:
+    entry = {"name": image.name, "overrides": image.metadataOverrides}
+    return {**entry, **_geometryFiles(image)}
+
+
+def _geometryFiles(image: VardaRaster) -> dict[str, str]:
+    """The CRISM geometry files chosen by hand for the image, by key."""
+    return {
+        key: str(image.extraMetadata[key])
+        for key in CRISM_GEOMETRY_KEYS
+        if image.extraMetadata.get(key)
+    }
 
 
 def writeSession(
@@ -131,7 +148,9 @@ def writeSession(
         "version": _VERSION,
         "images": [stored(p) for p in state.images],
         "workspaces": workspaces,
-        "metadata": {stored(p): entry for p, entry in state.metadata.items()},
+        "metadata": {
+            stored(p): _withPath(entry, stored) for p, entry in state.metadata.items()
+        },
     }
     target.write_text(json.dumps(document, indent=2))
     return target
@@ -180,8 +199,20 @@ def readSession(path: str | Path) -> SessionState:
             )
             for entry in document["workspaces"]
         ),
-        {resolved(p): entry for p, entry in document.get("metadata", {}).items()},
+        {
+            resolved(p): _withPath(entry, resolved)
+            for p, entry in document.get("metadata", {}).items()
+        },
     )
+
+
+def _withPath(entry: dict, convert: Callable[[str], str]) -> dict:
+    """An image's metadata entry with its geometry files' paths converted
+    like the images' (relative to the session file when stored)."""
+    return {
+        **entry,
+        **{key: convert(entry[key]) for key in CRISM_GEOMETRY_KEYS if entry.get(key)},
+    }
 
 
 def _upgrade(document: dict, path: str | Path) -> dict:

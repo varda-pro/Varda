@@ -505,8 +505,8 @@ def test_the_lock_uses_the_if_geometry_under_a_map_link(qtbot, mapPair, monkeypa
     geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0), (30, 1)))
     seen = []
 
-    def load(path, *_args):
-        seen.append(path)
+    def load(image, *_args):
+        seen.append(image.filePath)
         return geometry
 
     monkeypatch.setattr(ratio_explorer, "columnGeometryFor", load)

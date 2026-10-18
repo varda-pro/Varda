@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import sip
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFormLayout,
@@ -25,9 +26,13 @@ from shapely.geometry import Polygon
 from varda.image_loading.crism_geometry import (
     ColumnGeometry,
     columnGeometryFor,
+    COLUMNS,
     computeColumnLockedTranslation,
+    geometryOverride,
+    looksLikeCrism,
     wholePixels,
 )
+from varda.image_loading.crism_geometry_chooser import chooseGeometryButton
 from varda.common.ui import FlowLayout
 from varda.plotting.plot import VardaPlotWidget
 from varda.rois.add_column_dialog import AddColumnDialog
@@ -122,14 +127,12 @@ class ROIManagerWidget(QWidget):
         self._plotBtn.setEnabled(False)
 
         # "Lock to sensor column" toggle for template placement, enabled only
-        # when a CRISM DDR geometry companion resolves for this image.
+        # when the image's CRISM detector columns are known; where they
+        # aren't, the geometry file can be chosen by hand.
         self._lockColumnCheck = QCheckBox("Lock to sensor column")
-        hasDdr = self._columnGeometry() is not None
-        self._lockColumnCheck.setEnabled(hasDdr)
-        if not hasDdr:
-            self._lockColumnCheck.setToolTip(
-                "No CRISM DDR geometry found for this image"
-            )
+        self.chooseGeometryButton = chooseGeometryButton(image, parent=self)
+        self._refreshColumnLock()
+        image.sigMetadataChanged.connect(self._refreshColumnLock)  # held weakly
 
         # Layout
         btnRow = FlowLayout()  # wraps in a narrow dock
@@ -143,6 +146,7 @@ class ROIManagerWidget(QWidget):
             self._exportBtn,
             self._plotBtn,
             self._lockColumnCheck,
+            self.chooseGeometryButton,
         ):
             btnRow.addWidget(widget)
 
@@ -225,6 +229,34 @@ class ROIManagerWidget(QWidget):
     @property
     def templateFid(self) -> int | None:
         return self._templateFid
+
+    def _refreshColumnLock(self) -> None:
+        """Enable the column lock when the detector columns are known; offer
+        to choose the geometry file when they aren't, or one was chosen."""
+        if sip.isdeleted(self):  # the image outlived this widget
+            return
+        geometry = self._columnGeometry()
+        crism = looksLikeCrism(self._image)
+        self._lockColumnCheck.setEnabled(geometry is not None)
+        if geometry is None:
+            self._lockColumnCheck.setChecked(False)
+            self._lockColumnCheck.setToolTip(
+                "No CRISM detector columns for this image: no geometry file "
+                "with an IR Sample band beside it or its source, and it is "
+                "not an unprojected CRISM cube. Choose the IN file by hand."
+                if crism
+                else "No sensor detector columns for this image (column lock "
+                "is for CRISM cubes)"
+            )
+        else:
+            self._lockColumnCheck.setToolTip(
+                f"Detector columns from {geometry.source} ({geometry.route})"
+            )
+        # offered only where it can help: a CRISM image without columns, or
+        # one whose file was chosen by hand (to change it)
+        self.chooseGeometryButton.setVisible(
+            (geometry is None and crism) or bool(geometryOverride(self._image, COLUMNS))
+        )
 
     @property
     def lockColumn(self) -> bool:
@@ -366,9 +398,7 @@ class ROIManagerWidget(QWidget):
     def _columnGeometry(self) -> ColumnGeometry | None:
         """The image's detector columns (backplane or unprojected CRISM grid)."""
         image = self._image
-        geometry = columnGeometryFor(
-            image.filePath, (image.height, image.width), image.crs is not None
-        )
+        geometry = columnGeometryFor(image)
         if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
             return None
         return geometry

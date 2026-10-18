@@ -267,6 +267,33 @@ class StringParameter(Parameter[str]):
         )
 
 
+class FilePathParameter(Parameter[str]):
+    """A file to read, chosen with a file dialog or typed; "" means none.
+    ``placeholder`` is shown while it's empty (e.g. what empty means), and
+    the dialog opens in ``startFolder`` (set it to suit the image)."""
+
+    def __init__(
+        self,
+        name: str,
+        description=None,
+        *,
+        fileFilter: str = "All files (*)",
+        placeholder: str = "",
+    ) -> None:
+        super().__init__(name, "", description)
+        self.fileFilter = fileFilter
+        self.placeholder = placeholder
+        self.startFolder = ""
+
+    def clone(self) -> FilePathParameter:
+        return FilePathParameter(
+            self.name,
+            self.description,
+            fileFilter=self.fileFilter,
+            placeholder=self.placeholder,
+        )
+
+
 class BoolParameter(Parameter[bool]):
     def __init__(self, name, default=False, description=None):
         super().__init__(name, default, description)

@@ -2,10 +2,18 @@
 
 CRISM reflectance products ship a separate geometry "DDR" file whose bands give,
 per pixel, the detector column ("IR Sample") and the source strip identity
-("Target ID" + "Segment ID"). This module resolves that companion file and
-computes the horizontal shift needed to place a copied ROI on the same detector
-column as its template. It is deliberately CRISM-specific and self-contained: no
-general multi-instrument abstraction until a second instrument needs one.
+("Target ID" + "Segment ID"), or the solar incidence angle. This module finds
+that companion file, computes the horizontal shift needed to place a copied ROI
+on the same detector column as its template, and reads the scene's incidence.
+
+The file is looked for in order (``geometryCandidates``): the image's own
+override for the need, chosen by hand (``crismColumnsFile`` for the IN file,
+``crismIncidenceFile`` for the DDR/DE file, in its metadata), the companions
+named like the image's file beside it, then those of the files its Varda
+provenance names, following crops back to their source. A file serves only if
+it has the needed band and covers the image's pixels. It is deliberately
+CRISM-specific and self-contained: no general multi-instrument abstraction
+until a second instrument needs one.
 """
 
 from __future__ import annotations
@@ -14,11 +22,19 @@ import logging
 import math
 import os
 import re
+from typing import TYPE_CHECKING
 
 import attrs
 import numpy as np
 import rasterio
+from affine import Affine
+from pyproj import CRS
 from rasterio.errors import RasterioError
+
+from varda.common.provenance import CRISM_GEOMETRY_KEYS, PROVENANCE_KEY
+
+if TYPE_CHECKING:  # entities imports image loading: only the type is needed
+    from varda.common.entities import VardaRaster
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +56,9 @@ class ColumnGeometry:
     and ``segment_id`` identify the source observation strip. Missing values
     are NaN. ``source`` is the backplane file read, or :data:`IMAGE_COLUMNS`;
     ``sampleBand`` the backplane band the columns came from ("" for image
-    columns); ``binning`` how many detector columns one image column spans.
+    columns); ``binning`` how many detector columns one image column spans;
+    ``route`` how the file was found ("override", "beside the file", "from
+    source <path>", or "image columns").
     """
 
     ir_sample: np.ndarray
@@ -50,6 +68,7 @@ class ColumnGeometry:
     source: str = ""
     sampleBand: str = ""
     binning: int = 1
+    route: str = ""
 
 
 def _modeUnderMask(arr: np.ndarray | None, mask: np.ndarray) -> int | None:
@@ -203,62 +222,429 @@ def findBandIndex(descriptions: tuple[str, ...], kind: str) -> int | None:
     return None
 
 
-_geometry_cache: dict[str, ColumnGeometry | None] = {}
+# --- which geometry file, and how it was found -----------------------------------
+
+# How a geometry file was found (``route``)
+ROUTE_OVERRIDE = "override"
+ROUTE_BESIDE = "beside the file"
+ROUTE_IMAGE_COLUMNS = "image columns"
+SOURCE_ROUTE_PREFIX = "from source "
+# How many provenance steps back the lookup follows (e.g. crop → IOVF → I/F)
+PROVENANCE_DEPTH = 8
+# What a feature needs from the geometry file: a band kind of ``_BAND_ALIASES``
+COLUMNS = "ir_sample"
+INCIDENCE = "incidence"
+# Where an image's hand-chosen geometry file for each need is kept, in its
+# metadata: the IN file for detector columns, the DDR/DE file for incidence
+GEOMETRY_KEYS = dict(zip((COLUMNS, INCIDENCE), CRISM_GEOMETRY_KEYS))
+# Processes whose output is a window of their input: the parameters giving the
+# first row and column, and whether those are 1-based
+_CROPS = {"crop": ("row", "column", 0), "subset": ("First Row", "First Column", 1)}
+# Processes whose output is on another grid (or an unrecorded window of it):
+# the provenance chain stops there
+_REGRIDS = frozenset({"resample", "rotate_flip", "crop_to_roi"})
+# How close to whole pixels a georeferenced offset must be
+_OFFSET_TOLERANCE = 0.01
 
 
-def _readColumnGeometry(geomPath: str) -> ColumnGeometry | None:
-    """The backplane bands of ``geomPath``, or None when it has no detector
-    sample band (a TRR3's DDR, for example) or can't be read."""
+def sourceRoute(path: str) -> str:
+    return f"{SOURCE_ROUTE_PREFIX}{path}"
+
+
+@attrs.frozen
+class GeometryCandidate:
+    """A geometry file that may serve an image: ``offset`` is the (row,
+    column) of the image's first pixel in the file's grid when crops along the
+    provenance chain say so; (0, 0) means the same grid, or one placed by
+    georeferencing."""
+
+    path: str
+    route: str
+    offset: tuple[int, int] = (0, 0)
+
+
+@attrs.frozen
+class GeometryMatch:
+    """The geometry file found for an image and need: the image's pixels are
+    the file's rows ``window[0]``.. and columns ``window[1]``.."""
+
+    path: str
+    route: str
+    window: tuple[int, int]
+
+
+@attrs.frozen
+class _Header:
+    descriptions: tuple[str, ...]
+    height: int
+    width: int
+    transform: Affine
+    crs: str  # WKT, "" without one
+
+
+def _header(path: str) -> _Header:
+    with rasterio.open(path) as geom:
+        return _Header(
+            tuple(d or "" for d in geom.descriptions or ()),
+            geom.height,
+            geom.width,
+            geom.transform,
+            geom.crs.to_wkt() if geom.crs else "",
+        )
+
+
+def geometryDataFile(path: str) -> str:
+    """The file to open for a chosen geometry file: an ENVI header's data
+    file (``.img`` beside the ``.hdr``), else ``path`` itself; absolute."""
+    stem, suffix = os.path.splitext(os.path.abspath(path))
+    if suffix.lower() == ".hdr":
+        for data in (stem + ".img", stem + ".IMG"):
+            if os.path.isfile(data):
+                return data
+    return stem + suffix
+
+
+def geometryStartFolder(image: VardaRaster) -> str:
+    """Where to start looking for ``image``'s geometry file: its own file's
+    folder, else that of the first file its provenance names ("" if none)."""
+    chain = _sourceChain(image)
+    path = image.filePath or next(
+        (str(entry.get("path")) for _, entry in chain if entry.get("path")), ""
+    )
+    return os.path.dirname(path)
+
+
+def _sourceChain(image: VardaRaster) -> list[tuple[dict, dict]]:
+    """The image's provenance back to its first source, following each step's
+    primary input (the image the process ran on, listed first; others, such
+    as Band Math's second image, may be another observation's): (record, its
+    primary input's entry), newest first, up to :data:`PROVENANCE_DEPTH`."""
+    chain: list[tuple[dict, dict]] = []
+    record = image.extraMetadata.get(PROVENANCE_KEY)
+    for _ in range(PROVENANCE_DEPTH):
+        if not isinstance(record, dict):
+            break
+        inputs = [i for i in record.get("inputs") or [] if isinstance(i, dict)]
+        if not inputs:
+            break
+        chain.append((record, inputs[0]))
+        record = inputs[0].get(PROVENANCE_KEY)
+    return chain
+
+
+def geometryOverride(image: VardaRaster, need: str) -> str:
+    """The geometry file chosen by hand for ``image``'s ``need``
+    (:data:`COLUMNS` or :data:`INCIDENCE`; "" when none)."""
+    return str(image.extraMetadata.get(GEOMETRY_KEYS[need]) or "")
+
+
+def setGeometryOverride(image: VardaRaster, need: str, path: str | None) -> None:
+    """Use ``path`` as ``image``'s geometry file for ``need`` before any found
+    by name (None or "" goes back to automatic lookup); everything showing the
+    image is told. Kept in the data source's metadata, so a plugin source whose
+    ``extraMetadata`` is a new dict on each access would lose it."""
+    metadata = image.dataSource.extraMetadata
+    if path:
+        metadata[GEOMETRY_KEYS[need]] = str(path)
+    else:
+        metadata.pop(GEOMETRY_KEYS[need], None)
+    image.sigMetadataChanged.emit()
+
+
+def keepChosenFile(image: VardaRaster, need: str, path: str) -> None:
+    """A geometry file typed or picked in a dialog: kept as ``image``'s
+    override for ``need`` if it serves (so every feature uses it); "" goes back
+    to automatic lookup; a file that doesn't serve leaves the image as it was
+    (the dialog says why)."""
+    path = geometryDataFile(path) if path else ""
+    if path == geometryOverride(image, need):
+        return
+    if not path or not checkGeometryFile(path, image, need):
+        setGeometryOverride(image, need, path)
+
+
+def geometryCandidates(image: VardaRaster, need: str) -> list[GeometryCandidate]:
+    """Every geometry file that may serve ``image``'s ``need``, in the order
+    they are tried: its override for that need, the companions beside its
+    file, then those of the files its provenance names (the primary input of
+    each step, up to :data:`PROVENANCE_DEPTH` steps back)."""
+    found: list[GeometryCandidate] = []
+    override = geometryOverride(image, need)
+    if override:
+        found.append(GeometryCandidate(override, ROUTE_OVERRIDE))
+    if image.filePath:
+        found += [
+            GeometryCandidate(path, ROUTE_BESIDE)
+            for path in geometryFileCandidates(image.filePath)
+        ]
+    found += _provenanceCandidates(image, need)
+    unique: dict[tuple[str, tuple[int, int]], GeometryCandidate] = {}
+    for candidate in found:
+        unique.setdefault((candidate.path, candidate.offset), candidate)
+    return list(unique.values())
+
+
+def _provenanceCandidates(image: VardaRaster, need: str) -> list[GeometryCandidate]:
+    """The geometry files of the sources the image's provenance names (each
+    one's override for ``need``, then its companions), crops shifting the
+    window; the chain stops at a step that moves pixels."""
+    found: list[GeometryCandidate] = []
+    offset = (0, 0)
+    for record, entry in _sourceChain(image):
+        process = record.get("processId", "")
+        if process in _REGRIDS:
+            break
+        if process in _CROPS:
+            rowKey, columnKey, base = _CROPS[process]
+            parameters = record.get("parameters") or {}
+            try:
+                offset = (
+                    offset[0] + int(parameters[rowKey]) - base,
+                    offset[1] + int(parameters[columnKey]) - base,
+                )
+            except (KeyError, TypeError, ValueError):
+                break
+        path = str(entry.get("path") or "")
+        route = sourceRoute(path or str(entry.get("name", "?")))
+        chosen = entry.get(GEOMETRY_KEYS[need])
+        if chosen:
+            found.append(GeometryCandidate(str(chosen), route, offset))
+        if path:
+            found += [
+                GeometryCandidate(companion, route, offset)
+                for companion in geometryFileCandidates(path)
+            ]
+    return found
+
+
+# CRISM product IDs (observation class, 8 hex digits) and map tiles (MRDR)
+_CRISM_NAME = re.compile(
+    r"(?:^|[^a-z0-9])(?:frt|hrl|hrs|frs|ats|afs|fff|msp|hsp|msw|msv|hsv|epf|tod|lis|cal|bin)"
+    r"[0-9a-f]{8}_|_[mv]rr(?:al|if|ir|sr|su|ra|de)_"
+)
+# metadata keys that may name the instrument or product
+_CRISM_KEYS = ("instrument", "product_id", "productid", "mission", "spacecraft")
+# a CRISM-like spectral axis: at least this many bands, all in this range (nm)
+_CRISM_MIN_BANDS = 50
+_CRISM_RANGE_NM = (360.0, 3920.0)
+
+
+def looksLikeCrism(image: VardaRaster) -> bool:
+    """Whether ``image`` is plausibly a CRISM product, so a missing geometry
+    file is worth offering to choose: a geometry file chosen for it, a CRISM
+    product name on it or on a source its provenance names, CRISM metadata
+    (an IOVF record, "CRISM" in its description or an instrument or product
+    key), or an unprojected cube of a CRISM width (640, 320, 128 or 64
+    columns) with a CRISM-like spectral axis (at least 50 bands within
+    0.36-3.92 µm). Width alone isn't enough: 640 columns is common."""
+    if any(geometryOverride(image, need) for need in GEOMETRY_KEYS):
+        return True
+    names = [image.filePath or "", image.name]
+    names += [
+        str(entry.get("path") or entry.get("name") or "")
+        for _, entry in _sourceChain(image)
+    ]
+    if any(_CRISM_NAME.search(os.path.basename(n).lower()) for n in names):
+        return True
+    metadata = image.extraMetadata
+    if "iovf" in metadata or "crism" in str(image.description).lower():
+        return True
+    for key, value in metadata.items():
+        if any(k in str(key).lower().replace(" ", "_") for k in _CRISM_KEYS):
+            if "crism" in str(value).lower():
+                return True
+    if image.crs is not None or image.width not in CRISM_SENSOR_WIDTHS:
+        return False
+    centers = image.bandModel.centers
+    if centers is None or len(centers) < _CRISM_MIN_BANDS:
+        return False
+    low, high = _CRISM_RANGE_NM
+    return bool(np.nanmin(centers) >= low and np.nanmax(centers) <= high)
+
+
+def _georeferencedOffset(header: _Header, image: VardaRaster) -> tuple[int, int] | None:
+    """The image's first pixel in the file's grid, when both are on one map
+    grid (the same projection and pixel size, no rotation, whole-pixel offset)."""
+    if not header.crs or not image.hasGeospatialData or image.crs is None:
+        return None
+    if not CRS.from_wkt(header.crs).equals(image.crs, ignore_axis_order=True):
+        return None
+    file, own = header.transform, image.transform
+    if file.b or file.d or own.b or own.d or not file.a or not file.e:
+        return None
+    if not (
+        math.isclose(file.a, own.a, rel_tol=1e-6)
+        and math.isclose(file.e, own.e, rel_tol=1e-6)
+    ):
+        return None
+    column = (own.c - file.c) / file.a
+    row = (own.f - file.f) / file.e
+    if (
+        abs(column - round(column)) > _OFFSET_TOLERANCE
+        or abs(row - round(row)) > _OFFSET_TOLERANCE
+    ):
+        return None
+    return int(round(row)), int(round(column))
+
+
+def _window(
+    header: _Header, image: VardaRaster, offset: tuple[int, int]
+) -> tuple[int, int] | None:
+    """Where the image's pixels are in the file: the same grid, a window that
+    crops along the provenance chain give, or one placed by georeferencing.
+    None when the file doesn't cover the image that way."""
+    height, width = image.height, image.width
+    if offset == (0, 0) and (header.height, header.width) == (height, width):
+        return (0, 0)
+    if offset == (0, 0):
+        placed = _georeferencedOffset(header, image)
+        if placed is None:
+            return None
+        offset = placed
+    row, column = offset
+    if (
+        row < 0
+        or column < 0
+        or row + height > header.height
+        or column + width > header.width
+    ):
+        return None
+    return offset
+
+
+def _firstMatch(
+    candidates: list[GeometryCandidate], image: VardaRaster, need: str
+) -> GeometryMatch | None:
+    for candidate in candidates:
+        try:
+            header = _header(candidate.path)
+        except (RasterioError, OSError):
+            logger.info("Can't open the geometry file %s", candidate.path)
+            continue
+        if findBandIndex(header.descriptions, need) is None:
+            continue
+        window = _window(header, image, candidate.offset)
+        if window is None:
+            logger.info("%s doesn't cover %s's pixels", candidate.path, image.name)
+            continue
+        return GeometryMatch(candidate.path, candidate.route, window)
+    return None
+
+
+def findGeometryFile(image: VardaRaster, need: str) -> GeometryMatch | None:
+    """The first of :func:`geometryCandidates` that has the band ``need``
+    (:data:`COLUMNS` or :data:`INCIDENCE`) and covers the image's pixels, or
+    None. Reads only the files' headers."""
+    return _firstMatch(geometryCandidates(image, need), image, need)
+
+
+_NEEDED_BY = {
+    COLUMNS: "IR detector sample band ('IR Sample'), which column lock and "
+    "the Ratio Cube need",
+    INCIDENCE: "solar incidence band ('INA at areoid'), which the Shadow Mask reads",
+}
+
+
+def checkGeometryFile(path: str, image: VardaRaster, need: str) -> str:
+    """Why ``path`` can't serve as ``image``'s geometry file for ``need``
+    ("" when it can): it must open, have the band, and cover the image's
+    pixels (the same rows × columns, or one map grid that covers the image)."""
+    name = os.path.basename(path)
+    if not os.path.isfile(path):
+        return f"{path} doesn't exist."
+    try:
+        header = _header(path)
+    except (RasterioError, OSError) as error:
+        return f"Varda can't open {name} as an image: {error}"
+    if findBandIndex(header.descriptions, need) is None:
+        bands = ", ".join(d for d in header.descriptions if d) or "none named"
+        if (
+            need == COLUMNS
+            and findBandIndex(header.descriptions, INCIDENCE) is not None
+        ):
+            return (
+                f"{name} looks like a DDR/DE file: it has the incidence angle "
+                f"but no {_NEEDED_BY[COLUMNS]}. Choose the product's IN file "
+                "(…_in…, e.g. frt000107a7_07_in166j_mtr3.img), which holds "
+                "the detector columns."
+            )
+        companion = "IN file (…_in…)" if need == COLUMNS else "DDR/DE file (…_de…)"
+        return (
+            f"{name} has no {_NEEDED_BY[need]}. Its bands: {bands}. Choose the "
+            f"product's {companion}."
+        )
+    if _window(header, image, (0, 0)) is None:
+        return (
+            f"{name} is {header.width} × {header.height} pixels but {image.name} "
+            f"is {image.width} × {image.height}, and they aren't on one map grid "
+            "(the same projection and pixel size) that covers the image, so its "
+            "pixels can't be matched to the image's. A chosen file must have the "
+            "image's rows × columns or share its map grid; for a crop without "
+            "georeferencing, leave it to the automatic lookup, which follows the "
+            "crop back to its source."
+        )
+    return ""
+
+
+# --- reading ---------------------------------------------------------------------
+
+
+def _readWindow(
+    window: tuple[int, int], shape: tuple[int, int]
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """A rasterio read window: ``shape`` (rows, cols) pixels from ``window``
+    (row, column), as ((row start, stop), (column start, stop))."""
+    (row, column), (height, width) = window, shape
+    return (row, row + height), (column, column + width)
+
+
+# (path, window, shape) -> the detector columns read there
+_geometry_cache: dict[
+    tuple[str, tuple[int, int], tuple[int, int]], ColumnGeometry | None
+] = {}
+
+
+def _readColumnGeometry(
+    geomPath: str, window: tuple[int, int], shape: tuple[int, int]
+) -> ColumnGeometry | None:
+    """The backplane bands of ``geomPath`` under the image (``shape`` pixels
+    from ``window``), or None when it has no detector sample band (a TRR3's
+    DDR, for example) or can't be read. Cached."""
+    key = (geomPath, window, shape)
+    if key in _geometry_cache:
+        return _geometry_cache[key]
+    result = None
     try:
         with rasterio.open(geomPath) as geom:
             descs = geom.descriptions or ()
             irIdx = findBandIndex(descs, "ir_sample")
             if irIdx is None:
                 logger.info("%s has no IR Sample band", geomPath)
-                return None
-            nodata = geom.nodata
+            else:
+                nodata = geom.nodata
+                pixels = _readWindow(window, shape)
 
-            def _read(idx: int | None) -> np.ndarray | None:
-                if idx is None:
-                    return None
-                arr = geom.read(idx).astype(np.float64)
-                if nodata is not None:
-                    arr = np.where(arr == nodata, np.nan, arr)
-                return arr
+                def _read(idx: int | None) -> np.ndarray | None:
+                    if idx is None:
+                        return None
+                    arr = geom.read(idx, window=pixels).astype(np.float64)
+                    if nodata is not None:
+                        arr = np.where(arr == nodata, np.nan, arr)
+                    return arr
 
-            sample = _read(irIdx)
-            assert sample is not None
-            return ColumnGeometry(
-                ir_sample=sample,
-                target_id=_read(findBandIndex(descs, "target_id")),
-                segment_id=_read(findBandIndex(descs, "segment_id")),
-                ir_line=_read(findBandIndex(descs, "ir_line")),
-                source=geomPath,
-                sampleBand=descs[irIdx - 1] or "",
-            )
+                sample = _read(irIdx)
+                assert sample is not None
+                result = ColumnGeometry(
+                    ir_sample=sample,
+                    target_id=_read(findBandIndex(descs, "target_id")),
+                    segment_id=_read(findBandIndex(descs, "segment_id")),
+                    ir_line=_read(findBandIndex(descs, "ir_line")),
+                    source=geomPath,
+                    sampleBand=descs[irIdx - 1] or "",
+                )
     except RasterioError as e:
         logger.warning("Failed to read DDR geometry %s: %s", geomPath, e)
-        return None
-
-
-def loadColumnGeometry(sourceFilename: str) -> ColumnGeometry | None:
-    """The detector columns of a CRISM product from the first companion
-    backplane that has an IR Sample band (:func:`geometryFileCandidates`), or
-    None.
-
-    Results (including None) are cached by source path so repeated placements do
-    not re-read the (large) backplane file.
-    """
-    if sourceFilename in _geometry_cache:
-        return _geometry_cache[sourceFilename]
-    result = None
-    for geomPath in geometryFileCandidates(sourceFilename):
-        result = _readColumnGeometry(geomPath)
-        if result is not None:
-            break
-    else:
-        logger.debug("CRISM GEOMETRY: no backplane with detector columns")
-    _geometry_cache[sourceFilename] = result
+    _geometry_cache[key] = result
     return result
 
 
@@ -270,22 +656,31 @@ def imageColumnGeometry(height: int, width: int) -> ColumnGeometry:
         ir_line=np.repeat(np.arange(height, dtype=np.float64)[:, None], width, 1),
         source=IMAGE_COLUMNS,
         binning=CRISM_SENSOR_WIDTHS.get(width, 1),
+        route=ROUTE_IMAGE_COLUMNS,
     )
 
 
-def columnGeometryFor(
-    sourceFilename: str | None, shape: tuple[int, int], projected: bool
-) -> ColumnGeometry | None:
-    """The detector columns of a CRISM cube of ``shape`` (rows, cols): from
-    its backplane when one is found, else, for a cube that is confidently
-    unprojected (no map projection and a CRISM width, 640, 320, 128 or 64
-    columns), its own image columns. None otherwise."""
-    geometry = loadColumnGeometry(sourceFilename) if sourceFilename else None
-    if geometry is not None:
-        return geometry
-    height, width = shape
-    if not projected and width in CRISM_SENSOR_WIDTHS:
-        return imageColumnGeometry(height, width)
+def columnGeometryFor(image: VardaRaster, chosen: str = "") -> ColumnGeometry | None:
+    """The detector columns of a CRISM cube, on its pixels: from ``chosen``
+    when given (a file picked for this use, route "override"; None if it
+    can't serve), else from the first geometry file with an IR Sample band
+    that covers the image (:func:`findGeometryFile`), else, for a cube that
+    is confidently unprojected (no map projection and a CRISM width, 640,
+    320, 128 or 64 columns), its own image columns. None otherwise.
+    ``route`` says how the file was found."""
+    match = (
+        _firstMatch([GeometryCandidate(chosen, ROUTE_OVERRIDE)], image, COLUMNS)
+        if chosen
+        else findGeometryFile(image, COLUMNS)
+    )
+    if match is not None:
+        geometry = _readColumnGeometry(
+            match.path, match.window, (image.height, image.width)
+        )
+        if geometry is not None:
+            return attrs.evolve(geometry, route=match.route)
+    if not chosen and image.crs is None and image.width in CRISM_SENSOR_WIDTHS:
+        return imageColumnGeometry(image.height, image.width)
     return None
 
 
@@ -328,7 +723,7 @@ def geometryFileCandidates(sourceFilename: str) -> list[str]:
 
 
 def resolveGeometryFile(sourceFilename: str) -> str | None:
-    """The first geometry companion of a CRISM ``.img``/``.hdr`` path found on
+    """(Kept for tests and plugins.) The first geometry companion of a CRISM ``.img``/``.hdr`` path found on
     disk (see :func:`geometryFileCandidates`), or None."""
     found = geometryFileCandidates(sourceFilename)
     return found[0] if found else None
@@ -342,30 +737,37 @@ class Incidence:
     low: float
     high: float
     path: str  # the DDR it was read from
+    route: str = ""  # how that file was found
 
 
-def sceneIncidence(sourceFilename: str) -> Incidence | None:
+def sceneIncidenceFor(image: VardaRaster, chosen: str = "") -> Incidence | None:
     """The solar incidence angle at the areoid (the DDR's "INA at areoid"
-    band) over the scene of a CRISM product, or None without a DDR that has
-    it. The DDR gives no solar azimuth."""
-    for geomPath in geometryFileCandidates(sourceFilename):
-        incidence = _readIncidence(geomPath)
-        if incidence is not None:
-            return incidence
-    return None
+    band) over ``image``'s pixels, from ``chosen`` when given (a file picked
+    for this use, route "override"), else the first geometry file that has it
+    (:func:`findGeometryFile`); None without one. The DDR gives no solar
+    azimuth."""
+    match = (
+        _firstMatch([GeometryCandidate(chosen, ROUTE_OVERRIDE)], image, INCIDENCE)
+        if chosen
+        else findGeometryFile(image, INCIDENCE)
+    )
+    if match is None:
+        return None
+    return _readIncidence(match, (image.height, image.width))
 
 
-def _readIncidence(geomPath: str) -> Incidence | None:
+def _readIncidence(match: GeometryMatch, shape: tuple[int, int]) -> Incidence | None:
     try:
-        with rasterio.open(geomPath) as geom:
-            index = findBandIndex(geom.descriptions or (), "incidence")
+        with rasterio.open(match.path) as geom:
+            index = findBandIndex(geom.descriptions or (), INCIDENCE)
             if index is None:
                 return None
-            values = geom.read(index).astype(np.float64)
+            pixels = _readWindow(match.window, shape)
+            values = geom.read(index, window=pixels).astype(np.float64)
             if geom.nodata is not None:
                 values[values == geom.nodata] = np.nan
     except RasterioError as e:
-        logger.warning("Failed to read DDR geometry %s: %s", geomPath, e)
+        logger.warning("Failed to read DDR geometry %s: %s", match.path, e)
         return None
     # CRISM marks missing values with 65535
     values[(values < 0) | (values > 180)] = np.nan
@@ -375,5 +777,6 @@ def _readIncidence(geomPath: str) -> Incidence | None:
         float(np.nanmean(values)),
         float(np.nanmin(values)),
         float(np.nanmax(values)),
-        geomPath,
+        match.path,
+        match.route,
     )

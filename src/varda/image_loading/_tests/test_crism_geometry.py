@@ -5,7 +5,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
+from affine import Affine
+from pyproj import CRS
 
+from varda.common.entities import VardaRaster
 from varda.image_loading import crism_geometry
 from varda.image_loading.crism_geometry import (
     IMAGE_COLUMNS,
@@ -14,10 +17,19 @@ from varda.image_loading.crism_geometry import (
     computeColumnLockedTranslation,
     findBandIndex,
     geometryFileCandidates,
-    loadColumnGeometry,
     resolveGeometryFile,
-    sceneIncidence,
+    sceneIncidenceFor,
 )
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+
+
+def _cube(rows: int, cols: int, filePath: str | None = None, **kwargs) -> VardaRaster:
+    """A one-band in-memory image of ``rows`` × ``cols`` pixels."""
+    return VardaRaster(
+        ArrayDataSource(
+            np.zeros((rows, cols, 1), np.float32), filePath=filePath, **kwargs
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -278,8 +290,9 @@ def test_an_mtrdr_in_file_gives_detector_columns_and_lines(tmp_path):
     src = tmp_path / "frt000107a7_07_if166j_mtr3.img"
     _touch(src)
     _envi(tmp_path / "frt000107a7_07_in166j_mtr3.img", bands)
-    geometry = loadColumnGeometry(str(src))
+    geometry = columnGeometryFor(_cube(rows, cols, str(src)))
     assert geometry is not None
+    assert geometry.route == "beside the file"
     np.testing.assert_array_equal(geometry.ir_sample, sample)
     assert geometry.ir_line is not None
     np.testing.assert_array_equal(geometry.ir_line, line)
@@ -296,18 +309,20 @@ def test_an_unprojected_trr3_uses_its_image_columns(tmp_path):
         tmp_path / "frt000107a7_07_de166l_ddr1.img",
         {name: np.full((rows, 640), 40.0) for name in _DDR_BANDS},
     )
-    assert loadColumnGeometry(str(src)) is None
-    geometry = columnGeometryFor(str(src), (rows, 640), projected=False)
+    image = _cube(rows, 640, str(src))
+    geometry = columnGeometryFor(image)
     assert geometry is not None
     assert geometry.source == IMAGE_COLUMNS and geometry.binning == 1
+    assert geometry.route == "image columns"
     np.testing.assert_array_equal(geometry.ir_sample[0], np.arange(640))
     # the DDR still gives the solar incidence
-    incidence = sceneIncidence(str(src))
+    incidence = sceneIncidenceFor(image)
     assert incidence is not None and incidence.mean == 40.0
 
 
 def test_image_columns_need_a_confidently_unprojected_crism_cube():
-    binned = columnGeometryFor(None, (4, 320), projected=False)
+    binned = columnGeometryFor(_cube(4, 320))
     assert binned is not None and binned.binning == 2
-    assert columnGeometryFor(None, (4, 320), projected=True) is None
-    assert columnGeometryFor(None, (4, 600), projected=False) is None
+    projected = _cube(4, 320, crs=CRS.from_epsg(32612), transform=Affine.scale(10))
+    assert columnGeometryFor(projected) is None
+    assert columnGeometryFor(_cube(4, 600)) is None

@@ -356,6 +356,44 @@ def test_the_sun_elevation_comes_from_a_crism_ddr(tmp_path):
     assert angles.azimuth is None
     assert angles.elevation == pytest.approx(90.0 - (58.0 + 14 * 60.0) / 15)
     assert "DDR" in angles.elevationSource and "58.00–60.00°" in angles.elevationSource
+    assert "found: beside the file" in angles.elevationSource
+    assert "across the image's pixels" in angles.elevationSource
+
+
+def _ddr(path, incidence: float, shape=(4, 4)):
+    with rasterio.open(
+        path, "w", driver="GTiff", height=shape[0], width=shape[1], count=1,
+        dtype="float32",
+    ) as out:  # fmt: skip
+        out.write(np.full(shape, incidence, np.float32), 1)
+        out.set_band_description(1, "INA at areoid, deg")
+    return path
+
+
+def test_a_chosen_ddr_gives_the_sun_elevation(tmp_path):
+    image = _raster(np.ones((4, 4)), filePath=str(tmp_path / "renamed.img"))
+    analysis = ShadowMaskAnalysis()
+    analysis.method.set(ShadowMethod.TOPOGRAPHIC)
+    analysis.prepareFor(image)
+    assert analysis.sunSources["elevation"] == ""
+    analysis.geometryFile.set(str(_ddr(tmp_path / "chosen_de.tif", 30.0)))
+    assert analysis.sunElevation.get() == pytest.approx(60.0)
+    assert "found: override" in analysis.sunSources["elevation"]
+    assert "chosen_de.tif" in analysis.sunSources["elevation"]
+    # kept with the image, like the Ratio Cube's IN file
+    assert image.extraMetadata["crismIncidenceFile"] == str(tmp_path / "chosen_de.tif")
+    again = ShadowMaskAnalysis()
+    again.method.set(ShadowMethod.TOPOGRAPHIC)
+    again.prepareFor(image)
+    assert again.geometryFile.get() == str(tmp_path / "chosen_de.tif")
+    assert again.sunElevation.get() == pytest.approx(60.0)
+    # a file without the incidence band, or of another size, is refused
+    analysis.geometryFile.set(str(_ddr(tmp_path / "small.tif", 30.0, (3, 3))))
+    assert analysis.unavailableReason(image).startswith("CRISM Geometry File: ")
+    assert "pixels but" in analysis.unavailableReason(image)
+    assert image.extraMetadata["crismIncidenceFile"].endswith("chosen_de.tif")
+    analysis.geometryFile.set("")
+    assert "crismIncidenceFile" not in image.extraMetadata
 
 
 def test_geographic_dems_are_refused():

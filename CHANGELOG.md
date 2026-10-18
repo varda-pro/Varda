@@ -12,6 +12,20 @@ can alter results.
   10.5281/zenodo.23447208 cites every version, and v0.10.0 is
   10.5281/zenodo.23447209. Help → Cite Varda and CITATION.cff now include
   the DOI.
+- **Choose a CRISM geometry file by hand.** Where Varda can't find a cube's
+  IN (detector columns) or DDR/DE (incidence) file, **Choose Geometry File…**
+  (CRISM Ratio workspace, ROI Manager), **Geometry File** (Ratio Cube) and
+  **CRISM Geometry File** (Shadow Mask) point it to one; the file is checked
+  (it must open, have the needed band and cover the image's pixels) and
+  refused with the reason otherwise. A chosen IN file enables column lock at
+  once; the chosen IN and DDR/DE files are kept with the image (one key each,
+  `crismColumnsFile` and `crismIncidenceFile`), used by every feature and
+  kept by the session. The automatic
+  lookup now also follows provenance, so an IOVF-filtered (or cropped) cube
+  finds the companions of the I/F cube it was made from. The Ratio Cube
+  records the file and how it was found (`geometryRoute`) in its record,
+  description and column table; the Shadow Mask's sun elevation now uses the
+  incidence over the image's own pixels rather than the whole DDR.
 
 ## 0.10.0 (2026-10-17)
 
