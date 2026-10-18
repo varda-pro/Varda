@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QCheckBox, QPushButton, QWidget
 
 from varda.common.entities import Color, VardaRaster
 from varda.common.parameter import EnumParameter, IntParameter, ParameterGroup
-from varda.common.ui import ButtonBuilder, HBoxBuilder, SectionBox, VBoxBuilder
+from varda.common.ui import ButtonBuilder, FlowLayout, SectionBox, VBoxBuilder
 from varda.plotting.plot import Curve, VardaPlotWidget
 from varda.rois.region_statistics import boxPolygonPixels, computeRegionStatistics
 from varda.common.parameter_widgets import groupWidget
@@ -180,14 +180,14 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
                 .withWidget(groupWidget(self.pixelConfig))
                 .withWidget(self.activeCheckBox)
                 .withLayout(
-                    HBoxBuilder()
+                    FlowLayout()
                     .withWidget(
                         ButtonBuilder("Clear Spectra").onClick(self.clearPixelSpectra)
                     )
                     .withWidget(self.newPlotButton)
                 )
                 .withLayout(
-                    HBoxBuilder()
+                    FlowLayout()
                     .withWidget(self.savePointButton)
                     .withWidget(self.saveAllPointsButton)
                 ),

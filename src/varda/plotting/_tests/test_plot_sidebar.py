@@ -1,12 +1,19 @@
 """Layout and behavior of the spectral plot's settings sidebar."""
 
 import numpy as np
+import pytest
 from PyQt6.QtWidgets import QLabel
 
+from varda.common.layout_audit import assertNothingClipped
 from varda.common.ui import SectionBox
 from varda.common.vec2 import Vec2
 from varda.plotting.pixel_spectra_plot import PixelSpectraPlotWidget
-from varda.plotting.plot import RangeMode, VardaPlotWidget
+from varda.plotting.plot import (
+    DEFAULT_SIDEBAR_WIDTH,
+    PLOT_MIN_WIDTH,
+    RangeMode,
+    VardaPlotWidget,
+)
 
 
 def _sectionTitles(widget: VardaPlotWidget) -> list[str]:
@@ -79,3 +86,75 @@ def test_sidebar_can_be_collapsed_with_its_toggle(qtbot):
     assert not widget.isSidebarVisible()
     widget.setSidebarVisible(True)
     assert widget.isSidebarVisible() and widget.sidebarToggle.isChecked()
+
+
+@pytest.fixture(params=[VardaPlotWidget, PixelSpectraPlotWidget])
+def shown(request, qtbot) -> VardaPlotWidget:
+    widget = request.param()
+    qtbot.addWidget(widget)
+    widget.resize(900, 600)
+    widget.show()
+    qtbot.waitExposed(widget)
+    return widget
+
+
+def _dragSidebarTo(widget: VardaPlotWidget, width: int) -> None:
+    """Drag the splitter handle as the user does, leaving the sidebar
+    ``width`` px wide (within the limits)."""
+    splitter = widget.splitter
+    handle = splitter.handleWidth()
+    splitter.moveSplitter(splitter.width() - width - handle, 1)
+
+
+def _sidebarWidth(widget: VardaPlotWidget) -> int:
+    return widget.splitter.sizes()[1]
+
+
+def test_the_sidebar_can_be_dragged_narrower_and_wider(shown):
+    _dragSidebarTo(shown, 260)
+    assert _sidebarWidth(shown) == 260
+    _dragSidebarTo(shown, 500)
+    assert _sidebarWidth(shown) == 500
+
+
+def test_the_dragged_width_is_remembered_per_plot_kind(qtbot, shown):
+    _dragSidebarTo(shown, 410)
+
+    shown.setSidebarVisible(False)
+    assert _sidebarWidth(shown) < 40  # just the arrow
+    shown.setSidebarVisible(True)
+    assert _sidebarWidth(shown) == 410
+
+    again = type(shown)()
+    qtbot.addWidget(again)
+    again.resize(900, 600)
+    again.show()
+    qtbot.waitExposed(again)
+    assert _sidebarWidth(again) == 410
+
+    other = (
+        VardaPlotWidget
+        if isinstance(shown, PixelSpectraPlotWidget)
+        else PixelSpectraPlotWidget
+    )()
+    qtbot.addWidget(other)
+    other.resize(900, 600)
+    other.show()
+    qtbot.waitExposed(other)
+    assert _sidebarWidth(other) == DEFAULT_SIDEBAR_WIDTH
+
+
+def test_a_narrow_sidebar_wraps_rather_than_cuts_off(shown):
+    shown.plot(np.arange(10.0), np.linspace(0.0, 1.0, 10), name="a curve")
+    shown.selectPlot(shown.plots[0])  # its settings show in the sidebar too
+    _dragSidebarTo(shown, 220)
+    assert _sidebarWidth(shown) <= 240  # as narrow as asked, or nearly
+    assertNothingClipped(shown.sidePanel)
+    bar = shown.sidebarArea.horizontalScrollBar()
+    assert bar is not None and bar.maximum() == 0  # never scrolls sideways
+
+
+def test_the_plot_keeps_its_minimum_width(shown):
+    _dragSidebarTo(shown, 5000)
+    assert shown.gv.width() >= PLOT_MIN_WIDTH
+    assert _sidebarWidth(shown) > 600  # the sidebar took the rest

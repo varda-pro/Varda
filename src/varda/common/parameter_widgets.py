@@ -49,11 +49,13 @@ from varda.common.parameter import (
     parsePositions,
 )
 from varda.common.ui import (
+    FlowLayout,
     FloatSlider,
     HBoxBuilder,
     SliderBuilder,
     SpinBoxBuilder,
     VBoxBuilder,
+    WrapperWidget,
     notListedLabel,
 )
 from varda.common.vec2 import Vec2
@@ -265,17 +267,18 @@ class Vec2ParameterWidget(QWidget):
     def __init__(self, param: Vec2Parameter, parent: QWidget | None = None):
         super().__init__(parent)
         self.param = param
-        paramLayout = paramLayoutDefault()
         self.xSpinBox = self._makeSpinBox(param.range[0], param.get().x)
         self.xSpinBox.valueChanged.connect(self.onXChanged)
-        paramLayout.addWidget(QLabel(param.valueNames[0]))
-        paramLayout.addWidget(self.xSpinBox)
-
         self.ySpinBox = self._makeSpinBox(param.range[1], param.get().y)
         self.ySpinBox.valueChanged.connect(self.onYChanged)
-        paramLayout.addWidget(QLabel(param.valueNames[1]))
-        paramLayout.addWidget(self.ySpinBox)
-        self.setLayout(paramLayout)
+        # Each value with its name; in a narrow panel the second wraps below
+        pairs = [
+            WrapperWidget(
+                paramLayoutDefault().withWidget(QLabel(name)).withWidget(spinBox)
+            )
+            for name, spinBox in zip(param.valueNames, (self.xSpinBox, self.ySpinBox))
+        ]
+        self.setLayout(FlowLayout().withWidget(pairs[0]).withWidget(pairs[1]))
         connectWhileAlive(param.sigParameterChanged, self.onParamChanged, self)
 
     def _makeSpinBox(self, range: Vec2, value: float) -> QDoubleSpinBox:

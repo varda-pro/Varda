@@ -29,6 +29,12 @@ can alter results.
 
 ### Changed
 
+- **A spectral plot's sidebar can be resized.** Drag the divider between a
+  plot and its settings sidebar to make the sidebar narrower or wider; the
+  width is remembered for each kind of plot and restored when the sidebar is
+  reopened. In a narrow sidebar the fields go under their labels and the
+  buttons and the View Range boxes wrap instead of being cut off, and the
+  plot always keeps at least 200 pixels.
 - **CRISM Ratio workspace: the plots side by side, and taller.** The
   numerator and denominator are now overlaid on one **Spectra** plot (green
   and magenta, with a legend; **Separate** in its title bar splits them into
