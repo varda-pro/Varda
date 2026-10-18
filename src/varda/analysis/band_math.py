@@ -16,6 +16,7 @@ safe evaluator in ``common/expressions`` -- never ``eval``.
 from __future__ import annotations
 
 import ast
+import html
 import re
 from collections.abc import Sequence
 
@@ -33,7 +34,7 @@ from PyQt6.QtWidgets import (
 from varda.analysis.analysis import Analysis, ProgressCallback
 from varda.analysis.rasters import singleBandRaster
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import gridDifference, sameGrid, sameGridChoices
 from varda.common.expressions import ExpressionError as ExpressionError, evaluate, parse
 from varda.common.parameter import StringParameter
 from varda.common.parameter_widgets import connectWhileAlive
@@ -110,10 +111,10 @@ def _imageNumbered(
     if not 1 <= number <= len(images):
         raise ExpressionError(f"{name}: the Image List has images 1-{len(images)}")
     other = images[number - 1]
-    if other is not image and other not in compatibleImages(list(images), image):
+    if other is not image and not sameGrid(other, image):
         raise ExpressionError(
             f"{name}: {other.name} isn't on {image.name}'s pixel grid "
-            f"({other.width} × {other.height} against {image.width} × {image.height})"
+            f"({gridDifference(other, image)}); Band Math doesn't resample"
         )
     return other
 
@@ -321,14 +322,23 @@ class BandMathHelp(QWidget):
                 where = f" ({model.native([model.centers[band]])[0]:g} {model.label})"
             of = "" if source is self.image else f" of {source.name}"
             parts.append(f"{name} → band {band + 1}{where}{of}")
-        images = self.analysis.context.images
-        grid = [self.image, *compatibleImages(list(images), self.image)]
+        images = list(self.analysis.context.images)
+        choices = sameGridChoices(images, self.image)
+        grid = [self.image, *choices.images]
+        reasons = {id(e.image): e.reason for e in choices.excluded}
         numbered = [
             f"i{n}: {other.name}"
             for n, other in enumerate(images, start=1)
             if other in grid
         ]
+        # cross-image references need the same pixel grid: no resampling
+        offGrid = [
+            f"i{n}: {html.escape(other.name)} ({reasons[id(other)]})"
+            for n, other in enumerate(images, start=1)
+            if id(other) in reasons
+        ]
         self.referencesLabel.setText(
             (" · ".join(parts) or "No band references.")
             + ("<br>On this grid: " + " · ".join(numbered) if len(numbered) > 1 else "")
+            + ("<br>Can't be used: " + " · ".join(offGrid) if offGrid else "")
         )

@@ -1,6 +1,10 @@
 """Shadow masks: where an image is in shadow, from its brightness, from the
 terrain and the sun (a co-registered DEM), or both. No Qt.
 
+The DEM may be on another grid (e.g. a 6 m CTX DEM under an 18 m CRISM
+image): it is resampled onto the image's grid first (``demOnGrid``), so the
+slopes and shadows are computed at the image's pixels.
+
 Brightness: the mean over a wavelength range (or one band) below a
 threshold, a percentile of the scene or a value in data units.
 
@@ -25,7 +29,7 @@ from numba import njit, prange
 from scipy import ndimage
 
 from varda.analysis.analysis import Analysis, ProgressCallback
-from varda.analysis.bandwise import fillGaps, readBand
+from varda.analysis.bandwise import fillGaps
 from varda.analysis.image_math import CATEGORY, readWithGaps
 from varda.analysis.rasters import goodBands
 from varda.analysis.topography import (
@@ -37,7 +41,14 @@ from varda.analysis.topography import (
     slopeAspect,
 )
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import (
+    ImageChoices,
+    demResampling,
+    onGridOf,
+    placeableChoices,
+    readPixels,
+    resamplingRecord,
+)
 from varda.common.parameter import (
     EnumParameter,
     FloatParameter,
@@ -273,11 +284,19 @@ def solarGeometry(image: VardaRaster) -> SunAngles:
     )
 
 
-def demCandidates(images, image: VardaRaster) -> list[VardaRaster]:
-    """Images on ``image``'s grid that could be its DEM (the image itself
-    too when it has one band)."""
-    others = compatibleImages(list(images), image)
-    return ([image] if image.bandCount == 1 else []) + others
+def demCandidates(images, image: VardaRaster) -> ImageChoices:
+    """Single-band images that could be ``image``'s DEM: on its grid, or
+    georeferenced and overlapping it (resampled onto its grid, see
+    ``demOnGrid``); the image itself too when it has one band. And why the
+    others can't."""
+    return placeableChoices(list(images), image, bandCounts=(1,), includeBase=True)
+
+
+def demOnGrid(dem: VardaRaster, image: VardaRaster) -> np.ndarray:
+    """The DEM's first band on ``image``'s grid, NaN where it has no data:
+    as it is on the same grid, else averaged when its pixels are finer than
+    the image's and bilinearly interpolated otherwise (``grid.demResampling``)."""
+    return onGridOf(dem, image, demResampling(dem, image), [0])[:, :, 0]
 
 
 # --- the analysis ----------------------------------------------------------------
@@ -336,7 +355,9 @@ class ShadowMaskAnalysis(Analysis):
     )
     dem = ImageParameter(
         "DEM",
-        "Elevation (first band) on this image's grid, co-registered with it",
+        "A single-band elevation image co-registered with this image; on "
+        "another grid it's resampled onto this image's (averaged when finer, "
+        "bilinear when coarser)",
         optional=True,
     )
     zFactor = FloatParameter(
@@ -405,8 +426,8 @@ class ShadowMaskAnalysis(Analysis):
         self.minWavelength.set(low)
         self.maxWavelength.set(high)
         current = self.dem.get()
-        self.dem.setProvider(lambda: demCandidates(self.context.images, image))
-        candidates = demCandidates(self.context.images, image)
+        self.dem.setChoices(lambda: demCandidates(self.context.images, image))
+        candidates = demCandidates(self.context.images, image).images
         self.dem.setOrClear(current if current in candidates else None)
         angles = solarGeometry(image)
         for angle, param, value, source in (
@@ -425,14 +446,18 @@ class ShadowMaskAnalysis(Analysis):
             return ""
         dem = self.dem.get()
         if dem is None:
-            if not demCandidates(self.context.images, image):
+            if not demCandidates(self.context.images, image).images:
                 return (
-                    "The topographic method needs a DEM on this image's grid: "
-                    "open one, co-registered (see the Mosaic workspace)."
+                    "The topographic method needs a single-band DEM covering "
+                    "this image: open one, co-registered (see the Mosaic "
+                    "workspace)."
                 )
             return "Choose the DEM."
-        if dem.crs is not None and dem.crs.is_geographic:
-            return "The DEM's pixels are in degrees: use a projected DEM (meters per pixel)."
+        if image.crs is not None and image.crs.is_geographic:
+            return (
+                "The DEM is used on this image's grid, whose pixels are in "
+                "degrees: use a projected image (meters per pixel)."
+            )
         unknown = [angle for angle, source in self.sunSources.items() if not source]
         if unknown:
             return (
@@ -442,8 +467,15 @@ class ShadowMaskAnalysis(Analysis):
         return ""
 
     def estimateMemory(self, image: VardaRaster) -> int:
-        # plus about a dozen per-pixel planes for the DEM and its products
-        return super().estimateMemory(image) + 16 * image.height * image.width * 8
+        # plus about a dozen per-pixel planes for the DEM and its products,
+        # and the DEM's pixels read for resampling (read and copied)
+        dem = self.dem.get() if self.usesTerrain() else None
+        demRead = 0 if dem is None else 2 * readPixels(dem, image) * 8
+        return (
+            super().estimateMemory(image)
+            + 16 * image.height * image.width * 8
+            + demRead
+        )
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:
         reason = self.unavailableReason(image)
@@ -467,7 +499,7 @@ class ShadowMaskAnalysis(Analysis):
             record["brightness"] = info
         if self.usesTerrain():
             reportProgress(30, "tracing shadows across the DEM")
-            cosine, selfShadow, cast, info = self._terrain()
+            cosine, selfShadow, cast, info = self._terrain(image)
             shadow |= selfShadow | cast
             missing |= np.isnan(cosine)
             bands.append(cosine)
@@ -515,14 +547,18 @@ class ShadowMaskAnalysis(Analysis):
             info["threshold"] = float(self.absolute.get())
         return brightness, info
 
-    def _terrain(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    def _terrain(
+        self, image: VardaRaster
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+        """The DEM on the image's grid (see ``demOnGrid``): its illumination
+        cosine, self and cast shadow, and their record."""
         dem = self.dem.get()
         assert dem is not None
-        elevation, gaps = fillGaps(readBand(dem, 0))
+        elevation, gaps = fillGaps(demOnGrid(dem, image))
         zFactor = float(self.zFactor.get())
         elevation = elevation * zFactor
-        dx, dy = pixelSize(dem)
-        eastSign, northSign = gridDirections(dem)
+        dx, dy = pixelSize(image)
+        eastSign, northSign = gridDirections(image)
         azimuth, sun = float(self.sunAzimuth.get()), float(self.sunElevation.get())
         slope, aspect = slopeAspect(*gradients(elevation, dx, dy, eastSign, northSign))
         cosine = illuminationCosine(slope, aspect, azimuth, sun)
@@ -532,13 +568,14 @@ class ShadowMaskAnalysis(Analysis):
         cast = ~gaps & castShadow(elevation, azimuth, sun, dx, dy, eastSign, northSign)
         info = {
             "dem": dem.name,
+            "demResampling": resamplingRecord(dem, image, demResampling(dem, image)),
             "sunAzimuth": azimuth,
             "sunElevation": sun,
             "sunAzimuthSource": self.sunSources["azimuth"],
             "sunElevationSource": self.sunSources["elevation"],
             "zFactor": zFactor,
             "pixelSize": [dx, dy],
-            "pixelSizeKnown": hasPixelSize(dem),
+            "pixelSizeKnown": hasPixelSize(image),
             "cosineThreshold": limit,
             "selfShadowPixels": int(selfShadow.sum()),
             "castShadowPixels": int(cast.sum()),
@@ -568,6 +605,11 @@ class ShadowMaskAnalysis(Analysis):
                 f"({t['sunElevationSource']}): self-shadow (cos(i) ≤ "
                 f"{t['cosineThreshold']:g}) {t['selfShadowPixels']} px, cast "
                 f"shadow {t['castShadowPixels']} px"
+                + (
+                    f" ({t['demResampling']['description']})"
+                    if t.get("demResampling")
+                    else ""
+                )
                 + (
                     ""
                     if t["pixelSizeKnown"]

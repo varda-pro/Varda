@@ -24,7 +24,8 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import sameGridChoices
+from varda.common.ui import notListedLabel
 from varda.rois.roi_calculations import (
     CONSTANTS,
     FUNCTIONS,
@@ -64,7 +65,9 @@ class AddColumnDialog(QDialog):
         self.calculated = calculated
         self.collection = calculated.collection
         base = images[0]
-        self.images = [base, *compatibleImages(images[1:], base)]
+        # zonal statistics need the ROIs' pixel grid: no resampling
+        self.gridChoices = sameGridChoices(images[1:], base)
+        self.images = [base, *self.gridChoices.images]
         self._suggested = ""  # replaced by the next suggestion unless edited
 
         self.nameEdit = QLineEdit()
@@ -131,6 +134,8 @@ class AddColumnDialog(QDialog):
         form = QFormLayout(page)
         form.setContentsMargins(0, 0, 0, 0)
         form.addRow("Raster:", self.imageBox)
+        self.notListed = notListedLabel(self.gridChoices.note)
+        form.addRow(self.notListed)
         form.addRow("Band:", self.bandBox)
         form.addRow("Statistic:", self.statisticBox)
         self._fillBands()

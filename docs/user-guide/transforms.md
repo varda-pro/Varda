@@ -70,7 +70,8 @@ PCA, MNF and ICA each choose what goes in:
   rebuilds just those bands.
 - **Weights** (optional; none by default) gives each value a weight from
   another image on the same grid: per band (an image with the same bands)
-  or per pixel (one band). **Weights Are** says whether that image holds
+  or per pixel (one band). Weights are never resampled; images that can't
+  be used are named under the dropdown, with why. **Weights Are** says whether that image holds
   weights, such as the number of frames behind each value, or uncertainties
   σ (weighted 1/σ²).
 

@@ -48,6 +48,10 @@ def test_a_zonal_statistic_column(setup):
     dialog, rois, fid, calculated = setup
     dialog.setKind(dialog.ZONAL)
     assert dialog.imageBox.count() == 1  # only images on the ROIs' grid
+    assert dialog.notListed.text() == (
+        "Not listed: other scene (different pixel grid: 30 × 5 vs 30 × 20 "
+        "pixels; this needs the same grid)"
+    )
     dialog.statisticBox.setCurrentText("max")
     assert dialog.nameEdit.text() == "max_col"  # suggested until typed over
     assert "5" in dialog.previewLabel.text()

@@ -166,10 +166,17 @@ zero, the log of a negative).
   inside (or outside) a range, 0 elsewhere, no data where the band has
   none. Both ends of the range count as inside. The range starts at the
   band's minimum and maximum.
-- **Apply Mask** applies a mask on the same grid: keep the pixels where
-  it's set (nonzero) and make the rest no data, keep where it **isn't** set
-  (the inverse), or **multiply** by it (for a weight, or a 0/1 mask that
-  should leave zeros). Where the mask has no data, so does the result.
+- **Apply Mask** applies a mask: keep the pixels where it's set (nonzero)
+  and make the rest no data, keep where it **isn't** set (the inverse), or
+  **multiply** by it (for a weight, or a 0/1 mask that should leave zeros).
+  Where the mask has no data, so does the result. A mask with any number
+  of bands is offered: one with the image's band count is applied band by
+  band, any other's **first band** to every band (so a Shadow Mask, whose
+  later bands are its Brightness and cos(i), is applied by its mask band).
+  The mask may be on another pixel grid: any georeferenced mask that
+  overlaps the image is resampled onto the image's grid by **nearest
+  neighbor** (see [Images on other grids](#images-on-other-grids)); the
+  description and the `maskResampling` metadata record it.
 
 - **ROI to Mask** makes a mask from the workspace's ROIs: 1 inside the ROIs
   of the classes you tick, 0 elsewhere.
@@ -177,6 +184,42 @@ zero, the log of a negative).
 Masks combine with Image Arithmetic: **minimum** of two 0/1 masks is
 "and", **maximum** is "or", and `1 - mask` in Band Math inverts one. Band
 Math makes masks too (`b3 > 0.2` is 1 or 0).
+
+### Images on other grids
+
+A dropdown of images lists only the images that input can use. Under it, a
+muted note names each image left out and why, for example
+"Not listed: ctx_dem (different pixel grid: 6.0 m vs 18.0 m pixels; this
+needs the same grid)", "(not georeferenced, can't be placed on this
+image)", "(doesn't overlap this image)" or "(3 bands; this needs 1 or 30)".
+
+**Resampled automatically** (any georeferenced image that overlaps the
+image in map space, in any map projection; an image on the same grid is
+used exactly as it is, with no resampling):
+
+| Input | Resampling onto the image's grid |
+| --- | --- |
+| Apply Mask's **Mask**, a FATT map's **Exclude**, the ROI Manager's **From Threshold or Mask…** mask | Nearest neighbor (values stay as they are, e.g. 0 and 1) |
+| Shadow Mask's **DEM** | **Average** when the DEM's pixels are finer than the image's (every DEM pixel under an image pixel counts equally); **bilinear** when they are coarser |
+
+Varda reprojects and resamples with GDAL's warper
+(`rasterio.warp.reproject`), reading only the part of the source under the
+image. The source's no-data (its no-data value or masked pixels) is left
+out of the resampling; image pixels outside the source, or with no source
+data under them, are no data. The result's description says what was done
+("ctx_dem resampled from 6.0 m to 18.0 m pixels (average)", "reprojected
+and resampled" across map projections), and its metadata keeps the source,
+the method, both pixel sizes and both coordinate systems. If you need
+another method (cubic, a mode filter, a different target grid), resample
+the input yourself first (e.g. GDAL's `gdalwarp`, or Varda's Resample) and
+choose that image: an image on the same grid is never resampled again.
+
+**Same grid only** (the same size, map projection and pixel positions):
+Image Arithmetic's second image, Band Math's other images (`i3_b1`), PCA/
+MNF weights, ROI zonal-statistic columns, overlays in the image workspaces
+and drapes in 3D Terrain. These combine or compare values pixel for pixel,
+and silently resampling science data first would change them. Resample an
+image yourself when you mean to.
 
 ### Shadow Mask
 
@@ -200,18 +243,30 @@ with Apply Mask, or anywhere a 0/1 mask goes. **Method** chooses how:
   (e.g. I/F; **Absolute Threshold**, default 0). A pixel is shadow when its
   brightness is strictly below the threshold.
 - **Topographic (needs a DEM)**: shadow from the terrain and the sun.
-  - **DEM**: elevation (its first band) on the image's pixel grid: the same
-    size, map projection and pixel positions, **co-registered** with it.
-    Varda doesn't resample a DEM onto another image's grid yet; prepare it
-    elsewhere (for example GDAL's `gdalwarp` with the image's extent and
-    pixel size), then check the fit, e.g. by draping the image over the DEM
-    in [3D Terrain](3d-terrain.md#overlays), whose **Auto Align** matches
-    an image to a DEM. A misregistered DEM puts shadows in the wrong place.
+  - **DEM**: a **single-band** elevation image **co-registered** with the
+    image (multi-band images aren't offered; save the elevation band as its
+    own image first). It may be on another grid, in any map projection, as
+    long as it is georeferenced and overlaps the image: a 6 m CTX DEM under
+    an 18 m CRISM image, say. Varda resamples it onto the image's grid
+    first and computes everything there: **averaged** when the DEM's pixels
+    are finer than the image's, **bilinear** when they are coarser (see
+    [Images on other grids](#images-on-other-grids)); a DEM on the image's
+    grid is used as it is. Averaging a finer DEM smooths it, so slopes
+    (and self-shadow) are those of the image's pixels, gentler than the
+    DEM's own steepest slopes, and relief narrower than an image pixel
+    can't cast a shadow; this matches what one image pixel sees. If you need
+    another resampling, reproject the DEM yourself onto the image's grid
+    (e.g. `gdalwarp` with the image's extent and pixel size) and choose
+    that. The image itself counts too when it has one band. Check the fit,
+    e.g. by draping the image over the DEM in
+    [3D Terrain](3d-terrain.md#overlays), whose **Auto Align** matches an
+    image to a DEM. A misregistered DEM puts shadows in the wrong place.
   - **Z Factor** (default 1) multiplies elevations to put them in the pixel
     size's units (1000 for kilometers of elevation over meters of pixel
-    size), as in Terrain. DEMs in degrees (a geographic coordinate system)
-    are refused; a DEM without georeferencing counts each pixel as one unit
-    of elevation (the description says so).
+    size), as in Terrain. Since the DEM is used on the image's grid, an
+    image in degrees (a geographic coordinate system) is refused; a DEM and
+    image without georeferencing (on the same grid) count each pixel as one
+    unit of elevation (the description says so).
   - **Sun Azimuth** (degrees clockwise from north) and **Sun Elevation**
     (degrees above the horizon, 90° − the incidence angle). Varda fills
     them in when it knows them: from the image's metadata (keys named
@@ -233,8 +288,9 @@ with Apply Mask, or anywhere a 0/1 mask goes. **Method** chooses how:
     Varda steps toward the sun one pixel at a time along the larger of the
     row and column directions (interpolating linearly across the other),
     and marks the pixel when the DEM rises strictly above the straight
-    line to the sun. Distances come from the DEM's pixel size. Terrain
-    beyond the DEM's edge can't cast a shadow.
+    line to the sun. Distances come from the image's pixel size (the grid
+    the DEM is resampled onto). Terrain beyond the image's edge, or the
+    DEM's, can't cast a shadow, even when the DEM extends farther.
 - **Both (union)**: shadow by either method.
 
 **Buffer** (default 0, 0–100 px) grows the shadow by that many pixels in
@@ -250,14 +306,20 @@ the other method finds shadow there. The `shadowMask` metadata (saved with
 the file) and the description record the method, the bands used, the
 threshold actually used (a percentile's value in data units too), the DEM,
 the sun angles and where each came from, the cos(i) threshold, the pixel
-size and Z Factor, the buffer, and the pixels found by each rule, added by
+size and Z Factor, the DEM's resampling (`demResampling`: source, method,
+both pixel sizes and coordinate systems; empty when it was on the grid), the buffer, and the pixels found by each rule, added by
 the buffer, in shadow and with data.
 
 ### ROIs from a threshold or a mask
 
 In the ROI Manager, **From Threshold or Mask…** makes a new ROI class
 from the pixels where a band is inside (or outside) a range, as ENVI's
-band threshold to ROI does, or where a mask image on the same grid is set.
+band threshold to ROI does, or where a mask image is set (its **first
+band** nonzero, so a Shadow Mask's mask band). A mask on another grid is
+offered when it is georeferenced and overlaps the image, and resampled
+onto the image's grid by nearest neighbor (the dialog says so under the
+mask; see [Images on other grids](#images-on-other-grids)); images it
+can't use are named under the dropdown.
 The range starts at the band's minimum and maximum, and the dialog counts
 the pixels chosen as you change it. Each connected region becomes an ROI
 of the class; regions smaller than **Smallest region** (4 pixels by
@@ -442,7 +504,7 @@ Sizes are made odd (a 4 becomes 5).
 | Band Math | Expression in 64-bit floats; `R<nm>` as above | `R2300 / R2200` | As the expression |
 | Image Arithmetic | Band by band | Add; Number 1 | As the operation |
 | Threshold to Mask | 1 where Low ≤ value ≤ High (or the opposite for outside) | Range: the band's minimum and maximum | 0 / 1 |
-| Shadow Mask | Brightness: mean of the good bands in the range (no-data bands left out) < threshold; a percentile is numpy's `nanpercentile` (linear interpolation) over the valid pixels. Topographic: cos(i) ≤ threshold (slope and aspect by Horn's method, edges extended, DEM gaps filled with the nearest value and no data in the result), or cast shadow by a ray march toward the sun in one-pixel steps along the major axis, linear interpolation across it, shadow where the DEM is strictly above the ray. Buffer: a (2N + 1)-pixel square maximum filter | Brightness; 1280–1380 nm (else all good bands); 5th percentile; absolute 0; Z Factor 1; cos(i) ≤ 0; buffer 0 | Mask 0 / 1; brightness in data units; cos(i) unitless |
+| Shadow Mask | Brightness: mean of the good bands in the range (no-data bands left out) < threshold; a percentile is numpy's `nanpercentile` (linear interpolation) over the valid pixels. Topographic: cos(i) ≤ threshold (slope and aspect by Horn's method, edges extended, DEM gaps filled with the nearest value and no data in the result), or cast shadow by a ray march toward the sun in one-pixel steps along the major axis, linear interpolation across it, shadow where the DEM is strictly above the ray. A DEM on another grid is first resampled onto the image's (GDAL: average when finer, bilinear when coarser). Buffer: a (2N + 1)-pixel square maximum filter | Brightness; 1280–1380 nm (else all good bands); 5th percentile; absolute 0; Z Factor 1; cos(i) ≤ 0; buffer 0 | Mask 0 / 1; brightness in data units; cos(i) unitless |
 | Decode Bit Mask | Each value's bits at the image's own width; signed integers read as unsigned of the same width (16-bit −1 is 16 bits set) | Number of bits set; Bits `0` | Count, or 0 / 1 |
 | Local Statistics | Moments over the window (variance divided by n, not n − 1) | Standard deviation; 7 px; One band | Band units (variance: squared; skewness: none) |
 | GLCM | Symmetric co-occurrence of pairs inside the window (windows are cut at the image's edges); gray levels over the band's 2–98% range | Contrast; 7 px; 32 levels; all directions; distance 1 px; One band | Gray levels: contrast, variance in levels²; dissimilarity, mean in levels; entropy in nats (natural log); second moment (Σp², not its square root), homogeneity, correlation unitless |
@@ -539,7 +601,10 @@ how to get a number:
   an absolute threshold you can state. The topographic method is only as
   good as the DEM: a shadow narrower than a few DEM pixels, or cast by
   relief within the DEM's vertical error, is missed or misplaced, and any
-  misregistration between the DEM and the image moves every shadow. Cast
+  misregistration between the DEM and the image moves every shadow. A DEM
+  finer than the image is averaged onto the image's pixels first, which
+  smooths slopes; one coarser than the image is interpolated, which adds no
+  detail (shadow edges are then only as sharp as the DEM). Cast
   shadow edges are approximate at the scale of a pixel (the ray is sampled
   once per pixel, and a pixel is either shadow or not, though its footprint
   can be part lit). The sun is a point here, so the penumbra (the sun's
@@ -547,7 +612,8 @@ how to get a number:
   shadowed ground isn't dark: diffuse light from the sky and light
   scattered from nearby slopes still reach it. For a margin, buffer the
   mask, and report the method, thresholds, sun angles (and their source),
-  DEM, buffer and pixel counts from the `shadowMask` metadata.
+  DEM and its resampling, buffer and pixel counts from the `shadowMask`
+  metadata.
 - **Resample** with bilinear or cubic interpolation changes values (cubic
   can overshoot), and when shrinking also smooths them (the anti-aliasing
   Gaussian above: report its σ); nearest neighbor keeps them but moves each

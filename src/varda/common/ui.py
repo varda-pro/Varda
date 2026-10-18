@@ -901,6 +901,15 @@ class MutedLabel(QLabel):
             self.setPalette(palette)
 
 
+def notListedLabel(note: str = "", parent: QWidget | None = None) -> MutedLabel:
+    """A wrapped muted note under a dropdown of images, naming the images it
+    leaves out and why (``grid.ImageChoices.note``); hidden while empty."""
+    label = MutedLabel(note, parent)
+    label.setWordWrap(True)
+    label.setVisible(bool(note))
+    return label
+
+
 def openOwnedDialog(dialog: QDialog) -> QDialog:
     """Open a window-modal dialog that cleans up after itself. The dialog must
     have a parent: with none, nothing keeps it alive, and garbage collection

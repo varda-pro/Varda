@@ -2,6 +2,7 @@
 
 import pytest
 
+from varda.common.grid import Excluded, ImageChoices
 from varda.common.parameter import ImageParameter
 from varda.utilities.debug import generate_random_image
 from varda.common.parameter_widgets import ImageParameterWidget
@@ -64,3 +65,22 @@ def test_an_optional_image_works_with_nothing_to_choose(qapp):
     param.setProvider(lambda: [])
     widget = ImageParameterWidget(param)  # no images is fine when optional
     assert widget.comboBox.count() == 1 and param.get() is None
+
+
+def test_images_left_out_are_explained_under_the_dropdown(qapp, images):
+    param = ImageParameter("Mask")
+    choices = ImageChoices(
+        images[:1], [Excluded(images[2], "doesn't overlap this image")]
+    )
+    param.setChoices(lambda: choices)
+    widget = ImageParameterWidget(param)
+    assert widget.comboBox.count() == 1
+    assert widget.notListed.text() == (
+        f"Not listed: {images[2].name} (doesn't overlap this image)"
+    )
+    assert not widget.notListed.isHidden() and widget.notListed.wordWrap()
+    assert param.clone().explain() == widget.notListed.text()
+
+
+def test_nothing_left_out_shows_no_note(qapp, param):
+    assert ImageParameterWidget(param).notListed.isHidden()

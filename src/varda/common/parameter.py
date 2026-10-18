@@ -14,6 +14,7 @@ from enum import Enum
 from psygnal import Signal
 
 from varda.common.entities import Color, VardaRaster
+from varda.common.grid import ImageChoices
 from varda.common.vec2 import Vec2
 
 
@@ -442,20 +443,34 @@ class ImageParameter(Parameter[VardaRaster]):
         """``optional``: None is a choice too (listed first as ``noneLabel``)
         and the starting one."""
         self.imageProvider: Callable[[], Sequence[VardaRaster]] = lambda: []
+        # why images are left out of the choices ("" when none are)
+        self.explain: Callable[[], str] = lambda: ""
         self.optional = optional
         self.noneLabel = noneLabel
         default = None
         super().__init__(name, default, description)
 
-    def setProvider(self, imageProvider: Callable[[], Sequence[VardaRaster]]) -> None:
+    def setProvider(
+        self,
+        imageProvider: Callable[[], Sequence[VardaRaster]],
+        explain: Callable[[], str] | None = None,
+    ) -> None:
         """
         Sets the callable image provider that returns the list of images to choose from.
         This must be set before using the parameter for anything else.
+        ``explain`` says which images are left out and why (shown under the
+        dropdown); see ``setChoices``.
         """
         self.imageProvider = imageProvider
+        self.explain = explain or (lambda: "")
         images = imageProvider()
         if len(images) > 0 and not self.optional:
             self.set(images[0])
+
+    def setChoices(self, choose: Callable[[], ImageChoices]) -> None:
+        """Offer ``choose().images`` and explain ``choose().excluded``
+        (e.g. ``grid.sameGridChoices``)."""
+        self.setProvider(lambda: choose().images, explain=lambda: choose().note)
 
     def clear(self) -> None:
         """No image (an optional parameter's None choice)."""
@@ -475,5 +490,5 @@ class ImageParameter(Parameter[VardaRaster]):
             optional=self.optional,
             noneLabel=self.noneLabel,
         )
-        newParam.setProvider(self.imageProvider)
+        newParam.setProvider(self.imageProvider, self.explain)
         return newParam

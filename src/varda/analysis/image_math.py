@@ -3,20 +3,31 @@ divide, minimum, maximum) with another image on the same pixel grid or a
 number; masks made by thresholds; and masks applied, keeping where the mask
 is set, where it isn't, or multiplying by it. No Qt.
 
-A second image or a mask has the image's bands or one band (applied to
-every band). No data in either is no data in the result; so is division
-by zero. A mask is set where it's nonzero, and has no say where it has no
-data (the pixel is dropped).
+A second image is on the same pixel grid, with the image's bands or one
+band (applied to every band). A mask may be on another grid: any
+georeferenced mask overlapping the image is resampled onto its grid by
+nearest neighbor. A mask with the image's band count is applied band by
+band; any other mask's first band is applied to every band. No data in
+either is no data in the result; so is division by zero. A mask is set where
+it's nonzero, and has no say where it has no data (the pixel is dropped).
 """
 
 from __future__ import annotations
 
 import numpy as np
+from rasterio.enums import Resampling
 
 from varda.analysis.analysis import Analysis, ProgressCallback
 from varda.analysis.rasters import sameBandsRaster, singleBandRaster
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import (
+    ImageChoices,
+    onGridOf,
+    placeableChoices,
+    resamplingRecord,
+    resamplingText,
+    sameGridChoices,
+)
 from varda.common.parameter import (
     EnumParameter,
     FloatParameter,
@@ -40,13 +51,24 @@ def readWithGaps(image: VardaRaster, bands: list[int] | None = None) -> np.ndarr
     return data
 
 
-def partners(images, image: VardaRaster) -> list[VardaRaster]:
-    """Images on ``image``'s grid with its bands or one band."""
-    return [
-        other
-        for other in compatibleImages(list(images), image)
-        if other.bandCount in (1, image.bandCount)
-    ]
+def partners(images, image: VardaRaster) -> ImageChoices:
+    """Images on ``image``'s grid with its bands or one band (and why the
+    others aren't)."""
+    return sameGridChoices(list(images), image, bandCounts=(1, image.bandCount))
+
+
+def maskChoices(images, image: VardaRaster) -> ImageChoices:
+    """Masks for ``image``: on its grid, or georeferenced and overlapping it
+    (resampled by ``maskOnGrid``), with any number of bands."""
+    return placeableChoices(list(images), image)
+
+
+def maskOnGrid(mask: VardaRaster, image: VardaRaster) -> np.ndarray:
+    """``mask`` on ``image``'s grid (rows, cols, bands), NaN where it has no
+    data: its bands when it has the image's band count, else its first band.
+    Resampled by nearest neighbor (values stay as they are, e.g. 0 and 1)."""
+    bands = None if mask.bandCount == image.bandCount else [0]
+    return onGridOf(mask, image, Resampling.nearest, bands)
 
 
 class Operation(LabeledEnum):
@@ -93,16 +115,19 @@ class ImageArithmeticAnalysis(Analysis):
 
     def prepareFor(self, image: VardaRaster) -> None:
         current = self.second.get()
-        self.second.setProvider(lambda: partners(self.context.images, image))
+        self.second.setChoices(lambda: partners(self.context.images, image))
         self.second.setOrClear(
-            current if current in partners(self.context.images, image) else None
+            current if current in partners(self.context.images, image).images else None
         )
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:
         reportProgress(0, "reading")
         first = readWithGaps(image)
         other = self.second.get()
-        if other is not None and other not in partners(self.context.images, image):
+        if (
+            other is not None
+            and other not in partners(self.context.images, image).images
+        ):
             raise ValueError(
                 f"{other.name} isn't on {image.name}'s grid with its bands."
             )
@@ -187,38 +212,41 @@ class ApplyMaskAnalysis(Analysis):
     memoryFactor = 1.5
     category = CATEGORY
     description = (
-        "Apply a mask on the same pixel grid (one band, or the image's bands): "
-        "keep the pixels where it's set (nonzero) and make the rest no data, keep "
-        "where it isn't set, or multiply by it (a weight or a 0/1 mask)."
+        "Apply a mask (its first band, or band by band when it has the image's "
+        "bands; on another grid it's resampled by nearest neighbor): keep the "
+        "pixels where it's set (nonzero) and make the rest no data, keep where "
+        "it isn't set, or multiply by it (a weight or a 0/1 mask)."
     )
 
     mask = ImageParameter(
-        "Mask", "A mask on the same grid, e.g. from Threshold to Mask"
+        "Mask",
+        "A mask, e.g. from Threshold to Mask or a Shadow Mask (its first band); "
+        "on another grid it's resampled by nearest neighbor",
     )
     mode = EnumParameter("Mode", MaskMode)
 
     def prepareFor(self, image: VardaRaster) -> None:
         current = self.mask.get()
-        candidates = partners(self.context.images, image)
-        self.mask.setProvider(lambda: partners(self.context.images, image))
+        candidates = maskChoices(self.context.images, image).images
+        self.mask.setChoices(lambda: maskChoices(self.context.images, image))
         if current in candidates:
             self.mask.set(current)
 
     def unavailableReason(self, image: VardaRaster) -> str:
-        if not partners(self.context.images, image):
+        if not maskChoices(self.context.images, image).images:
             return (
-                "Make or open a mask on this image's grid first (Threshold to "
-                "Mask, Band Math, or ROI to Mask)."
+                "Make or open a mask covering this image first (Threshold to "
+                "Mask, Band Math, ROI to Mask, or Shadow Mask)."
             )
         return ""
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:
         mask = self.mask.get()
-        if mask is None or mask not in partners(self.context.images, image):
+        if mask is None or mask not in maskChoices(self.context.images, image).images:
             raise ValueError(self.unavailableReason(image) or "Choose the mask.")
         reportProgress(0, "reading")
         values = readWithGaps(image)
-        weights = readWithGaps(mask)
+        weights = maskOnGrid(mask, image)
         mode = self.mode.get()
         if mode is MaskMode.MULTIPLY:
             out = values * weights
@@ -232,11 +260,15 @@ class ApplyMaskAnalysis(Analysis):
             MaskMode.KEEP_UNSET: "masked outside",
             MaskMode.MULTIPLY: "times",
         }[mode]
+        resampled = resamplingText(mask, image, Resampling.nearest)
+        record = resamplingRecord(mask, image, Resampling.nearest)
         return sameBandsRaster(
             image,
             out,
             name=f"{image.name} {how} {mask.name}",
-            description=f"{image.name} {how} {mask.name} ({mode.value})",
+            description=f"{image.name} {how} {mask.name} ({mode.value})"
+            + (f"; {resampled}" if resampled else ""),
+            extraMetadata={"maskResampling": record} if record else None,
         )
 
 
