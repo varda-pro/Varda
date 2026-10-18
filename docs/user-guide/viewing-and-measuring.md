@@ -66,6 +66,20 @@ give:
 Sessions keep the display settings of Linked Images and 3D Terrain
 workspaces, but not those of General Image Analysis, so write them down.
 
+## Pixel readout
+
+Hovering over an image shows, at its bottom left, the pixel's column and row,
+the displayed band values and, for a georeferenced image, its position. A
+map-projected image shows `xy` in the CRS's units (e.g. `xy 1234.50, -987.00 m`),
+and every georeferenced image shows its latitude and longitude with the
+conventions named, e.g. `lat 18.40312° N  lon 77.45120° E  (Mars,
+planetocentric)`. The body and latitude type (planetocentric or
+planetographic) come from the image's CRS, as described in
+[Coordinate systems](coordinate-systems.md); an unknown body reads "unknown
+body", never Earth. The angles are shown as the CRS gives them: a west-positive
+CRS reads "° W", and a 0..360 image shows longitudes in [0, 360) followed by
+"(0–360)". The position is that of the pixel's center.
+
 ## Pixel spectra
 
 Turn on **Pixel Select** under a view and Ctrl-click (Cmd-click on a Mac) a

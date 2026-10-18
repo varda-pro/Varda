@@ -8,6 +8,11 @@ can alter results.
 
 ### Added
 
+- **The pixel readout names the body and conventions.** Hovering over a
+  georeferenced image shows, e.g., `lat 18.40312° N  lon 77.45120° E  (Mars,
+  planetocentric)`: the body, the latitude type, the longitude direction and,
+  for 0..360 images, the longitude domain. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md).
 - **Image Properties describes the coordinate system.** A new
   **Coordinate system** group says what the image's CRS is in words, e.g.
   "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px",
