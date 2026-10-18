@@ -8,6 +8,13 @@ can alter results.
 
 ### Added
 
+- **Spectral plots: pull a marker off the Y axis, and remove curves with
+  the keyboard.** Dragging sideways off the Y axis pulls out a vertical
+  marker that drops at the wavelength where you release it (released over
+  the axis or outside the plot, it's canceled); a drag along the axis still
+  moves Y. Backspace or Delete removes the curve you clicked (not while
+  you're typing in the plot's sidebar); before, after a click on the plot,
+  Backspace undid the last zoom instead.
 - **Shadow Mask** (Processing → Image Math): a 0/1 mask of shadow from the
   image's brightness (the mean over a wavelength range, 1280–1380 nm by
   default, below a percentile of the scene or a value), from the terrain
