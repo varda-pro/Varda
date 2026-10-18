@@ -442,14 +442,16 @@ def streamTiles(
     layer: BasemapLayer,
     tiles: list[Tile],
     cache: TileCache,
-    fetch: Fetch = fetchBytes,
+    fetch: Fetch | None = None,
 ) -> StreamedImagery:
     """Fetch (or read from the cache) and assemble the tiles of one view, a
-    few at a time. Tiles that fail are left transparent and counted."""
+    few at a time. Tiles that fail are left transparent and counted.
+    ``fetch`` defaults to ``fetchBytes`` (looked up when called)."""
+    get = fetch or fetchBytes
 
     def one(tile: Tile) -> np.ndarray | None:
         try:
-            return decodeImage(fetchTile(layer, tile, cache, fetch))
+            return decodeImage(fetchTile(layer, tile, cache, get))
         except (CatalogError, OSError, ValueError):
             return None
 

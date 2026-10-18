@@ -59,3 +59,15 @@ def test_a_selected_product_fits_the_preview(workspace, qtbot):
     workspace.selectProducts(["p"])
     qtbot.wait(50)
     assertNothingClipped(workspace)
+
+
+def test_the_map_panel_fits_at_1280_by_800(workspace, qtbot):
+    """The map's bar (body, projection, basemap, names, Go to, overlays)
+    wraps, and the imagery credit wraps under the map."""
+    workspace.resize(1280, 800)
+    workspace.show()
+    qtbot.waitExposed(workspace)
+    qtbot.wait(50)
+    assert workspace.basemapBox.currentData() is not None  # the Moon's imagery
+    assert workspace.map.credit.isVisible()
+    assertNothingClipped(workspace.mapPanel)

@@ -1,6 +1,7 @@
 """The Find Data workspace with a stand-in catalog: search, map, selection,
 basemap, overlays and sessions."""
 
+import io
 from datetime import datetime, timezone
 
 import geopandas as gpd
@@ -8,8 +9,10 @@ import numpy as np
 import pytest
 import shapely
 from affine import Affine
+from PIL import Image
 
-from varda.catalogs import registry
+from varda.catalogs import basemaps, registry
+from varda.catalogs.basemaps import BasemapLayer
 from varda.catalogs.bodies import geographicCrs
 from varda.catalogs.catalog import Catalog, Collection, Product, SearchPage
 from varda.common.di_types import ProjectImages
@@ -154,11 +157,15 @@ def test_a_mars_image_becomes_the_basemap(workspace, qtbot, monkeypatch):
     )
     workspace.projectImages.append(image)
     workspace._onCollection()
-    assert workspace.basemapBox.count() == 2
-    workspace.basemapBox.setCurrentIndex(1)
+    # None, Mars's two imagery layers, the image
+    assert workspace.basemapBox.count() == 4
+    workspace.basemapBox.setCurrentIndex(0)
+    assert workspace.map.basemapItem.image is None
+    workspace.basemapBox.setCurrentIndex(3)
     qtbot.waitUntil(lambda: workspace.map.basemapItem.image is not None, timeout=10000)
     rect = workspace.map.basemapItem.boundingRect()
     assert rect.width() > 0
+    assert workspace.streamer.layer is None  # no tiles over a loaded image
 
 
 def test_overlays_are_drawn_and_saved(workspace, tmp_path):
@@ -281,13 +288,13 @@ def test_images_loaded_later_become_basemaps_and_keep_the_choice(qtbot, monkeypa
     workspace = FindDataWorkspace(images)
     qtbot.addWidget(workspace)
     qtbot.waitUntil(lambda: workspace.collectionBox.count() == 1, timeout=5000)
-    assert workspace.basemapBox.count() == 1  # just None
+    assert workspace.basemapBox.count() == 3  # None and Mars's two layers
     first = _marsImage("first")
     images.append(first)  # e.g. a download that opened
-    assert workspace.basemapBox.count() == 2 and workspace.areaImage.count() == 1
-    workspace.basemapBox.setCurrentIndex(1)
+    assert workspace.basemapBox.count() == 4 and workspace.areaImage.count() == 1
+    workspace.basemapBox.setCurrentIndex(3)
     images.append(_marsImage("second"))
-    assert workspace.basemapBox.count() == 3
+    assert workspace.basemapBox.count() == 5
     assert workspace.basemapBox.currentData() is first  # the choice stays
     images.remove(first)
     assert workspace.basemapBox.currentData() is None
@@ -306,3 +313,103 @@ def test_the_basemap_is_drawn_north_up_and_not_mirrored(workspace):
     assert (rect.left(), rect.top(), rect.width(), rect.height()) == pytest.approx(
         (10, 20, 6, 4)
     )
+
+
+# --- global imagery, names and Go to ------------------------------------------------
+
+
+def test_the_bodys_global_imagery_is_the_default_basemap(workspace, qtbot):
+    layer = workspace.basemapBox.currentData()
+    assert isinstance(layer, BasemapLayer) and layer.body == "Mars"
+    qtbot.waitUntil(lambda: workspace.map.basemapItem.image is not None, timeout=10000)
+    rect = workspace.map.basemapItem.mapRectToParent(
+        workspace.map.basemapItem.boundingRect()
+    )
+    assert (rect.left(), rect.top(), rect.width(), rect.height()) == pytest.approx(
+        (-180, -90, 360, 180)
+    )
+    credit = workspace.map.credit.text()
+    assert "Solar System Treks" in credit and "MOLA" in credit
+    assert "Planetary Nomenclature" in credit
+
+
+def test_a_polar_view_reprojects_the_bundled_image(workspace, qtbot):
+    workspace.projectionBox.setCurrentIndex(
+        workspace.projectionBox.findData(MapProjection.SOUTH_POLAR)
+    )
+    qtbot.waitUntil(lambda: workspace.map.basemapItem.image is not None, timeout=10000)
+    image = workspace.map.basemapItem.image
+    assert image is not None and image.shape[:2] == (1500, 1500)
+    assert workspace.map.tilesItem.image is None  # no tiles off equirectangular
+
+
+def test_names_appear_by_size_and_can_be_hidden(workspace, qtbot):
+    workspace.map.showWhole()
+    qtbot.wait(50)
+    zoomedOut = workspace.map.shownNames()
+    assert "Gale" not in zoomedOut and zoomedOut  # large features only
+    assert len(zoomedOut) <= 60
+    workspace.map.zoomTo((134.0, -9.0, 142.0, -2.0), padding=0)
+    qtbot.wait(50)
+    assert "Gale" in workspace.map.shownNames()
+    workspace.namesCheck.setChecked(False)
+    assert workspace.map.shownNames() == []
+    assert "Planetary Nomenclature" not in workspace.map.credit.text()
+
+
+def test_go_to_zooms_to_a_feature(workspace, qtbot):
+    workspace.goTo.setText("gale")
+    workspace.goTo.returnPressed.emit()
+    west, south, east, north = workspace.map.viewBounds()
+    assert west < 137.8 < east and south < -5.4 < north
+    assert north - south < 10  # about twice Gale's 154 km
+    assert workspace.goToFeature("Olympus Mons")
+    west, _, east, _ = workspace.map.viewBounds()
+    assert west < -133.8 < east
+    assert not workspace.goToFeature("No Such Place")
+    names = workspace.goToNames.stringList()
+    assert "Gale" in names and "Isidis Planitia" in names
+
+
+def test_zooming_in_streams_tiles_over_the_bundled_image(workspace, qtbot, monkeypatch):
+    buffer = io.BytesIO()
+    Image.new("RGB", (256, 256), (0, 255, 0)).save(buffer, "PNG")
+    fetched = []
+
+    def fetch(url: str, *args, **kwargs) -> bytes:
+        fetched.append(url)
+        return buffer.getvalue()
+
+    monkeypatch.setattr(basemaps, "fetchBytes", fetch)
+    workspace.goToFeature("Gale")
+    workspace.streamer.refresh()
+    qtbot.waitUntil(lambda: workspace.map.tilesItem.image is not None, timeout=10000)
+    assert fetched and all("Mars_MGS_MOLA" in url for url in fetched)
+    workspace.map.showWhole()
+    workspace.streamer.refresh()
+    assert workspace.map.tilesItem.image is None  # the bundled image is enough
+
+
+def test_offline_tiles_leave_the_bundled_image_and_a_note(workspace, qtbot):
+    workspace.goToFeature("Gale")
+    workspace.streamer.refresh()
+    qtbot.waitUntil(
+        lambda: "couldn't be fetched" in workspace.status.currentMessage(),
+        timeout=10000,
+    )
+    image = workspace.map.tilesItem.image
+    assert image is None or (image[..., 3] == 0).all()
+    assert workspace.map.basemapItem.image is not None
+
+
+def test_the_basemap_choice_comes_back_from_a_session(workspace, qtbot):
+    workspace.basemapBox.setCurrentIndex(2)  # Viking color
+    workspace.namesCheck.setChecked(False)
+    state = workspace.sessionState()
+    assert state["basemapLayer"].startswith("Mars_Viking") and not state["names"]
+    reopened = FindDataWorkspace([])
+    qtbot.addWidget(reopened)
+    reopened.restoreSessionState(state)
+    qtbot.waitUntil(lambda: reopened.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: reopened.basemapBox.currentIndex() == 2, timeout=5000)
+    assert not reopened.namesCheck.isChecked()

@@ -1,6 +1,7 @@
-"""Loaded images on the find-data map: as a basemap (its display bands,
-reprojected to the map's projection) or as a search area (its bounds in
-longitude and latitude)."""
+"""Basemaps on the find-data map: a body's bundled global image (as it is
+in equirectangular, reprojected for a polar view), or a loaded image (its
+display bands, reprojected to the map's projection); and a loaded image as a
+search area (its bounds in longitude and latitude)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from pyproj import CRS
 from rasterio.transform import array_bounds, from_bounds
 from rasterio.warp import Resampling, reproject, transform_bounds
 
+from varda.catalogs.basemaps import GLOBE
 from varda.catalogs.bodies import bodyOf, geographicCrs
 from varda.common.entities import VardaRaster
 from varda.workspaces.find_data.projection import Projector
@@ -62,3 +64,31 @@ def basemap(image: VardaRaster, projector: Projector) -> tuple[np.ndarray, Bound
         dst_nodata=np.nan,
     )
     return toRgba(out.transpose(1, 2, 0)), bounds
+
+
+def globalBasemap(rgba: np.ndarray, projector: Projector) -> tuple[np.ndarray, Bounds]:
+    """A global equirectangular RGBA image (rows north to south, -180° to
+    180° east) in the map's projection, and its bounds in map coordinates:
+    as it is for equirectangular, the view's hemisphere reprojected (nearest
+    neighbor) for a polar one."""
+    if not projector.polar:
+        return rgba, GLOBE
+    bounds = projector.mapBounds(projector.hemisphere)
+    assert bounds is not None  # a hemisphere is always on its own map
+    west, south, east, north = bounds
+    height, width = rgba.shape[:2]
+    out = np.zeros((4, BASEMAP_PIXELS, BASEMAP_PIXELS), np.uint8)
+    reproject(
+        source=np.ascontiguousarray(rgba.transpose(2, 0, 1)),
+        destination=out,
+        src_transform=from_bounds(*GLOBE, width, height),
+        src_crs=geographicCrs(projector.body),
+        dst_transform=from_bounds(
+            west, south, east, north, BASEMAP_PIXELS, BASEMAP_PIXELS
+        ),
+        dst_crs=projector.crs,
+        resampling=Resampling.nearest,
+        src_nodata=None,
+        dst_nodata=0,
+    )
+    return out.transpose(1, 2, 0), bounds
