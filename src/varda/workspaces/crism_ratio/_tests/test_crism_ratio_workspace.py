@@ -13,6 +13,7 @@ from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.image_loading.crism_geometry import ColumnGeometry
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_rendering.raster_view.overlay_handles import PyqtgraphTextOverlay
 from varda.image_rendering.raster_view.pointer_event import (
     KeyEvent,
     PointerAction,
@@ -378,7 +379,7 @@ def test_the_tool_hint_fits_its_view_on_a_laptop(qtbot, mapPair):
     qtbot.wait(50)
     for index, view in enumerate((workspace.browseView, workspace.dataView)):
         overlay = tool(workspace, index)._textOverlay
-        assert overlay is not None
+        assert isinstance(overlay, PyqtgraphTextOverlay)
         assert overlay._item.textItem.boundingRect().width() <= view.width()
 
 

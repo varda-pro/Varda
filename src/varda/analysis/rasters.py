@@ -54,7 +54,7 @@ def readCube(image: VardaRaster, fill: bool = True) -> tuple[np.ndarray, np.ndar
         )
         cube[:, :, model.badBands] = np.nan
     if not fill:
-        return cube, np.isfinite(cube[:, :, goodBands(image)]).all(axis=2)
+        return cube, np.all(np.isfinite(cube[:, :, goodBands(image)]), axis=2)
     return fillAlongSpectrum(cube, badBands=model.badBands)
 
 

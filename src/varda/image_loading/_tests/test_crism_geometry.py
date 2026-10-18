@@ -245,7 +245,7 @@ def test_a_trr3_resolves_its_ddr(tmp_path):
     vnir = tmp_path / "frt000107a7_07_if166s_trr3.img"
     _touch(vnir)
     _touch(tmp_path / "frt000107a7_07_de166s_ddr1.img")
-    assert resolveGeometryFile(str(vnir)).endswith("de166s_ddr1.img")
+    assert str(resolveGeometryFile(str(vnir))).endswith("de166s_ddr1.img")
 
 
 def test_upper_case_names_resolve_to_the_file_as_named(tmp_path):
@@ -307,6 +307,7 @@ def test_an_unprojected_trr3_uses_its_image_columns(tmp_path):
 
 
 def test_image_columns_need_a_confidently_unprojected_crism_cube():
-    assert columnGeometryFor(None, (4, 320), projected=False).binning == 2
+    binned = columnGeometryFor(None, (4, 320), projected=False)
+    assert binned is not None and binned.binning == 2
     assert columnGeometryFor(None, (4, 320), projected=True) is None
     assert columnGeometryFor(None, (4, 600), projected=False) is None
