@@ -89,7 +89,12 @@ def toLonLat(crs: CRS | str, xy: npt.ArrayLike) -> np.ndarray:
 
 def cumulativeDistance(crs: CRS | str, xy: npt.ArrayLike) -> np.ndarray:
     """Meters along (n, 2) map points on ``crs`` from the first: the sum of
-    the geodesics between consecutive points on the CRS's own surface."""
+    the geodesics between consecutive points on the CRS's own surface.
+
+    A point PROJ can't invert (off the projection) makes the segments
+    touching it NaN, so every distance from it on is NaN; NumPy may warn
+    ("invalid value"). Raises ValueError for a CRS on no body or one PROJ
+    can't read (``planetocentricLonLat``)."""
     points = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
     surfaces = _surfacesFor(crs)
     lon, centric = planetocentricLonLat(crs, points[:, 0], points[:, 1])
@@ -102,7 +107,10 @@ def lineLength(
 ) -> Measurement:
     """The length of the line through (n, 2) map points on ``crs``, as
     drawn: the caller densifies it (about 1 px) to follow the image. With
-    the image's ``transform``, also the distortion over its bounding box."""
+    the image's ``transform``, also the distortion over its bounding box.
+
+    The value is NaN when PROJ can't invert any of the points (see
+    ``cumulativeDistance``); raises ValueError as it does."""
     points = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
     surfaces = _surfacesFor(crs)
     lon, centric = planetocentricLonLat(crs, points[:, 0], points[:, 1])

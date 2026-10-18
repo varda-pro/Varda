@@ -70,8 +70,9 @@ The map shows the collection's body in **Equirectangular**, **North Polar
 Stereographic** or **South Polar Stereographic** projection, on a sphere of
 the body's IAU mean radius (for drawing only; footprints and images keep
 their longitude and latitude). A body Varda doesn't know keeps its name and
-is drawn at Earth's mean radius, so a polar view's meters are nominal. **Basemap** shows the body's
-global imagery (see below) or an open georeferenced image of the same body
+is drawn at Earth's mean radius, so a polar view's meters are nominal.
+
+**Basemap** shows the body's global imagery (see below) or an open georeferenced image of the same body
 under the footprints; **Names** labels features with their IAU names; **Go
 to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
 traverse, a geologic map); **Whole Body** zooms out.

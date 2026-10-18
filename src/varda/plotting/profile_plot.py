@@ -256,13 +256,15 @@ class ProfilePlotWidget(QWidget):
         units = self._unitsOf()
         band = int(self.bandBox.currentData() or 0)
         unit = valueUnit(self.image, band)
-        crs = CRS.from_user_input(self.image.crs) if georeferenced else None
+        with PROJ_LOCK:  # as every pyproj call, also on the GUI thread
+            crs = CRS.from_user_input(self.image.crs) if georeferenced else None
+            wkt = crs.to_wkt() if crs is not None else None
         header = [
             f"Varda {vardaVersion()} line profiles",
             f"image: {self.image.name}"
             + (f" ({self.image.filePath})" if self.image.filePath else ""),
             f"CRS: {crsLabel(crs)}",
-            *([f"CRS WKT: {crs.to_wkt()}"] if crs is not None else []),
+            *([f"CRS WKT: {wkt}"] if wkt is not None else []),
             *(
                 ["distance unit: px (the image has no georeferencing)"]
                 if units == "px" or crs is None

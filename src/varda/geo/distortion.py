@@ -94,6 +94,7 @@ class _Model:
     degreesPerUnit: float  # geographic: the angle unit in degrees
     eccentricitySquared: float  # the ellipsoid's e²
     west: bool  # the geodetic CRS's longitude is positive west
+    westing: bool  # projected, its x counts west (Proj takes an easting)
     # the geodetic CRS's latitude is planetocentric (on a flattened
     # ellipsoid; PROJ's own latitude is always geodetic, i.e. planetographic)
     planetocentric: bool
@@ -208,9 +209,10 @@ def _model(key: str) -> _Model | None:
     e2 = flattening * (2 - flattening)
     centric = e2 > 0 and _planetocentric(geodetic)
     if crs.is_projected:
-        return _Model(Proj(crs), 1.0, e2, west, centric)
+        westing = bool(crs.axis_info) and crs.axis_info[0].direction == "west"
+        return _Model(Proj(crs), 1.0, e2, west, westing, centric)
     unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-    return _Model(None, math.degrees(unit), e2, west, centric)
+    return _Model(None, math.degrees(unit), e2, west, False, centric)
 
 
 def _planetocentric(geodetic: CRS) -> bool:
@@ -246,6 +248,8 @@ def _lonLat(
     if model.proj is None:
         lons, lats = xs * model.degreesPerUnit, ys * model.degreesPerUnit
         return (-lons if model.west else lons), lats
+    if model.westing:
+        xs = -xs
     # lists: pyproj takes a one-element array for a scalar (and warns)
     lons, lats = model.proj(xs.tolist(), ys.tolist(), inverse=True, errcheck=False)
     lons, lats = np.asarray(lons, float), np.asarray(lats, float)

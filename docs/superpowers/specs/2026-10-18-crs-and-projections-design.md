@@ -592,7 +592,7 @@ and says what it did. It never mixes bodies.
 | CRISM Ratio map link | same | inherits | 1 |
 | Masks/DEMs from other grids (`grid.py`) | `==`, no body check, 0–360 overlap miss | `sameCrs` in `sameGrid`; body guard and longitude-aware overlap in `placementProblem` | 1 |
 | ROI transfer (`applyToImage`) | no body check | `canTransform` guard; skip `to_crs` when `sameCrs` | 1 |
-| Points (`point_collection.py`) | first image's CRS for all | store each point's own CRS and convert to the collection's on add (body-checked); export notes it | 1 |
+| Points (`point_collection.py`) | first image's CRS for all | one collection CRS; points from other images converted to it on add (body-checked); the export's `image` column names each point's source (decision 14) | 1 |
 | Mosaic (`model.py`) | `str()` comparison, refuses | `sameCrs`; SAME_BODY → reproject inputs to the target CRS (§4.6) | 1 (sameCrs), 3 (reprojection) |
 | Terrain drapes/vectors | reprojects drapes unrecorded; mean-radius sphere for degrees | record drape reprojection in exports; degrees mean the DEM's `geodetic_crs` (as vector import) | 3 |
 | Raster overlays (`raster_overlay.py`) | same grid only | same body: reprojected on the fly | 4 |
@@ -681,7 +681,7 @@ measures by other means (planar map-unit ROI columns, shapes, slopes).
 |---|---|---|---|
 | Line length (Lines manager) | geodesic in geographic CRSs, planar in projected ones | geodesic always; tooltip states method and body-model term | 1 |
 | Profile distance + CSV | same | geodesic always; header: method, surface, body-model term, distortion at the line | 1 |
-| ROI area/perimeter | planar map units (degrees² in geographic CRSs) | new columns **Area on the body (km²)** and **Perimeter on the body (km)**, geodesic; "map units" columns kept, labeled planar, with a tooltip giving the distortion at the ROI | 1 |
+| ROI area/perimeter | planar map units (degrees² in geographic CRSs) | new columns **Area on the body (km²)** and **Perimeter on the body (km)**, geodesic; "map units" columns kept, labeled planar, with a tooltip giving the distortion at the ROI (Phase 1 gives the distortion over the whole image, as the guide says; per ROI is later work) | 1 |
 | Pixel area for zonal sums | — | `pixelAreas(crs, transform, rows, cols)` (geodesic per pixel row for cylindrical projections, through the areal scale otherwise) for "Area of selected pixels (km²)" | 2 |
 | Terrain analysis (slope, aspect, hillshade, curvature) | grid spacing in map units; refuses geographic | per-pixel ground spacing from the scale factors: dx = Δx·u/k, dy = Δy·u/h (u = the unit's meters); geographic CRSs allowed (spacing on the CRS's surface); the description states the method; the z unit is checked against meters | 3 |
 | Shadow mask | same as Terrain analysis | same | 3 |
@@ -944,7 +944,9 @@ Each of these is **(our call)**.
 3. **Degrees on a body mean that body's IAU 2015 sphere** (`IAU_2015:{naif}00`;
    3396.19 km for Mars). We dropped the mean-radius sphere. When an image is
    involved, degrees mean that image's own `geodetic_crs`, as in the
-   vector-import branch.
+   vector-import branch. Exception: the Find Data map still draws on the
+   IAU mean-radius sphere (`find_data/projection.py`); it is display only,
+   and footprints and images keep their longitude and latitude.
 4. **Measurements use the CRS's own ellipsoid or sphere**, with the IAU 2015
    reference ellipsoid's result as the reported "body model" difference.
    The alternative was to measure on the IAU ellipsoid by default.

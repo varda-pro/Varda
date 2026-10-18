@@ -230,3 +230,17 @@ def test_levels():
     assert made(0.85, 1.0).level == "strong"
     assert made(1.0, 1.0, 12.0).level == "strong"
     assert made(0.97, 1.02).scaleError == pytest.approx(0.03)
+
+
+@pytest.mark.parametrize(
+    "code, center",
+    [
+        ("IAU_2015:49911", (-77.5, 18.4)),  # westing, west-positive longitude
+        ("IAU_2015:49912", (77.5, 18.4)),
+    ],
+)
+def test_where_is_in_the_crs_own_longitude_direction(code, center):
+    image = makeImage(code, centerLonLat=center, pixelSize=100.0, width=3, height=3)
+    summary = distortionOver(image.crs, image.transform, image.width, image.height)
+    assert summary is not None
+    assert summary.where[0] == pytest.approx(center[0], abs=0.01)
