@@ -11,18 +11,22 @@ from PyQt6.QtCore import (
     QPointF,
     QByteArray,
     QMimeData,
+    QSettings,
     QSize,
 )
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import (
+    QWIDGETSIZE_MAX,
     QApplication,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QGraphicsItem,
     QLabel,
     QListWidget,
     QMessageBox,
     QSizePolicy,
+    QSplitter,
     QToolButton,
     QWidget,
 )
@@ -31,6 +35,7 @@ import pyqtgraph as pg
 from varda.common.entities import VardaRaster, Color
 
 from varda.common.ui import (
+    FlowLayout,
     VBoxBuilder,
     HBoxBuilder,
     SectionBox,
@@ -59,7 +64,7 @@ from varda.spectral_libraries.spectrum import (
     spectrumFromImage,
 )
 from varda.spectral_libraries.store import LibraryStore, defaultStore
-from varda.plotting.view_box import ModifierDragViewBox
+from varda.plotting.view_box import RECT_ZOOM_MODIFIERS, ModifierDragViewBox
 from varda.common.parameter import (
     ParameterGroup,
     FloatParameter,
@@ -74,6 +79,11 @@ from varda.common.parameter_widgets import groupWidget
 CURVE_MIME_TYPE = "application/x-varda-curve"
 # Remove the selected curve while the plot has the keyboard focus
 DELETE_KEYS = (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
+# The plot never gets narrower than this, however wide the sidebar is dragged
+PLOT_MIN_WIDTH = 200
+# The sidebar's width until the user drags it (then remembered per plot kind)
+DEFAULT_SIDEBAR_WIDTH = 300
+SIDEBAR_WIDTH_KEY = "plots/sidebarWidth/"
 
 
 class CurveConfig(ParameterGroup):
@@ -189,6 +199,11 @@ class Curve(QObject):
     def isTransformed(self) -> bool:
         """Whether the curve is shown with a Y scale or offset."""
         return self.config.scale.value != 1.0 or self.config.offset.value != 0.0
+
+    def isUnder(self, scenePos: QPointF) -> bool:
+        """Whether ``scenePos`` is on the curve (within its click width)."""
+        item = self.plotDataItem.curve
+        return item.mouseShape().contains(item.mapFromScene(scenePos))
 
     def setClickable(self, clickable: bool):
         self.plotDataItem.setCurveClickable(clickable, width=20)
@@ -316,17 +331,51 @@ class RangeConfig(ParameterGroup):
     )
 
 
+class _SidebarLayout(VBoxBuilder):
+    """The sidebar's sections, each always at its full height: the sidebar
+    scrolls rather than squeeze them. (Its scroll area offers the sections
+    their minimum height, but a box layout never gives a section whose
+    height depends on its width, e.g. one with wrapped text, less than its
+    preferred height, so it took the shortfall from a section's text.)"""
+
+    def minimumHeightForWidth(self, a0: int) -> int:
+        return self.heightForWidth(a0)
+
+
+def _wrapFormRows(widget: QWidget) -> None:
+    """In a narrow sidebar, put each form field under its label."""
+    for form in widget.findChildren(QFormLayout):
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+
+
 class _PlotGraphicsView(pg.GraphicsView):
     def __init__(self, parent: "VardaPlotWidget"):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._dragStartPos: QPoint | None = None
 
+    def _plotWidget(self) -> "VardaPlotWidget | None":
+        """The plot this view belongs to (beyond the splitter it sits in)."""
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, VardaPlotWidget):
+            parent = parent.parentWidget()
+        return parent
+
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            parent = self.parent()
-            if isinstance(parent, VardaPlotWidget) and parent.selectedCurve is not None:
-                self._dragStartPos = event.pos()
+        # A plain left-drag that starts on the selected curve drags it to
+        # another plot; any other drag is the view box's (pan, box zoom, ...).
+        # Starting the curve's drag and drop takes the rest of the mouse
+        # events, release included, from pyqtgraph, so it must never take
+        # over one of the view box's drags: that left the zoom box behind.
+        plot = self._plotWidget()
+        curve = None if plot is None else plot.selectedCurve
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not event.modifiers() & RECT_ZOOM_MODIFIERS
+            and curve is not None
+            and curve.isUnder(self.mapToScene(event.pos()))
+        ):
+            self._dragStartPos = event.pos()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -336,32 +385,35 @@ class _PlotGraphicsView(pg.GraphicsView):
             and (event.pos() - self._dragStartPos).manhattanLength() >= 10
         ):
             self._dragStartPos = None
-            parent = self.parent()
-            if isinstance(parent, VardaPlotWidget) and parent.selectedCurve is not None:
-                self._initiateDrag(parent.selectedCurve)
+            plot = self._plotWidget()
+            if plot is not None and plot.selectedCurve is not None:
+                self._initiateDrag(plot.selectedCurve)
+                plot.viewBox.clearZoomBox()  # in case one was showing
                 return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         self._dragStartPos = None
         super().mouseReleaseEvent(event)
+        plot = self._plotWidget()
+        if plot is not None and not event.buttons():
+            plot.viewBox.clearZoomBox()  # every drag is over: no box belongs
 
     def keyPressEvent(self, ev) -> None:
         # Before the scene: pyqtgraph's view box takes Backspace (zoom history)
-        parent = self.parent()
-        if (
-            ev is not None
-            and ev.key() in DELETE_KEYS
-            and isinstance(parent, VardaPlotWidget)
-            and parent.removeSelectedCurve()
-        ):
-            ev.accept()
-            return
+        # and swallows Esc
+        plot = self._plotWidget()
+        if ev is not None and plot is not None:
+            if ev.key() == Qt.Key.Key_Escape:
+                plot.viewBox.clearZoomBox()
+            elif ev.key() in DELETE_KEYS and plot.removeSelectedCurve():
+                ev.accept()
+                return
         super().keyPressEvent(ev)
 
     def _initiateDrag(self, curve: Curve) -> None:
         data = curve.serialize()
-        data["source_id"] = id(self.parent())
+        data["source_id"] = id(self._plotWidget())
         mimeData = QMimeData()
         mimeData.setData(CURVE_MIME_TYPE, QByteArray(json.dumps(data).encode("utf-8")))
         drag = QDrag(self)
@@ -379,9 +431,9 @@ class _PlotGraphicsView(pg.GraphicsView):
 
     def dropEvent(self, event) -> None:
         if event.mimeData().hasFormat(CURVE_MIME_TYPE):
-            parent = self.parent()
-            if isinstance(parent, VardaPlotWidget):
-                parent.onCurveDrop(event)
+            plot = self._plotWidget()
+            if plot is not None:
+                plot.onCurveDrop(event)
 
 
 class VardaPlotWidget(QWidget):
@@ -461,7 +513,7 @@ class VardaPlotWidget(QWidget):
 
         # Most-used controls first: getting the view right, then what's
         # plotted, then per-curve tweaks, then cosmetics.
-        sidebar = VBoxBuilder(Qt.AlignmentFlag.AlignTop).withWidget(
+        sidebar = _SidebarLayout(Qt.AlignmentFlag.AlignTop, margins=0).withWidget(
             SectionBox(
                 "View",
                 VBoxBuilder()
@@ -498,7 +550,7 @@ class VardaPlotWidget(QWidget):
                 "Markers",
                 VBoxBuilder()
                 .withLayout(
-                    HBoxBuilder()
+                    FlowLayout()
                     .withWidget(self.markerWavelength)
                     .withWidget(
                         ButtonBuilder("Add").onClick(
@@ -510,7 +562,7 @@ class VardaPlotWidget(QWidget):
                 )
                 .withWidget(self.markerList)
                 .withLayout(
-                    HBoxBuilder()
+                    FlowLayout()
                     .withWidget(
                         ButtonBuilder("Remove Selected").onClick(
                             self._removeSelectedMarker
@@ -543,7 +595,9 @@ class VardaPlotWidget(QWidget):
         sidebar.withWidget(self.curveSettingsBox)
         sidebar.withWidget(SectionBox("Appearance", groupWidget(self.appearanceConfig)))
         self._sidebar = sidebar
-        self.sidebarArea = PanelScrollArea(WrapperWidget(sidebar))
+        sidebarPanel = WrapperWidget(sidebar)
+        _wrapFormRows(sidebarPanel)
+        self.sidebarArea = PanelScrollArea(sidebarPanel)
         # A slim arrow beside the plot folds the settings away in narrow docks
         self.sidebarToggle = QToolButton()
         self.sidebarToggle.setCheckable(True)
@@ -552,18 +606,64 @@ class VardaPlotWidget(QWidget):
         self.sidebarToggle.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
         )
-        self.sidebarToggle.toggled.connect(self._onSidebarToggled)
-        self._onSidebarToggled(True)
 
-        self.setLayout(
-            HBoxBuilder()
-            .withWidget(self.gv, stretch=2)
+        # The plot and the sidebar (with its arrow) share a splitter, so the
+        # sidebar's width can be dragged. Folded away, it's just the arrow.
+        sidePanelLayout = (
+            HBoxBuilder(margins=0)
             .withWidget(self.sidebarToggle)
             .withWidget(self.sidebarArea)
         )
+        sidePanelLayout.setSpacing(0)
+        self.sidePanel = WrapperWidget(sidePanelLayout)
+        self.gv.setMinimumWidth(PLOT_MIN_WIDTH)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.gv)
+        self.splitter.addWidget(self.sidePanel)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setStretchFactor(0, 1)  # the plot takes extra room
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.splitterMoved.connect(self._onSplitterMoved)
+
+        self.sidebarToggle.toggled.connect(self._onSidebarToggled)
+        self._onSidebarToggled(True)
+
+        self.setLayout(HBoxBuilder().withWidget(self.splitter))
+
+    def _sidebarWidthKey(self) -> str:
+        return SIDEBAR_WIDTH_KEY + type(self).__name__
+
+    def sidebarWidth(self) -> int:
+        """The sidebar's width (with its arrow): the one the user last dragged
+        it to in a plot of this kind, or the default."""
+        saved = QSettings().value(self._sidebarWidthKey(), DEFAULT_SIDEBAR_WIDTH)
+        try:
+            return int(saved)
+        except (TypeError, ValueError):
+            return DEFAULT_SIDEBAR_WIDTH
+
+    def setSidebarWidth(self, width: int) -> None:
+        """Give the sidebar ``width`` px (with its arrow), within its own and
+        the plot's minimum widths."""
+        total = sum(self.splitter.sizes()) or self.splitter.width()
+        self.splitter.setSizes([max(total - width, 0), width])
+
+    def _onSplitterMoved(self, *_) -> None:
+        if self.isSidebarVisible():
+            QSettings().setValue(self._sidebarWidthKey(), self.splitter.sizes()[1])
 
     def _onSidebarToggled(self, visible: bool) -> None:
         self.sidebarArea.setVisible(visible)
+        handle = self.splitter.handle(1)
+        if handle is not None:
+            handle.setEnabled(visible)
+        if visible:
+            self.sidePanel.setMaximumWidth(QWIDGETSIZE_MAX)
+            self.setSidebarWidth(self.sidebarWidth())
+        else:
+            arrow = self.sidebarToggle.sizeHint().width()
+            self.sidePanel.setMaximumWidth(arrow)
+            self.setSidebarWidth(arrow)
         self.sidebarToggle.setArrowType(
             Qt.ArrowType.RightArrow if visible else Qt.ArrowType.LeftArrow
         )
@@ -579,6 +679,7 @@ class VardaPlotWidget(QWidget):
 
     def insertSidebarSection(self, index: int, section: QWidget) -> None:
         """Insert a section into the settings sidebar (0 = top)."""
+        _wrapFormRows(section)
         self._sidebar.insertWidget(index, section)
 
     def sizeHint(self) -> QSize:
@@ -860,6 +961,8 @@ class VardaPlotWidget(QWidget):
         return int(self.viewConfig.dataPointSize.value)
 
     def keyPressEvent(self, a0) -> None:
+        if a0 is not None and a0.key() == Qt.Key.Key_Escape:
+            self.viewBox.clearZoomBox()  # a leftover box, should one remain
         # Keys the sidebar's fields and lists pass on (e.g. Backspace in the
         # marker list) are theirs, not a request to remove the curve
         focus = QApplication.focusWidget()
@@ -888,28 +991,28 @@ class VardaPlotWidget(QWidget):
         self.selectedCurve = curve
         curve.setHighlighted(True)
         self.sigSelectedCurveChanged.emit(curve)
-        self.curveSettingsBox.setContent(
-            WrapperWidget(
-                VBoxBuilder(Qt.AlignmentFlag.AlignTop)
-                .withWidget(groupWidget(curve.config))
-                .withLayout(
-                    HBoxBuilder()
-                    .withWidget(
-                        ButtonBuilder("Add to Library…")
-                        .onClick(lambda: self._openAddToLibrary(curve))
-                        .withToolTip(
-                            "Save this spectrum (its own values, not as scaled) "
-                            "in one of your spectral libraries, with where it came from"
-                        )
+        settings = WrapperWidget(
+            VBoxBuilder(Qt.AlignmentFlag.AlignTop)
+            .withWidget(groupWidget(curve.config))
+            .withLayout(
+                FlowLayout()
+                .withWidget(
+                    ButtonBuilder("Add to Library…")
+                    .onClick(lambda: self._openAddToLibrary(curve))
+                    .withToolTip(
+                        "Save this spectrum (its own values, not as scaled) "
+                        "in one of your spectral libraries, with where it came from"
                     )
-                    .withWidget(
-                        ButtonBuilder("Remove Curve").onClick(
-                            lambda: self.removePlot(curve)
-                        )
+                )
+                .withWidget(
+                    ButtonBuilder("Remove Curve").onClick(
+                        lambda: self.removePlot(curve)
                     )
                 )
             )
         )
+        _wrapFormRows(settings)
+        self.curveSettingsBox.setContent(settings)
 
     def onSceneClicked(self, event):
         if event.isAccepted():

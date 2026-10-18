@@ -85,13 +85,29 @@ the mean and standard deviation. When curves don't share wavelengths, the
 CSV has one row per sample instead, with columns `curve`, `x`, `y` and, if
 any curve is a mean, `std` and `n` (blank for single pixels).
 
+### The plot's sidebar
+
+A spectral plot's settings (**View**, **Markers**, **Library Spectra**,
+**Selected Curve**, **Appearance**, and in some workspaces more) sit in a
+sidebar on its right. The arrow between the plot and the sidebar folds it
+away and back. Drag the divider beside the arrow to make the sidebar
+narrower or wider: its fields move under their labels and its buttons wrap,
+and it scrolls up and down but never sideways. It can't get narrower than
+its widest field (about 230 pixels), and the plot keeps at least 200 pixels.
+The width you drag it to is remembered for plots of that kind (e.g. pixel
+spectra plots) and used again when the sidebar is reopened, in this and
+later sessions of Varda.
+
 ### Moving around a spectral plot
 
 In the spectral plots (pixel, ROI and ratio spectra, and the Spectral
 Hourglass):
 
 - **Drag** pans; **Shift-drag** (or Ctrl/Cmd-drag) zooms to the dragged box;
-  **right-drag** stretches the axes.
+  **right-drag** stretches the axes. The keys held when a drag starts decide
+  which it is, so letting go of Shift or Cmd just before the mouse button
+  still zooms. **Esc** over the plot clears a zoom box, should one ever be
+  left behind.
 - **Scroll** (mouse wheel or trackpad) over the plot zooms both axes about
   the cursor.
 - **Scroll over an axis** zooms only that axis, about the cursor. Over the
@@ -108,6 +124,8 @@ Hourglass):
   remove it (the same as **Remove Curve** under **Selected Curve**). The
   keys act only while the plot has the keyboard focus (clicking the plot
   gives it the focus), never while you are typing in a field of the sidebar.
+  A plain drag that starts on the selected curve drags it to another plot;
+  any other drag pans or zooms as above.
 
 A Y stretch stays as new spectra arrive until you reset it with **Fit to
 Data** under **View** (or by setting **Range** back to **Auto**). Under

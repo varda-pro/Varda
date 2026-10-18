@@ -1,7 +1,8 @@
 """Repository-wide pytest fixtures.
 
 The per-package ``_tests/conftest.py`` files put Qt in offscreen mode; this one
-keeps the GUI tests from segfaulting and away from the real keychain.
+keeps the GUI tests from segfaulting and away from the real keychain and
+settings.
 """
 
 import gc
@@ -25,6 +26,7 @@ import PyQt6.QtWebEngineWidgets  # noqa: E402, F401
 from varda.workspaces.terrain.terrain_view import TerrainView  # noqa: E402
 from varda.spectral_libraries.store import setDefaultStore  # noqa: E402
 from keyring.backend import KeyringBackend
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
 
@@ -55,6 +57,20 @@ def memoryKeyring():
     keyring.set_keyring(backend)
     yield backend
     keyring.set_keyring(previous)
+
+
+@pytest.fixture(autouse=True)
+def _isolatedSettings(tmp_path):
+    """QSettings() reads and writes a throwaway file, never the user's
+    settings (e.g. a plot sidebar's remembered width)."""
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        str(tmp_path / "settings"),
+    )
+    yield
+    QSettings.setDefaultFormat(QSettings.Format.NativeFormat)
 
 
 @pytest.fixture(autouse=True)

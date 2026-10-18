@@ -528,7 +528,7 @@ what it saves is ROIs and points.
   same panel; click it again to overlay them.
 - **Ratio** (beside Spectra): numerator ÷ denominator. Its sidebar overlays
   library spectra; it starts folded, so the plot keeps its width; open it with
-  the arrow at the plot's right edge.
+  the arrow at the plot's right edge, and drag its left edge to resize it.
 - **Denominator Blandness** (under both plots): the check, its limits and the
   CO₂ exclusion on one row, then a one-line verdict. **Details ▸** opens the
   per-window table.

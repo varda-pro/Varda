@@ -29,6 +29,12 @@ can alter results.
 
 ### Changed
 
+- **A spectral plot's sidebar can be resized.** Drag the divider between a
+  plot and its settings sidebar to make the sidebar narrower or wider; the
+  width is remembered for each kind of plot and restored when the sidebar is
+  reopened. In a narrow sidebar the fields go under their labels and the
+  buttons and the View Range boxes wrap instead of being cut off, and the
+  plot always keeps at least 200 pixels.
 - **CRISM Ratio workspace: the plots side by side, and taller.** The
   numerator and denominator are now overlaid on one **Spectra** plot (green
   and magenta, with a legend; **Separate** in its title bar splits them into
@@ -52,6 +58,14 @@ can alter results.
 
 ### Fixed
 
+- **A box zoom no longer leaves its yellow box on a plot.** In every
+  spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
+  button turned the end of a box zoom into a pan, so the box was never
+  cleared (and the zoom never applied); with a curve selected, any drag of
+  10 px or more anywhere in the plot became dragging that curve away, which
+  took the mouse release from the zoom. The keys held when a drag starts now
+  decide it, only a plain drag that starts on the selected curve drags the
+  curve, and a new drag, a mouse release or **Esc** clears any leftover box.
 - **Opening a packaged project no longer fills the disk.** Every open of a
   `.varda.zip` unpacked a new full copy and kept it forever. Varda now unpacks
   a package once and reuses that folder, removes unpacked packages nothing uses
