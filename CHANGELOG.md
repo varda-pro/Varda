@@ -180,6 +180,9 @@ can alter results.
 
 ### Changed
 
+- **Find Data has its own top-level Data menu** (Data → Find Data…), no
+  longer under Workspace: it searches for and downloads data rather than
+  opening a view of your images. It opens the same Find Data workspace.
 - **Spectral plots remember which libraries you chose.** The libraries you
   turn off under **Libraries (n of m)** are saved with each plot in
   sessions (General Image Analysis, Dual Image and Spectral Hourglass), and
