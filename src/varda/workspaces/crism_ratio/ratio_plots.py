@@ -7,9 +7,11 @@ from __future__ import annotations
 import functools
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
+from varda.analysis.blandness import BlandnessResult
 from varda.common.entities import Color
 from varda.common.spectral_axis import SpectralUnit
 from varda.common.ui import MutedLabel
@@ -22,6 +24,7 @@ from varda.workspaces.crism_ratio.blandness_readout import BlandnessReadout
 from varda.workspaces.ratio_explorer import RatioComponents
 
 RATIO_COLOR = Color(0.9, 0.5, 0.0, 1.0)
+FAILING_COLOR = QColor(220, 50, 47)  # failing windows and their dips
 
 
 def _color(color: QColor) -> Color:
@@ -54,6 +57,11 @@ class RatioPlotsPanel(QWidget):
                 functools.partial(self._followX, plot)
             )
         self.readout = BlandnessReadout()
+        # what marks the failing windows on the Denominator plot: a shaded
+        # region per window, and a marker with a label at its deepest dip
+        self.dipMarkers: list[pg.GraphicsObject] = []
+        self._denominatorCurve: tuple[np.ndarray, np.ndarray] | None = None
+        self.readout.sigVerdictChanged.connect(self._markFailingWindows)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -107,6 +115,11 @@ class RatioPlotsPanel(QWidget):
             plot.setSpectralUnit(SpectralUnit.NANOMETRE if nm is not None else None)
             plot.plot(x, np.where(good, np.asarray(y, np.float64), np.nan), color)
             plot.fitToData()
+        self._denominatorCurve = (
+            (nm[good], np.asarray(c.denominator, np.float64)[good])
+            if nm is not None
+            else None
+        )
         # the spectrum's own range, whatever library curves the Ratio plot has
         finite = good & np.isfinite(x)
         if finite.any():
@@ -115,3 +128,43 @@ class RatioPlotsPanel(QWidget):
             self.readout.setUnavailable(NEEDS_WAVELENGTHS)
         else:
             self.readout.setSpectrum(nm[good], np.asarray(c.denominator)[good])
+
+    def _markFailingWindows(self, result: BlandnessResult) -> None:
+        plotItem = self.denominatorPlot.plotItem
+        for item in self.dipMarkers:
+            plotItem.removeItem(item)
+        self.dipMarkers = []
+        if self._denominatorCurve is None:
+            return
+        x, y = self._denominatorCurve
+        order = np.argsort(x)
+        shade = QColor(FAILING_COLOR)
+        shade.setAlpha(40)
+        for w in result.windows:
+            if w.passed:
+                continue
+            region = pg.LinearRegionItem(
+                (w.window.lowNm, w.window.highNm),
+                movable=False,
+                brush=pg.mkBrush(shade),
+                pen=pg.mkPen(None),
+            )
+            region.setZValue(-10)
+            region.setToolTip(f"{w.window.name}: not bland")
+            plotItem.addItem(region, ignoreBounds=True)
+            self.dipMarkers.append(region)
+            if not np.isfinite(w.depth):
+                continue
+            at = float(np.interp(w.dipNm, x[order], y[order]))
+            marker = pg.ScatterPlotItem(
+                [w.dipNm], [at], symbol="t", size=10, brush=pg.mkBrush(FAILING_COLOR)
+            )
+            label = pg.TextItem(
+                f"{w.window.name}: {100 * w.depth:.1f} %",
+                color=FAILING_COLOR,
+                anchor=(0.5, 0),
+            )
+            label.setPos(w.dipNm, at)
+            for item in (marker, label):
+                plotItem.addItem(item, ignoreBounds=True)
+                self.dipMarkers.append(item)

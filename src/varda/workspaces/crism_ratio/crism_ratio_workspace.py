@@ -325,7 +325,7 @@ class CrismRatioWorkspace(QMainWindow):
         """The denominator's verdict, to put in the names of what is saved
         (none when there is no denominator: the readout would be stale)."""
         readout = self.plots.readout
-        if denominator is None or not readout.lastResult.checks:
+        if denominator is None or not readout.lastResult.windows:
             return ""
         mark = "✓" if readout.lastResult.passed else "✗"
         return f" (denominator {mark} {readout.currentCheckName()})"
@@ -356,6 +356,7 @@ class CrismRatioWorkspace(QMainWindow):
             "lockColumn": self.lockCheck.isChecked(),
             "blandness": self.plots.readout.currentCheckName(),
             "blandnessLimits": self.plots.readout.limitOverrides(),
+            "blandnessExcludeCo2": self.plots.readout.co2Check.isChecked(),
             **plotLibrariesState(self.plots.ratioPlot),
         }
 
@@ -372,6 +373,9 @@ class CrismRatioWorkspace(QMainWindow):
         limits = state.get("blandnessLimits", {})
         if isinstance(limits, dict):
             self.plots.readout.setLimitOverrides(limits)
+        self.plots.readout.co2Check.setChecked(
+            bool(state.get("blandnessExcludeCo2", True))
+        )
         restorePlotLibraries(state, self.plots.ratioPlot)
 
 

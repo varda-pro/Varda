@@ -1,4 +1,5 @@
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from PyQt6.QtWidgets import QTableWidgetItem
 
@@ -80,14 +81,39 @@ def test_x_axes_are_linked(qtbot):
         np.testing.assert_allclose(plot.viewBox.viewRange()[0], [1200, 1500])
 
 
-def test_flat_spectrum_passes_every_check(qtbot):
+def test_flat_spectrum_passes_every_window(qtbot):
     readout = BlandnessReadout()
     qtbot.addWidget(readout)
     result = readout.setSpectrum(WAVELENGTHS, np.full(WAVELENGTHS.shape, 0.3))
     assert result.passed
-    assert readout.table.rowCount() == 2
-    assert all(cell(readout, r, 3).text() == "✓" for r in range(2))
+    assert readout.table.rowCount() == 2  # Generic's two windows
+    assert all(cell(readout, r, 5).text() == "✓" for r in range(2))
+    assert cell(readout, 0, 0).text() == "1.05–1.7 µm"
+    assert cell(readout, 0, 1).text() == "1050–1700"
     assert "bland" in readout.verdictLabel.text().lower()
+
+
+def _withBand(depth: float, center: float = 2310) -> np.ndarray:
+    return 0.3 * (1 - depth * np.exp(-0.5 * ((WAVELENGTHS - center) / 40) ** 2))
+
+
+def test_the_readout_shows_where_the_dip_is_and_how_deep(qtbot):
+    readout = BlandnessReadout()
+    qtbot.addWidget(readout)
+    readout.checkCombo.setCurrentText("Fe/Mg phyllosilicates")
+    result = readout.setSpectrum(WAVELENGTHS, _withBand(0.08))
+    assert not result.passed
+    rows = [cell(readout, r, 0).text() for r in range(readout.table.rowCount())]
+    row = rows.index("2.3 µm Fe/Mg-OH")
+    window = result.windows[row]
+    assert window.dipNm == pytest.approx(2310, abs=30)
+    assert (
+        cell(readout, row, 2).text()
+        == f"{100 * window.depth:.1f} % at {window.dipNm:.0f} nm"
+    )
+    assert cell(readout, row, 3).text() == "3.0 %"  # the floor: a quiet spectrum
+    assert cell(readout, row, 5).text() == "✗"
+    assert "2.3 µm Fe/Mg-OH" in readout.verdictLabel.text()
 
 
 def test_editing_a_limit_reevaluates(qtbot):
@@ -95,48 +121,71 @@ def test_editing_a_limit_reevaluates(qtbot):
     qtbot.addWidget(readout)
     sloped = 0.3 * (1 + 0.5 * (WAVELENGTHS - 1000) / 1000)
     readout.setSpectrum(WAVELENGTHS, sloped)
+    assert readout.lastResult.passed
     verdicts = []
     readout.sigVerdictChanged.connect(verdicts.append)
-    slopeRow = 1
-    assert cell(readout, slopeRow, 3).text() == "✗"
-    cell(readout, slopeRow, 2).setText("1.0")
-    assert cell(readout, slopeRow, 3).text() == "✓"
-    assert verdicts and verdicts[-1].passed
+    readout.editors["maxSlope"].setValue(0.2)
+    assert verdicts and not verdicts[-1].passed
+    assert readout.limitOverrides() == {"maxSlope": pytest.approx(0.2)}
+    readout.editors["floor"].setValue(5.0)  # percent
+    assert readout.limits().floor == pytest.approx(0.05)
+    readout.resetLimits()
+    assert readout.limitOverrides() == {}
+    assert readout.editors["maxSlope"].value() == pytest.approx(0.75)
+    assert readout.lastResult.passed
 
 
-def test_bad_limit_text_is_restored(qtbot):
+def test_limits_from_a_session_out_of_range_are_ignored(qtbot):
+    readout = BlandnessReadout()
+    qtbot.addWidget(readout)
+    readout.setLimitOverrides({"floor": 0.02, "maxSlope": -1, "Slope": 0.5})
+    assert readout.limitOverrides() == {"floor": 0.02}
+    assert readout.editors["floor"].value() == pytest.approx(2.0)
+
+
+def test_limits_are_kept_when_the_check_changes(qtbot):
     readout = BlandnessReadout()
     qtbot.addWidget(readout)
     readout.setSpectrum(WAVELENGTHS, np.full(WAVELENGTHS.shape, 0.3))
-    before = cell(readout, 0, 2).text()
-    cell(readout, 0, 2).setText("lots")
-    assert cell(readout, 0, 2).text() == before
-
-
-def test_preset_without_hypyrameter_says_so(qtbot):
-    def missing(spectrum, wavelengths, names):
-        raise ImportError("no HyPyRameter")
-
-    readout = BlandnessReadout(parameters=missing)
-    qtbot.addWidget(readout)
-    readout.setSpectrum(WAVELENGTHS, np.full(WAVELENGTHS.shape, 0.3))
+    readout.editors["noiseMultiple"].setValue(5.0)
     readout.checkCombo.setCurrentText("Olivine")
-    assert readout.currentCheckName() == "Olivine"
-    assert "needs HyPyRameter" in readout.verdictLabel.text()
-    assert readout.table.rowCount() == 0
+    assert readout.limits().noiseMultiple == 5.0
+    assert [w.window.name for w in readout.lastResult.windows] == [
+        "1 µm olivine",
+        "2 µm pyroxene",
+    ]
 
 
-def test_preset_limits_are_editable(qtbot):
-    values = {"OLINDEX3": 0.05, "LCPINDEX2": 0.0, "HCPINDEX2": 0.0}
-    readout = BlandnessReadout(
-        parameters=lambda s, w, names: np.array([values[n] for n in names])
-    )
+def test_the_co2_range_can_be_included(qtbot):
+    readout = BlandnessReadout()
     qtbot.addWidget(readout)
-    readout.setSpectrum(WAVELENGTHS, np.full(WAVELENGTHS.shape, 0.3))
-    readout.checkCombo.setCurrentText("Olivine")
+    co2 = _withBand(0.1, center=2030)
+    assert readout.setSpectrum(WAVELENGTHS, co2).passed
+    readout.co2Check.setChecked(False)
     assert not readout.lastResult.passed
-    cell(readout, 0, 2).setText("0.1")
-    assert readout.lastResult.passed
+    assert "1950–2100" not in readout.describe()
+
+
+def test_the_denominator_plot_marks_each_failing_windows_dip(qtbot):
+    panel = RatioPlotsPanel()
+    qtbot.addWidget(panel)
+    panel.readout.checkCombo.setCurrentText("Fe/Mg phyllosilicates")
+    panel.showComponents(components(1.0, denominator=_withBand(0.08)))
+    failing = [w for w in panel.readout.lastResult.windows if not w.passed]
+    assert [w.window.name for w in failing] == ["2.3 µm Fe/Mg-OH"]
+    regions = [i for i in panel.dipMarkers if isinstance(i, pg.LinearRegionItem)]
+    markers = [i for i in panel.dipMarkers if isinstance(i, pg.ScatterPlotItem)]
+    labels = [i for i in panel.dipMarkers if isinstance(i, pg.TextItem)]
+    assert len(regions) == len(markers) == len(labels) == 1
+    assert regions[0].getRegion() == (2120, 2400)
+    x, _ = markers[0].getData()
+    assert x[0] == pytest.approx(failing[0].dipNm)
+    assert labels[0].toPlainText().startswith("2.3 µm Fe/Mg-OH: ")
+    for item in panel.dipMarkers:
+        assert item in panel.denominatorPlot.plotItem.items
+    # a bland denominator clears them
+    panel.showComponents(components(1.0))
+    assert panel.dipMarkers == []
 
 
 @pytest.mark.parametrize("width", [640, 1280])
@@ -171,7 +220,7 @@ def test_without_wavelengths_the_readout_says_so(qtbot):
     qtbot.addWidget(panel)
     panel.showComponents(components(1.0))  # a verdict first, to see it replaced
     panel.showComponents(components(1.0, cube=image(wavelengths=None)))
-    assert panel.readout.lastResult.checks == ()
+    assert panel.readout.lastResult.windows == ()
     assert "wavelengths" in panel.readout.verdictLabel.text()
     assert panel.readout.table.rowCount() == 0
     np.testing.assert_allclose(

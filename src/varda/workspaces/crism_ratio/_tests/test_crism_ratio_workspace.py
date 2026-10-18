@@ -208,8 +208,8 @@ def _pair(workspace):
     tool(workspace).onPointerEvent(press(RIGHT, 31.5, 5.5))
 
 
-def test_s_saves_the_pair_as_rois_named_with_the_verdict(qtbot, pixelPair):
-    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+def test_s_saves_the_pair_as_rois_named_with_the_verdict(qtbot, spectralPair):
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
 
     key(workspace, Qt.Key.Key_S)
@@ -224,9 +224,9 @@ def test_s_saves_the_pair_as_rois_named_with_the_verdict(qtbot, pixelPair):
 
 
 def test_p_saves_the_numerator_pixel_as_a_point_named_with_the_verdict(
-    qtbot, pixelPair
+    qtbot, spectralPair
 ):
-    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
 
     key(workspace, Qt.Key.Key_P)
@@ -238,55 +238,72 @@ def test_p_saves_the_numerator_pixel_as_a_point_named_with_the_verdict(
     assert point.image == "data"
 
 
-def _editSlopeLimit(workspace, value: str) -> None:
-    readout = workspace.plots.readout
-    row = [c.name for c in readout.lastResult.checks].index("Slope")
-    item = readout.table.item(row, 2)
-    assert item is not None
-    item.setText(value)
+def _editSlopeLimit(workspace, value: float) -> None:
+    workspace.plots.readout.editors["maxSlope"].setValue(value)
 
 
-def test_s_puts_the_checks_values_and_limits_in_the_rois_description(qtbot, pixelPair):
-    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+@pytest.fixture
+def spectralPair():
+    """Images with enough bands (60, 1000-2500 nm) for every blandness window."""
+    return (
+        raster("browse", (30, 40), seed=1, bands=60),
+        raster("data", (30, 40), seed=2, bands=60),
+    )
+
+
+def test_s_puts_the_windows_values_and_limits_in_the_rois_description(
+    qtbot, spectralPair
+):
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
-    _editSlopeLimit(workspace, "0.5")
+    _editSlopeLimit(workspace, 0.5)
 
     key(workspace, Qt.Key.Key_S)
 
-    checks = workspace.plots.readout.lastResult.checks
+    result = workspace.plots.readout.lastResult
+    assert result.windows
     for fid in workspace.roiCollection.fids:
         description = workspace.roiCollection.getProperty(fid, "description")
-        assert "Generic" in description
-        for check in checks:
-            assert f"{check.name} {check.value:.4g}" in description
-            assert f"≤ {check.limit:.4g}" in description
-        assert "≤ 0.5 /µm (edited)" in description
+        assert "Generic check" in description
+        for w in result.windows:
+            assert f"{w.window.name} {w.window.lowNm:g}–{w.window.highNm:g} nm" in (
+                description
+            )
+            assert f"at {w.dipNm:.0f} nm" in description
+            assert f"limit {100 * w.depthLimit:.1f} %" in description
+        assert "|slope| ≤ 0.5 /µm (edited: slope)" in description
+        assert "max(3.0 %, 3 × noise)" in description
+        assert "excluded 1000–1050, 1950–2100, 2650–4000 nm" in description
 
 
-def test_p_puts_the_verdict_in_the_points_description(qtbot, pixelPair):
-    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+def test_p_puts_the_verdict_in_the_points_description(qtbot, spectralPair):
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
     key(workspace, Qt.Key.Key_P)
     (point,) = workspace.pointCollection.getAllPoints()
     assert point.description == workspace.plots.readout.describe()
-    assert "Absorption depth" in point.description
+    assert "1.05–1.7 µm" in point.description
 
 
-def test_the_session_keeps_edited_limits(qtbot, pixelPair):
-    browse, data = pixelPair
+def test_the_session_keeps_edited_limits_and_the_co2_choice(qtbot, spectralPair):
+    browse, data = spectralPair
     workspace = build(qtbot, browse, data, Link.PIXEL)
     _pair(workspace)
-    _editSlopeLimit(workspace, "0.5")
+    _editSlopeLimit(workspace, 0.5)
+    workspace.plots.readout.co2Check.setChecked(False)
     state = workspace.sessionState()
-    assert state["blandnessLimits"] == {"Slope": 0.5}
+    assert state["blandnessLimits"] == {"maxSlope": 0.5}
+    assert state["blandnessExcludeCo2"] is False
 
     copy = buildWorkspace("crism_ratio", [browse, data], [browse, data], state)
     assert isinstance(copy, CrismRatioWorkspace)
     qtbot.addWidget(copy)
-    assert copy.plots.readout.limitOverrides() == {"Slope": 0.5}
+    assert copy.plots.readout.limitOverrides() == {"maxSlope": 0.5}
+    assert not copy.plots.readout.co2Check.isChecked()
     _pair(copy)
-    slope = next(c for c in copy.plots.readout.lastResult.checks if c.name == "Slope")
-    assert slope.limit == 0.5
+    result = copy.plots.readout.lastResult
+    assert result.limits is not None and result.limits.maxSlope == 0.5
+    assert (1950.0, 2100.0) not in result.exclusions
 
 
 def test_the_managers_start_auto_hidden(qtbot, pixelPair):
@@ -442,21 +459,21 @@ def test_the_dialog_cannot_open_when_no_link_works(qtbot, monkeypatch):
 
 def test_a_micrometer_cube_gets_the_same_verdict_as_a_nanometer_cube(qtbot):
     browse = raster("browse", (30, 40), seed=1)
-    nm = raster("data", (30, 40), seed=2)
-    um = raster("data", (30, 40), seed=2, micrometers=True)
+    nm = raster("data", (30, 40), seed=2, bands=60)
+    um = raster("data", (30, 40), seed=2, bands=60, micrometers=True)
     verdicts = []
     for data in (nm, um):
         workspace = build(qtbot, browse, data, Link.PIXEL)
         _pair(workspace)
         verdicts.append(
             [
-                (c.name, round(c.value, 6))
-                for c in workspace.plots.readout.lastResult.checks
+                (w.window.name, round(w.depth, 6), round(w.dipNm, 3), round(w.slope, 6))
+                for w in workspace.plots.readout.lastResult.windows
             ]
         )
         x = workspace.plots.numeratorPlot.plots[0].data()[0]
-        np.testing.assert_allclose(x, np.linspace(1000, 2500, 6))
-    assert verdicts[0] == verdicts[1]
+        np.testing.assert_allclose(x, np.linspace(1000, 2500, 60))
+    assert verdicts[0] and verdicts[0] == verdicts[1]
 
 
 def test_p_without_a_denominator_adds_no_stale_verdict(qtbot, pixelPair):
