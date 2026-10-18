@@ -51,6 +51,21 @@ can alter results.
   missing values are never interpolated, counted or pooled. Saved, it
   carries a methods description in its header and a per-column table
   (`<name>.columns.csv`) beside it. See the new CRISM ratio cubes guide.
+- **Find Data: basemaps, feature names and Go to, for finding your way
+  around.** The map's **Basemap** now offers each body's global imagery
+  (Mercury, Venus, the Moon, Mars, Phobos, Ceres, Vesta, Io, Europa,
+  Ganymede, Callisto, Enceladus and Titan), chosen by default: a small
+  global image bundled with Varda, so it works offline, with sharper tiles
+  streamed from NASA's Solar System Treks as you zoom in (Equirectangular
+  only; polar views reproject the bundled image). Tiles are fetched in the
+  background, only for the view, and kept in a 200 MB cache
+  (`basemap-tiles` in Varda's cache folder). **Names** labels features with
+  their IAU names from the Gazetteer of Planetary Nomenclature (bundled),
+  large ones zoomed out and smaller ones as you zoom in, without overlap.
+  **Go to a feature…** completes on names and zooms to a view twice the
+  feature's diameter across. The map shows the imagery's and the names'
+  credits. Trek's Titan tiles are 180° off IAU longitudes, so Titan uses
+  only the bundled image, corrected. See *Finding data*.
 - **Spectral plots: pull a marker off the Y axis, and remove curves with
   the keyboard.** Dragging sideways off the Y axis pulls out a vertical
   marker that drops at the wavelength where you release it (released over

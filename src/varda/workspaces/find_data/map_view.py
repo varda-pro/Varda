@@ -1,4 +1,5 @@
-"""The find-data map: footprints over a graticule, a basemap image and vector
+"""The find-data map: footprints over a graticule, a basemap image (with
+sharper tiles over it as you zoom), the names of features and vector
 overlays, in equirectangular or polar stereographic (``projection``), with a
 box to search in. Click selects the footprints under the pointer, Shift adds
 to the selection, Cmd (Ctrl) removes from it, and Shift-drag adds every
@@ -11,10 +12,12 @@ from collections.abc import Sequence
 import numpy as np
 import pyqtgraph as pg
 import shapely
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsRectItem, QLabel, QVBoxLayout, QWidget
 
 from varda.catalogs.catalog import Product
+from varda.catalogs.gazetteer import Gazetteer, selectLabels
+from varda.common.ui import MutedLabel
 from varda.workspaces.find_data.projection import (
     Bounds,
     MapProjection,
@@ -28,6 +31,8 @@ AREA_PEN = pg.mkPen("#ff4fd8", width=2, style=Qt.PenStyle.DashLine)
 BAND_PEN = pg.mkPen("#ffd200", width=1, style=Qt.PenStyle.DashLine)
 GRATICULE_PEN = pg.mkPen((255, 255, 255, 70), width=1)
 OVERLAY_COLORS = ("#7CFC00", "#ff8c00", "#ff4040", "#c080ff", "#ffffff")
+NAME_COLOR = (255, 248, 220)
+NAME_FILL = (0, 0, 0, 120)
 
 # What a click or a box does to the selection
 REPLACE, ADD, REMOVE = "replace", "add", "remove"
@@ -103,6 +108,10 @@ class FootprintMap(QWidget):
         self._overlayLayers: list[list[shapely.Geometry]] = []
         self._overlays: list[pg.GraphicsObject] = []
         self._labels: list[pg.TextItem] = []
+        self._gazetteer: Gazetteer | None = None
+        self._namesShown = True
+        self._namePositions: tuple[np.ndarray, np.ndarray] | None = None
+        self._nameItems: list[pg.TextItem] = []  # reused as the view changes
         self.viewBox = MapViewBox()
         self.viewBox.sigBoxed.connect(self._onBox)
         self.plot = pg.PlotWidget(viewBox=self.viewBox)
@@ -111,6 +120,10 @@ class FootprintMap(QWidget):
         self.basemapItem = pg.ImageItem(axisOrder="row-major")
         self.basemapItem.setZValue(-10)
         self.plot.addItem(self.basemapItem)
+        # sharper tiles of the global imagery, over the bundled image
+        self.tilesItem = pg.ImageItem(axisOrder="row-major")
+        self.tilesItem.setZValue(-9)
+        self.plot.addItem(self.tilesItem)
         self.graticuleItem = pg.PlotCurveItem(pen=GRATICULE_PEN, connect="finite")
         self.graticuleItem.setZValue(-5)
         self.plot.addItem(self.graticuleItem)
@@ -129,15 +142,28 @@ class FootprintMap(QWidget):
         scene.sigMouseClicked.connect(self._onClick)
         scene.sigMouseMoved.connect(self._onMove)
         self.viewBox.sigRangeChanged.connect(lambda *_: self._drawGraticule())
+        self._namesTimer = QTimer(self)
+        self._namesTimer.setSingleShot(True)
+        self._namesTimer.setInterval(30)
+        self._namesTimer.timeout.connect(self._drawNames)
+        self.viewBox.sigRangeChanged.connect(lambda *_: self._namesTimer.start())
         self.pointer = QLabel()
         self.pointer.setToolTip(
             "Click selects footprints; Shift-click adds, Cmd-click (Ctrl-click) "
             "removes; Shift-drag adds every footprint in a box."
         )
+        # who made the imagery and the names shown
+        self.credit = MutedLabel()
+        self.credit.setWordWrap(True)
+        font = self.credit.font()
+        font.setPointSizeF(font.pointSizeF() * 0.85)
+        self.credit.setFont(font)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.plot, 1)
         layout.addWidget(self.pointer)
+        layout.addWidget(self.credit)
+        self.credit.hide()
         self._showAxes()
         self.showWhole()
 
@@ -154,6 +180,8 @@ class FootprintMap(QWidget):
         view, area = self.viewBounds(), self.areaBounds()
         self.projector = Projector(projection, body)
         self.basemapItem.clear()
+        self.tilesItem.clear()
+        self._namePositions = None
         self._showAxes()
         self.setFootprints(self._products)
         self.setSelected(self._selectedProducts)
@@ -269,6 +297,81 @@ class FootprintMap(QWidget):
         # rows run north to south; the plot's y runs up
         self.basemapItem.setImage(rgba[::-1], autoLevels=False)
         self.basemapItem.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+    def setTiles(self, rgba: np.ndarray | None, bounds: Bounds | None = None) -> None:
+        """Sharper tiles over the basemap: RGBA (rows north to south, clear
+        where a tile is missing) covering longitude-latitude ``bounds``."""
+        if rgba is None or bounds is None:
+            self.tilesItem.clear()
+            return
+        x0, y0, x1, y1 = bounds
+        self.tilesItem.setImage(rgba[::-1], autoLevels=False)
+        self.tilesItem.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+    def setCredit(self, text: str) -> None:
+        self.credit.setText(text)
+        self.credit.setVisible(bool(text))
+
+    # --- names ---------------------------------------------------------------------------
+
+    def setNames(self, gazetteer: Gazetteer | None) -> None:
+        """Label ``gazetteer``'s features (None for no names)."""
+        self._gazetteer = gazetteer
+        self._namePositions = None
+        self._drawNames()
+
+    def showNames(self, shown: bool) -> None:
+        self._namesShown = shown
+        self._drawNames()
+
+    def shownNames(self) -> list[str]:
+        """The names labeled now."""
+        return [item.toPlainText() for item in self._nameItems if item.isVisible()]
+
+    def _positions(self, gazetteer: Gazetteer) -> tuple[np.ndarray, np.ndarray]:
+        """The features in map coordinates (NaN in a polar view's other
+        hemisphere)."""
+        if self._namePositions is None:
+            x, y = self.projector.forward(gazetteer.longitude, gazetteer.latitude)
+            if self.projector.polar:
+                away = (gazetteer.latitude < 0) == self.projector.north
+                x, y = np.where(away, np.nan, x), np.where(away, np.nan, y)
+            self._namePositions = (x, y)
+        return self._namePositions
+
+    def _drawNames(self) -> None:
+        gazetteer = self._gazetteer
+        chosen: list[int] = []
+        if gazetteer is not None and self._namesShown and len(gazetteer):
+            view = self.mapView()
+            widthPx = self.viewBox.width()
+            if widthPx > 0 and view[2] > view[0]:
+                kmPerUnit = 0.001 if self.projector.polar else gazetteer.kmPerDegree
+                x, y = self._positions(gazetteer)
+                chosen = selectLabels(
+                    gazetteer, x, y, view, widthPx / (view[2] - view[0]), kmPerUnit
+                )
+        while len(self._nameItems) < len(chosen):
+            item = pg.TextItem(color=NAME_COLOR, fill=NAME_FILL, anchor=(0.5, 0.5))
+            item.setZValue(8)
+            self.viewBox.addItem(item, ignoreBounds=True)
+            self._nameItems.append(item)
+        for item, index in zip(self._nameItems, chosen):
+            assert gazetteer is not None
+            x, y = self._positions(gazetteer)
+            item.setText(gazetteer.names[index])
+            item.setToolTip(
+                f"{gazetteer.names[index]}: {gazetteer.kinds[index]}"
+                + (
+                    f", {gazetteer.diameter[index]:g} km"
+                    if gazetteer.diameter[index] > 0
+                    else ""
+                )
+            )
+            item.setPos(float(x[index]), float(y[index]))
+            item.setVisible(True)
+        for item in self._nameItems[len(chosen) :]:
+            item.setVisible(False)
 
     def addOverlay(self, geometries: Sequence[shapely.Geometry]) -> None:
         """Longitude-latitude geometries, drawn in the next color."""

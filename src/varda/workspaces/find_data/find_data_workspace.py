@@ -8,18 +8,27 @@ from collections.abc import MutableSequence
 from datetime import datetime, time, timezone
 
 import geopandas as gpd
+import numpy as np
 import PyQt6Ads as ads
 import shapely
-from PyQt6.QtCore import QDate, QModelIndex, QSortFilterProxyModel, Qt
+from PyQt6.QtCore import (
+    QDate,
+    QModelIndex,
+    QSortFilterProxyModel,
+    QStringListModel,
+    Qt,
+)
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QCompleter,
     QDateEdit,
     QFileDialog,
     QFormLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QSizePolicy,
@@ -30,6 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.catalogs.basemaps import BasemapLayer, bundledImage, layersFor
 from varda.catalogs.bodies import toLongitudeLatitude
 from varda.catalogs.catalog import (
     Catalog,
@@ -41,6 +51,12 @@ from varda.catalogs.catalog import (
 )
 from varda.catalogs.credentials import hasCredentials, loadCredentials
 from varda.catalogs.footprints import FootprintFileCatalog
+from varda.catalogs.gazetteer import (
+    GAZETTEER_CREDIT,
+    featureView,
+    loadGazetteer,
+    search,
+)
 from varda.catalogs.http import fetchBytes
 from varda.catalogs.registry import availableCatalogs
 from varda.catalogs.stac import StacCatalog
@@ -57,7 +73,14 @@ from varda.common.ui import (
 )
 from varda.image_loading.image_loading_service import ImageLoadingService
 from varda.utilities.background import runInBackground
-from varda.workspaces.find_data.basemap import basemap, imageBody, imageBounds
+from varda.workspaces.find_data.basemap import (
+    MapFrame,
+    basemap,
+    globalBasemap,
+    imageBody,
+    imageBounds,
+    imageMapBounds,
+)
 from varda.workspaces.find_data.catalog_dialogs import (
     CredentialsDialog,
     StacApisDialog,
@@ -66,7 +89,8 @@ from varda.workspaces.find_data.catalog_dialogs import (
 from varda.workspaces.find_data.collection_picker import CollectionCombo
 from varda.workspaces.find_data.downloads_panel import DownloadsPanel
 from varda.workspaces.find_data.map_view import ADD, REMOVE, FootprintMap
-from varda.workspaces.find_data.projection import MapProjection
+from varda.workspaces.find_data.imagery import ImageryStreamer
+from varda.workspaces.find_data.projection import Bounds, MapProjection
 from varda.workspaces.find_data.results_model import SORT_ROLE, ResultsModel
 
 AREA_VIEW, AREA_BOX, AREA_IMAGE = "Map view", "Box on the map", "An image's footprint"
@@ -116,9 +140,12 @@ class FindDataWorkspace(QMainWindow):
         self._resultsCatalog: Catalog | None = None  # the catalog that found them
         self._nextPage: object | None = None
         self.overlayPaths: list[str] = []
+        self._pendingLayer: str | None = None  # a session's basemap layer id
+        self._basemapRequest = 0  # the latest basemap drawing asked for
 
         self.map = FootprintMap()
         self.map.sigSelect.connect(self._onMapSelect)
+        self.streamer = ImageryStreamer(self.map, self)
         self.results = ResultsModel(self)
         self.proxy = SelectedFilter(self)
         self.proxy.setSourceModel(self.results)
@@ -143,6 +170,9 @@ class FindDataWorkspace(QMainWindow):
         self.downloads.sigOpen.connect(self.openImages)
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+        self.streamer.sigStatus.connect(
+            lambda text: self.status.showMessage(text, 8000)
+        )
         self._buildDocks()
         self._onCatalog()
 
@@ -243,9 +273,35 @@ class FindDataWorkspace(QMainWindow):
         self.projectionBox.currentIndexChanged.connect(lambda _: self._onProjection())
         self.basemapBox = ElidingComboBox()
         self.basemapBox.setToolTip(
-            "A loaded, georeferenced image of the same body under the footprints"
+            "Global imagery of the body (bundled, with sharper tiles from NASA's "
+            "Solar System Treks as you zoom in), or a loaded, georeferenced "
+            "image of the same body"
         )
         self.basemapBox.currentIndexChanged.connect(lambda _: self._onBasemap())
+        self.basemapBox.activated.connect(lambda _: self._forgetSessionLayer())
+        self.namesCheck = QCheckBox("Names")
+        self.namesCheck.setChecked(True)
+        self.namesCheck.setToolTip(
+            "Label features with their IAU names: large ones zoomed out, "
+            "smaller ones as you zoom in"
+        )
+        self.namesCheck.toggled.connect(self._onNamesShown)
+        self.goTo = QLineEdit()
+        self.goTo.setPlaceholderText("Go to a feature…")
+        self.goTo.setClearButtonEnabled(True)
+        self.goTo.setMinimumWidth(160)
+        self.goTo.setToolTip(
+            "Type a feature's name (Gale, Valles Marineris, Tycho, …) and press "
+            "Enter or pick it from the list: the map zooms to it"
+        )
+        self.goToNames = QStringListModel(self)
+        completer = QCompleter(self.goToNames, self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setMaxVisibleItems(12)
+        completer.activated.connect(self.goToFeature)
+        self.goTo.setCompleter(completer)
+        self.goTo.returnPressed.connect(lambda: self.goToFeature(self.goTo.text()))
         overlay = QPushButton("Add Overlay…")
         overlay.setToolTip(
             "A vector file (GeoJSON, shapefile, GeoPackage): a traverse, a geologic map, …"
@@ -272,6 +328,8 @@ class FindDataWorkspace(QMainWindow):
                     .withWidget(self.basemapBox)
                 )
             )
+            .withWidget(self.namesCheck)
+            .withWidget(self.goTo)
             .withWidget(overlay)
             .withWidget(clear)
             .withWidget(whole)
@@ -428,6 +486,10 @@ class FindDataWorkspace(QMainWindow):
         body = self.body()
         self.bodyLabel.setText(f"<b>{body}</b>" if body else "")
         self.map.setProjection(self.projectionBox.currentData(), body)
+        gazetteer = loadGazetteer(body) if body else None
+        self.map.setNames(gazetteer)
+        self.goToNames.setStringList(list(gazetteer.names) if gazetteer else [])
+        self.goTo.setEnabled(gazetteer is not None)
         self._refreshImageLists(keep=False)
         self._onArea()
         self._onBasemap()
@@ -446,6 +508,14 @@ class FindDataWorkspace(QMainWindow):
             box.blockSignals(True)
             box.clear()
         self.basemapBox.addItem("None", None)
+        layers = layersFor(body) if body else []
+        for layer in layers:
+            self.basemapBox.addItem(layer.title, layer)
+            self.basemapBox.setItemData(
+                self.basemapBox.count() - 1,
+                f"{layer.title}: {layer.fullCredit}",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         for image in images:
             self.basemapBox.addItem(image.name, image)
             self.areaImage.addItem(image.name, image)
@@ -453,6 +523,16 @@ class FindDataWorkspace(QMainWindow):
             index = next(
                 (i for i in range(box.count()) if box.itemData(i) is image), -1
             )
+            if box is self.basemapBox and not keep and layers:
+                # the body's global imagery, or what a session chose (kept
+                # until the user picks: collections can be listed twice)
+                pending = self._pendingLayer
+                if pending is None:
+                    index = 1
+                elif pending == "":  # the session's basemap was None
+                    index = 0
+                else:
+                    index = max(self._layerIndex(pending), 1)
             if index >= 0:
                 box.setCurrentIndex(index)
             box.blockSignals(False)
@@ -463,6 +543,22 @@ class FindDataWorkspace(QMainWindow):
                 and self.basemapBox.currentData() is None
             ):
                 self._onBasemap()  # its image was closed
+
+    def _forgetSessionLayer(self) -> None:
+        self._pendingLayer = None
+
+    def _layerIndex(self, layerId: str) -> int:
+        """The basemap list's row for a layer id (-1 if it's not there)."""
+        box = self.basemapBox
+        return next(
+            (
+                i
+                for i in range(box.count())
+                if isinstance(layer := box.itemData(i), BasemapLayer)
+                and layer.layerId == layerId
+            ),
+            -1,
+        )
 
     def _addFootprintFile(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -715,15 +811,40 @@ class FindDataWorkspace(QMainWindow):
         self._onBasemap()
 
     def _onBasemap(self) -> None:
+        # a newer choice drops the result of any drawing still under way
+        self._basemapRequest += 1
+        request = self._basemapRequest
         image = self.basemapBox.currentData()
+        layer = image if isinstance(image, BasemapLayer) else None
+        self.streamer.setLayer(layer)
+        self._showCredit()
         if image is None:
             self.map.setBasemap(None)
             return
         projector = self.map.projector
+        # pyproj objects stay on this thread: workers get plain values
+        frame = MapFrame.of(projector)
+        if layer is not None:
+            runInBackground(
+                lambda: globalBasemap(bundledImage(layer), frame),
+                lambda result: self._showGlobalBasemap(request, *result),
+                lambda error: self.status.showMessage(
+                    f"The basemap couldn't be drawn: {error}", 8000
+                ),
+                description="Drawing a global basemap",
+                owner=self,
+            )
+            return
+        try:
+            bounds = imageMapBounds(image, projector)
+        except ValueError as error:
+            self.map.setBasemap(None)
+            self.status.showMessage(f"The basemap couldn't be drawn: {error}", 8000)
+            return
         self.status.showMessage(f"Reprojecting {image.name} for the map…")
         runInBackground(
-            lambda: basemap(image, projector),
-            lambda result: self._showBasemap(projector, *result),
+            lambda: basemap(image, frame.crs, bounds),
+            lambda result: self._showBasemap(request, *result),
             lambda error: self.status.showMessage(
                 f"The basemap couldn't be drawn: {error}", 8000
             ),
@@ -731,13 +852,55 @@ class FindDataWorkspace(QMainWindow):
             owner=self,
         )
 
-    def _showBasemap(self, projector, rgba, bounds) -> None:
-        if projector is not self.map.projector:
-            return  # drawn for a projection the map has left
+    def _showBasemap(self, request: int, rgba: np.ndarray, bounds: Bounds) -> None:
+        if request != self._basemapRequest:
+            return  # drawn for a choice or projection the map has left
         self.map.setBasemap(rgba, bounds)
         self.status.clearMessage()
         if not self.results.products:
             self.map.zoomToMap(bounds, padding=0.05)
+
+    def _showGlobalBasemap(
+        self, request: int, rgba: np.ndarray, bounds: Bounds
+    ) -> None:
+        if request == self._basemapRequest:  # still the choice and projection
+            self.map.setBasemap(rgba, bounds)
+
+    def _showCredit(self) -> None:
+        """The active imagery layer's credit, and the names' when shown."""
+        layer = self.basemapBox.currentData()
+        parts = []
+        if isinstance(layer, BasemapLayer):
+            parts.append(f"Imagery: {layer.title}, {layer.fullCredit}.")
+        if self.namesCheck.isChecked() and self.goTo.isEnabled():
+            parts.append(f"{GAZETTEER_CREDIT}.")
+        self.map.setCredit(" ".join(parts))
+
+    def _onNamesShown(self, shown: bool) -> None:
+        self.map.showNames(shown)
+        self._showCredit()
+
+    def goToFeature(self, name: str) -> bool:
+        """Zoom to the body's feature best matching ``name`` (an exact name,
+        else the largest starting with it, else containing it)."""
+        gazetteer = loadGazetteer(self.body()) if self.body() else None
+        hits = search(gazetteer, name, limit=1) if gazetteer is not None else []
+        if gazetteer is None or not hits:
+            if name.strip():
+                self.status.showMessage(f"No feature called {name.strip()!r}.", 5000)
+            return False
+        found = gazetteer.names[hits[0]]
+        view = featureView(gazetteer, hits[0])
+        if self.map.projector.mapBounds(view) is None:
+            self.status.showMessage(
+                f"{found} is in the other hemisphere; choose Equirectangular "
+                "or the other polar view.",
+                8000,
+            )
+            return False
+        self.map.zoomTo(view, padding=0)
+        self.status.showMessage(f"{found} ({gazetteer.kinds[hits[0]]})", 5000)
+        return True
 
     def _chooseOverlay(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -777,6 +940,10 @@ class FindDataWorkspace(QMainWindow):
             "view": list(self.map.viewBounds()),
             "footprintFiles": list(FootprintFileCatalog.paths),
             "overlays": list(self.overlayPaths),
+            "basemapLayer": layer.layerId
+            if isinstance(layer := self.basemapBox.currentData(), BasemapLayer)
+            else "",
+            "names": self.namesCheck.isChecked(),
         }
 
     def restoreSessionState(self, state: dict) -> None:
@@ -788,6 +955,8 @@ class FindDataWorkspace(QMainWindow):
             self.catalogBox.blockSignals(True)
             self.catalogBox.setCurrentIndex(index)
             self.catalogBox.blockSignals(False)
+        if "basemapLayer" in state:  # chosen once the collection's body is known
+            self._pendingLayer = state["basemapLayer"]
         projection = MapProjection.__members__.get(state.get("projection", ""))
         if projection is not None:
             self.projectionBox.setCurrentIndex(self.projectionBox.findData(projection))
@@ -800,3 +969,4 @@ class FindDataWorkspace(QMainWindow):
             self.map.zoomTo(tuple(state["view"]), padding=0)
         for path in state.get("overlays", []):
             self.addOverlay(path)
+        self.namesCheck.setChecked(state.get("names", True))
