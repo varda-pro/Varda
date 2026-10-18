@@ -86,6 +86,23 @@ To check that an installation works, run `uv run varda --self-test` (or
 `Varda --self-test` for a downloaded build). It opens, reads and writes test
 images, renders one and runs two analyses, then reports each check.
 
+## Troubleshooting
+
+### Planetary coordinate systems fail with conda or another GIS installed
+
+If a shell with conda (or another GDAL/PROJ installation) active starts
+Varda, it can export `PROJ_DATA`, `PROJ_LIB` or `GDAL_DATA` pointing at that
+installation's data. An older PROJ database has no `IAU_2015` codes, so images
+on other bodies fail with a coordinate system error. At startup Varda checks
+these variables: when `PROJ_DATA`/`PROJ_LIB` names a `proj.db` whose layout
+version (the `DATABASE.LAYOUT.VERSION` rows) is older than the one bundled
+with Varda's rasterio, or that lacks the `IAU_2015` authority, it points
+`PROJ_DATA` at the bundled data instead. A `GDAL_DATA` outside Varda that is
+missing GDAL's schema files is replaced by the bundled folder in the same way.
+Anything usable is left alone, and each override is logged as one INFO line
+(it is logged before the log file opens, so it is not in the file). To keep your own settings regardless, set `VARDA_KEEP_PROJ_DATA=1`
+before starting Varda.
+
 ## Memory
 
 ### Open images

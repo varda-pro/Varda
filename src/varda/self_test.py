@@ -191,6 +191,9 @@ def _coordinateSystems() -> str:
     # PROJ's IAU_2015 authority is bundled: bodies are found by their codes
     vesta = identifyBody("IAU_2015:200000400")
     assert vesta.body is not None and vesta.body.name == "Vesta", vesta.evidence
+    # rasterio's GDAL (not only pyproj) must see IAU_2015 too: an old PROJ_DATA
+    # from another installation fails here
+    assert CRS.from_user_input("IAU_2015:49900").to_wkt()
     return f"EPSG:{CRS_EPSG} -> ({lon:.3f}, {lat:.3f}), {vesta.evidence} is Vesta"
 
 
