@@ -17,7 +17,6 @@ import logging
 from collections.abc import MutableSequence, Sequence
 
 import PyQt6Ads as ads
-from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWidgets import (
@@ -32,6 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
 from varda.common.parameter_widgets import groupWidget
@@ -191,14 +191,13 @@ class CrismRatioWorkspace(QMainWindow):
         status.addPermanentWidget(self.lockStatus)
         self._refreshLock()
         # a geometry file chosen here or anywhere else enables the lock at once
-        self.data.sigMetadataChanged.connect(self._refreshLock)  # held weakly
+        # the image outlives the workspace
+        connectWhileAlive(self.data.sigMetadataChanged, self._refreshLock, self)
 
     def _refreshLock(self) -> None:
         """Enable the lock when the I/F cube's detector columns are known
         (and turn it on when it becomes available); otherwise say why and
         offer to choose the geometry file."""
-        if sip.isdeleted(self):  # the image outlived the workspace
-            return
         wasAvailable = bool(self.columnSource)
         geometry = columnGeometryFor(self.data)
         self.columnSource = _sourceOf(geometry, self.data)
