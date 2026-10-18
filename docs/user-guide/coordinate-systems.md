@@ -48,6 +48,12 @@ The group also shows:
   a methods section or another program. The WKT is the authoritative record;
   the line above summarizes it.
 
+The pixel readout in the image views uses the same description: its
+latitude and longitude end with the body and latitude type, e.g.
+`lat 18.40312° N  lon 77.45120° E  (Mars, planetocentric)`, longitudes are
+followed by E or W as the CRS counts them, and a 0..360 image reads
+"(0–360)". Map coordinates are shown as `xy` in the CRS's units.
+
 An image without a CRS shows **No coordinate system (pixel coordinates)**:
 Varda works in pixels and doesn't measure in meters. Two other cases:
 
