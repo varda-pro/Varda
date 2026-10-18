@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from collections.abc import Iterable
 from pathlib import Path
 
 from app_model.types import Action, MenuRule, StandardKeyBinding
@@ -12,6 +12,8 @@ from varda.context_keys import EXPR_HAS_IMAGES
 from varda.image_loading import ImageLoadingService
 from varda.image_loading.export_image_dialog import ExportImageDialog
 from varda.maingui import MainGUI
+from varda.common.entities import VardaRaster
+from varda.package_extraction import cleanExtractions, extractPackage
 from varda.project_package import (
     capturePackage,
     formatBytes,
@@ -22,7 +24,6 @@ from varda.session import (
     BUNDLE_SUFFIX,
     SESSION_FILE_FILTER,
     captureSession,
-    openSessionBundle,
     readSession,
     writeSession,
 )
@@ -36,15 +37,26 @@ BUNDLE_FILE_FILTER = f"Packaged Varda project (*{BUNDLE_SUFFIX})"
 OPEN_SESSION_FILE_FILTER = f"Varda sessions (*.varda *{BUNDLE_SUFFIX})"
 
 
-def _bundleFolder(bundle: Path) -> Path:
-    """Where an opened bundle is extracted: Varda's data folder, one per open."""
-    root = Path(
+def _appDataRoot() -> Path:
+    return Path(
         QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.AppLocalDataLocation
         )
     )
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return root / "sessions" / f"{bundle.name.removesuffix(BUNDLE_SUFFIX)}-{stamp}"
+
+
+def cleanOldExtractions(
+    images: Iterable[VardaRaster], keep: Path | None = None
+) -> None:
+    """Remove the extracted packages nothing uses: not the autosave's, not the
+    open images', not ``keep``."""
+    inUse = [i.filePath for i in images if i.filePath]
+    try:
+        cleanExtractions(
+            _appDataRoot(), defaultAutosavePath(), inUse + ([keep] if keep else [])
+        )
+    except OSError as error:
+        logger.warning("Cleaning old extracted packages failed: %s", error)
 
 
 def exportImage(images: ProjectImages, mainGui: MainGUI) -> None:
@@ -166,7 +178,8 @@ def restoreLastSession(images: ProjectImages, mainGui: MainGUI) -> None:
 def _restoreSession(path: Path, images: ProjectImages, mainGui: MainGUI) -> None:
     try:
         if path.name.lower().endswith(".zip"):
-            path = openSessionBundle(path, _bundleFolder(path))
+            path = extractPackage(path, _appDataRoot())
+            cleanOldExtractions(images, keep=path.parent)
         state = readSession(path)
     except (OSError, ValueError, KeyError) as error:
         QMessageBox.critical(mainGui, "Cannot open session", str(error))

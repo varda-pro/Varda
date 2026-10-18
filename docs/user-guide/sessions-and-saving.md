@@ -77,6 +77,31 @@ Writing happens in the background, with its progress shown. The files are
 compressed lightly: the four MISE example products (352 MB) package to
 166 MB in a few seconds.
 
+### Opening a package
+
+Opening a `.varda.zip` unpacks it into Varda's app-data folder, in
+`sessions/<package name>-<key>` (macOS: `~/Library/Application Support/Varda`;
+Windows: `%LOCALAPPDATA%\Varda`; Linux: `~/.local/share/Varda`). The key
+comes from the package's `manifest.json` (a hash of it, so it identifies the
+exact data), or from the package's path, size and modification time if it has
+none.
+
+- **Reopening reuses the folder.** The same, unchanged package is unpacked
+  only once; a marker file written after the last file says the unpacking
+  finished, and an interrupted one is redone. A changed package gets a new
+  folder.
+- **Superseded copies are removed.** At startup and after opening a
+  package, Varda deletes older unpacked copies of the same package name. The
+  newest copy is always kept, as is any copy that the autosave or an open
+  image uses (the removals are in the log). A package's only copy is never
+  removed, since a session you saved elsewhere may point into it. If Varda
+  can't read the autosave, it removes nothing. It only touches folders it
+  made inside `sessions/`.
+- **It checks the disk first.** If the package's unpacked size (plus a
+  margin) won't fit, Varda says so and doesn't start. Unpacked data is a full
+  copy, so a 5 GB package takes about 5 GB while it's in use.
+- To reclaim the space at once, close the project and restart Varda.
+
 ## Saving results
 
 Every Processing result joins the project's image list. Tick **Save result to

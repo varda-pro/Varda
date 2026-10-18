@@ -52,6 +52,11 @@ can alter results.
 
 ### Fixed
 
+- **Opening a packaged project no longer fills the disk.** Every open of a
+  `.varda.zip` unpacked a new full copy and kept it forever. Varda now unpacks
+  a package once and reuses that folder, removes unpacked packages nothing uses
+  (at startup and after opening one), and refuses to unpack when the disk lacks
+  the room.
 - **Varda no longer slows down as more images are open.** The image list
   draws each image from a small thumbnail made once (from a sample of its
   pixels, and again after its metadata is edited) instead of rendering every
