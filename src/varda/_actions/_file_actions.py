@@ -257,7 +257,7 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.exit",
         title="Exit",
-        icon="fa6-solid:close",
+        icon="fa6-solid:xmark",
         callback=exitApp,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_EXIT, order=1)],
         keybindings=[StandardKeyBinding.Quit.to_keybinding_rule()],
