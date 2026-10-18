@@ -3,8 +3,10 @@
 A browse image (usually a CRISM summary-parameter product, or any image
 co-registered to the scene) is navigated on the left; the I/F cube is on the
 right. Ctrl/Cmd+click a numerator box and a denominator box on either view:
-the spectra are always measured on the I/F cube, and the numerator, the
-denominator (with a blandness verdict) and the ratio are plotted. With column
+the spectra are always measured on the I/F cube; the numerator and the
+denominator are plotted together, the ratio beside them, and the denominator's
+blandness verdict in a strip below. Every panel is a dock, and where they are
+is kept with the session. With column
 lock on, each new numerator moves the denominator into its sensor column.
 S saves the pair as ROIs, P the numerator pixel as a point, both named with
 the verdict and described with every check's value and limit.
@@ -17,25 +19,38 @@ import logging
 from collections.abc import MutableSequence, Sequence
 
 import PyQt6Ads as ads
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QStandardItemModel
+from PyQt6.QtCore import QByteArray, QSize, QTimer
+from PyQt6.QtGui import QShowEvent, QStandardItemModel
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
+    QSplitter,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
-from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
-from varda.common.parameter_widgets import groupWidget
-from varda.common.ui import ElidingComboBox, MutedLabel, VardaDockWidget
+from varda.common.parameter_widgets import (
+    IntParameterWidget,
+    connectWhileAlive,
+    parameterWidget,
+)
+from varda.common.ui import (
+    ElidingComboBox,
+    FlowLayout,
+    PanelScrollArea,
+    VardaDockWidget,
+)
 from varda.image_loading.crism_geometry import (
     IMAGE_COLUMNS,
     ColumnGeometry,
@@ -63,7 +78,7 @@ from varda.points.point_manager_widget import PointManagerWidget
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_manager_widget import ROIManagerWidget
 from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
-from varda.workspaces.crism_ratio.ratio_plots import RatioPlotsPanel
+from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
 from varda.workspaces.linked_images.linked_images_workspace import ViewGroupLink
 from varda.workspaces.linked_images.linking import Link, linkWarnings
 from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
@@ -76,6 +91,11 @@ from varda.workspaces.ratio_explorer import (
 logger = logging.getLogger(__name__)
 
 LINK_LABELS = {Link.PIXEL: "Pixel match", Link.MAP: "Map link"}
+KEYS_HINT = (
+    "Ctrl/⌘+left-click: numerator box · Ctrl/⌘+right-click: denominator box "
+    "(on either view) · S: save the pair as ROIs · P: save the numerator pixel "
+    "as a point · Esc: clear"
+)
 
 
 def columnSource(image: VardaRaster) -> str:
@@ -94,6 +114,34 @@ def hasBackplane(image: VardaRaster) -> bool:
     """Whether the image's detector columns are known (a CRISM backplane, or
     an unprojected CRISM cube's own columns)."""
     return bool(columnSource(image))
+
+
+def _row(*widgets: QWidget) -> QWidget:
+    """``widgets`` side by side, kept together."""
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    for widget in widgets:
+        layout.addWidget(widget)
+    return row
+
+
+class _StripScrollArea(PanelScrollArea):
+    """A strip a row or two tall (the controls, the blandness readout): its
+    dock can be as short as its contents, not a scroll area's usual
+    minimum; it scrolls when squeezed further."""
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), min(hint.height(), self.neededHeight(self.width())))
+
+    def neededHeight(self, width: int) -> int:
+        """The panel's height at ``width`` (its minimum width when 0)."""
+        panel = self.panel
+        width = max(width, panel.minimumSizeHint().width())
+        needed = panel.heightForWidth(width) if panel.hasHeightForWidth() else -1
+        return max(needed, panel.minimumSizeHint().height()) + 2 * self.frameWidth()
 
 
 class _NoSpectrumPlots:
@@ -155,8 +203,8 @@ class CrismRatioWorkspace(QMainWindow):
         self.pointManager = PointManagerWidget(self.pointCollection, parent=self)
 
         self.config = RatioExplorerConfig()
-        self.plots = RatioPlotsPanel()
-        self.lockCheck = QCheckBox("Lock denominator to the numerator's sensor column")
+        self.plots = RatioPlots(self)
+        self.lockCheck = QCheckBox("Lock to sensor column")
         self.lockStatus = QLabel()
         self._initLock()
         self.controller = RatioExplorerController(
@@ -207,7 +255,8 @@ class CrismRatioWorkspace(QMainWindow):
             self.lockCheck.setChecked(available)
         if not available:
             self.lockCheck.setToolTip(
-                f"No CRISM geometry file with detector columns (the IN file, "
+                "Lock the denominator to the numerator's sensor column: "
+                "unavailable. No CRISM geometry file with detector columns (the IN file, "
                 f"with an IR Sample band) was found beside {self.data.name} or "
                 "the file it was made from, and it is not an unprojected CRISM "
                 "cube (no map projection, 640, 320, 128 or 64 columns), so the "
@@ -217,6 +266,7 @@ class CrismRatioWorkspace(QMainWindow):
         else:
             route = f" ({geometry.route})" if geometry and geometry.route else ""
             self.lockCheck.setToolTip(
+                "Lock the denominator to the numerator's sensor column. "
                 f"Detector columns from {self.columnSource}{route}"
             )
         self.chooseGeometryButton.setText(
@@ -267,20 +317,45 @@ class CrismRatioWorkspace(QMainWindow):
         return manager
 
     def _controls(self) -> QWidget:
-        hint = MutedLabel(
-            "Ctrl/⌘+left-click: numerator · Ctrl/⌘+right-click: denominator · "
-            "S: save as ROIs · P: save numerator pixel as a point · Esc: clear"
+        """One wrapping row: the box size, the column lock, the geometry
+        file, and the keys behind a "?"."""
+        box = []
+        for param in (self.config.boxWidth, self.config.boxHeight):
+            editor = parameterWidget(param)
+            assert isinstance(editor, IntParameterWidget)
+            if editor.slider is not None:
+                editor.slider.hide()
+            editor.spinBox.setToolTip(param.description)
+            box.append(editor)
+        if box[0].unitLabel is not None:
+            box[0].unitLabel.setText("×")  # Box [w] × [h] px
+        self.boxWidthBox, self.boxHeightBox = box[0].spinBox, box[1].spinBox
+        self.chooseGeometryButton.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
         )
-        hint.setWordWrap(True)
+        self.keysButton = QToolButton()
+        self.keysButton.setText("?")
+        self.keysButton.setToolTip(KEYS_HINT)
+        self.keysButton.clicked.connect(self._showKeys)
         controls = QWidget()
-        layout = QVBoxLayout(controls)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(groupWidget(self.config))
-        layout.addWidget(self.lockCheck)
-        layout.addWidget(self.chooseGeometryButton, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(hint)
-        layout.addWidget(self.plots, 1)
+        row = FlowLayout(controls, margins=4)
+        for widget in (
+            _row(QLabel("Box"), *box),
+            # a check box in a plain row: a flow layout gives a macOS check
+            # box 2 px less than its text needs
+            _row(self.lockCheck),
+            self.chooseGeometryButton,
+            self.keysButton,
+        ):
+            row.addWidget(widget)
         return controls
+
+    def _showKeys(self) -> None:
+        QToolTip.showText(
+            self.keysButton.mapToGlobal(self.keysButton.rect().bottomLeft()),
+            KEYS_HINT,
+            self.keysButton,
+        )
 
     def _arrange(self) -> None:
         self.dockManager = ads.CDockManager(self)
@@ -293,8 +368,28 @@ class CrismRatioWorkspace(QMainWindow):
         self.dataDock = VardaDockWidget(f"I/F: {self.data.name}").withWidget(
             self.dataView
         )
-        self.plotsDock = VardaDockWidget("Ratio Plots").withWidget(self._controls())
-        for dock in (self.browseDock, self.dataDock):  # the views stay in the window
+        self.controlsDock = VardaDockWidget("Ratio Controls").withWidget(
+            _StripScrollArea(self._controls())
+        )
+        self.spectraDock = VardaDockWidget("Spectra").withWidget(
+            self.plots.spectraPanel
+        )
+        self.spectraDock.setTitleBarActions(self.plots.spectraActions)
+        self.ratioDock = VardaDockWidget("Ratio").withWidget(self.plots.ratioPanel)
+        self.ratioDock.setTitleBarActions(self.plots.ratioActions)
+        self.blandnessDock = VardaDockWidget("Denominator Blandness").withWidget(
+            _StripScrollArea(self.plots.readout)
+        )
+        self.plots.readout.detailsButton.toggled.connect(self._fitBlandness)
+        # nothing here can be reopened once closed: fold or float it instead
+        for dock in (
+            self.browseDock,
+            self.dataDock,
+            self.controlsDock,
+            self.spectraDock,
+            self.ratioDock,
+            self.blandnessDock,
+        ):
             dock.setFeature(ads.CDockWidget.DockWidgetFeature.DockWidgetClosable, False)
         browseArea = self.dockManager.addDockWidget(
             ads.DockWidgetArea.CenterDockWidgetArea, self.browseDock
@@ -302,13 +397,23 @@ class CrismRatioWorkspace(QMainWindow):
         self.dockManager.addDockWidget(
             ads.DockWidgetArea.RightDockWidgetArea, self.dataDock, browseArea
         )
-        self.dockManager.addDockWidget(
-            ads.DockWidgetArea.RightDockWidgetArea, self.plotsDock
+        # the right side: the controls, the two plots side by side under them,
+        # and the blandness strip across both
+        controlsArea = self.dockManager.addDockWidget(
+            ads.DockWidgetArea.RightDockWidgetArea, self.controlsDock
         )
-        self.dockManager.setSplitterSizes(browseArea, [3, 3])
-        root = self.dockManager.rootSplitter()
-        if root is not None and root.count() == 2:
-            root.setSizes([700, 500])
+        spectraArea = self.dockManager.addDockWidget(
+            ads.DockWidgetArea.BottomDockWidgetArea, self.spectraDock, controlsArea
+        )
+        self.dockManager.addDockWidget(
+            ads.DockWidgetArea.BottomDockWidgetArea, self.blandnessDock, spectraArea
+        )
+        self.dockManager.addDockWidget(
+            ads.DockWidgetArea.RightDockWidgetArea, self.ratioDock, spectraArea
+        )
+        self._areas = (browseArea, controlsArea, spectraArea)
+        self._restoredLayout: str | None = None  # from a session
+        self._shown = False
 
         # The managers and the display settings stay out of the way until wanted
         self.roiDock = VardaDockWidget("ROI Manager").withWidget(self.roiManager)
@@ -333,11 +438,82 @@ class CrismRatioWorkspace(QMainWindow):
                     VardaDockWidget(title).withWidget(widget),
                 )
 
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        if not self._shown:
+            self._shown = True
+            if self._restoredLayout is None:
+                # once the window has its size (a resize right after show counts)
+                QTimer.singleShot(0, self._defaultSizes)
+
+    def _defaultSizes(self) -> None:
+        """Half the width for the images, half for two plots side by side;
+        the controls and the blandness strip as short as their contents, the
+        plots the rest of the height."""
+        if self._restoredLayout is not None:
+            return
+        browseArea, controlsArea, spectraArea = self._areas
+        root = self.dockManager.rootSplitter()
+        if root is None or root.count() != 2:
+            return  # rearranged before it was shown
+        width = root.width()
+        right = width // 2
+        root.setSizes([width - right, right])
+        self.dockManager.setSplitterSizes(browseArea, [1, 1])
+        self.dockManager.setSplitterSizes(spectraArea, [1, 1])
+        column = self._rightColumn()
+        if column is not None:
+            heights = [self._stripHeight(d, right) for d in self._strips()]
+            plots = max(column.height() - sum(heights), 0)
+            column.setSizes([heights[0], plots, heights[1]])
+
+    def _strips(self) -> tuple[VardaDockWidget, VardaDockWidget]:
+        return self.controlsDock, self.blandnessDock
+
+    def _rightColumn(self) -> QSplitter | None:
+        """The splitter of the default right side (the controls, the plots,
+        the blandness strip), unless the docks were moved."""
+        controls, blandness = (d.dockAreaWidget() for d in self._strips())
+        column = controls.parentWidget() if controls is not None else None
+        if (
+            isinstance(column, QSplitter)
+            and column.count() == 3
+            and column.widget(0) is controls
+            and column.widget(2) is blandness
+        ):
+            return column
+        return None
+
+    @staticmethod
+    def _stripHeight(dock: VardaDockWidget, width: int) -> int:
+        """The height ``dock``'s area needs to show its strip whole at ``width``."""
+        area, strip = dock.dockAreaWidget(), dock.widget()
+        if area is None or not isinstance(strip, _StripScrollArea):
+            return 0
+        titleBar = area.titleBar()
+        title = titleBar.sizeHint().height() if titleBar is not None else 0
+        return title + strip.neededHeight(width) + 4
+
+    def _fitBlandness(self) -> None:
+        """Make room for the blandness details (or give it back to the
+        plots) when they are shown (or folded) in the default layout."""
+        column = self._rightColumn()
+        if column is None or not self._shown:
+            return
+        sizes = column.sizes()
+        wanted = self._stripHeight(self.blandnessDock, column.width())
+        sizes[1] = max(sizes[1] + sizes[2] - wanted, 0)
+        sizes[2] = wanted
+        column.setSizes(sizes)
+
     # --- the click loop ------------------------------------------------------------
 
     def _onToolActivated(self, index: int, tool: object) -> None:
         if not isinstance(tool, RatioExplorerTool):
             return
+        # the clicks and keys are behind "?": no hint over the images (the
+        # tool's later messages, such as a refused click, still show)
+        tool.hideText()
         self.controller.bindTool(tool, self.data)
         if index == 0:  # the browse view: its clicks and boxes go through the link
             tool.setClickMapper(self._browseToData)
@@ -399,6 +575,13 @@ class CrismRatioWorkspace(QMainWindow):
             "blandness": self.plots.readout.currentCheckName(),
             "blandnessLimits": self.plots.readout.limitOverrides(),
             "blandnessExcludeCo2": self.plots.readout.co2Check.isChecked(),
+            "blandnessDetails": self.plots.readout.detailsVisible(),
+            "separateSpectra": self.plots.isSeparate(),
+            "plotShapes": {
+                "spectra": self.plots.spectraShape.shape.name,
+                "ratio": self.plots.ratioShape.shape.name,
+            },
+            "dockLayout": self._dockLayout(),
             **plotLibrariesState(self.plots.ratioPlot),
         }
 
@@ -419,6 +602,30 @@ class CrismRatioWorkspace(QMainWindow):
             bool(state.get("blandnessExcludeCo2", True))
         )
         restorePlotLibraries(state, self.plots.ratioPlot)
+        self.plots.readout.setDetailsVisible(bool(state.get("blandnessDetails", False)))
+        self.plots.setSeparate(bool(state.get("separateSpectra", False)))
+        shapes = state.get("plotShapes", {})
+        if isinstance(shapes, dict):
+            for key, action in (
+                ("spectra", self.plots.spectraShape),
+                ("ratio", self.plots.ratioShape),
+            ):
+                if shapes.get(key) in PlotShape.__members__:
+                    action.setShape(PlotShape[shapes[key]])
+        layout = state.get("dockLayout")
+        # a layout from another version of this workspace is refused by ADS
+        if isinstance(layout, str) and self.dockManager.restoreState(
+            QByteArray.fromBase64(layout.encode())
+        ):
+            self._restoredLayout = layout
+
+    def _dockLayout(self) -> str | None:
+        """Where the docks are (ADS's own state, base64 for the JSON file);
+        a workspace never shown has no layout of its own yet, so it keeps
+        the one it was restored with."""
+        if not self._shown:
+            return self._restoredLayout
+        return bytes(self.dockManager.saveState().toBase64().data()).decode()
 
 
 class NewCrismRatioDialog(QDialog):

@@ -221,7 +221,8 @@ class RasterViewport(Protocol):
         backgroundAlpha: int = 150,
         anchor: tuple[float, float] = (0.0, 0.0),
     ) -> TextOverlayHandle:
-        """Add a text label at `viewPos` (defaults to the top-left of the view)."""
+        """Add a text label at `viewPos` (image coordinates); without one, it
+        is pinned to the view's top-left corner and wrapped to its width."""
         ...
 
     def addROIOverlay(

@@ -29,6 +29,20 @@ can alter results.
 
 ### Changed
 
+- **CRISM Ratio workspace: the plots side by side, and taller.** The
+  numerator and denominator are now overlaid on one **Spectra** plot (green
+  and magenta, with a legend; **Separate** in its title bar splits them into
+  two plots), with the **Ratio** plot beside it, each about 350 × 650 pixels
+  at 1440 × 900 instead of three short strips. The box size, column lock
+  (now "Lock to sensor column") and geometry file sit on one row above them,
+  with the clicks and keys behind a **?**. The blandness readout is a strip
+  below both plots: the check and its limits on one row, a one-line verdict
+  naming each failing window's dip (or slope) and limit, and the per-window
+  table behind **Details ▸**. Each plot can keep a **Shape** (Free, Square
+  or Tall 3:4) as it is resized. Every panel is a dock that can be moved,
+  tabbed, floated or folded, and the session keeps where they are, the
+  shapes, Separate and Details. The failing-window markers are now on the
+  Spectra plot's denominator curve. Results are unchanged.
 - **Open images use much less memory.** Loading an image now peaks at about
   its own size, plus GDAL's shared block cache (a 1.5 GB CRISM MTRDR took
   5.2 GB, now 2.6 GB, and loads in half the time), with the same values and

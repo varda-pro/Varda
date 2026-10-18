@@ -1,8 +1,9 @@
-"""The blandness readout under the Denominator plot: is this spectrum bland
-(featureless) enough to divide by? One row per wavelength window of the chosen
-check, with where its deepest dip is and how deep, the noise-aware limit, the
-slope and a mark; an overall verdict; and the limits (floor, k, slope) and
-the CO₂ exclusion, which the user can change."""
+"""The denominator's blandness readout: is this spectrum bland (featureless)
+enough to divide by? A compact strip: the chosen check, the limits (floor, k,
+slope) and the CO₂ exclusion, which the user can change, on one wrapping row;
+a one-line verdict naming each failing window's dip and limit; and, behind
+Details, one row per wavelength window of the check with where its deepest
+dip is and how deep, the noise-aware limit, the slope and a mark."""
 
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -82,6 +84,32 @@ def dipText(w: WindowResult) -> str:
     return f"{_percent(w.depth)} at {w.dipNm:.0f} nm"
 
 
+def failureText(w: WindowResult) -> str:
+    """Why a window fails, e.g. ``1.7–2.65 µm, 3.9 % dip at 1948 nm (limit
+    3.0 %)``, or ``…, slope 0.91 /µm (limit 0.75)``."""
+    reasons = []
+    if not w.depthPassed:
+        reasons.append(
+            f"{_percent(w.depth)} dip at {w.dipNm:.0f} nm "
+            f"(limit {_percent(w.depthLimit)})"
+        )
+    if not w.slopePassed:
+        reasons.append(f"slope {w.slope:.2f} /µm (limit {w.maxSlope:g})")
+    return ", ".join([w.window.name, *reasons])
+
+
+def verdictText(result: BlandnessResult) -> str:
+    """The one-line verdict: ✓, or ✗ with each failing window's reason."""
+    if not result.windows:
+        return result.note
+    if result.passed:
+        text = "✓ Bland enough to divide by"
+    else:
+        failing = "; ".join(failureText(w) for w in result.windows if not w.passed)
+        text = f"✗ Not bland: {failing}"
+    return f"{text}. {result.note}" if result.note else text
+
+
 class BlandnessReadout(QWidget):
     sigVerdictChanged = pyqtSignal(object)  # BlandnessResult
 
@@ -101,10 +129,11 @@ class BlandnessReadout(QWidget):
         self.checkCombo.currentIndexChanged.connect(self._evaluate)
 
         self.editors: dict[str, QDoubleSpinBox] = {}
-        # the limits wrap onto more rows when the panel is narrow; the row
-        # widget owns them from the start
+        # the check, the limits and the CO₂ exclusion share one row, which
+        # wraps when the panel is narrow; the row widget owns them from the start
         self.limitsRow = QWidget(self)
         limits = FlowLayout(self.limitsRow)
+        limits.addWidget(self.checkCombo)
         for key, label, scale, decimals, suffix, tip in _EDITORS:
             low, high = LIMIT_RANGES[key]
             box = QDoubleSpinBox()
@@ -129,16 +158,24 @@ class BlandnessReadout(QWidget):
         self.defaultsButton = QPushButton("Defaults")
         self.defaultsButton.setToolTip("Put the default limits back")
         self.defaultsButton.clicked.connect(self.resetLimits)
-        limits.addWidget(self.defaultsButton)
 
         low, high = CO2_RESIDUAL_NM
-        self.co2Check = QCheckBox(f"Leave out the CO₂ residual ({low:g}–{high:g} nm)")
+        self.co2Check = QCheckBox(f"Leave out CO₂ ({low:g}–{high:g} nm)")
         self.co2Check.setChecked(True)
         self.co2Check.setToolTip(
-            "Atmospheric CO₂ left by the volcano-scan correction; uncheck for "
-            "data with a better atmospheric correction"
+            f"Leave out the CO₂ residual ({low:g}–{high:g} nm): atmospheric CO₂ "
+            "left by the volcano-scan correction; uncheck for data with a "
+            "better atmospheric correction"
         )
         self.co2Check.toggled.connect(self._evaluate)
+        # in a plain row: a flow layout gives a macOS check box 2 px less
+        # than its text needs (its layout margins don't round-trip)
+        co2 = QWidget()
+        co2Row = QHBoxLayout(co2)
+        co2Row.setContentsMargins(0, 0, 0, 0)
+        co2Row.addWidget(self.co2Check)
+        limits.addWidget(co2)
+        limits.addWidget(self.defaultsButton)
 
         self.table = QTableWidget(0, len(_HEADERS))
         self.table.setHorizontalHeaderLabels(_HEADERS)
@@ -152,14 +189,27 @@ class BlandnessReadout(QWidget):
 
         self.verdictLabel = QLabel()
         self.verdictLabel.setWordWrap(True)
+        # the per-window table, folded away until wanted
+        self.detailsButton = QToolButton()
+        self.detailsButton.setText("Details")
+        self.detailsButton.setCheckable(True)
+        self.detailsButton.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.detailsButton.setAutoRaise(True)
+        self.detailsButton.toggled.connect(self.setDetailsVisible)
+        verdictRow = QHBoxLayout()
+        verdictRow.setContentsMargins(0, 0, 0, 0)
+        verdictRow.addWidget(self.verdictLabel, 1)
+        verdictRow.addWidget(self.detailsButton, 0, Qt.AlignmentFlag.AlignTop)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.checkCombo)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
         layout.addWidget(self.limitsRow)
-        layout.addWidget(self.co2Check)
+        layout.addLayout(verdictRow)
         layout.addWidget(self.table)
-        layout.addWidget(self.verdictLabel)
+        self.setDetailsVisible(False)
 
     def _horizontalHeader(self) -> QHeaderView:
         header = self.table.horizontalHeader()
@@ -170,6 +220,22 @@ class BlandnessReadout(QWidget):
         header = self.table.verticalHeader()
         assert header is not None
         return header
+
+    def detailsVisible(self) -> bool:
+        return self.detailsButton.isChecked()
+
+    def setDetailsVisible(self, visible: bool) -> None:
+        """Show or fold the per-window table."""
+        self.detailsButton.setChecked(visible)
+        self.detailsButton.setArrowType(
+            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
+        )
+        self.detailsButton.setToolTip(
+            "Hide the per-window table"
+            if visible
+            else "Show each window's dip, limit, slope and mark"
+        )
+        self.table.setVisible(visible)
 
     def currentCheckName(self) -> str:
         return self.checkCombo.currentText()
@@ -310,14 +376,11 @@ class BlandnessReadout(QWidget):
             + 2 * self.table.frameWidth()
             + 4
         )
-        failing = [w.window.name for w in result.windows if not w.passed]
-        if result.note and not result.windows:
-            self.verdictLabel.setText(result.note)
-        elif result.passed:
-            self.verdictLabel.setText("✓ Bland enough to divide by")
-        else:
-            self.verdictLabel.setText(
-                f"✗ Not bland ({', '.join(failing)}): the ratio may show its "
-                f"structure, inverted. {result.note}".strip()
-            )
+        self.verdictLabel.setText(verdictText(result))
+        self.verdictLabel.setToolTip(
+            ""
+            if result.passed or not result.windows
+            else "The ratio may show the denominator's structure, inverted, "
+            "at the failing windows (shaded on the Spectra plot)."
+        )
         self.sigVerdictChanged.emit(result)

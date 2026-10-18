@@ -354,12 +354,12 @@ class ImageViewport(QWidget):
         backgroundAlpha: int = 150,
         anchor: tuple[float, float] = (0.0, 0.0),
     ) -> "TextOverlayHandle":
-        """Add a text label at `viewPos` (defaults to the top-left of the view)."""
-        pos = viewPos if viewPos is not None else self._vb.viewRect().topLeft()
+        """Add a text label at `viewPos` (image coordinates); without one, it
+        is pinned to the view's top-left corner and wrapped to its width."""
         return PyqtgraphTextOverlay(
             self._vb,
             text,
-            pos,
+            viewPos,
             color,
             fontSize,
             backgroundColor,

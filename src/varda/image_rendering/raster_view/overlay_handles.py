@@ -76,13 +76,15 @@ class PyqtgraphPolygonOverlay:
 
 
 class PyqtgraphTextOverlay:
-    """A `pg.TextItem` label positioned in view (data) coordinates."""
+    """A `pg.TextItem` label positioned in view (data) coordinates, or, with
+    no position, pinned to the view's top-left corner in screen pixels: it
+    stays there whatever the view is panned, zoomed or resized to."""
 
     def __init__(
         self,
         viewBox: pg.ViewBox,
         text: str,
-        pos: QPointF,
+        pos: QPointF | None,
         color: str,
         fontSize: int,
         backgroundColor: str,
@@ -96,10 +98,18 @@ class PyqtgraphTextOverlay:
         if backgroundColor:
             self._item.fill = pg.mkBrush(color=backgroundColor, alpha=backgroundAlpha)
             self._item.border = pg.mkPen(color=backgroundColor, width=1)
-        self._item.setPos(pos)
         self._viewBox = viewBox
+        self._pinned = pos is None
         self._wrapToView()
-        viewBox.addItem(self._item, ignoreBounds=True)
+        if pos is None:
+            # a child of the view box itself (not of its data group): its
+            # position is in the view's pixels, in front of the image
+            self._item.setParentItem(viewBox)
+            self._item.setPos(QPointF(self._MARGIN / 2, self._MARGIN / 2))
+            self._item.setZValue(1000)
+        else:
+            self._item.setPos(pos)
+            viewBox.addItem(self._item, ignoreBounds=True)
         viewBox.sigResized.connect(self._wrapToView)
 
     _MARGIN = 8  # px kept free at the view's right edge
@@ -126,7 +136,13 @@ class PyqtgraphTextOverlay:
 
     def remove(self) -> None:
         self._viewBox.sigResized.disconnect(self._wrapToView)
-        self._viewBox.removeItem(self._item)
+        if self._pinned:
+            scene = self._item.scene()
+            if scene is not None:
+                scene.removeItem(self._item)
+            self._item.setParentItem(None)
+        else:
+            self._viewBox.removeItem(self._item)
 
 
 class PyqtgraphPointOverlay:

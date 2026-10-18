@@ -2,6 +2,8 @@
 or map location, with the ratio plots, a blandness verdict and a column lock
 that follows the numerator."""
 
+import json
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -29,6 +31,7 @@ from varda.workspaces.crism_ratio.crism_ratio_workspace import (
     CrismRatioWorkspace,
     NewCrismRatioDialog,
 )
+from varda.workspaces.crism_ratio.ratio_plots import PlotShape
 from varda.workspaces.linked_images.linking import Link
 from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
 
@@ -76,9 +79,11 @@ def key(workspace, qtKey, index=0):
     )
 
 
-def curveY(plot):
-    assert len(plot.plots) == 1
-    return plot.plots[0].data()[1]
+def curveY(plot, name=None):
+    """The plot's one curve's y values, or those of its curve named ``name``."""
+    curves = [c for c in plot.plots if name is None or c.plotDataItem.name() == name]
+    assert len(curves) == 1
+    return curves[0].data()[1]
 
 
 @pytest.fixture
@@ -111,7 +116,9 @@ def test_pixel_match_measures_where_you_click(qtbot, pixelPair):
     tool(workspace).onPointerEvent(press(RIGHT, 31.5, 5.5))
 
     numerator = mean(boxPolygonPixels(11, 21, 5, 5), data)
-    np.testing.assert_allclose(curveY(workspace.plots.numeratorPlot), numerator)
+    spectra = workspace.plots.spectraPlot
+    assert len(spectra.plots) == 2  # numerator and denominator, overlaid
+    np.testing.assert_allclose(curveY(spectra, "Numerator"), numerator)
 
 
 def test_a_click_on_the_browse_view_measures_the_if_image_through_the_map(
@@ -129,8 +136,9 @@ def test_a_click_on_the_browse_view_measures_the_if_image_through_the_map(
     )
     numerator = mean(boxPolygonPixels(7, 5, 5, 5), data)
     denominator = mean(boxPolygonPixels(19, 17, 5, 5), data)
-    np.testing.assert_allclose(curveY(workspace.plots.numeratorPlot), numerator)
-    np.testing.assert_allclose(curveY(workspace.plots.denominatorPlot), denominator)
+    spectra = workspace.plots.spectraPlot
+    np.testing.assert_allclose(curveY(spectra, "Numerator"), numerator)
+    np.testing.assert_allclose(curveY(spectra, "Denominator"), denominator)
     np.testing.assert_allclose(
         curveY(workspace.plots.ratioPlot), numerator / denominator
     )
@@ -356,27 +364,46 @@ def test_a_link_problem_is_shown_across_the_top(qtbot):
     assert "grid" in workspace.linkNotice.text()
 
 
-def test_the_workspace_fits_a_laptop(qtbot, mapPair):
-    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
+def shown(qtbot, workspace, width=1280, height=800):
     workspace.showNormal()
-    workspace.resize(1280, 800)
+    workspace.resize(width, height)
     qtbot.waitExposed(workspace)
+    qtbot.wait(50)
+    return workspace
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "squareness"), [(1280, 800, 0.9), (1440, 900, 1.0)]
+)
+def test_the_plots_stand_side_by_side_and_tall_on_a_laptop(
+    qtbot, mapPair, width, height, squareness
+):
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
+    workspace.resize(width, height)
     qtbot.wait(50)
     _pair_on_map(workspace)
     assertNothingClipped(workspace)
+    spectra, ratio = workspace.plots.spectraPlot, workspace.plots.ratioPlot
+    for plot in (spectra, ratio):
+        assert plot.isVisible()
+        assert plot.height() >= squareness * plot.width()
+        assert plot.width() >= 250
+    # side by side: one row, spectra on the left
+    left = spectra.mapTo(workspace, spectra.rect().topLeft())
+    right = ratio.mapTo(workspace, ratio.rect().topLeft())
+    assert left.x() + spectra.width() <= right.x()
+    assert abs(left.y() - right.y()) < 10
+    # the plots take most of the height
+    assert spectra.height() >= 0.6 * height
 
 
 def test_the_three_plots_share_one_x_range_on_a_laptop(qtbot, mapPair):
-    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
-    workspace.showNormal()
-    workspace.resize(1280, 800)
-    qtbot.waitExposed(workspace)
-    qtbot.wait(50)
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
     _pair_on_map(workspace)
     plots = workspace.plots
     ranges = [
         p.viewBox.viewRange()[0]
-        for p in (plots.numeratorPlot, plots.denominatorPlot, plots.ratioPlot)
+        for p in (plots.spectraPlot, plots.numeratorPlot, plots.ratioPlot)
     ]
     for xRange in ranges[1:]:
         np.testing.assert_allclose(xRange, ranges[0], rtol=1e-6)
@@ -384,20 +411,144 @@ def test_the_three_plots_share_one_x_range_on_a_laptop(qtbot, mapPair):
     assert low <= 1000 and high >= 2500  # the whole spectrum, not a slice
     # the user's own zoom follows on every plot
     plots.ratioPlot.viewBox.setXRange(1500, 2000, padding=0)
-    for plot in (plots.numeratorPlot, plots.denominatorPlot):
+    for plot in (plots.spectraPlot, plots.numeratorPlot):
         np.testing.assert_allclose(plot.viewBox.viewRange()[0], [1500, 2000])
 
 
-def test_the_tool_hint_fits_its_view_on_a_laptop(qtbot, mapPair):
-    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)  # hints shown
+def test_square_and_tall_plots_keep_their_shape_as_the_window_resizes(qtbot, mapPair):
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
+    plots = workspace.plots
+    plots.spectraShape.setShape(PlotShape.SQUARE)
+    plots.ratioShape.setShape(PlotShape.TALL)
+    for size in ((1440, 900), (1100, 700), (1600, 1000)):
+        workspace.resize(*size)
+        qtbot.wait(20)
+        for plot, aspect in ((plots.spectraPlot, 1.0), (plots.ratioPlot, 0.75)):
+            assert plot.width() / plot.height() == pytest.approx(aspect, abs=0.01)
+
+
+def test_separate_gives_two_spectra_plots_in_the_spectra_dock(qtbot, mapPair):
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
+    _pair_on_map(workspace)
+    plots = workspace.plots
+    assert plots.separateAction in workspace.spectraDock.titleBarActions()
+    plots.separateAction.trigger()
+    qtbot.wait(10)
+    assert plots.numeratorPlot.isVisible() and plots.spectraPlot.isVisible()
+    assert len(plots.numeratorPlot.plots) == len(plots.spectraPlot.plots) == 1
+    assert (
+        plots.numeratorPlot.y()
+        < plots.spectraPlot.mapTo(
+            plots.spectraPanel, plots.spectraPlot.rect().topLeft()
+        ).y()
+    )
+    assertNothingClipped(workspace)
+    plots.separateAction.trigger()
+    qtbot.wait(10)
+    assert not plots.numeratorPlot.isVisible()
+    assert len(plots.spectraPlot.plots) == 2
+
+
+def test_dip_markers_are_on_the_spectra_plot(qtbot):
+    browse = raster("browse", (30, 40), seed=1, bands=60)
+    values = np.full((30, 40, 60), 0.3, np.float32)
+    wavelengths = np.linspace(1000, 2500, 60)
+    values[:, :, :] *= 1 - 0.1 * np.exp(-0.5 * ((wavelengths - 1900) / 40) ** 2)
+    data = VardaRaster(
+        ArrayDataSource(values, wavelengths=wavelengths, wavelengthUnits="nm"),
+        name="data",
+    )
+    workspace = build(qtbot, browse, data, Link.PIXEL)
+    _pair(workspace)
+    plots = workspace.plots
+    assert not plots.readout.lastResult.passed
+    assert plots.dipMarkers
+    for item in plots.dipMarkers:
+        assert item in plots.spectraPlot.plotItem.items
+    assert plots.readout.verdictLabel.text().startswith("✗ Not bland: 1.7–2.65 µm")
+
+
+def test_the_keys_hint_is_behind_the_question_mark(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    hint = workspace.keysButton.toolTip()
+    for keys in (
+        "Ctrl/⌘+left-click: numerator",
+        "Ctrl/⌘+right-click: denominator",
+        "S: save the pair as ROIs",
+        "P: save the numerator pixel as a point",
+        "Esc: clear",
+    ):
+        assert keys in hint
+    assert workspace.keysButton.text() == "?"
+
+
+def test_the_session_keeps_the_plot_layout(qtbot, mapPair):
+    browse, data = mapPair
+    workspace = shown(qtbot, build(qtbot, browse, data, Link.MAP), 1440, 900)
+    plots = workspace.plots
+    plots.setSeparate(True)
+    plots.spectraShape.setShape(PlotShape.SQUARE)
+    plots.ratioShape.setShape(PlotShape.TALL)
+    plots.readout.setDetailsVisible(True)
+    # the Ratio plot tabbed with the Spectra, the blandness strip folded away
+    workspace.dockManager.addDockWidgetTabToArea(
+        workspace.ratioDock, workspace.spectraDock.dockAreaWidget()
+    )
+    workspace.blandnessDock.setAutoHide(True)
+    qtbot.wait(10)
+    assert (
+        workspace.ratioDock.dockAreaWidget() is workspace.spectraDock.dockAreaWidget()
+    )
+    state = json.loads(json.dumps(workspace.sessionState()))  # as in the file
+
+    copy = buildWorkspace("crism_ratio", [browse, data], [browse, data], state)
+    assert isinstance(copy, CrismRatioWorkspace)
+    qtbot.addWidget(copy)
+    shown(qtbot, copy, 1440, 900)
+    assert copy.plots.isSeparate()
+    assert copy.plots.spectraShape.shape is PlotShape.SQUARE
+    assert copy.plots.ratioShape.shape is PlotShape.TALL
+    assert copy.plots.readout.detailsVisible()
+    assert copy.ratioDock.dockAreaWidget() is copy.spectraDock.dockAreaWidget()
+    assert copy.blandnessDock.isAutoHide()
+    # and it is kept again by a copy never shown
+    again = buildWorkspace("crism_ratio", [browse, data], [browse, data], state)
+    assert isinstance(again, CrismRatioWorkspace)
+    qtbot.addWidget(again)
+    assert again.sessionState()["dockLayout"] == state["dockLayout"]
+
+
+def test_a_bad_dock_layout_in_a_session_is_ignored(qtbot, pixelPair):
+    images = list(pixelPair)
+    copy = buildWorkspace(
+        "crism_ratio", images, images, {"link": "PIXEL", "dockLayout": "bm9wZQ=="}
+    )
+    assert isinstance(copy, CrismRatioWorkspace)
+    qtbot.addWidget(copy)
+    shown(qtbot, copy)
+    assert copy.ratioDock.dockAreaWidget() is not copy.spectraDock.dockAreaWidget()
+    assert copy.plots.spectraPlot.height() > copy.plots.spectraPlot.width()
+
+
+def test_no_hint_covers_the_images_and_messages_fit_their_view(qtbot, mapPair):
+    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
     workspace.showNormal()
-    workspace.resize(1280, 800)  # and the views narrowed after
+    workspace.resize(1280, 800)  # the views narrowed after the tools started
     qtbot.waitExposed(workspace)
     qtbot.wait(50)
-    for index, view in enumerate((workspace.browseView, workspace.dataView)):
-        overlay = tool(workspace, index)._textOverlay
-        assert isinstance(overlay, PyqtgraphTextOverlay)
-        assert overlay._item.textItem.boundingRect().width() <= view.width()
+    # the clicks and keys are behind "?", not over the images
+    for index in (0, 1):
+        assert tool(workspace, index)._textOverlay is None
+    # a message (here a denominator without a numerator) is in the view's
+    # corner, whole
+    tool(workspace).onPointerEvent(press(RIGHT, 9.5, 8.5))
+    overlay = tool(workspace)._textOverlay
+    assert isinstance(overlay, PyqtgraphTextOverlay)
+    item, viewBox = overlay._item, workspace.browseView._vb
+    text = item.mapRectToScene(
+        item.textItem.mapRectToParent(item.textItem.boundingRect())
+    )
+    assert viewBox.sceneBoundingRect().contains(text)
 
 
 def _pair_on_map(workspace):
@@ -471,7 +622,7 @@ def test_a_micrometer_cube_gets_the_same_verdict_as_a_nanometer_cube(qtbot):
                 for w in workspace.plots.readout.lastResult.windows
             ]
         )
-        x = workspace.plots.numeratorPlot.plots[0].data()[0]
+        x = workspace.plots.spectraPlot.plots[0].data()[0]
         np.testing.assert_allclose(x, np.linspace(1000, 2500, 60))
     assert verdicts[0] and verdicts[0] == verdicts[1]
 
