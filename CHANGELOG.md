@@ -8,6 +8,9 @@ can alter results.
 
 ### Added
 
+- **Collapsing panels documented:** the pin button on any panel's title bar
+  collapses it to an edge tab (see Sessions and saving), and a test guards it
+  in every workspace.
 - **CRISM Ratio workspace** (Workspace → New CRISM Ratio Workspace…): a
   browse image (such as a CRISM summary product) beside the I/F cube,
   linked by pixel or map location. Ctrl/⌘-click a numerator and a
