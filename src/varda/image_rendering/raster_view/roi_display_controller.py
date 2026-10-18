@@ -51,6 +51,7 @@ class ROIDisplayController(QObject):
 
         # Connect collection signals
         self._collection.sigROIAdded.connect(self._onROIAdded)
+        self._collection.sigROIsAdded.connect(self._onROIsAdded)
         self._collection.sigROIRemoved.connect(self._onROIRemoved)
         self._collection.sigROIUpdated.connect(self._onROIUpdated)
         self._collection.sigVisibilityChanged.connect(self._onVisibilityChanged)
@@ -98,6 +99,12 @@ class ROIDisplayController(QObject):
     def _onROIAdded(self, fid: int) -> None:
         for vid in self._viewports:
             self._addOverlay(vid, fid)
+        self.displayUpdated.emit()
+
+    def _onROIsAdded(self, fids: list[int]) -> None:
+        for vid in self._viewports:
+            for fid in fids:
+                self._addOverlay(vid, fid)
         self.displayUpdated.emit()
 
     def _onROIRemoved(self, fid: int) -> None:

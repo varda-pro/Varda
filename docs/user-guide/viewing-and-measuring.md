@@ -98,6 +98,14 @@ The width you drag it to is remembered for plots of that kind (e.g. pixel
 spectra plots) and used again when the sidebar is reopened, in this and
 later sessions of Varda.
 
+### Saved points
+
+**Save Point** (or **Save All Points**) in the plot's sidebar keeps a pixel
+spectrum's pixel in the **Points Manager**, with its map position when the
+image is georeferenced. **Export…** there writes the points as GeoJSON,
+GeoPackage or a shapefile; **Import…** adds points from a GIS file or a CSV of
+coordinates (see [Importing vector data](importing-vector-data.md)).
+
 ### Moving around a spectral plot
 
 In the spectral plots (pixel, ROI and ratio spectra, and the Spectral
@@ -254,7 +262,9 @@ column (below) with the **count** statistic.
 
 Calculated columns update as ROIs change. The table shows six significant
 figures. **Export...** writes the ROIs and their columns as GeoJSON,
-GeoPackage or a shapefile.
+GeoPackage or a shapefile. **Import…** adds polygons from a GIS file as ROIs,
+with its columns as table columns (see
+[Importing vector data](importing-vector-data.md)).
 
 ### Uncertainty of a mean spectrum
 

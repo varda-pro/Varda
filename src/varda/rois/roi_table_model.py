@@ -47,6 +47,7 @@ class ROITableModel(QAbstractTableModel):
         self._refreshCache()
 
         collection.sigROIAdded.connect(self._onChanged)
+        collection.sigROIsAdded.connect(self._onChanged)
         collection.sigROIRemoved.connect(self._onChanged)
         collection.sigROIUpdated.connect(self._onChanged)
         collection.sigColumnsChanged.connect(self._onChanged)

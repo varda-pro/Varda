@@ -165,7 +165,9 @@ class DualImageWorkspace(QMainWindow):
         )
         # Saved pixel points (from the pixel-spectra plots' Save Point)
         self.pointCollection = PointCollection()
-        self.pointManagerWidget = PointManagerWidget(self.pointCollection, parent=self)
+        self.pointManagerWidget = PointManagerWidget(
+            self.pointCollection, parent=self, image=self.image1
+        )
 
     def _initUI(self):
         if self.displayMode == DisplayMode.SIDE_BY_SIDE:
