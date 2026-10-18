@@ -4,8 +4,9 @@
 
 Each argument is an output folder (``VARDA_QA_OUT``, or a downloaded
 ``release-qa-<os>`` artifact) holding a ``findings.json``. Findings that
-read the same are merged; the list is ranked by how many personas hit
-them, then severity, with a count per OS. Prints Markdown.
+read the same but for their numbers are merged; the list is ranked by how
+many personas hit them, then severity, with a count per OS and a screenshot.
+Prints Markdown.
 """
 
 from __future__ import annotations
@@ -29,8 +30,8 @@ class Merged:
 
 
 def key(found: Finding) -> str:
-    """Findings that differ only in numbers or quoted names merge."""
-    return re.sub(r"\d+(\.\d+)?|'[^']*'|\"[^\"]*\"", "#", found.message)
+    """Findings that differ only in numbers (sizes, seconds, counts) merge."""
+    return re.sub(r"\d+(\.\d+)?", "#", found.message)
 
 
 def merge(folders: list[Path]) -> list[Merged]:
@@ -61,9 +62,10 @@ def markdown(folders: list[Path], limit: int = 40) -> str:
     ]
     for number, row in enumerate(rows[:limit], 1):
         counts = " | ".join(str(row.perOs.get(os, 0)) for os in systems)
+        shot = f" ({row.screenshots[0]})" if row.screenshots else ""
         lines.append(
             f"| {number} | {row.severity} | {len(row.personas)} "
-            f"({', '.join(sorted(row.personas))}) | {counts} | {row.message} |"
+            f"({', '.join(sorted(row.personas))}) | {counts} | {row.message}{shot} |"
         )
     return "\n".join(lines)
 
