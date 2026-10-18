@@ -22,6 +22,8 @@ from shapely.geometry import (
 )
 
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.geo._tests.fixtures import makeImage
+from varda.geo.transform import transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.lines.line_collection import LineCollection, LineKind
 from varda.points.point_collection import PointCollection
@@ -29,6 +31,7 @@ from varda.rois.roi_collection import ROICollection
 from varda import vector_import
 from varda.utilities.proj_lock import PROJ_LOCK
 from varda.vector_import import (
+    bodyLabel,
     Coordinates,
     ImportOptions,
     Target,
@@ -668,6 +671,53 @@ def test_earth_degrees_on_mars_are_an_explicit_choice(tmp_path):
         )
 
 
+# A sphere of 3000 km: within 1 % of no known body's radii
+UNKNOWN_EQC = CRS.from_user_input("+proj=eqc +R=3000000 +units=m +no_defs")
+
+
+def _unknownBodyImage() -> VardaRaster:
+    """100 × 100 pixels of 100 m, centered on 0° N 0° E of an unknown body."""
+    source = ArrayDataSource(
+        np.zeros((100, 100, 1)),
+        transform=Affine(100.0, 0.0, -5000.0, 0.0, -100.0, 5000.0),
+        crs=UNKNOWN_EQC,
+    )
+    return VardaRaster(source, name="unknown")
+
+
+def test_wgs84_geojson_on_an_unknown_body_is_degrees_on_that_body(tmp_path):
+    # an unknown body is not Earth: GeoJSON's WGS 84 means the image's degrees
+    image = _unknownBodyImage()
+    radius = 3000000.0
+    x, y = radius * np.radians(0.02), radius * np.radians(-0.01)
+    path = tmp_path / "unknown.geojson"
+    gpd.GeoDataFrame(
+        {"name": ["site"]}, geometry=[Point(0.02, -0.01)], crs=4326
+    ).to_file(path)
+    source = readVectorFile(path)
+    options = defaultOptions(source, image, Target.POINTS)
+    assert options.coordinates is Coordinates.BODY
+
+    plan = planImport(source, image, options, Target.POINTS)
+
+    expected = image.geoToImage([[x, y]])[0]
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx(tuple(expected), abs=1e-6)
+    assert any("on the image's body" in n for n in plan.notes)
+    assert bodyLabel(image.crs) == "the image's body"
+
+
+def test_earth_degrees_on_an_unknown_body_are_refused_with_the_hint(tmp_path):
+    image = _unknownBodyImage()
+    source = readVectorFile(_lonLatFile(tmp_path, [0.01]))
+    with pytest.raises(
+        VectorImportError, match="on Earth and the image is of an unknown body"
+    ):
+        planImport(source, image, ImportOptions(Coordinates.FILE), Target.POINTS)
+    with pytest.raises(VectorImportError, match="Degrees on the image's body"):
+        planImport(source, image, ImportOptions(Coordinates.FILE), Target.POINTS)
+
+
 # --- Smaller things ------------------------------------------------------------------------
 
 
@@ -686,3 +736,40 @@ def test_invalid_polygons_are_reported(tmp_path):
     plan = _plan(path, _plainImage(), Target.ROIS)
     assert len(plan.features) == 1
     assert any("1 polygon invalid" in note for note in plan.notes)
+
+
+@pytest.mark.parametrize(
+    "code, center",
+    [
+        ("IAU_2015:49911", (-77.5, 18.4)),  # west-positive, planetographic
+        ("IAU_2015:49912", (77.5, 18.4)),  # planetocentric
+    ],
+)
+def test_degrees_land_on_an_iau_ellipsoid_projection(tmp_path, code, center):
+    """GeoJSON degrees (east, the image's own latitude type) on a projection
+    of the Mars ellipsoid, whose geographic axes are latitude first."""
+    image = makeImage(code, centerLonLat=center, pixelSize=100.0)
+    path = tmp_path / "site.geojson"
+    gpd.GeoDataFrame(
+        {"name": ["site"]}, geometry=[Point(77.5, 18.4)], crs=4326
+    ).to_file(path)
+    plan = _plan(path, image, Target.POINTS)
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx((32.0, 32.0), abs=1e-6)
+
+
+def test_a_file_in_another_mars_crs_lands_on_an_iau_ellipsoid_image(tmp_path):
+    """Degrees on the Mars sphere onto a west-positive projection of the
+    ellipsoid: the same planetocentric place."""
+    image = makeImage("IAU_2015:49911", centerLonLat=(-77.5, 18.4), pixelSize=100.0)
+    x, y = image.pixelToGeo(32, 32)
+    lon, lat = transformPoints("IAU_2015:49911", "IAU_2015:49900", [x], [y])
+    path = tmp_path / "site.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["site"]},
+        geometry=[Point(lon[0], lat[0])],
+        crs=CRS.from_user_input("IAU_2015:49900"),
+    ).to_file(path)
+    plan = _plan(path, image, Target.POINTS)
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx((32.5, 32.5), abs=1e-6)

@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from varda.catalogs.bodies import bodyOf
 from varda.common.entities import VardaRaster
 from varda.common.ui import (
     ElidingComboBox,
@@ -41,6 +40,7 @@ from varda.vector_import import (
     ImportPlan,
     Target,
     VectorImportError,
+    bodyLabel,
     counted,
     VectorSource,
     defaultOptions,
@@ -105,7 +105,7 @@ class VectorImportDialog(QDialog):
         body = "the image's body"
         if image.hasGeospatialData:
             with PROJ_LOCK:
-                body = bodyOf(image.crs)
+                body = bodyLabel(image.crs)
         for mode in Coordinates:
             label = f"Degrees on {body}" if mode is Coordinates.BODY else mode.value
             self.coordinatesCombo.addItem(label, mode)

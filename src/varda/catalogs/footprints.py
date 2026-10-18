@@ -1,10 +1,11 @@
 """Footprint files: any vector file of footprints (an ODE shapefile, a
 GeoJSON or GeoPackage someone shared) searched like a catalog, offline.
 
-The body comes from the file's coordinate system (its sphere's or
-ellipsoid's radius); footprints are converted to that body's longitude and
-latitude. A product's files are the row's URLs, or, when the row carries
-ODE's identifiers (as ODE's own footprint shapefiles do), ODE's file list.
+The body comes from the file's coordinate system (``varda.geo``'s
+``identifyBody``: its names, else its radius); projected footprints are
+converted to degrees on that body's IAU 2015 sphere. A product's files are
+the row's URLs, or, when the row carries ODE's identifiers (as ODE's own
+footprint shapefiles do), ODE's file list.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 
-from varda.catalogs.bodies import BodyChoice, bodyOf, toLongitudeLatitude
+from varda.catalogs.bodies import BodyChoice, toLongitudeLatitude
 from varda.catalogs.catalog import (
     Catalog,
     CatalogError,
@@ -32,6 +33,7 @@ from varda.catalogs.catalog import (
 )
 from varda.catalogs.ode import DATABASES, OdeCatalog
 from varda.common.parameter import EnumParameter, StringParameter
+from varda.geo.bodies import identifyBody
 
 # Column names tried, in order, for a product's id and observation start
 ID_COLUMNS = ("ProductId", "pdsid", "product_id", "id", "obs", "name", "Name")
@@ -98,7 +100,7 @@ class FootprintFileCatalog(Catalog):
         chosen = BodyChoice(self.body.get())
         if chosen is not BodyChoice.AUTO:
             return chosen.value
-        return bodyOf(self._frame(path).attrs.get("source crs"))
+        return self._frame(path).attrs["body"]
 
     def _frame(self, path: str) -> gpd.GeoDataFrame:
         if path not in self._frames:
@@ -109,9 +111,14 @@ class FootprintFileCatalog(Catalog):
                     f"Varda couldn't read {Path(path).name}: {error}"
                 ) from error
             source = frame.crs
-            frame = toLongitudeLatitude(frame)
+            try:
+                frame = toLongitudeLatitude(frame)
+            except ValueError as error:
+                raise CatalogError(f"{Path(path).name}: {error}") from error
             frame["geometry"] = frame.geometry.apply(_shift)
-            frame.attrs["source crs"] = source
+            # "" when the coordinate system names no known body
+            body = identifyBody(source).body
+            frame.attrs["body"] = body.name if body is not None else ""
             self._frames[path] = frame
         return self._frames[path]
 

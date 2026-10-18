@@ -12,8 +12,8 @@ import numpy as np
 import shapely
 from pyproj import Transformer
 
-from varda.catalogs.bodies import RADII_M, bodyName, geographicCrs
 from varda.common.parameter import LabeledEnum
+from varda.geo.bodies import BODIES, bodyNamed
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north (or x, y)
 WHOLE: Bounds = (-180.0, -90.0, 180.0, 90.0)
@@ -31,7 +31,9 @@ class MapProjection(LabeledEnum):
 
 class Projector:
     """Turns longitude and latitude on a body into map coordinates (degrees
-    for equirectangular, meters for the polar views) and back."""
+    for equirectangular, meters for the polar views) and back. The map is
+    drawn on the body's IAU mean-radius sphere (WGS 84 degrees for Earth); a
+    body Varda doesn't know keeps its name and is drawn at Earth's size."""
 
     def __init__(
         self,
@@ -39,16 +41,23 @@ class Projector:
         body: str = "Earth",
     ):
         self.projection = projection
-        self.body = bodyName(body) if body else "Earth"
+        known = bodyNamed(body) if body else BODIES["Earth"]
+        self.body = known.name if known is not None else body.strip()
         self.polar = projection is not MapProjection.EQUIRECTANGULAR
         self.north = projection is MapProjection.NORTH_POLAR
-        radius = RADII_M.get(self.body, RADII_M["Earth"])
+        radius = (known or BODIES["Earth"]).meanRadius
         pole = 90 if self.north else -90
+        # longitude and latitude on the map's sphere, as a PROJ string
+        self.lonLatCrs = (
+            "EPSG:4326"
+            if self.body == "Earth"
+            else f"+proj=longlat +R={radius:g} +no_defs"
+        )
         # 0°E points down from the north pole and up from the south (PDS's convention)
         self.crs = (
             f"+proj=stere +lat_0={pole} +lon_0=0 +k=1 +R={radius:g} +units=m +no_defs"
             if self.polar
-            else geographicCrs(self.body)
+            else self.lonLatCrs
         )
         if self.polar:
             geographic = f"+proj=longlat +R={radius:g} +no_defs"

@@ -1,22 +1,39 @@
-"""Bodies: names, geographic coordinate systems, longitude conventions."""
+"""Bodies: footprints in longitude and latitude, longitude conventions."""
 
+import geopandas as gpd
 import pytest
-from rasterio.crs import CRS
+import shapely
 
-from varda.catalogs.bodies import bodyName, geographicCrs, normalizeLongitude
-
-
-def test_names_are_normalized():
-    assert bodyName("mars") == bodyName("MARS") == "Mars"
-    assert bodyName(" europa ") == "Europa"
+from varda.catalogs.bodies import normalizeLongitude, toLongitudeLatitude
+from varda.geo.bodies import BODIES
+from varda.geo._tests.fixtures import CTX_DEM_PROJ, VESTA_IAU
 
 
-def test_each_body_has_a_geographic_crs():
-    assert geographicCrs("Earth") == "EPSG:4326"
-    mars = CRS.from_user_input(geographicCrs("mars"))
-    assert mars.is_geographic
-    with pytest.raises(ValueError, match="size"):
-        geographicCrs("Arrokoth")
+def test_projected_footprints_become_degrees_on_the_bodys_iau_sphere():
+    frame = gpd.GeoDataFrame(geometry=[shapely.Point(0.0, 0.0)], crs=CTX_DEM_PROJ)
+    degrees = toLongitudeLatitude(frame)
+    assert degrees.crs.is_geographic
+    assert degrees.crs == BODIES["Mars"].sphereCrs()
+    assert degrees.geometry[0].x == pytest.approx(77.5)
+
+
+def test_geographic_footprints_are_taken_as_they_are():
+    frame = gpd.GeoDataFrame(geometry=[shapely.Point(10.0, 5.0)], crs=VESTA_IAU)
+    assert toLongitudeLatitude(frame) is frame
+
+
+def test_footprints_on_an_unknown_body_are_an_error_not_earth():
+    frame = gpd.GeoDataFrame(
+        geometry=[shapely.Point(0.0, 0.0)],
+        crs="+proj=eqc +R=100000 +units=m +no_defs",
+    )
+    with pytest.raises(ValueError, match="no known body"):
+        toLongitudeLatitude(frame)
+
+
+def test_mars_degrees_are_the_iau_2015_sphere():
+    ellipsoid = BODIES["Mars"].sphereCrs().ellipsoid
+    assert ellipsoid is not None and ellipsoid.semi_major_metre == 3_396_190.0
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,7 @@ from pathlib import Path
 import attrs
 
 from varda.common.entities import VardaRaster
-from varda.common.provenance import CRISM_GEOMETRY_KEYS
+from varda.common.provenance import CRISM_GEOMETRY_KEYS, CRS_FIX_KEY
 from varda.rois.roi_json import roisToJson
 from varda.workspaces.workspace_kinds import describeWorkspace
 
@@ -44,8 +44,9 @@ class SessionState:
     images: tuple[str, ...] = attrs.field(converter=tuple)  # file paths in list order
     workspaces: tuple[WorkspaceState, ...] = attrs.field(converter=tuple)
     # path -> {"name": ..., "overrides": {...}, "crismColumnsFile"?: path,
-    # "crismIncidenceFile"?: path}: metadata edited in Varda, and the CRISM
-    # geometry files chosen by hand
+    # "crismIncidenceFile"?: path, "crsFix"?: {...}}: metadata edited in
+    # Varda, the CRISM geometry files chosen by hand, and the record of a
+    # CRS used instead of the file's (automatic, chosen, or undone)
     metadata: dict = attrs.field(factory=dict)
 
 
@@ -94,7 +95,12 @@ def captureSession(
     edited = {
         pathOf[id(image)]: _imageMetadata(image)
         for image in images
-        if id(image) in pathOf and (image.metadataOverrides or _geometryFiles(image))
+        if id(image) in pathOf
+        and (
+            image.metadataOverrides
+            or _geometryFiles(image)
+            or image.extraMetadata.get(CRS_FIX_KEY)
+        )
     }
     return SessionCapture(
         SessionState(tuple(pathOf.values()), tuple(states), edited), tuple(unsaved)
@@ -103,6 +109,9 @@ def captureSession(
 
 def _imageMetadata(image: VardaRaster) -> dict:
     entry = {"name": image.name, "overrides": image.metadataOverrides}
+    record = image.extraMetadata.get(CRS_FIX_KEY)
+    if isinstance(record, dict):
+        entry[CRS_FIX_KEY] = dict(record)
     return {**entry, **_geometryFiles(image)}
 
 

@@ -1,43 +1,11 @@
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 import pyqtgraph as pg
 
-import varda
 from varda.common.entities import Image
-from varda.utilities import image_utils
 from varda.utilities.roi_utils import RegionCoordinateTransform
-from varda.common.entities import ROIMode, ROI
-
-
-def createROI(
-    points: List[Tuple[float, float]],
-    sourceImageIndex: int,
-    color: Tuple[int, int, int, int],
-    mode: ROIMode,
-) -> ROI:
-    """Create a new ROI and save it to the project"""
-    kwargs = {
-        "points": np.array(points),
-        "sourceImageIndex": sourceImageIndex,
-        "color": color,
-        "mode": mode,
-    }
-
-    # Calculate geo coordinates if available
-    image = varda.app.proj.getImage(sourceImageIndex)
-    if image.metadata.hasGeospatialData:
-        geoPoints = [image_utils.transformPixelToGeoCoord(image, *p) for p in points]
-        geoPoints = np.array(geoPoints)
-        kwargs["geoPoints"] = geoPoints
-
-    # Create ROI object
-    roi = ROI(**kwargs)
-
-    # Save to project
-    varda.app.proj.roiManager.addROI(roi)
-    varda.app.proj.roiManager.associateROIWithImage(roi, sourceImageIndex)
-    return roi
+from varda.common.entities import ROI
 
 
 def createROIMask(points: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:

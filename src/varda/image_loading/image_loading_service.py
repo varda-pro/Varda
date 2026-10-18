@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .data_sources import DataSource, RasterioDataSource, InMemoryDataSource
+from .crs_check import checkImageCrs
 from .data_sources.cached_data_source import CachedDataSource
 from .data_sources.in_memory_data_source import InMemoryBudget
 from .data_sources.registry import datasource_registry, get_image_type_filter
@@ -248,7 +249,10 @@ class ImageLoadingService:
 
 def loadRaster(filePath: str) -> VardaRaster:
     """Open ``filePath`` as a VardaRaster: in memory when it fits comfortably,
-    otherwise read on demand. Blocks; ``ImageLoadingService`` runs it in the
-    background."""
+    otherwise read on demand, with its coordinate system checked (and the
+    one automatic fix applied; see ``crs_check``). Blocks;
+    ``ImageLoadingService`` runs it in the background."""
     logger.info(f"Loading image: {filePath}")
-    return VardaRaster.fromDataSource(wrapForReading(openDataSource(filePath)))
+    image = VardaRaster.fromDataSource(wrapForReading(openDataSource(filePath)))
+    checkImageCrs(image)
+    return image

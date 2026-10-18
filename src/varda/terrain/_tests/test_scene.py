@@ -10,8 +10,8 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 
-from varda.catalogs.bodies import RADII_M, geographicCrs
 from varda.common.entities import VardaRaster
+from varda.geo.bodies import BODIES
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.terrain.scene import (
     FILL_METHOD,
@@ -45,9 +45,9 @@ def test_ground_size_in_meters_projected_geographic_or_pixels():
     )
     assert groundSize(projected) == pytest.approx((400, 200))
     geographic = _dem(
-        np.zeros((10, 20)), Affine(0.01, 0, 0, 0, -0.01, 0), geographicCrs("Mars")
+        np.zeros((10, 20)), Affine(0.01, 0, 0, 0, -0.01, 0), BODIES["Mars"].sphereCrs()
     )
-    perDegree = np.pi * RADII_M["Mars"] / 180
+    perDegree = np.pi * BODIES["Mars"].equatorialRadius / 180
     assert groundSize(geographic) == pytest.approx(
         (0.2 * perDegree, 0.1 * perDegree), rel=1e-4
     )

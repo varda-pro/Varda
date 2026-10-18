@@ -138,6 +138,22 @@ class DataSource(Protocol):
         ...
 
     @property
+    def rawCrsText(self) -> str | None:
+        """The CRS as the file states it (WKT), kept even when PROJ can't
+        parse it; ``None`` when the file has none."""
+        return None
+
+    @property
+    def crsError(self) -> str | None:
+        """Why the file's CRS couldn't be parsed (``crs`` is then ``None``)."""
+        return None
+
+    def gdalMetadata(self) -> dict[str, dict[str, str]]:
+        """GDAL's planetary label metadata domains (``xml:PDS4``,
+        ``json:ISIS3``) that the file has, for ``varda.geo.labels``."""
+        return {}
+
+    @property
     def driver(self) -> str:
         """Format driver name (e.g. 'ENVI', 'GTiff', 'HDF5')."""
         ...

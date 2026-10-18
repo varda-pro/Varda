@@ -2,15 +2,21 @@
 marked on every view, and kept with the session."""
 
 import numpy as np
+from shapely.geometry import box
 
+from varda.common.entities import Color, ROIMode
+from varda.geo._tests.fixtures import makeImage
 from varda.image_rendering.raster_view.viewport_tools.line_tools import LineDrawTool
 from varda.lines.line_collection import LineKind, sharedLines
+from varda.rois.roi_calculations import GeometryMeasure
 from varda.utilities.debug import generate_random_image
 from varda.workspaces.general_image_analysis import (
     GeneralImageAnalysisConfig,
     GeneralImageAnalysisWorkflow,
 )
 from varda.workspaces.workspace_kinds import buildWorkspace
+
+RED = Color(1.0, 0.0, 0.0, 0.5)
 
 
 def _workflow(qtbot, image):
@@ -62,3 +68,31 @@ def test_its_lines_are_offered_to_other_workspaces_until_it_closes(qtbot):
     assert (image, workflow.lineCollection) in sharedLines()
     workflow.close()
     assert all(lines is not workflow.lineCollection for _, lines in sharedLines())
+
+
+def test_a_crs_set_after_the_workspace_opens_reaches_its_rois_lines_and_points(
+    qtbot,
+):
+    """A WGS 84 image of Mars, measured, then Set coordinate system… → Mars:
+    the ROI's body area, the line's length and the points follow."""
+    image = makeImage(
+        "EPSG:4326", centerLonLat=(10.0, 0.0), pixelSize=0.01, width=40, height=30
+    )
+    workflow = _workflow(qtbot, image)
+    rois = workflow.roiCollection
+    fid = rois.addROI(box(9.9, -0.1, 10.0, 0.0), "box", RED, ROIMode.RECTANGLE)
+    workflow.roiManagerWidget.calculatedColumns.add(
+        "area_km2", GeometryMeasure("area_body")
+    )
+    workflow.lineCollection.addLine([[0.0, 0.0], [30.0, 0.0]])
+    lengths = workflow.lineManagerWidget.model
+    pointFid = workflow.pointManagerWidget.addPixel(image, 3, 4)
+    onEarth = (rois.getProperty(fid, "area_km2"), lengths.data(lengths.index(0, 2)))
+
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})
+
+    assert rois.getProperty(fid, "area_km2") < onEarth[0] * 0.3
+    assert lengths.data(lengths.index(0, 2)) != onEarth[1]
+    assert pointFid is not None
+    assert workflow.pointCollection.crs == image.crs
+    assert workflow.pointManagerWidget.addPixel(image, 5, 6) is not None

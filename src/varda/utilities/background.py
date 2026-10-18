@@ -18,6 +18,8 @@ from PyQt6 import sip
 from PyQt6.QtCore import QObject
 from superqt.utils import FunctionWorker, create_worker, ensure_main_thread
 
+from varda.utilities.proj_lock import keepProjContext
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +47,14 @@ def runInBackground[R](
         if not gone():
             onFailed(error)
 
+    def work() -> R:
+        try:
+            return task()
+        finally:
+            keepProjContext()  # pyproj would free it between pool tasks
+
     worker = create_worker(
-        task, _start_thread=False, _connect={"returned": done, "errored": failed}
+        work, _start_thread=False, _connect={"returned": done, "errored": failed}
     )
     worker.start()
     return worker

@@ -13,10 +13,20 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import (
     demResampling,
     onGridOf,
+    pixelSizeText,
     placeableChoices,
+    placementProblem,
     resamplingRecord,
     resamplingText,
+    sameGrid,
     sameGridChoices,
+)
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_SOUTH_WKT,
+    CRISM_MTRDR_WKT,
+    MARS_EQC_PDS3_WKT,
+    WGS84,
+    makeImage,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
@@ -167,3 +177,75 @@ def test_images_that_cant_be_placed_raise():
     crism, shadow, dem, otherDem, plain, far = _scene()
     with pytest.raises(ValueError, match="doesn't overlap"):
         onGridOf(far, crism)
+
+
+def test_pixel_size_text_names_the_crs_units():
+    assert pixelSizeText(_raster(np.zeros((2, 2)), "utm")) == "18.0 m"
+    km = CRS.from_user_input("+proj=eqc +R=3396190 +units=km +no_defs")
+    image = _raster(np.zeros((2, 2)), "km", Affine(0.5, 0, 0, 0, -0.5, 0), km)
+    assert pixelSizeText(image) == "0.5 km"
+    degrees = _raster(
+        np.zeros((2, 2)), "deg", Affine(0.01, 0, 0, 0, -0.01, 0), CRS.from_epsg(4326)
+    )
+    assert pixelSizeText(degrees) == "0.01°"
+
+
+def test_pixel_size_text_of_a_local_crs():
+    local = CRS.from_user_input(
+        'LOCAL_CS["arbitrary",UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    )
+    image = _raster(np.zeros((2, 2)), "local", Affine(2.0, 0, 0, 0, -2.0, 0), local)
+    assert pixelSizeText(image) == "2.0 m"
+
+
+# GDAL's PDS3 form and the IAU code of one projection: names differ, geometry not
+PDS3_EQC = CRS.from_wkt(MARS_EQC_PDS3_WKT)
+IAU_EQC = CRS.from_user_input("IAU_2015:49910")
+MARS_DEGREES = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+
+
+def test_equivalent_projections_are_one_grid():
+    data = np.zeros((4, 4))
+    assert sameGrid(
+        _raster(data, "gdal", crs=PDS3_EQC), _raster(data, "asp", crs=IAU_EQC)
+    )
+
+
+def test_images_on_different_bodies_are_never_placed():
+    earth = _raster(
+        np.zeros((4, 4)),
+        "earth",
+        Affine(0.01, 0, 10, 0, -0.01, 5),
+        CRS.from_user_input(WGS84),
+    )
+    mars = _raster(
+        np.zeros((8, 8)), "mars", Affine(0.005, 0, 10, 0, -0.005, 5), MARS_DEGREES
+    )
+    assert placementProblem(earth, mars) == "Earth and Mars are different bodies"
+
+
+def test_longitudes_0_to_360_and_minus_180_to_180_overlap():
+    values = np.arange(100, dtype=np.float32).reshape(10, 10)
+    east = _raster(values, "0-360", Affine(0.1, 0, 257.0, 0, -0.1, 5.0), MARS_DEGREES)
+    west = _raster(
+        np.zeros((10, 10)),
+        "-180-180",
+        Affine(0.1, 0, -103.0, 0, -0.1, 5.0),
+        MARS_DEGREES,
+    )
+    assert placementProblem(east, west) is None
+    assert placementProblem(west, east) is None
+    placed = onGridOf(east, west)[..., 0]
+    assert np.nansum(placed) == pytest.approx(values.sum())
+    np.testing.assert_array_equal(placed, values)
+
+
+def test_two_crism_scenes_need_reprojecting_not_one_grid():
+    # each MTRDR is on the sphere of Mars's local radius under its own scene
+    north = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, -40.0), pixelSize=18.0)
+    south = makeImage(CRISM_MTRDR_SOUTH_WKT, centerLonLat=(10.0, -40.0), pixelSize=18.0)
+    southCrs = CRS.from_wkt(CRISM_MTRDR_SOUTH_WKT)
+    sameNumbers = _raster(np.zeros((64, 64)), "south", north.transform, southCrs)
+    assert not sameGrid(north, sameNumbers)  # same transform, other surface
+    assert not sameGrid(north, south)
+    assert placementProblem(south, north) is None  # reprojected onto it

@@ -7,6 +7,11 @@ from rasterio.crs import CRS
 
 from varda.analysis.geometry import crop
 from varda.common.entities import VardaRaster
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_SOUTH_WKT,
+    CRISM_MTRDR_WKT,
+    MARS_EQC_PDS3_WKT,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.mosaicking.grid import defaultGrid
 from varda.mosaicking.model import MosaicError, MosaicProject
@@ -122,12 +127,40 @@ def test_inputs_must_share_projection_and_bands():
         ),
         name="o",
     )
-    with pytest.raises(MosaicError, match="projections"):
+    with pytest.raises(MosaicError, match="projections") as error:
         MosaicProject([scene, other])
+    assert "Transverse Mercator" in str(error.value)  # each one named
+    assert "Geographic (lon/lat)" in str(error.value)
     with pytest.raises(MosaicError, match="bands"):
         MosaicProject([scene, _scene(bands=3)])
     with pytest.raises(MosaicError, match="two images"):
         MosaicProject([scene])
+
+
+def test_equivalent_projections_written_differently_mosaic():
+    # GDAL's PDS3 form and the IAU code (as ASP writes it) of one projection
+    def image(crs: CRS) -> VardaRaster:
+        data = np.ones((4, 4, 1), np.float32)
+        return VardaRaster(ArrayDataSource(data, transform=TRANSFORM, crs=crs), "m")
+
+    MosaicProject(
+        [
+            image(CRS.from_wkt(MARS_EQC_PDS3_WKT)),
+            image(CRS.from_user_input("IAU_2015:49910")),
+        ]
+    )
+
+
+def test_two_crism_scenes_are_different_projections():
+    # each MTRDR's sphere is Mars's local radius under its own scene
+    def image(wkt: str) -> VardaRaster:
+        data = np.ones((4, 4, 1), np.float32)
+        crs = CRS.from_wkt(wkt)
+        return VardaRaster(ArrayDataSource(data, transform=TRANSFORM, crs=crs), "m")
+
+    with pytest.raises(MosaicError, match="different map projections") as error:
+        MosaicProject([image(CRISM_MTRDR_WKT), image(CRISM_MTRDR_SOUTH_WKT)])
+    assert "3394.84 km" in str(error.value) and "3392.50 km" in str(error.value)
 
 
 def test_two_crops_rebuild_the_scene_exactly():

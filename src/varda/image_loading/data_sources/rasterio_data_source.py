@@ -42,6 +42,9 @@ logging.getLogger("rasterio").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+# GDAL metadata domains holding a planetary label (read by varda.geo.labels)
+PLANETARY_LABEL_DOMAINS = ("xml:PDS4", "json:ISIS3")
+
 
 def _maskedToNan(
     reader: rio.DatasetReader,
@@ -293,22 +296,43 @@ class RasterioDataSource(DataSource):
     def crs(self) -> CRS | None:
         # Built once: every access used to create a new pyproj CRS, i.e. PROJ
         # calls from whichever thread asked (see utilities/proj_lock.py)
-        with PROJ_LOCK:
-            if not hasattr(self, "_crs"):
-                self._crs = self._readCrs()
-            return self._crs
+        return self._crsState()[0]
 
-    def _readCrs(self) -> CRS | None:
-        src_crs = self._src.crs
-        if src_crs is None:
-            return None
+    @property
+    def rawCrsText(self) -> str | None:
+        return self._crsState()[1]
+
+    @property
+    def crsError(self) -> str | None:
+        return self._crsState()[2]
+
+    def _crsState(self) -> tuple[CRS | None, str | None, str | None]:
+        """The CRS, its raw text and its parse error, read once."""
+        with PROJ_LOCK:
+            if not hasattr(self, "_crsRead"):
+                self._crsRead = self._readCrs()
+            return self._crsRead
+
+    def _readCrs(self) -> tuple[CRS | None, str | None, str | None]:
+        """The CRS, the file's WKT for it, and why PROJ couldn't parse it."""
+        rawText = None
         try:
-            return CRS.from_wkt(src_crs.to_wkt())
-        except Exception:
-            logger.error(
-                f"Failed to parse CRS from source: {src_crs} from file {self.filePath}"
-            )
-            return None
+            srcCrs = self._src.crs
+            if srcCrs is None:
+                return None, None, None
+            rawText = srcCrs.to_wkt()
+            return CRS.from_wkt(rawText), rawText, None
+        except Exception as error:
+            logger.error(f"Failed to parse the CRS of {self.filePath}: {error}")
+            return None, rawText, str(error) or type(error).__name__
+
+    def gdalMetadata(self) -> dict[str, dict[str, str]]:
+        namespaces = self._src.tag_namespaces() or []
+        return {
+            domain: self._src.tags(ns=domain)
+            for domain in PLANETARY_LABEL_DOMAINS
+            if domain in namespaces
+        }
 
     @property
     def driver(self) -> str:

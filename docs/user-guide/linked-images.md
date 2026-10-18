@@ -22,6 +22,15 @@ Linking by pixel images that aren't on the first image's grid (another size
 or georeferencing) pairs different places, so a notice across the top of the
 workspace names those images too.
 
+Images of different bodies (or with an Earth coordinate system on planetary
+data) are never linked by map location: there is no "same place" between
+them. The notice names them and their body, e.g. "EARTH: on Earth, not Mars;
+not linked" (bodies compared with the first georeferenced image). On them,
+the cursor isn't shown, their spectrum plot says "off the image", panning
+doesn't move them, and a line drawn on one isn't added (the status bar says
+why). Images whose body Varda can't identify are linked when their radii
+match, and otherwise treated the same way.
+
 ## Reading every image at once
 
 - The views pan and zoom together.
@@ -91,7 +100,7 @@ How images are linked:
 | Step | What Varda does |
 | --- | --- |
 | By pixel | The same column and row in every image. Images not on the first image's grid (another size, CRS or transform) are named in a notice across the top of the workspace. |
-| By map location | The point's map coordinates in the georeferencing of the image you clicked, converted to each other image's CRS with PROJ (through pyproj), then to its pixel through its georeferencing. No co-registration is done. |
+| By map location | The point's map coordinates in the georeferencing of the image you clicked, converted to each other image's CRS at the same planetocentric longitude and latitude (PROJ through pyproj, plus the latitude conversion between a sphere and an ellipsoid; see [Moving points between surfaces of one body](coordinate-systems.md#moving-points-between-surfaces-of-one-body)), then to its pixel through its georeferencing. CRSs that differ only in names (e.g. GDAL's PDS3 and ENVI readings of one CRISM product) need no conversion. Images of another body aren't converted at all: they aren't linked. No co-registration is done. |
 | Values | The spectrum of the pixel the point falls in (nearest pixel, no interpolation). |
 | Lines | Vertices are kept in the first image's coordinates and moved to each image as above; each image's profile is then sampled along straight segments between them on its own grid. |
 | Bits | Bit *i* is (value >> *i*) & 1, so bit 0 is the least significant. A signed image's values are read as the unsigned integer of the same width (an int16 −1 is sixteen bits set), as **Decode Bit Mask** reads them. |
@@ -112,6 +121,10 @@ How images are linked:
 - **Unreferenced images are read by pixel.** In a map link, an image
   without georeferencing is read by pixel; the notice at the top of the
   workspace names it. Don't report its values as being at the same place.
+- **Different bodies aren't linked.** By map location, an image of another
+  body than the first georeferenced image (or one whose body can't be told
+  and whose radii differ) is named in the notice and has no reading. Linked
+  by pixel, images are still paired pixel for pixel, whatever their body.
 - **By pixel assumes one grid.** Images of different sizes or grids are
   still read pixel for pixel; the notice at the top of the workspace names
   them. Link them by map location instead.

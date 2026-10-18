@@ -82,8 +82,11 @@ keeps them even after that workspace is closed.
 **From a File…** reads a vector file instead: a rover traverse or mapped
 contacts (GeoJSON, GeoPackage, shapefile, KML). Polygons show as their
 outlines. Longitude and latitude are taken as degrees on the DEM's body
-(planetary GeoJSON files always claim Earth's), and other map projections
-are converted to the DEM's. GeoJSON can't store a Mars map projection, so a
+(planetary GeoJSON files always claim Earth's): longitude east, and
+latitude of the DEM's own type (planetocentric or planetographic, see
+[Coordinate systems](coordinate-systems.md)). Other map projections of the
+same body are converted to the DEM's; a file on another body is refused
+with a message. GeoJSON can't store a Mars map projection, so a
 GeoJSON whose "degrees" are really projected coordinates is read in the
 DEM's projection; a GeoPackage keeps the projection and is the safer choice.
 Tick a layer to show or hide it; double-click it to change its color. Lines

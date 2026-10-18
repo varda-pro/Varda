@@ -8,6 +8,60 @@ can alter results.
 
 ### Added
 
+- **ROI areas and perimeters on the body.** Add Column's Geometry measures
+  now include **Area on the body (km²)** and **Perimeter on the body (km)**:
+  geodesic (Karney, 2013) on the coordinate system's own surface, with the
+  ROI's edges densified to one pixel, whatever the projection. The column's
+  tooltip names the method and surface, the difference on the body's IAU 2015
+  reference ellipsoid, and why any value is blank. The map-unit area and
+  perimeter are now labeled planar, with the projection's distortion over the
+  image in their tooltip. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
+- **The pixel readout names the body and conventions.** Hovering over a
+  georeferenced image shows, e.g., `lat 18.40312° N  lon 77.45120° E  (Mars,
+  planetocentric)`: the body, the latitude type, the longitude direction and,
+  for 0..360 images, the longitude domain. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md).
+- **Image Properties describes the coordinate system.** A new
+  **Coordinate system** group says what the image's CRS is in words, e.g.
+  "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px",
+  with its latitude type (planetocentric or planetographic), longitude
+  direction and domain (0..360 or −180..180), its authority code (or the
+  `IAU_2015`/EPSG code it matches), the pixel size in the CRS's units and on
+  the ground, and the full WKT. An unknown body is reported as unknown,
+  never as Earth. A CRS PROJ can't read is shown as the file has it, with
+  PROJ's error, and fills **Set coordinate system…** to be corrected.
+  Line-profile CSVs name the CRS the same way. See the new
+  [Coordinate systems](docs/user-guide/coordinate-systems.md) guide.
+- **Planetary images tagged WGS 84 are read on their own body.** When an
+  image opens, Varda checks its coordinate system against its label. A
+  geographic Earth CRS (e.g. `EPSG:4326`) on an image whose label names
+  another body Varda knows (PDS3 `TARGET_NAME = MARS`, say) is read as
+  degrees on that body's IAU 2015 sphere (`IAU_2015:49900` for Mars); the
+  degrees don't change. This is the only CRS Varda changes on its own: the
+  file is left as it is, the corrected CRS is kept with the image (and in
+  sessions), files Varda exports are written with it, and the provenance of
+  every result made from the image records it as `crsFix` (`from`, `to`,
+  `reason`, `automatic`). A body Varda doesn't know (e.g. Bennu) is flagged
+  but not fixed; targets that name no body (`SKY`, `CALIBRATION`, `N/A`) are
+  ignored. Editing an image's metadata in Image
+  Properties keeps the corrected CRS; **Reset to the File's** returns the
+  image to how it opened. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#the-one-automatic-fix-and-why-only-that-one).
+- **Coordinate-system findings show where you work, and you can fix them.**
+  An image whose CRS has a tip or a problem gets an amber dot on its
+  thumbnail in the image list, and its tooltip says the first finding
+  (e.g. "Map: Its CRS says Earth; read as Mars (from its label)."). An
+  image with a problem is announced once in the status bar when it opens.
+  Image Properties lists every finding with what to do, **Undo** for the
+  automatic fix, **Apply** for a fix offered, and **Set coordinate
+  system…**: any EPSG or IAU_2015 code, WKT or PROJ string, or the same CRS
+  as another open image, described in words as you type, with a warning
+  (not a refusal) for a CRS on another body. Changes apply at once, also
+  to workspaces already open (the image's ROIs and their calculated
+  columns, line lengths and saved points follow), and are recorded as
+  `crsFix` (`automatic: false`, or `undone: true`). See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#setting-or-correcting-a-coordinate-system).
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference
   mineral overlaid on the Ratio plot (its metadata's mineral or class, else
@@ -84,6 +138,67 @@ can alter results.
 
 ### Fixed
 
+- **Line lengths and profile distances in projected images were measured
+  on the flat map (e.g. 2× too long east–west at 60° in a 0°-centered
+  equirectangular map); they're now geodesic on the body.** In every
+  coordinate system, distances are geodesic (Karney, 2013) on the CRS's own
+  sphere or ellipsoid. The Lines tab's length tooltip and the profile CSV's
+  header give the method and surface, the difference on the body's IAU 2015
+  reference ellipsoid, the projection's distortion along the line, and the
+  limits (horizontal; plus the image's georeferencing error). Line lengths
+  now follow the line at about 1 px, as profiles do. See
+  [Lines and profiles](docs/user-guide/lines-and-profiles.md).
+- **Images and footprint files of Vesta and other bodies with IAU 2015
+  radii were identified as Earth; unknown bodies are now reported as
+  unknown.** Varda now identifies a body from a coordinate system's
+  `IAU_2015` code, the names in it, else its radius against PROJ's IAU 2015
+  radii, in the Find Data map, footprint files, the Terrain workspace and
+  vector import. A projected footprint file on no known body is refused with
+  a message. Projected footprints are now converted to degrees on the body's
+  IAU 2015 sphere (Mars: 3396.19 km, was the 3389.5 km mean radius); latitude
+  and longitude on a sphere don't depend on its radius, so footprints don't
+  move. Degrees placed on a Terrain DEM are read in the DEM's own geographic
+  coordinate system.
+- **Mosaic refused images in the same projection written differently (e.g.
+  by GDAL and ASP).** Mosaics, masks, DEMs and 3D Terrain overlays now
+  treat two coordinate systems as one when their geometry matches (the
+  projection, its parameters, the body's radii, the prime meridian and the
+  axes), whatever they're named, so such images share a grid and aren't
+  resampled. An image on a different body (a mask in Earth's degrees over a
+  Mars image, say) is never placed on another, and degree images with
+  longitudes 0–360 and −180–180 now overlap where they cover the same
+  ground. A mosaic's projection error names both projections.
+- **Linking or transferring between images of different bodies (or with an
+  Earth CRS on planetary data) no longer crashes; it says why it can't.**
+  Linked Images (and the CRISM Ratio workspace's browse view) linked by map
+  location leave an image of another body unlinked, with a notice such as
+  "EARTH: on Earth, not Mars; not linked"; applying ROIs to such an image
+  and saving a point from it are refused with a message naming both bodies.
+  Points saved from images on other projections of the same body are now
+  converted to the Points Manager's coordinate system (that of the first
+  image a point was saved from); before, their coordinates were stored
+  unconverted and exported under the wrong CRS. Points from an image
+  without georeferencing are no longer mixed with map points (or the
+  reverse). Linking, ROI transfer and points between a sphere and a
+  flattened ellipsoid of one body keep each point's planetocentric
+  latitude; PROJ alone kept the latitude number, up to 0.34° (about 20 km)
+  off on Mars. Images whose coordinate
+  systems differ only in names are linked and given ROIs without
+  reprojection.
+- **The pixel readout swapped latitude and longitude for map projections
+  on the IAU 2015 ellipsoid codes (e.g. `IAU_2015:49911`, `49912`).** It now
+  reads the coordinate system's own axis order, so a pixel near 18.4° N,
+  77.5° E reads `lat 18.39916° N  lon -77.49916° W  (Mars, planetographic)` in
+  49911 and `… lon 77.50084° E  (Mars, planetocentric)` in 49912.
+- **Vector import, terrain lines and Find Data misread degrees for map
+  projections on the IAU 2015 ellipsoid codes.** Their geographic axes are
+  latitude first (and west-positive for the planetographic ones), so
+  imported features and lines draped on a terrain landed in the wrong place
+  and Find Data drew such an image's footprint mirrored. Degrees are now
+  read longitude east first, in the image's own latitude type, and
+  conversions between surfaces of one body keep the planetocentric place
+  (as Linked Images and points do). Terrain lines on another body are
+  refused with a message rather than "No line crosses the DEM".
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never

@@ -26,9 +26,11 @@ from PyQt6.QtWidgets import (
 from varda.common.entities import VardaRaster
 from varda.common.grid import sameGridChoices
 from varda.common.ui import notListedLabel
+from varda.geo.distortion import distortionOver
 from varda.rois.roi_calculations import (
     CONSTANTS,
     FUNCTIONS,
+    BODY_MEASURES,
     GEOMETRY_MEASURES,
     MAP_MEASURES,
     STATISTICS,
@@ -65,6 +67,7 @@ class AddColumnDialog(QDialog):
         self.calculated = calculated
         self.collection = calculated.collection
         base = images[0]
+        self.base = base
         # zonal statistics need the ROIs' pixel grid: no resampling
         self.gridChoices = sameGridChoices(images[1:], base)
         self.images = [base, *self.gridChoices.images]
@@ -110,15 +113,38 @@ class AddColumnDialog(QDialog):
             if kind in MAP_MEASURES and units:
                 label = label.replace("map units", units)
             self.measureBox.addItem(label, kind)
+            item = self.measureBox.model().item(self.measureBox.count() - 1)  # ty: ignore[unresolved-attribute]
             if kind in MAP_MEASURES and units is None:
-                item = self.measureBox.model().item(self.measureBox.count() - 1)  # ty: ignore[unresolved-attribute]
                 item.setEnabled(False)
                 item.setToolTip("The image has no map coordinates")
+            elif kind in ("area_map", "perimeter_map"):
+                item.setToolTip(self._planarTip())
+            elif kind in BODY_MEASURES:
+                item.setToolTip(
+                    "Geodesic on the body's surface in the image's coordinate "
+                    "system, edges densified to 1 pixel: no projection "
+                    "distortion, whatever the projection"
+                )
         self.measureBox.currentIndexChanged.connect(lambda _: self._update())
         form = QFormLayout(page)
         form.setContentsMargins(0, 0, 0, 0)
         form.addRow("Measure:", self.measureBox)
         return page
+
+    def _planarTip(self) -> str:
+        """Planar measures carry the projection's distortion: say how much."""
+        summary = distortionOver(
+            self.base.crs, self.base.transform, self.base.width, self.base.height
+        )
+        distortion = (
+            f"Over this image the projection has {summary.text}. "
+            if summary is not None
+            else ""
+        )
+        return (
+            f"Measured on the flat map (planar). {distortion}"
+            "Area and Perimeter on the body are free of it."
+        )
 
     def _zonalPage(self) -> QWidget:
         page = QWidget()

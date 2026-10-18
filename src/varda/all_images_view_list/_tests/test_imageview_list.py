@@ -2,10 +2,15 @@
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QContextMenuEvent
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QListWidgetItem
 
-from varda.all_images_view_list.imageview_list import ImageListWidget
+from varda.all_images_view_list.imageview_list import (
+    ImageItemDelegate,
+    ImageListWidget,
+)
 from varda.common.observable_list import ObservableList
+from varda.geo._tests.fixtures import writeWgs84
+from varda.image_loading.image_loading_service import loadRaster
 from varda.utilities.debug import generate_random_image
 
 
@@ -70,3 +75,51 @@ def test_right_click_on_empty_space_emits_nothing(qtbot):
 
     with qtbot.assertNotEmitted(widget.sigContextMenuRequested):
         _rightClick(widget, emptyPos)
+
+
+def _item(widget: ImageListWidget, row: int) -> QListWidgetItem:
+    item = widget.item(row)
+    assert item is not None
+    return item
+
+
+def test_a_wgs84_mars_image_has_a_badge_and_says_why(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    widget = _showWidget(qtbot, image)
+    item = _item(widget, 0)
+    assert item.toolTip() == (
+        "scene.tif\nMap: Its CRS says Earth; read as Mars (from its label)."
+    )
+    index = widget.indexFromItem(item)
+    assert index.data(Qt.ItemDataRole.ToolTipRole) == item.toolTip()  # the view's
+    assert isinstance(widget.itemDelegate(), ImageItemDelegate)
+    assert ImageItemDelegate.hasBadge(index)
+
+
+def test_an_image_without_findings_has_no_badge(qtbot):
+    image = generate_random_image((20, 20, 10))
+    widget = _showWidget(qtbot, image)
+    item = _item(widget, 0)
+    assert item.toolTip() == image.name
+    assert not ImageItemDelegate.hasBadge(widget.indexFromItem(item))
+
+
+def test_painting_the_badge_makes_no_new_thumbnail(qtbot, tmp_path, monkeypatch):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    widget = _showWidget(qtbot, image)
+    widget.thumbnail(image)  # made once
+    made = []
+
+    def record(*args, **kwargs) -> None:
+        made.append(args)
+
+    monkeypatch.setattr(
+        "varda.all_images_view_list.imageview_list.thumbnailRgba", record
+    )
+    monkeypatch.setattr("varda.geo.health.checkCrs", record)
+    monkeypatch.setattr("varda.image_loading.crs_check.checkCrs", record)
+    viewport = widget.viewport()
+    assert viewport is not None
+    for _ in range(3):
+        viewport.repaint()
+    assert made == []  # the badge reads the health checked at load

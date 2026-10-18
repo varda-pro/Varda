@@ -18,6 +18,8 @@ from varda.common.provenance import (
     VARDA_NAMESPACE,
     makeProvenance,
 )
+from varda.geo._tests.fixtures import writeWgs84
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
@@ -171,3 +173,26 @@ def test_quality_figures_are_kept_in_files(tmp_path, key):
     )
     written = writeRaster(VardaRaster(source, name="r"), tmp_path / "r.tif")
     assert openDataSource(str(written)).extraMetadata[key] == figures
+
+
+def test_a_corrected_crs_is_written_and_recorded(tmp_path):
+    scene = writeWgs84(tmp_path)  # Earth degrees, with a PDS3 label for Mars
+    fixed = loadRaster(str(scene))
+    written = writeRaster(_bandMath(fixed, "b2 - b1"), tmp_path / "result.tif")
+
+    reopened = openDataSource(str(written))
+
+    assert reopened.crs is not None and sameCrs(reopened.crs, "IAU_2015:49900")
+    entry = reopened.extraMetadata[PROVENANCE_KEY]["inputs"][0]
+    assert entry["crsFix"] == fixed.extraMetadata["crsFix"]
+    assert entry["crsFix"]["automatic"] is True
+    assert entry["labelHints"]["target"] == "Mars"
+
+
+def test_an_exported_corrected_image_keeps_its_record(tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    written = writeRaster(fixed, tmp_path / "copy.tif")
+    reopened = loadRaster(str(written))
+    assert reopened.crs is not None and sameCrs(reopened.crs, "IAU_2015:49900")
+    assert reopened.extraMetadata["crsFix"] == fixed.extraMetadata["crsFix"]
+    assert reopened.metadataOverrides == {}  # nothing left to fix

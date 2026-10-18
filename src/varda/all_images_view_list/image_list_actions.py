@@ -87,7 +87,7 @@ def _exportImage(
 def _showProperties(
     ctx: ImageListClickContext, images: ProjectImages, mainGui: MainGUI
 ) -> None:
-    dialog = ImagePropertiesDialog(ctx.images[0], parent=mainGui)
+    dialog = ImagePropertiesDialog(ctx.images[0], parent=mainGui, images=list(images))
     if isinstance(images, ObservableList):  # a new name shows in the list
         dialog.accepted.connect(images.refresh)
     openOwnedDialog(dialog)
@@ -171,7 +171,7 @@ IMAGE_LIST_ACTIONS: list[Action] = [
     Action(
         id=PROPERTIES_ID,
         title="Properties…",
-        tooltip="The image's metadata: name, no-data value, wavelengths, band names",
+        tooltip="The image's metadata: name, no-data value, wavelengths, band names, coordinate system",
         callback=_showProperties,
         menus=[MenuRule(id=IMAGE_LIST_CONTEXT_MENU_ID, group="8_properties", order=1)],
     ),

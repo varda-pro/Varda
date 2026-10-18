@@ -11,13 +11,16 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
+from varda.common.provenance import CRS_FIX_KEY
 from varda.image_loading import ImageLoadingService
 from varda.image_loading.crism_geometry import GEOMETRY_KEYS, setGeometryOverride
+from varda.image_loading.crs_check import checkImageCrs
 from varda.rois.roi_json import roisFromJson
 from varda.session import SessionState
 from varda.workspaces.workspace_kinds import buildWorkspace
 
 logger = logging.getLogger(__name__)
+_NO_CRS = object()  # no "crs" override
 
 # (path, onSuccess(image), onFailure(message)) — the loading service's shape
 ImageLoader = Callable[
@@ -83,9 +86,7 @@ class SessionRestorer(QObject):
         for path, entry in self._state.metadata.items():  # edited in Varda
             image = self._byPath(path)
             if image is not None:
-                image.setMetadataOverrides(
-                    entry.get("overrides", {}), entry.get("name")
-                )
+                _restoreEdits(image, entry)
                 for need, key in GEOMETRY_KEYS.items():
                     if entry.get(key):
                         setGeometryOverride(image, need, entry[key])
@@ -110,3 +111,44 @@ class SessionRestorer(QObject):
         self.sigFinished.emit(
             RestoreReport(tuple(self._loaded), tuple(self._failed), count)
         )
+
+
+def _restoreEdits(image: VardaRaster, entry: dict) -> None:
+    """Put the session's edits (``entry``) back on ``image``, with its
+    ``crsFix`` record, and check its CRS again when the session chose
+    another than load did. A session CRS this PROJ can't read gives way to
+    the one chosen at load (and its record)."""
+    loaded = image.metadataOverrides.get("crs", _NO_CRS)
+    overrides = _restoredOverrides(image, entry.get("overrides", {}))
+    try:
+        image.setMetadataOverrides(overrides, entry.get("name"))
+    except ValueError as error:
+        logger.warning("Session edits of %s: %s", image.filePath, error)
+        overrides = {k: v for k, v in overrides.items() if k != "crs"}
+        if loaded is not _NO_CRS:
+            overrides["crs"] = loaded
+        try:
+            image.setMetadataOverrides(overrides, entry.get("name"))
+        except ValueError as again:  # band counts that don't match, say
+            logger.warning(
+                "Session edits of %s not restored: %s", image.filePath, again
+            )
+            return
+    else:
+        record = entry.get(CRS_FIX_KEY)
+        if isinstance(record, dict):  # kept by the check when it still applies
+            image.dataSource.extraMetadata[CRS_FIX_KEY] = dict(record)
+            loaded = _NO_CRS  # check again, below
+    if overrides.get("crs", _NO_CRS) != loaded or image.crsHealth is None:
+        checkImageCrs(image)
+
+
+def _restoredOverrides(image: VardaRaster, saved: dict) -> dict:
+    """The session's edits in place of the image's. A session that doesn't
+    say which CRS (one saved before Varda checked CRSs) keeps the CRS chosen
+    at load (the automatic fix); one that does wins, None (the file's own)
+    included."""
+    current = image.metadataOverrides
+    if "crs" in saved or "crs" not in current:
+        return dict(saved)
+    return {**saved, "crs": current["crs"]}

@@ -21,6 +21,7 @@ from rasterio.crs import CRS as RasterioCRS
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
 from varda.common.entities import VardaRaster
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.mosaicking.bands import chooseBands
 from varda.mosaicking.grid import TargetGrid
@@ -135,11 +136,12 @@ def toProjection(
 ) -> tuple[np.ndarray, Affine]:
     """An array (rows, cols, bands), NaN for no data, reprojected into
     another map projection at about its own resolution (unchanged when the
-    projections are the same). Takes WKT so a worker thread can call it: map
-    projection objects mustn't be shared between threads."""
-    source, target = RasterioCRS.from_wkt(sourceWkt), RasterioCRS.from_wkt(targetWkt)
-    if source == target:
+    projections are the same, however they're written). Takes WKT so a
+    worker thread can call it: map projection objects mustn't be shared
+    between threads."""
+    if sameCrs(sourceWkt, targetWkt):
         return data, transform
+    source, target = RasterioCRS.from_wkt(sourceWkt), RasterioCRS.from_wkt(targetWkt)
     rows, cols = data.shape[:2]
     left, top = transform * (0, 0)
     right, bottom = transform * (cols, rows)
