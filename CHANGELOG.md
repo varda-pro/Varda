@@ -46,6 +46,18 @@ can alter results.
   Properties keeps the corrected CRS; **Reset to the File's** returns the
   image to how it opened. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#the-one-automatic-fix-and-why-only-that-one).
+- **Coordinate-system findings show where you work, and you can fix them.**
+  An image whose CRS has a tip or a problem gets an amber dot on its
+  thumbnail in the image list, and its tooltip says the first finding
+  (e.g. "Map: Its CRS says Earth; read as Mars (from its label)."). An
+  image with a problem is announced once in the status bar when it opens.
+  Image Properties lists every finding with what to do, **Undo** for the
+  automatic fix, **Apply** for a fix offered, and **Set coordinate
+  system…**: any EPSG or IAU_2015 code, WKT or PROJ string, or the same CRS
+  as another open image, described in words as you type, with a warning
+  (not a refusal) for a CRS on another body. Changes apply at once and are
+  recorded as `crsFix` (`automatic: false`, or `undone: true`). See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#setting-or-correcting-a-coordinate-system).
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference
   mineral overlaid on the Ratio plot (its metadata's mineral or class, else

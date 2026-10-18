@@ -1,5 +1,6 @@
-"""Image Properties: what an image is (file, format, size, map projection)
-and the metadata Varda reads from it, with the parts that matter for
+"""Image Properties: what an image is (file, format, size, map projection,
+with what the coordinate-system check found and the fixes for it) and the
+metadata Varda reads from it, with the parts that matter for
 analysis editable: the name, the no-data value, the wavelengths and their
 unit, band names, FWHM, which bands are good, and the description.
 
@@ -10,10 +11,11 @@ values that differ from the file's become edits."""
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import numpy as np
 from pyproj import CRS
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,11 +37,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.all_images_view_list.set_crs_dialog import SetCrsDialog
 from varda.common.entities import VardaRaster
+from varda.common.provenance import CRS_FIX_KEY
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
-from varda.common.ui import MutedLabel, PanelScrollArea
+from varda.common.ui import FlowLayout, MutedLabel, PanelScrollArea
 from varda.geo.describe import describeCrs, formatMeters
-from varda.image_loading.crs_check import checkImageCrs
+from varda.geo.health import SET_CRS, CrsFix, CrsIssue
+from varda.image_loading.crs_check import checkImageCrs, chooseCrs, undoCrsFix
 from varda.image_loading.envi_header import headerFor, saveToHeader
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -87,10 +92,67 @@ def authorityText(crs: CRS, authority: str | None) -> str:
     return f"matches {authority}"
 
 
+def selectable(widget: QWidget) -> None:
+    for label in widget.findChildren(QLabel):
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+
+class CrsIssueRow(QWidget):
+    """One finding of the coordinate-system check: what, what to do, and
+    **Apply** for a fix offered, or a note and **Undo** for one in use."""
+
+    sigApply = pyqtSignal(object)  # the CrsFix
+    sigUndo = pyqtSignal()
+
+    def __init__(
+        self, issue: CrsIssue, chosen: bool, parent: QWidget | None = None
+    ) -> None:
+        """``chosen``: the fix in use was applied by the user (not at load)."""
+        super().__init__(parent)
+        self.fix: CrsFix | None = issue.fix
+        self.button: QPushButton | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(wrapped(f"{issue.severity.value.title()}: {issue.message}"))
+        suggestion = MutedLabel(issue.suggestion)
+        suggestion.setWordWrap(True)
+        layout.addWidget(suggestion)
+        if issue.fix is None:
+            return
+        row = FlowLayout()
+        if issue.fix.automatic:
+            who = (
+                "You applied this fix"
+                if chosen
+                else ("Varda applied this fix when the image opened")
+            )
+            layout.addWidget(wrapped(f"{who}: {issue.fix.reason}."))
+            self.button = QPushButton("Undo")
+            self.button.setToolTip("Use the file's own coordinate system")
+            self.button.clicked.connect(self.sigUndo)
+        else:
+            self.button = QPushButton("Apply")
+            self.button.setToolTip(issue.fix.reason)
+            self.button.clicked.connect(self._onApply)
+        row.addWidget(self.button)
+        layout.addLayout(row)
+
+    def _onApply(self) -> None:
+        self.sigApply.emit(self.fix)
+
+
 class ImagePropertiesDialog(QDialog):
-    def __init__(self, image: VardaRaster, parent: QWidget | None = None):
+    def __init__(
+        self,
+        image: VardaRaster,
+        parent: QWidget | None = None,
+        images: Sequence[VardaRaster] = (),
+    ):
+        """``images``: the open images, offered by Set Coordinate System."""
         super().__init__(parent)
         self.image = image
+        self.images = images
+        self.setCrsDialog: SetCrsDialog | None = None
         self.setWindowTitle(f"Properties of {image.name}")
         source = image.dataSource
         about = QFormLayout()
@@ -105,9 +167,11 @@ class ImagePropertiesDialog(QDialog):
         )
         aboutBox = QGroupBox("Image")
         aboutBox.setLayout(about)
-        self.crsBox = self._coordinateSystem(image)
-        for label in self.findChildren(QLabel):
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        selectable(aboutBox)
+        self.crsBox = QGroupBox("Coordinate system")
+        self._crsLayout = QVBoxLayout(self.crsBox)
+        self._crsContent: QWidget | None = None
+        self.refreshCoordinateSystem()
 
         self.nameEdit = QLineEdit(image.name)
         self.noDataEdit = QLineEdit("" if image.nodata is None else f"{image.nodata:g}")
@@ -227,27 +291,57 @@ class ImagePropertiesDialog(QDialog):
         self.resize(640, 720)
         self._source = source
 
-    def _coordinateSystem(self, image: VardaRaster) -> QGroupBox:
-        """The image's coordinate system in words, its authority code, its
-        pixel size, and its WKT (collapsed)."""
-        box = QGroupBox("Coordinate system")
-        form = QFormLayout(box)
+    def refreshCoordinateSystem(self) -> None:
+        """(Re)build the Coordinate system group for the image's CRS now."""
+        if self._crsContent is not None:
+            self._crsContent.setParent(None)
+            self._crsContent.deleteLater()
+        self._crsContent = self._coordinateSystem(self.image)
+        selectable(self._crsContent)
+        self._crsLayout.addWidget(self._crsContent)
+
+    def _coordinateSystem(self, image: VardaRaster) -> QWidget:
+        """The image's coordinate system in words, what the check found
+        (with Apply or Undo for a fix), Set coordinate system…, its
+        authority code, its pixel size, and its WKT (collapsed)."""
+        content = QWidget()
+        form = QFormLayout(content)
+        form.setContentsMargins(0, 0, 0, 0)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         crs = image.crs if image.hasGeospatialData else None
         description = describeCrs(crs, image.transform, image.width, image.height)
         form.addRow(wrapped(description.text))
+        self.applyButtons: list[QPushButton] = []
+        self.undoButton: QPushButton | None = None
+        health = image.crsHealth
+        record = image.extraMetadata.get(CRS_FIX_KEY)
+        chosen = isinstance(record, dict) and record.get("automatic") is False
+        for issue in health.issues if health is not None else ():
+            row = CrsIssueRow(issue, chosen)
+            row.sigApply.connect(self.applyFix)
+            row.sigUndo.connect(self.undoFix)
+            if row.button is not None and row.fix is not None:
+                if row.fix.automatic:
+                    self.undoButton = row.button
+                else:
+                    self.applyButtons.append(row.button)
+            form.addRow(row)
+        self.setCrsButton = QPushButton(SET_CRS)
+        self.setCrsButton.setToolTip(
+            "Read the image's map coordinates in another coordinate system"
+        )
+        self.setCrsButton.clicked.connect(self.showSetCrs)
         self.wktToggle = QPushButton("Show WKT")
         self.wktToggle.setCheckable(True)
         self.wktEdit = QPlainTextEdit()
         self.wktEdit.setReadOnly(True)
         self.wktEdit.setMaximumHeight(120)
         self.wktEdit.setVisible(False)
-        self.wktToggle.toggled.connect(self.wktEdit.setVisible)
-        self.wktToggle.toggled.connect(
-            lambda shown: self.wktToggle.setText("Hide WKT" if shown else "Show WKT")
-        )
+        self.wktToggle.toggled.connect(self._showWkt)
+        buttons = FlowLayout().withWidget(self.setCrsButton)
+        form.addRow(buttons)
         if crs is None:
-            return box
+            return content
         if description.latitudeType:  # a CRS on a body
             form.addRow(
                 "Conventions:",
@@ -270,9 +364,36 @@ class ImagePropertiesDialog(QDialog):
         form.addRow("Pixel size:", QLabel(f"{abs(t.a):g} × {abs(t.e):g}{unit}{ground}"))
         with PROJ_LOCK:
             self.wktEdit.setPlainText(crs.to_wkt(pretty=True))
-        form.addRow(self.wktToggle)
+        buttons.addWidget(self.wktToggle)
         form.addRow(self.wktEdit)
-        return box
+        return content
+
+    def _showWkt(self, shown: bool) -> None:
+        self.wktEdit.setVisible(shown)
+        self.wktToggle.setText("Hide WKT" if shown else "Show WKT")
+
+    def applyFix(self, fix: CrsFix) -> None:
+        """Use the fix offered (applies at once), recorded as the user's."""
+        chooseCrs(self.image, fix.wkt, fix.reason)
+        self.refreshCoordinateSystem()
+
+    def undoFix(self) -> None:
+        """Keep the file's own CRS instead of the fix (applies at once)."""
+        undoCrsFix(self.image)
+        self.refreshCoordinateSystem()
+
+    def showSetCrs(self) -> None:
+        self.setCrsDialog = SetCrsDialog(self.image, self.images, self)
+        self.setCrsDialog.accepted.connect(self._onCrsChosen)
+        self.setCrsDialog.open()
+
+    def _onCrsChosen(self) -> None:
+        dialog = self.setCrsDialog
+        assert dialog is not None
+        wkt = dialog.chosenWkt()
+        if wkt is not None:
+            chooseCrs(self.image, wkt, dialog.reason())
+            self.refreshCoordinateSystem()
 
     def fillWavelengths(self) -> None:
         start, step = self.fillStart.value(), self.fillStep.value()

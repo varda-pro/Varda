@@ -24,6 +24,7 @@ from varda.geo._tests.fixtures import (
     writeWgs84,
 )
 from varda.geo.equivalence import sameCrs
+from varda.geo.health import flagged
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
@@ -177,3 +178,72 @@ def test_a_local_crs_has_no_conventions_row(qtbot):
     texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
     assert "Local coordinates (no body), arbitrary, 2 m/px" in texts
     assert "Conventions:" not in texts and "2 × 2 m (2 m on the ground)" in texts
+
+
+def _crsTexts(dialog: ImagePropertiesDialog) -> list[str]:
+    return [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+
+
+def test_the_issues_are_listed_with_the_automatic_fix_and_undo(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = _crsTexts(dialog)
+    assert "Problem: Its CRS says Earth, but its label says Mars." in texts
+    assert any(t.startswith("Varda reads it as degrees") for t in texts)
+    assert any(
+        t.startswith("Varda applied this fix when the image opened") for t in texts
+    )
+    assert dialog.undoButton is not None and dialog.applyButtons == []
+
+
+def test_undo_keeps_the_files_crs_and_the_issue(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    assert dialog.undoButton is not None
+    dialog.undoButton.click()
+    assert sameCrs(image.crs, "EPSG:4326")
+    assert image.extraMetadata["crsFix"]["undone"] is True
+    assert flagged(image.crsHealth)  # still a problem: the badge stays
+    texts = _crsTexts(dialog)
+    assert any("you chose to keep the file's CRS" in t for t in texts)
+    assert any(t.startswith("WGS 84") or "Earth" in t for t in texts)
+    assert dialog.undoButton is None and len(dialog.applyButtons) == 1
+    dialog.applyButtons[0].click()  # and back
+    assert sameCrs(image.crs, "IAU_2015:49900")
+    assert image.extraMetadata["crsFix"]["automatic"] is False
+    assert any(t.startswith("You applied this fix") for t in _crsTexts(dialog))
+
+
+def test_set_coordinate_system_uses_the_chosen_crs(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.setCrsButton.click()
+    chooser = dialog.setCrsDialog
+    assert chooser is not None and chooser.isVisible()
+    chooser.crsEdit.setText("IAU_2015:49910")
+    chooser.accept()
+    assert sameCrs(image.crs, "IAU_2015:49910")
+    assert image.extraMetadata["crsFix"]["automatic"] is False
+    assert image.extraMetadata["crsFix"]["to"] == "IAU_2015:49910"
+    assert any(
+        t.startswith("Mars, sphere R = 3396.19 km, Equirectangular")
+        for t in _crsTexts(dialog)
+    )
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (640, 500)])
+def test_the_issues_are_not_cut_off_on_a_laptop_screen(qtbot, tmp_path, size):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.resize(*size)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)
+    assert dialog.undoButton is not None
+    dialog.undoButton.click()  # the Apply layout too
+    qtbot.wait(10)
+    assertNothingClipped(dialog)

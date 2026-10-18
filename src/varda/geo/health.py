@@ -216,6 +216,28 @@ def _earthOnBody(
     return CrsIssue("earth-crs-on-body", Severity.PROBLEM, message, suggestion, fix)
 
 
+def flagged(health: CrsHealth | None) -> bool:
+    """Whether ``health`` has a tip or a problem: the image list's dot."""
+    return headline(health) is not None
+
+
+def headline(health: CrsHealth | None) -> str | None:
+    """The finding to show first, in one line (the image list's tooltip, the
+    status bar): the automatic fix as what Varda read, else the first
+    problem, else the first tip; None for nothing (or only info)."""
+    if health is None:
+        return None
+    for severity in (Severity.PROBLEM, Severity.TIP):
+        for issue in health.issues:
+            if issue.severity is not severity:
+                continue
+            body = health.body.body
+            if issue.fix is not None and issue.fix.automatic and body is not None:
+                return f"Its CRS says Earth; read as {body.name} (from its label)."
+            return issue.message
+    return None
+
+
 def fixRecord(health: CrsHealth, declared: CRS | str) -> dict[str, str | bool] | None:
     """The automatic fix in ``health`` (of the ``declared`` CRS) as
     provenance records it (``crsFix``): the CRS declared and the CRS used,

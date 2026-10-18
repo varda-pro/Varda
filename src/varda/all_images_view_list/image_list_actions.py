@@ -87,7 +87,7 @@ def _exportImage(
 def _showProperties(
     ctx: ImageListClickContext, images: ProjectImages, mainGui: MainGUI
 ) -> None:
-    dialog = ImagePropertiesDialog(ctx.images[0], parent=mainGui)
+    dialog = ImagePropertiesDialog(ctx.images[0], parent=mainGui, images=list(images))
     if isinstance(images, ObservableList):  # a new name shows in the list
         dialog.accepted.connect(images.refresh)
     openOwnedDialog(dialog)

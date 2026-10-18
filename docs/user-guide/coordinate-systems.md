@@ -369,6 +369,35 @@ dialogs. Each finding has a severity:
   dot and the tooltip line.
 - **Info**: a convention, not an error. Shown in Image Properties only.
 
+### Where you'll see it
+
+- **The image list.** An image with a tip or a problem has an **amber dot**
+  at the top-right corner of its thumbnail. Its tooltip (hover over it)
+  adds one line, `Map: ` and the first problem (else the first tip), e.g.
+  "Map: Its CRS says Earth, but its label says Bennu." When the automatic
+  fix was applied, the line says what Varda read instead: "Map: Its CRS
+  says Earth; read as Mars (from its label)." The dot stays after the fix:
+  the file's CRS is still wrong, and the dot says so.
+- **The status bar.** When an image with a problem (the automatic fix
+  included) joins the image list, the main window's status bar says so for
+  15 seconds, e.g. "scene.tif: its CRS says Earth; read as Mars (from its
+  label). Details in Image Properties." Several such images added at once
+  give one message, "3 images have coordinate-system problems (a dot on
+  their thumbnails). Details in Image Properties." Each image is announced
+  once per session, however often the image list changes afterwards. Tips
+  and info aren't announced. Images Varda makes (analysis results) aren't
+  checked, so they get neither the dot nor a message.
+- **Image Properties.** The **Coordinate system** group lists every
+  finding, info included, as its severity and message ("Problem: Its CRS
+  says Earth, but its label says Mars."), with what to do below it. A fix
+  in use has a note saying who applied it and why ("Varda applied this fix
+  when the image opened: …", or "You applied this fix: …") and an **Undo**
+  button; a fix offered but not in use has an **Apply** button. **Set
+  coordinate system…** is always there.
+
+Varda never opens a dialog about a finding on its own: the dot, the
+tooltip and the status bar tell you, and Image Properties is where you act.
+
 ### Where the label facts come from
 
 - A **PDS3** label: a `.lbl` / `.LBL` file beside the image, or a label
@@ -450,6 +479,49 @@ in use. Sessions keep the corrected CRS
 (see
 [Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
 
+### Setting or correcting a coordinate system
+
+Every change below applies at once (the Properties dialog's **Cancel**
+doesn't undo it), leaves the file and the pixels' map coordinates as they
+are, checks the image again, and is kept in sessions (`"crs"` in the
+image's `overrides`; see
+[Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
+
+- **Undo** (on the automatic fix): use the file's own CRS. The finding
+  stays, now saying "…; you chose to keep the file's CRS.", and offers the
+  fix again with **Apply**; the dot stays too. The `crsFix` record is kept
+  with `undone: true`, so results made from the image say the fix was
+  undone.
+- **Apply** (on a fix offered): use the fix's CRS. The `crsFix` record is
+  the same as the automatic one but with `automatic: false`: you applied it.
+- **Set coordinate system…** opens a small dialog:
+  - **Coordinate system**: any CRS PROJ reads: an authority code
+    (`IAU_2015:49900`, `EPSG:4326`, `ESRI:104905`), WKT, or a PROJ string
+    (`+proj=longlat +R=3396190 +no_defs`).
+  - **Same as**: another open image that has a CRS; its CRS fills the
+    field.
+  - As you type, the dialog describes the CRS in words, as Image
+    Properties does, with the image's pixel size in it. A pixel size far
+    from what you expect (e.g. "0.00391 m/px" when a degree-based image is
+    given a CRS in meters) means the CRS's units don't match the image's
+    map coordinates.
+  - A CRS on another body than the image's (its label's body when the
+    label names one Varda knows, else its current CRS's) gets a warning,
+    e.g. "⚠ Mars and Earth are different bodies. Use it only if you know
+    the image is on Earth." It is allowed: you may know better than the
+    label. Text PROJ can't read can't be chosen (OK stays disabled).
+
+  OK uses the CRS, recorded as `crsFix` with `automatic: false` and the
+  reason "Chosen by hand (Set coordinate system…)", or "The same as
+  *image* (Set coordinate system…)". **Reset to the File's** returns the
+  image to how it opened, the automatic fix included.
+
+A session keeps the CRS you chose, but not the record of how you chose it:
+reopened, a CRS you set by hand has no `crsFix` record, the automatic
+fix's CRS applied by hand is recorded as automatic again, and an undone
+fix's record is gone. Results made before saving keep their records. Note
+your choice and its reason when you make it.
+
 ### Reporting a corrected CRS
 
 State the CRS the file declared, the CRS used, and why, for example:
@@ -460,8 +532,9 @@ State the CRS the file declared, the CRS used, and why, for example:
 > R = 3396.19 km; Archinal et al., 2018).
 
 The `crsFix` record in the provenance of any result gives these values.
-For a CRS you set yourself with **Set coordinate system…**, report it the
-same way, with your reason.
+For a CRS you set yourself with **Apply** or **Set coordinate system…**
+(`automatic: false` in `crsFix`), report it the same way, with your reason.
+A record with `undone: true` means the file's own CRS was used instead.
 
 ### The distortion check
 

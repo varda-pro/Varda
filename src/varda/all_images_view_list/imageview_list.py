@@ -19,10 +19,13 @@ from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
 from varda.all_images_view_list.thumbnail import THUMBNAIL_SIZE, thumbnailRgba
 from varda.common import ObservableList
 from varda.common.entities import VardaRaster
+from varda.common.palette import WARNING_COLOR
 from varda.common.parameter_widgets import connectWhileAlive
+from varda.geo.health import flagged, headline
 
 ICON_SIZE = THUMBNAIL_SIZE
 LEFT_MARGIN = 4  # px between the item's edge and its thumbnail and name
+BADGE_DIAMETER = 10  # px: the dot for a coordinate-system finding
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,27 @@ def _pixmap(rgba: np.ndarray) -> QPixmap:
     data = np.ascontiguousarray(rgba).tobytes()
     image = QImage(data, width, height, 4 * width, QImage.Format.Format_RGBA8888)
     return QPixmap.fromImage(image.copy())  # copy: QImage doesn't own ``data``
+
+
+def imageToolTip(image: VardaRaster) -> str:
+    """The image's full name (the label may be cut short), and its first
+    coordinate-system finding."""
+    finding = headline(image.crsHealth)
+    return image.name if finding is None else f"{image.name}\nMap: {finding}"
+
+
+class ImageItem(QListWidgetItem):
+    """An image in the list; its tooltip is made when asked for, so it
+    follows the image's coordinate-system check as that changes."""
+
+    def __init__(self, image: VardaRaster):
+        super().__init__(image.name)
+        self.setData(Qt.ItemDataRole.UserRole, image)
+
+    def data(self, role: int) -> object:
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return imageToolTip(super().data(Qt.ItemDataRole.UserRole))
+        return super().data(role)
 
 
 class ImageListWidget(QListWidget):
@@ -122,7 +146,6 @@ class ImageListWidget(QListWidget):
             item = self.item(row)
             if item is not None and item.data(Qt.ItemDataRole.UserRole) is image:
                 item.setText(image.name)
-                item.setToolTip(image.name)
         viewport = self.viewport()
         if viewport is not None:
             viewport.update()
@@ -130,10 +153,7 @@ class ImageListWidget(QListWidget):
     def _updateItems(self):
         self.clear()
         for image in self.imageList:
-            item = QListWidgetItem()
-            item.setText(image.name)
-            item.setToolTip(image.name)  # the full name; the label may be cut short
-            item.setData(Qt.ItemDataRole.UserRole, image)
+            item = ImageItem(image)
             item.setIcon(self._placeholderIcon)
             self.addItem(item)
             if image not in self._watched:
@@ -143,7 +163,9 @@ class ImageListWidget(QListWidget):
 
 
 class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
-    """Draws each image's cached thumbnail with its name below."""
+    """Draws each image's cached thumbnail with its name below, and an amber
+    dot at the thumbnail's top-right when its coordinate system has a tip
+    or a problem (read from the check made at load, never run here)."""
 
     def __init__(self, thumbnail, parent=None):
         super().__init__(parent)
@@ -165,6 +187,8 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             target.moveCenter(iconRect.center())
             target.moveLeft(iconRect.left())
             painter.drawPixmap(target, pixmap)
+            if self.hasBadge(index):
+                self._paintBadge(painter, target)
 
         textRect = QRect(
             iconRect.left(), iconRect.bottom() + 1, rect.right() - iconRect.left(), 0
@@ -194,4 +218,21 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QtGui.QPen(highlight, 1))
             painter.drawRoundedRect(frame, 3, 3)
+        painter.restore()
+
+    @staticmethod
+    def hasBadge(index: QtCore.QModelIndex) -> bool:
+        """Whether the image at ``index`` gets the coordinate-system dot."""
+        image = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        return isinstance(image, VardaRaster) and flagged(image.crsHealth)
+
+    @staticmethod
+    def _paintBadge(painter: QtGui.QPainter, thumbnail: QRect) -> None:
+        dot = QRect(0, 0, BADGE_DIAMETER, BADGE_DIAMETER)
+        dot.moveTopRight(thumbnail.topRight() + QPoint(-1, 1))
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtGui.QPen(QtGui.QColor("black"), 1))
+        painter.setBrush(QtGui.QColor(WARNING_COLOR))
+        painter.drawEllipse(dot)
         painter.restore()

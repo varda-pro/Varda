@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import TYPE_CHECKING
 
 from PyQt6 import QtWidgets
@@ -11,7 +12,9 @@ from PyQt6.QtCore import QPoint
 from varda.branding.title_mark import addTitleMarkBar
 from varda.common.ui import DetachableTabWidget
 from varda.all_images_view_list.imageview_list import ImageListWidget
+from varda.common.entities import VardaRaster
 from varda.context_keys import IMAGE_LIST_VISIBLE, WORKSPACE_COUNT
+from varda.geo.health import Severity, headline
 
 if TYPE_CHECKING:
     from varda.app import VardaApplication
@@ -19,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_TAB_TITLE_CHARS = 40
+CRS_MESSAGE_MS = 15000  # how long a coordinate-system problem stays in the status bar
 
 
 def elidedTabTitle(title: str, maxChars: int = MAX_TAB_TITLE_CHARS) -> str:
@@ -45,6 +49,9 @@ class MainGUI(QModelMainWindow):
 
         self.app = app
         self.childWindows: list[QWidget] = []
+        # images whose coordinate-system problems the status bar has shown:
+        # once per image per session
+        self._crsAnnounced: weakref.WeakSet[VardaRaster] = weakref.WeakSet()
 
         self.initUI()
 
@@ -79,6 +86,41 @@ class MainGUI(QModelMainWindow):
             tabBar.tabMoved.connect(lambda *_: self._followTabOrder())
         self.setCentralWidget(self.centralTabs)
         self._updateWorkspaceCount()
+        self.app.images.sigDataChanged.connect(self._announceCrsProblems)
+
+    def _announceCrsProblems(self, images: list) -> None:
+        """One status-bar message for the coordinate-system problems (the
+        automatic fix included) of images just added; never twice for one
+        image. Images not checked yet wait for a later change."""
+        new = [
+            image
+            for image in images
+            if isinstance(image, VardaRaster)
+            and image not in self._crsAnnounced
+            and image.crsHealth is not None
+        ]
+        self._crsAnnounced.update(new)
+        problems = [
+            image
+            for image in new
+            if image.crsHealth is not None
+            and any(i.severity is Severity.PROBLEM for i in image.crsHealth.issues)
+        ]
+        if not problems:
+            return
+        if len(problems) == 1:
+            finding = headline(problems[0].crsHealth) or ""
+            if finding.startswith("Its "):
+                finding = "i" + finding[1:]
+            message = f"{problems[0].name}: {finding} Details in Image Properties."
+        else:
+            message = (
+                f"{len(problems)} images have coordinate-system problems (a dot "
+                "on their thumbnails). Details in Image Properties."
+            )
+        statusBar = self.statusBar()
+        assert statusBar is not None
+        statusBar.showMessage(message, CRS_MESSAGE_MS)
 
     def newDock(self, title, widget, dockArea):
         dock = QtWidgets.QDockWidget(title, self)

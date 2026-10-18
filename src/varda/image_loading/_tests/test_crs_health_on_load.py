@@ -10,7 +10,7 @@ from varda.common.provenance import inputRecord
 from varda.geo._tests.fixtures import writeWgs84
 from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.image_loading.crs_check import checkImageCrs
+from varda.image_loading.crs_check import checkImageCrs, chooseCrs, undoCrsFix
 from varda.image_loading.image_loading_service import loadRaster
 from varda.image_loading.raster_writer import writeRaster
 
@@ -135,3 +135,53 @@ def test_an_image_made_in_varda_is_checked_too():
     image = VardaRaster(ArrayDataSource(np.zeros((4, 4, 1), dtype=np.float32)))
     health = checkImageCrs(image)
     assert image.crsHealth is health and health.issues == ()
+
+
+def test_a_crs_chosen_by_hand_is_recorded_not_automatic(tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    health = chooseCrs(image, "IAU_2015:49910", "Its producer's projection")
+    assert sameCrs(image.crs, "IAU_2015:49910") and image.crsHealth is health
+    assert image.extraMetadata["crsFix"] == {
+        "from": "EPSG:4326",
+        "to": "IAU_2015:49910",
+        "reason": "Its producer's projection",
+        "automatic": False,
+    }
+
+
+def test_undoing_the_fix_keeps_the_files_crs_and_says_so(tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    health = undoCrsFix(image)
+    assert image.metadataOverrides["crs"] is None
+    assert sameCrs(image.crs, "EPSG:4326")
+    issue = health.issues[0]
+    assert issue.code == "earth-crs-on-body" and issue.fix is not None
+    assert not issue.fix.automatic  # offered again
+    assert image.extraMetadata["crsFix"] == {
+        "from": "EPSG:4326",
+        "to": "IAU_2015:49900",
+        "reason": REASON,
+        "automatic": True,
+        "undone": True,
+    }
+
+
+def test_applying_the_declined_fix_records_it_as_chosen(tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    fix = undoCrsFix(image).issues[0].fix
+    assert fix is not None
+    chooseCrs(image, fix.wkt, fix.reason)
+    assert sameCrs(image.crs, "IAU_2015:49900")
+    assert image.extraMetadata["crsFix"] == {
+        "from": "EPSG:4326",
+        "to": "IAU_2015:49900",
+        "reason": REASON,
+        "automatic": False,
+    }
+
+
+def test_a_crs_chosen_for_an_image_without_one():
+    image = VardaRaster(ArrayDataSource(np.zeros((4, 4, 1), np.float32)), name="x")
+    chooseCrs(image, "IAU_2015:49900", "Same as other.tif")
+    assert sameCrs(image.crs, "IAU_2015:49900")
+    assert image.extraMetadata["crsFix"]["from"] == "none"

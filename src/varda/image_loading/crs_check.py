@@ -8,11 +8,15 @@ are back."""
 
 from __future__ import annotations
 
+from pyproj import CRS
+
 from varda.common.entities import VardaRaster
 from varda.common.provenance import CRS_FIX_KEY, PROVENANCE_KEY
+from varda.geo.describe import describeCrs
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import CrsHealth, checkCrs, fixRecord
 from varda.geo.labels import LabelHints, labelHints, provenanceHints
+from varda.utilities.proj_lock import PROJ_LOCK
 
 
 def imageLabelHints(image: VardaRaster) -> LabelHints:
@@ -66,6 +70,46 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
             health = checkCrs(chosen, *size, hints)
     image.crsHealth = health
     return health
+
+
+def chooseCrs(image: VardaRaster, crs: str, reason: str) -> CrsHealth:
+    """Use ``crs`` (WKT, or any text PROJ reads) for ``image`` instead of its
+    file's, checked, and recorded as a ``crsFix`` that isn't automatic (the
+    user's choice, with their ``reason``). Raises ValueError when PROJ
+    can't read ``crs``."""
+    declared = image.dataSource.crs
+    image.setMetadataOverrides({**image.metadataOverrides, "crs": crs})
+    health = checkImageCrs(image)
+    image.dataSource.extraMetadata[CRS_FIX_KEY] = {
+        "from": _recordText(declared),
+        "to": _recordText(crs),
+        "reason": reason,
+        "automatic": False,
+    }
+    return health
+
+
+def undoCrsFix(image: VardaRaster) -> CrsHealth:
+    """Keep the file's own CRS instead of the fix in use (the fix is then
+    offered again), with the fix's ``crsFix`` record kept as ``undone``."""
+    record = image.dataSource.extraMetadata.get(CRS_FIX_KEY)
+    image.setMetadataOverrides({**image.metadataOverrides, "crs": None})
+    health = checkImageCrs(image)
+    if isinstance(record, dict):
+        image.dataSource.extraMetadata[CRS_FIX_KEY] = {**record, "undone": True}
+    return health
+
+
+def _recordText(crs: CRS | str | None) -> str:
+    """``crs`` as ``crsFix`` records it: its authority code, else its WKT;
+    "none" for none."""
+    if crs is None:
+        return "none"
+    authority = describeCrs(crs).authority
+    if authority is not None:
+        return authority
+    with PROJ_LOCK:
+        return CRS.from_user_input(crs).to_wkt()
 
 
 def _isFix(chosen: str | None, health: CrsHealth) -> bool:

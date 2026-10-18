@@ -24,7 +24,14 @@ from varda.geo._tests.fixtures import (
     makeImage,
 )
 from varda.geo.equivalence import sameCrs
-from varda.geo.health import CrsHealth, Severity, checkCrs, fixRecord
+from varda.geo.health import (
+    CrsHealth,
+    Severity,
+    checkCrs,
+    fixRecord,
+    flagged,
+    headline,
+)
 from varda.geo.labels import LabelHints
 
 GALE = (137.4, -4.6)
@@ -366,3 +373,32 @@ def test_never_raises(crs: str | None, transform: Affine):
         health = checkCrs(crs, transform, 64, 64, label, rawCrsText="x")
         assert isinstance(health, CrsHealth)
     assert isinstance(checkCrs(crs, transform, 0, 0), CrsHealth)
+
+
+def test_the_headline_of_an_automatic_fix_says_what_varda_read():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=0.01)
+    health = check(image, MARS)
+    assert headline(health) == "Its CRS says Earth; read as Mars (from its label)."
+    assert flagged(health)
+
+
+def test_the_headline_is_the_first_problem_then_the_first_tip():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=0.01)
+    declined = checkCrs(
+        image.crs, image.transform, image.width, image.height, MARS, applyFix=False
+    )
+    assert headline(declined) == declined.issues[0].message
+    unknown = makeImage(
+        "+proj=longlat +R=100000 +no_defs", centerLonLat=(0, 0), pixelSize=0.01
+    )
+    health = check(unknown)
+    assert codes(health) == ["unknown-body"] and flagged(health)
+    assert headline(health) == health.issues[0].message
+
+
+def test_info_alone_is_no_headline():
+    image = makeImage(MOLA_MEGDR_PROJ, centerLonLat=(200, 0), pixelSize=1 / 128)
+    health = check(image)
+    assert [i.severity for i in health.issues] == [Severity.INFO]
+    assert headline(health) is None and not flagged(health)
+    assert headline(None) is None and not flagged(None)
