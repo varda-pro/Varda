@@ -114,24 +114,39 @@ def groupWidget(group: ParameterGroup, parent: QWidget | None = None) -> QWidget
     return formWidget(group.params.values(), parent)
 
 
+class _SlotWhileAlive(QObject):
+    """Calls a slot for ``connectWhileAlive``. A child of the owner, so Qt
+    deletes it with the owner, and psygnal (which holds it weakly) then drops
+    the connection."""
+
+    def __init__(self, slot: Callable, owner: QObject) -> None:
+        super().__init__(owner)
+        self._owner = weakref.ref(owner)
+        self._target = (
+            weakref.WeakMethod(slot) if inspect.ismethod(slot) else lambda: slot
+        )
+
+    def call(self, *args) -> None:
+        owner, function = self._owner(), self._target()
+        # deleted, but its children (this one) not yet torn down
+        if owner is None or sip.isdeleted(owner) or function is None:
+            return
+        function(*args)
+
+
 def connectWhileAlive(signal: SignalInstance, slot: Callable, owner: QObject) -> None:
     """Connect ``slot`` to a parameter signal for as long as ``owner`` exists.
 
     Parameters often outlive the widgets showing them; once ``owner`` is
     deleted the connection removes itself instead of calling into it. A bound
-    method is held weakly, so the connection never keeps its widget alive."""
-    ownerRef = weakref.ref(owner)
-    target = weakref.WeakMethod(slot) if inspect.ismethod(slot) else lambda: slot
+    method is held weakly, so the connection never keeps its widget alive.
 
-    def call(*args) -> None:
-        alive = ownerRef()
-        function = target()
-        if alive is None or sip.isdeleted(alive) or function is None:
-            signal.disconnect(call)
-            return
-        function(*args)
-
-    signal.connect(call)
+    Nothing here refers back to ``signal``: a slot holding the signal that
+    holds it is a reference cycle, which only the cyclic garbage collector
+    frees. Cycles left behind shift when that collector runs, and a collection
+    during Qt's event dispatch can free pyqtgraph items Qt is still drawing (a
+    segfault in the full test suite)."""
+    signal.connect(_SlotWhileAlive(slot, owner).call)
 
 
 def paramLayoutDefault() -> HBoxBuilder:
