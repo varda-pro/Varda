@@ -3,7 +3,9 @@ detector column, so it can stand in for the I/F cube in other software.
 
 The column of each pixel comes from the cube's backplane (the IN file's IR
 Sample band), or for an unprojected cube from its own image columns
-(``crism_geometry.columnGeometryFor``). No Qt.
+(``crism_geometry.columnGeometryFor``). The backplane is the Geometry File
+chosen here, else the image's override, a companion beside it or beside the
+file it was made from. No Qt.
 """
 
 from __future__ import annotations
@@ -44,15 +46,22 @@ from varda.analysis.ratio_cube import (
 from varda.common.entities import VardaRaster
 from varda.common.parameter import (
     EnumParameter,
+    FilePathParameter,
     FloatParameter,
     IntParameter,
     LabeledEnum,
     StringParameter,
 )
 from varda.image_loading.crism_geometry import (
+    COLUMNS,
     IMAGE_COLUMNS,
     ColumnGeometry,
+    checkGeometryFile,
     columnGeometryFor,
+    geometryDataFile,
+    geometryOverride,
+    geometryStartFolder,
+    setGeometryOverride,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.raster_writer import SIDECAR_WRITERS
@@ -101,6 +110,7 @@ _COLUMN_FIELDS = (
     "fallback",
 )
 _BLANDNESS_FIELDS = ("blandness", "blandnessSettings")
+_GEOMETRY_FIELDS = ("geometryFile", "geometryRoute")
 
 
 def columnTableCsv(record: dict) -> str:
@@ -109,8 +119,9 @@ def columnTableCsv(record: dict) -> str:
     ``;``-separated), and per good band (``B`` + the image's 1-based band
     number) the denominator mean, its std and the number of valid pixels.
     Every row also names the blandness check and its settings (windows,
-    excluded ranges, floor, k and slope; empty for the Whole column method),
-    so the table stands on its own."""
+    excluded ranges, floor, k and slope; empty for the Whole column method)
+    and the geometry file with how it was found, so the table stands on its
+    own."""
     bands = [f"B{b}" for b in record["bands"]]
     blandness = (
         (record["blandness"], record["thresholds"]["settings"])
@@ -124,6 +135,7 @@ def columnTableCsv(record: dict) -> str:
             *_COLUMN_FIELDS,
             "borrowed",
             *_BLANDNESS_FIELDS,
+            *_GEOMETRY_FIELDS,
             *(f"mean_{b}" for b in bands),
             *(f"std_{b}" for b in bands),
             *(f"n_{b}" for b in bands),
@@ -135,6 +147,7 @@ def columnTableCsv(record: dict) -> str:
                 *("" if entry[k] is None else entry[k] for k in _COLUMN_FIELDS),
                 ";".join(f"{c}:{n}" for c, n in entry["borrowed"]),
                 *blandness,
+                *(record.get(k, "") for k in _GEOMETRY_FIELDS),
                 *("" if v is None else v for v in entry["spectrum"]),
                 *("" if v is None else v for v in entry["std"]),
                 *entry["validCount"],
@@ -277,6 +290,16 @@ class RatioCubeAnalysis(Analysis):
         description="A column with fewer bland pixels than this borrows from "
         "neighboring columns, then uses its whole column",
     )
+    geometryFile = FilePathParameter(
+        "Geometry File",
+        "The CRISM IN file (…_in…) whose IR Sample band gives each pixel's "
+        "detector column. Empty: found automatically (the image's chosen "
+        "file, a companion beside it, or beside the file it was made from). "
+        "A file chosen here is used for this image everywhere",
+        fileFilter="CRISM geometry (*.img *.IMG *.hdr *.HDR *.tif *.TIF);;"
+        "All files (*)",
+        placeholder="Automatic",
+    )
     neighborRadius = IntParameter(
         "Neighbor Radius",
         2,
@@ -285,6 +308,36 @@ class RatioCubeAnalysis(Analysis):
         description="How far (columns each side, same strip) a column may "
         "borrow bland pixels from; 0 never borrows",
     )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._image: VardaRaster | None = None
+        self.geometryFile.sigParameterChanged.connect(self._useGeometryFile)
+
+    def prepareFor(self, image: VardaRaster) -> None:
+        """Show the image's chosen geometry file, and browse from its folder."""
+        self._image = image
+        self.geometryFile.startFolder = geometryStartFolder(image)
+        with self.geometryFile.sigParameterChanged.blocked():
+            self.geometryFile.set(geometryOverride(image))
+
+    def _chosenFile(self) -> str:
+        path = self.geometryFile.get().strip()
+        return geometryDataFile(path) if path else ""
+
+    def _useGeometryFile(self, _path: str) -> None:
+        """A usable file chosen here becomes the image's override (every
+        feature then uses it); clearing the field goes back to automatic."""
+        image, path = self._image, self._chosenFile()
+        if image is None:
+            return
+        if not path:
+            if geometryOverride(image):
+                setGeometryOverride(image, None)
+        elif path != geometryOverride(image) and not checkGeometryFile(
+            path, image, COLUMNS
+        ):
+            setGeometryOverride(image, path)
 
     def _check(self):
         return CHECKS[self.blandness.get().value]
@@ -314,18 +367,24 @@ class RatioCubeAnalysis(Analysis):
             <= NEIGHBOR_RADIUS_RANGE[1]
         ):
             return "Neighbor Radius must be 0 or more."
+        chosen = self._chosenFile()
+        if chosen:
+            problem = checkGeometryFile(chosen, image, COLUMNS)
+            if problem:
+                return f"Geometry File: {problem}"
         geometry = self._geometry(image)
         if geometry is None:
             where = (
-                f"next to {image.filePath}"
+                f"beside {image.filePath} or the file it was made from"
                 if image.filePath
-                else "(the image has no file)"
+                else "beside the file it was made from (the image has no file)"
             )
             return (
-                "No CRISM backplane with detector columns (an IN or DDR file with "
+                "No CRISM backplane with detector columns (the IN file, with "
                 f"an IR Sample band) was found {where}, and the image is not an "
                 "unprojected CRISM cube (no map projection, 640, 320, 128 or 64 "
-                "columns), so each pixel's detector column is unknown."
+                "columns), so each pixel's detector column is unknown. Choose "
+                "the IN file (…_in…) with Geometry File."
             )
         if geometry.ir_sample.shape != (image.height, image.width):
             return (
@@ -365,11 +424,8 @@ class RatioCubeAnalysis(Analysis):
             )
         return ""
 
-    @staticmethod
-    def _geometry(image: VardaRaster) -> ColumnGeometry | None:
-        return columnGeometryFor(
-            image.filePath, (image.height, image.width), image.crs is not None
-        )
+    def _geometry(self, image: VardaRaster) -> ColumnGeometry | None:
+        return columnGeometryFor(image, self._chosenFile())
 
     def unavailableReason(self, image: VardaRaster) -> str:
         return self._problem(image)
@@ -408,6 +464,7 @@ class RatioCubeAnalysis(Analysis):
                 else f"backplane band '{geometry.sampleBand}'"
             ),
             "geometryFile": "" if geometry.source == IMAGE_COLUMNS else geometry.source,
+            "geometryRoute": geometry.route,
             "binning": int(geometry.binning),
             "vnirApproximate": _vnirApproximate(centers, geometry),
             "vnirBelowNm": VNIR_BELOW_NM,
@@ -570,9 +627,10 @@ class RatioCubeAnalysis(Analysis):
                 f"backplane; {record['binning']} detector column(s) per image column)"
             )
         else:
+            found = record.get("geometryRoute")
             parts.append(
                 f"detector columns from {record['geometry']} of "
-                f"{record['geometryFile']}"
+                f"{record['geometryFile']}" + (f" (found: {found})" if found else "")
             )
         if record["vnirApproximate"]:
             parts.append(

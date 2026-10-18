@@ -4,6 +4,7 @@ import tracemalloc
 import attrs
 import numpy as np
 import pytest
+import rasterio
 
 from varda.analysis import ratio_cube_analysis
 from varda.analysis.blandness import CHECKS, RATIO_CUBE_LIMITS
@@ -13,6 +14,7 @@ from varda.analysis.ratio_cube_analysis import (
     RatioCubeMethod,
 )
 from varda.common.entities import VardaRaster
+from varda.common.provenance import makeProvenance, setProvenance
 from varda.image_loading.crism_geometry import ColumnGeometry
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
@@ -555,3 +557,92 @@ def test_a_micrometer_cube_finds_the_same_bland_pixels(geometry):
         results.append((_blandColumns(ratio), companion.getData()[:, :, 0].tolist()))
     assert results[0] == results[1]
     assert results[0][0] == {0, 1, 4, 5}
+
+
+# --- the geometry file: chosen by hand, and how it was found -------------------------
+
+
+def _backplaneFile(path, bands: dict[str, np.ndarray]):
+    first = next(iter(bands.values()))
+    with rasterio.open(
+        path, "w", driver="ENVI", width=first.shape[1], height=first.shape[0],
+        count=len(bands), dtype="float32",
+    ) as out:  # fmt: skip
+        for index, (name, values) in enumerate(bands.items(), start=1):
+            out.write(values.astype(np.float32), index)
+            out.set_band_description(index, name)
+    return path
+
+
+def _inFile(path, rows: int = ROWS):
+    return _backplaneFile(path, {"IR Sample": _geometry(rows).ir_sample})
+
+
+def test_a_chosen_geometry_file_is_used_and_recorded(tmp_path):
+    chosen = _inFile(tmp_path / "frt0000_07_in165j_mtr3.img")
+    image = _scene()
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(image)
+    assert "with Geometry File" in analysis.unavailableReason(image)
+    analysis.geometryFile.set(str(chosen))
+    # the image now carries it, so every other feature uses it too
+    assert image.extraMetadata["crismGeometryFile"] == str(chosen)
+    analysis.method.set(WHOLE)
+    ratio, _ = analysis.runAll(image, QUIET)
+    record = ratio.extraMetadata["ratioCube"]
+    assert record["geometryFile"] == str(chosen)
+    assert record["geometryRoute"] == "override"
+    assert f"of {chosen} (found: override)" in ratio.description
+    table = ratio_cube_analysis.columnTableCsv(record).splitlines()
+    rows = list(csv.DictReader(table))
+    assert {r["geometryFile"] for r in rows} == {str(chosen)}
+    assert {r["geometryRoute"] for r in rows} == {"override"}
+    # a new dialog for the image shows the file; clearing it goes back to automatic
+    again = RatioCubeAnalysis()
+    again.prepareFor(image)
+    assert again.geometryFile.get() == str(chosen)
+    again.geometryFile.set("")
+    assert "crismGeometryFile" not in image.extraMetadata
+
+
+def test_a_wrong_geometry_file_is_refused_with_the_reason(tmp_path):
+    image = _scene()
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(image)
+    ddr = _backplaneFile(
+        tmp_path / "frt0000_07_de165l_mtr1.img",
+        {"INA at areoid; deg": np.full((ROWS, COLS), 40.0)},
+    )
+    analysis.geometryFile.set(str(ddr))
+    reason = analysis.unavailableReason(image)
+    assert reason.startswith("Geometry File: ") and "DDR/DE" in reason
+    assert "crismGeometryFile" not in image.extraMetadata  # not taken
+    analysis.geometryFile.set(str(_inFile(tmp_path / "small_in.img", ROWS - 1)))
+    assert "pixels but" in analysis.unavailableReason(image)
+    with pytest.raises(ValueError, match="Geometry File"):
+        analysis.runAll(image, QUIET)
+
+
+def test_the_route_through_provenance_is_recorded(tmp_path):
+    source = tmp_path / "frt0000_07_if165j_mtr3.img"
+    _inFile(tmp_path / "frt0000_07_in165j_mtr3.img")
+    scene = _scene()
+
+    def at(path, name: str) -> VardaRaster:
+        return VardaRaster(
+            ArrayDataSource(
+                scene.getData(),
+                wavelengths=scene.wavelengths,
+                wavelengthUnits="nm",
+                filePath=str(path),
+            ),
+            name=name,
+        )
+
+    original = at(source, "if")
+    filtered = at(tmp_path / "if IOVF.img", "filtered")
+    setProvenance(filtered, makeProvenance("IOVF", {}, [original], processId="iovf"))
+    ratio, _ = _run(filtered, method=WHOLE)
+    record = ratio.extraMetadata["ratioCube"]
+    assert record["geometryRoute"] == f"from source {source}"
+    assert f"(found: from source {source})" in ratio.description

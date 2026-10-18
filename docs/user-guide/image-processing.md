@@ -272,12 +272,21 @@ with Apply Mask, or anywhere a 0/1 mask goes. **Method** chooses how:
     them in when it knows them: from the image's metadata (keys named
     `sun_azimuth` or `solar_azimuth`, `sun_elevation` or `solar_elevation`,
     or `incidence_angle`, in any case and with spaces or underscores), or,
-    for the elevation of a CRISM product with its DDR beside it, 90° minus
-    the scene's mean "INA at areoid" (the incidence angle to the reference
-    surface; the DDR has no solar azimuth). Otherwise you must enter them,
-    from the product's label or geometry; Run stays unavailable until you
-    do. Check a metadata azimuth's convention: Varda takes it as clockwise
-    from north.
+    for the elevation of a CRISM product, 90° minus the mean "INA at
+    areoid" over the image's pixels (the incidence angle to the reference
+    surface; the DDR has no solar azimuth) from its DDR/DE file: found
+    beside the image or beside the file it was made from (an IOVF result
+    finds its I/F cube's DDR; see [CRISM ratio cubes: the geometry
+    file](crism-ratio.md#the-geometry-file)), or chosen in **CRISM
+    Geometry File** (empty means automatic). A chosen file comes before the
+    metadata; it must have an "INA at areoid" band and the image's rows ×
+    columns (or the same map grid, covering the image), or the dialog says
+    why it can't be used. The elevation's source, recorded as
+    `sunElevationSource`, names the DDR, the incidence range across the
+    image and how the file was found (`override`, `beside the file`, `from
+    source <path>`). Otherwise you must enter them, from the product's
+    label or geometry; Run stays unavailable until you do. Check a metadata
+    azimuth's convention: Varda takes it as clockwise from north.
   - **Self-shadow** where the local illumination cosine is at or below
     **Self-Shadow cos(i) ≤** (default 0, slopes facing away from the sun):
     cos(i) = cos(s) sin(e) + sin(s) cos(e) cos(azimuth − aspect), with

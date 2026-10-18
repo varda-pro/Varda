@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+from psygnal import SignalInstance
 from PyQt6.QtWidgets import QMessageBox
 from shapely.geometry import box
 
@@ -108,6 +109,8 @@ def test_plot_spectrum_fill_band_is_mean_plus_minus_std(qtbot):
         nodata=None,
         filePath=None,
         crs=None,
+        extraMetadata={},
+        sigMetadataChanged=SignalInstance(),
         wavelengths=np.array([0.0]),
         wavelengthsType=float,
         bandModel=BandModel.empty(1),
