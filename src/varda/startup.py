@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QApplication
 import varda
 from varda._actions import MENUBAR
 from varda.workspaces.terrain.terrain_view import TerrainView
-from varda._actions._file_actions import importImagePaths
+from varda._actions._file_actions import cleanOldExtractions, importImagePaths
 from varda.all_images_view_list.image_list_menu_controller import (
     ImageListMenuController,
 )
@@ -65,6 +65,7 @@ def createVarda(q_app: QApplication, checkForUpdates: bool = True) -> VardaAppli
     )
     # Autosave the session every few minutes and on quit (File > Restore Last Session)
     app.autosaver = SessionAutosaver(app.images, app.maingui, parent=app.maingui)
+    cleanOldExtractions(app.images)
     app.maingui.showMaximized()
     q_app.processEvents()
     if checkForUpdates:
