@@ -130,7 +130,7 @@ def test_planar_measures_say_how_distorted_the_projection_is(qtbot):
     for kind in ("area_map", "perimeter_map"):
         tip = items[kind].toolTip()
         assert "scale error" in tip and "on the body" in tip
-    assert items["area_body"].isEnabled() and not items["area_body"].toolTip() == ""
+    assert items["area_body"].isEnabled() and items["area_body"].toolTip()
     assert items["area_map"].text() == "Area (metre², planar)"
 
 

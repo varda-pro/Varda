@@ -316,9 +316,9 @@ column (below) with the **count** statistic.
     projection's scale distortion away from its true-scale latitude or
     center; the Measure list's tooltip on the planar area and perimeter
     gives the worst distortion over the image (see [Projection
-    distortion](coordinate-systems.md#the-distortion-check)). In a geographic system (longitude
-    and latitude) they're in degrees and degrees², which aren't areas on
-    the ground. For areas and perimeters on the ground use **Area on the
+    distortion](coordinate-systems.md#the-distortion-check)). In a
+    geographic system (longitude and latitude) they're in degrees and
+    degrees², which aren't areas on the ground. For areas and perimeters on the ground use **Area on the
     body** and **Perimeter on the body**.
 - **Zonal statistic of a raster**: **mean**, **median**, **std**
   (population), **min**, **max**, **sum** or **count** of one band inside

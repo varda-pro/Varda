@@ -67,8 +67,8 @@ class AddColumnDialog(QDialog):
         self.calculated = calculated
         self.collection = calculated.collection
         base = images[0]
-        # zonal statistics need the ROIs' pixel grid: no resampling
         self.base = base
+        # zonal statistics need the ROIs' pixel grid: no resampling
         self.gridChoices = sameGridChoices(images[1:], base)
         self.images = [base, *self.gridChoices.images]
         self._suggested = ""  # replaced by the next suggestion unless edited

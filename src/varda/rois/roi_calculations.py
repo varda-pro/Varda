@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import math
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -176,9 +175,8 @@ def measureOnBody(collection: ROICollection, kind: str, fid: int) -> BodyValue:
     if not isinstance(shape, Polygon | MultiPolygon):
         return BodyValue(math.nan, None, "it is not a polygon")
     try:
-        # points PROJ can't invert become NaN, with NumPy's warnings
-        with warnings.catch_warnings(), np.errstate(invalid="ignore"):
-            warnings.simplefilter("ignore", RuntimeWarning)
+        # points PROJ can't invert become NaN, with NumPy's invalid-value warnings
+        with np.errstate(invalid="ignore"):
             area, perimeter = polygonArea(crs, shape, pixelSize(collection.transform))
     except ValueError as error:
         return BodyValue(math.nan, None, str(error))
