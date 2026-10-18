@@ -90,8 +90,9 @@ images, renders one and runs two analyses, then reports each check.
 
 ### Open images
 
-Varda keeps an image in memory (as 32-bit numbers, no-data as NaN) when it
-fits comfortably, so the display and analyses read it quickly. Otherwise it
+Varda keeps an image in memory (no-data as NaN; an integer image holding
+no-data becomes 32-bit float, or 64-bit for 32-bit integers, and other images
+keep their own type) when it fits comfortably, so the display and analyses read it quickly. Otherwise it
 reads the image on demand from its file: just the bands shown, the spectrum
 under the cursor, or the whole image when an analysis needs it. Both give
 the same values; reading on demand is only slower. Two limits decide:
@@ -102,7 +103,12 @@ the same values; reading on demand is only slower. Two limits decide:
   of RAM: four full CRISM MTRDR cubes of 1.5 GB). When a new image would go
   over, Varda switches the images used least recently to reading on demand
   until it fits; if it still wouldn't fit, the new image is read on demand.
-  An image you close frees its share.
+  An image you remove from Varda stops counting once nothing uses it.
+
+The 40 % counts the images Varda holds, so it's a target rather than a hard
+cap: switching an image to reading on demand frees its memory only once
+nothing else holds its pixels (an analysis still running on it, or an
+overlay showing it), so for a while the total can be higher.
 
 The rest of the memory stays free for the system, other programs, the
 display, and analyses, which need several times their image (below). Results
@@ -111,8 +117,12 @@ limits are `IN_MEMORY_SHARE` and `IN_MEMORY_BUDGET_SHARE` in
 `varda/image_loading/image_loading_service.py`.
 
 Loading an image takes about its own size in memory at its peak (a 1.5 GB
-cube about 1.5 GB). While a whole image is read, GDAL's block cache is held
-to 64 MB (`WHOLE_READ_CACHE_MB`), as the read goes straight into the image.
+cube about 1.5 GB); an integer image holding no-data briefly takes about 1.5
+times its in-memory size, while it's converted to
+float. On top of that, GDAL (which reads the files) keeps one block cache
+for all images: by default 5 % of RAM (about 0.9 GB with 16 GB). To change
+it, set the `GDAL_CACHEMAX` environment variable (in MB) before starting
+Varda.
 
 ### Analyses
 

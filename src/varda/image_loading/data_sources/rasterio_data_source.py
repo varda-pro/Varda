@@ -42,11 +42,6 @@ logging.getLogger("rasterio").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-# GDAL's block cache (MB) while a whole image is read: the read goes straight
-# to its result, so a small cache is as fast and doesn't add up to 5 % of RAM
-# (GDAL's default) to the peak
-WHOLE_READ_CACHE_MB = 64
-
 
 def _maskedToNan(
     reader: rio.DatasetReader,
@@ -55,23 +50,33 @@ def _maskedToNan(
     window: Window,
 ) -> np.ndarray:
     """``data`` (bands, h, w) with the pixels GDAL's mask marks invalid set to
-    NaN, as ``read(masked=True).filled(nan)`` gives, but in place, one band's
+    NaN, as ``read(masked=True).filled(nan)`` gave, but in place, one band's
     mask at a time. Integer data holding no-data becomes float32 (8 and 16-bit)
-    or float64; integer data without any keeps its type."""
-    flags = reader.mask_flag_enums
-    if all(MaskFlags.all_valid in flags[i - 1] for i in indexes):
+    or float64 first; integer data without any keeps its type. Other types
+    (complex) get the no-data value, as ``filled()`` gave."""
+    if all(MaskFlags.all_valid in reader.mask_flag_enums[i - 1] for i in indexes):
         return data
     mask = np.empty(data.shape[1:], dtype=np.uint8)
+
+    def invalid(index: int) -> np.ndarray:
+        reader.read_masks(index, window=window, out=mask)
+        return mask == 0
+
+    if data.dtype.kind in "iub":
+        if not any(invalid(index).any() for index in indexes):
+            return data
+        data = data.astype(np.float32 if data.dtype.itemsize <= 2 else np.float64)
     if data.dtype.kind == "f":
-        for band, index in zip(data, indexes):
-            reader.read_masks(index, window=window, out=mask)
-            np.putmask(band, mask == 0, np.nan)
-        return data
-    invalid = reader.read_masks(indexes, window=window) == 0
-    if not invalid.any():
-        return data
-    data = data.astype(np.float32 if data.dtype.itemsize <= 2 else np.float64)
-    np.putmask(data, invalid, np.nan)
+        fill = np.nan
+    elif (
+        len({reader.nodatavals[i - 1] for i in indexes}) == 1
+        and reader.nodata is not None
+    ):
+        fill = reader.nodata
+    else:
+        fill = np.ma.default_fill_value(data.dtype)
+    for band, index in zip(data, indexes):
+        np.putmask(band, invalid(index), fill)
     return data
 
 
@@ -143,31 +148,36 @@ class RasterioDataSource(DataSource):
         at about the size of its result.
         """
         reader = self._reader()
-        if window is None:
-            rowOff, colOff, height, width = 0, 0, self.height, self.width
-        else:
-            rowOff, colOff, height, width = window
-        rioWindow = Window.from_slices(
-            (rowOff, rowOff + height), (colOff, colOff + width)
+        rowOff, colOff, height, width = window or (0, 0, self.height, self.width)
+        # clipped to the image, as rasterio's read clips a window
+        rowOff, colOff = max(rowOff, 0), max(colOff, 0)
+        height = (
+            max(min(window[0] + height, self.height) - rowOff, 0) if window else height
         )
+        width = max(min(window[1] + width, self.width) - colOff, 0) if window else width
         indexes = (
             list(range(1, self.bandCount + 1))
             if bandIndices is None
             # rasterio uses 1-based band indexing
             else [int(i) + 1 for i in np.asarray(bandIndices, dtype=np.uint)]
         )
-        data = np.empty((len(indexes), height, width), dtype=self.dtype)
-        reader.read(indexes, window=rioWindow, out=data)
-        if masked:
-            data = _maskedToNan(reader, data, indexes, rioWindow)
+        if len({reader.dtypes[i - 1] for i in indexes}) > 1:
+            raise ValueError(f"The bands of {self.filePath} have different data types")
+        data = np.empty(
+            (len(indexes), height, width), dtype=reader.dtypes[indexes[0] - 1]
+        )
+        if data.size:
+            rioWindow = Window.from_slices(
+                (rowOff, rowOff + height), (colOff, colOff + width)
+            )
+            reader.read(indexes, window=rioWindow, out=data)
+            if masked:
+                data = _maskedToNan(reader, data, indexes, rioWindow)
         # (bands, h, w) -> (h, w, bands)
         return np.moveaxis(data, 0, -1)
 
     def readAllBands(self) -> np.ndarray:
-        # A whole-image read gains nothing from GDAL's block cache (by default
-        # 5 % of RAM, which it would fill on top of the image itself)
-        with rio.Env(GDAL_CACHEMAX=WHOLE_READ_CACHE_MB):
-            return self.getData()
+        return self.getData()
 
     def __getitem__(self, key) -> np.ndarray:
         if not isinstance(key, tuple):

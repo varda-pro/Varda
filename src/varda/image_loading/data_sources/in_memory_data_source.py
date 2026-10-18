@@ -126,8 +126,10 @@ class InMemoryDataSource(DelegatingDataSource):
         # numpy's indexing on the window read: an integer drops its axis
         key = key if isinstance(key, tuple) else (key,)
         if len(key) > 3 or not all(
-            isinstance(k, (int, np.integer, slice)) for k in key
-        ):
+            isinstance(k, (int, np.integer))
+            or (isinstance(k, slice) and (k.step or 1) > 0)
+            for k in key
+        ):  # lists, reversed slices...: numpy on the whole image
             return self.readAllBands()[key]
         key = key + (slice(None),) * (3 - len(key))
         window = tuple(
@@ -160,6 +162,7 @@ class InMemoryDataSource(DelegatingDataSource):
     # --- Lifecycle ---
 
     def close(self) -> None:
+        self._data = None  # no longer counted, nor kept alive by this source
         self._source.close()  # the file stays open for metadata until now
 
     def __repr__(self) -> str:
