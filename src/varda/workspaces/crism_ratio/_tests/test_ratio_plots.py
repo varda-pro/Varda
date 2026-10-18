@@ -2,11 +2,12 @@ import numpy as np
 import pytest
 from PyQt6.QtWidgets import QTableWidgetItem
 
+from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
     RatioSelection,
 )
-from varda.utilities.debug import generate_random_image
 from varda.workspaces.crism_ratio.blandness_readout import BlandnessReadout
 from varda.workspaces.crism_ratio.ratio_plots import RatioPlotsPanel
 from varda.workspaces.ratio_explorer import RatioComponents
@@ -14,11 +15,26 @@ from varda.workspaces.ratio_explorer import RatioComponents
 WAVELENGTHS = np.linspace(1000, 2500, 60)
 
 
-def components(level: float, slope: float = 0.0) -> RatioComponents:
-    denominator = np.full(WAVELENGTHS.shape, 0.3)
+def image(wavelengths=WAVELENGTHS, **metadata) -> VardaRaster:
+    bands = len(WAVELENGTHS)
+    source = ArrayDataSource(
+        np.full((4, 4, bands), 0.3, np.float32),
+        wavelengths=wavelengths,
+        wavelengthUnits="nm" if wavelengths is not None else "",
+        extraMetadata=metadata,
+    )
+    return VardaRaster(source, name="cube")
+
+
+def components(
+    level: float, slope: float = 0.0, denominator=None, cube=None
+) -> RatioComponents:
+    denominator = (
+        np.full(WAVELENGTHS.shape, 0.3) if denominator is None else denominator
+    )
     numerator = level * (1 + slope * (WAVELENGTHS - 1000) / 1000)
     return RatioComponents(
-        generate_random_image((10, 10, 10)),
+        image() if cube is None else cube,
         WAVELENGTHS,
         numerator,
         denominator,
@@ -134,3 +150,42 @@ def test_panel_fits_a_laptop_screen(qtbot, width):
     assertNothingClipped(panel)
     for plot in (panel.numeratorPlot, panel.denominatorPlot, panel.ratioPlot):
         assert plot.height() >= 120
+
+
+def test_bad_bands_are_left_out_of_the_readout_and_the_plots(qtbot):
+    bad = 30
+    bbl = [0 if i == bad else 1 for i in range(len(WAVELENGTHS))]
+    denominator = np.full(WAVELENGTHS.shape, 0.3)
+    denominator[bad] = 0.01  # a deep spike in the bad band only
+    panel = RatioPlotsPanel()
+    qtbot.addWidget(panel)
+    panel.showComponents(components(1.0, denominator=denominator, cube=image(bbl=bbl)))
+    assert panel.readout.lastResult.passed
+    for plot in (panel.numeratorPlot, panel.denominatorPlot, panel.ratioPlot):
+        y = curveY(plot)
+        assert np.isnan(y[bad]) and np.isfinite(np.delete(y, bad)).all()
+
+
+def test_without_wavelengths_the_readout_says_so(qtbot):
+    panel = RatioPlotsPanel()
+    qtbot.addWidget(panel)
+    panel.showComponents(components(1.0))  # a verdict first, to see it replaced
+    panel.showComponents(components(1.0, cube=image(wavelengths=None)))
+    assert panel.readout.lastResult.checks == ()
+    assert "wavelengths" in panel.readout.verdictLabel.text()
+    assert panel.readout.table.rowCount() == 0
+    np.testing.assert_allclose(
+        panel.numeratorPlot.plots[0].data()[0], np.arange(1, len(WAVELENGTHS) + 1)
+    )
+
+
+def test_the_ratio_plot_starts_as_wide_as_the_others(qtbot):
+    panel = RatioPlotsPanel()
+    qtbot.addWidget(panel)
+    panel.resize(500, 800)
+    panel.show()
+    qtbot.waitExposed(panel)
+    assert not panel.ratioPlot.isSidebarVisible()
+    panel.showComponents(components(1.0))
+    widths = [p.viewBox.width() for p in (panel.numeratorPlot, panel.ratioPlot)]
+    assert widths[1] == pytest.approx(widths[0], rel=0.1)

@@ -98,10 +98,25 @@ class PyqtgraphTextOverlay:
             self._item.border = pg.mkPen(color=backgroundColor, width=1)
         self._item.setPos(pos)
         self._viewBox = viewBox
+        self._wrapToView()
         viewBox.addItem(self._item, ignoreBounds=True)
+        viewBox.sigResized.connect(self._wrapToView)
+
+    _MARGIN = 8  # px kept free at the view's right edge
+    _MIN_WRAP = 80  # px: narrower than this (a view not laid out yet), don't wrap
+
+    def _wrapToView(self, _viewBox: pg.ViewBox | None = None) -> None:
+        """Wrap the text at word breaks when it is wider than the view, so a
+        narrow view never cuts it off."""
+        self._item.setTextWidth(-1)  # its natural width
+        available = self._viewBox.width() - self._MARGIN
+        natural = self._item.textItem.boundingRect().width()
+        if natural > available >= self._MIN_WRAP:
+            self._item.setTextWidth(available)
 
     def setText(self, text: str) -> None:
         self._item.setText(text)
+        self._wrapToView()
 
     def setPos(self, pos: QPointF) -> None:
         self._item.setPos(pos)
@@ -110,6 +125,7 @@ class PyqtgraphTextOverlay:
         self._item.setVisible(visible)
 
     def remove(self) -> None:
+        self._viewBox.sigResized.disconnect(self._wrapToView)
         self._viewBox.removeItem(self._item)
 
 

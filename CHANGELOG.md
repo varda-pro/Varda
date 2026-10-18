@@ -19,7 +19,9 @@ can alter results.
   denominator (Generic or a target preset, limits editable). The
   denominator follows the numerator along its sensor column, and says so
   when it can't. S saves the pair as ROIs and P the numerator pixel as a
-  point, named with the verdict. See the CRISM ratio cubes guide.
+  point, named with the verdict. The three plots always show the same
+  wavelength range, and bad bands are left out of them and of the readout.
+  See the CRISM ratio cubes guide.
 - **Ratio Explorer numerator and denominator curves:** General Image
   Analysis and the dual-image workspace now plot the numerator and
   denominator box spectra next to the ratio, so you can see which one a
@@ -229,6 +231,8 @@ can alter results.
 
 ### Fixed
 
+- **Tool hints wrap in narrow views** instead of running off the right edge,
+  including after the view is resized.
 - **Map links no longer trip a NumPy deprecation** when one point is mapped
   across map projections (every Map-link click in the CRISM Ratio and Linked
   Images workspaces), which a future NumPy would turn into an error.

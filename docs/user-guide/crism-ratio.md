@@ -179,8 +179,14 @@ what it saves is ROIs and points.
 - **Ratio Plots** (right, scrolls when the window is short): the box size, the
   column lock, and three plots on one wavelength axis: **Numerator**,
   **Denominator** (with its blandness readout under it) and **Ratio**. Each new
-  pair replaces the curves and refits the Y ranges. The Ratio plot's sidebar
-  overlays library spectra.
+  pair replaces the curves, refits the Y ranges and shows the whole spectrum;
+  the three plots always show the same wavelength range, so zooming or
+  panning one moves the others. The image's bad bands (ENVI `bbl`) are left
+  out of the plots and the readout. An image without wavelengths is plotted
+  by band number, and the readout says the check needs wavelengths. The
+  Ratio plot's sidebar overlays library spectra; it starts folded so the
+  three plots are equally wide; open it with the arrow at the plot's right
+  edge.
 - **ROI Manager**, **Points Manager** and **ROI Plots** sit folded on the right
   edge, and the render settings and histograms of both views on the bottom
   edge: click their tabs to open them.
@@ -258,7 +264,8 @@ inverted at the same wavelength in the ratio, where it could be mistaken for
 
 - **Generic** (default): the deepest absorption of the continuum-removed
   spectrum must be at most 0.02 and the absolute relative slope at most 0.10
-  per µm. These are the Ratio Cube's Generic checks, described above.
+  per µm. These are the Ratio Cube's Generic checks, described above, on the
+  same bands (bad bands left out).
 - **A target preset** (Plagioclase, Olivine, Fe/Mg phyllosilicates, Al
   phyllosilicates, Carbonates, Sulfates, Hydrated (any)): every spectral
   parameter of the preset must be at most its maximum, and the slope at most

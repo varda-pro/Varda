@@ -284,6 +284,40 @@ def test_the_workspace_fits_a_laptop(qtbot, mapPair):
     assertNothingClipped(workspace)
 
 
+def test_the_three_plots_share_one_x_range_on_a_laptop(qtbot, mapPair):
+    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
+    workspace.showNormal()
+    workspace.resize(1280, 800)
+    qtbot.waitExposed(workspace)
+    qtbot.wait(50)
+    _pair_on_map(workspace)
+    plots = workspace.plots
+    ranges = [
+        p.viewBox.viewRange()[0]
+        for p in (plots.numeratorPlot, plots.denominatorPlot, plots.ratioPlot)
+    ]
+    for xRange in ranges[1:]:
+        np.testing.assert_allclose(xRange, ranges[0], rtol=1e-6)
+    low, high = ranges[0]
+    assert low <= 1000 and high >= 2500  # the whole spectrum, not a slice
+    # the user's own zoom follows on every plot
+    plots.ratioPlot.viewBox.setXRange(1500, 2000, padding=0)
+    for plot in (plots.numeratorPlot, plots.denominatorPlot):
+        np.testing.assert_allclose(plot.viewBox.viewRange()[0], [1500, 2000])
+
+
+def test_the_tool_hint_fits_its_view_on_a_laptop(qtbot, mapPair):
+    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)  # hints shown
+    workspace.showNormal()
+    workspace.resize(1280, 800)  # and the views narrowed after
+    qtbot.waitExposed(workspace)
+    qtbot.wait(50)
+    for index, view in enumerate((workspace.browseView, workspace.dataView)):
+        overlay = tool(workspace, index)._textOverlay
+        assert overlay is not None
+        assert overlay._item.textItem.boundingRect().width() <= view.width()
+
+
 def _pair_on_map(workspace):
     tool(workspace).onPointerEvent(press(LEFT, 3.5, 2.5))
     tool(workspace).onPointerEvent(press(RIGHT, 9.5, 8.5))

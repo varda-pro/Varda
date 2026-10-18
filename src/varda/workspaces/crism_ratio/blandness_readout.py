@@ -96,6 +96,12 @@ class BlandnessReadout(QWidget):
         self._wavelengths, self._spectrum = wavelengthsNm, spectrum
         return self._evaluate()
 
+    def setUnavailable(self, note: str) -> BlandnessResult:
+        """No verdict, and why (e.g. the image has no wavelengths)."""
+        self._wavelengths = self._spectrum = None
+        self._show(BlandnessResult((), note=note))
+        return self.lastResult
+
     def _onCheckChanged(self) -> None:
         self._overrides.clear()
         self._evaluate()
