@@ -91,7 +91,10 @@ In the spectral plots (pixel, ROI and ratio spectra, and the Spectral
 Hourglass):
 
 - **Drag** pans; **Shift-drag** (or Ctrl/Cmd-drag) zooms to the dragged box;
-  **right-drag** stretches the axes.
+  **right-drag** stretches the axes. The keys held when a drag starts decide
+  which it is, so letting go of Shift or Cmd just before the mouse button
+  still zooms. **Esc** over the plot clears a zoom box, should one ever be
+  left behind.
 - **Scroll** (mouse wheel or trackpad) over the plot zooms both axes about
   the cursor.
 - **Scroll over an axis** zooms only that axis, about the cursor. Over the
@@ -108,6 +111,8 @@ Hourglass):
   remove it (the same as **Remove Curve** under **Selected Curve**). The
   keys act only while the plot has the keyboard focus (clicking the plot
   gives it the focus), never while you are typing in a field of the sidebar.
+  A plain drag that starts on the selected curve drags it to another plot;
+  any other drag pans or zooms as above.
 
 A Y stretch stays as new spectra arrive until you reset it with **Fit to
 Data** under **View** (or by setting **Range** back to **Auto**). Under

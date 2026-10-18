@@ -59,7 +59,7 @@ from varda.spectral_libraries.spectrum import (
     spectrumFromImage,
 )
 from varda.spectral_libraries.store import LibraryStore, defaultStore
-from varda.plotting.view_box import ModifierDragViewBox
+from varda.plotting.view_box import RECT_ZOOM_MODIFIERS, ModifierDragViewBox
 from varda.common.parameter import (
     ParameterGroup,
     FloatParameter,
@@ -189,6 +189,11 @@ class Curve(QObject):
     def isTransformed(self) -> bool:
         """Whether the curve is shown with a Y scale or offset."""
         return self.config.scale.value != 1.0 or self.config.offset.value != 0.0
+
+    def isUnder(self, scenePos: QPointF) -> bool:
+        """Whether ``scenePos`` is on the curve (within its click width)."""
+        item = self.plotDataItem.curve
+        return item.mouseShape().contains(item.mapFromScene(scenePos))
 
     def setClickable(self, clickable: bool):
         self.plotDataItem.setCurveClickable(clickable, width=20)
@@ -322,11 +327,25 @@ class _PlotGraphicsView(pg.GraphicsView):
         self.setAcceptDrops(True)
         self._dragStartPos: QPoint | None = None
 
+    def _plotWidget(self) -> "VardaPlotWidget | None":
+        parent = self.parent()
+        return parent if isinstance(parent, VardaPlotWidget) else None
+
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            parent = self.parent()
-            if isinstance(parent, VardaPlotWidget) and parent.selectedCurve is not None:
-                self._dragStartPos = event.pos()
+        # A plain left-drag that starts on the selected curve drags it to
+        # another plot; any other drag is the view box's (pan, box zoom, ...).
+        # Starting the curve's drag and drop takes the rest of the mouse
+        # events, release included, from pyqtgraph, so it must never take
+        # over one of the view box's drags: that left the zoom box behind.
+        plot = self._plotWidget()
+        curve = None if plot is None else plot.selectedCurve
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not event.modifiers() & RECT_ZOOM_MODIFIERS
+            and curve is not None
+            and curve.isUnder(self.mapToScene(event.pos()))
+        ):
+            self._dragStartPos = event.pos()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -336,27 +355,30 @@ class _PlotGraphicsView(pg.GraphicsView):
             and (event.pos() - self._dragStartPos).manhattanLength() >= 10
         ):
             self._dragStartPos = None
-            parent = self.parent()
-            if isinstance(parent, VardaPlotWidget) and parent.selectedCurve is not None:
-                self._initiateDrag(parent.selectedCurve)
+            plot = self._plotWidget()
+            if plot is not None and plot.selectedCurve is not None:
+                self._initiateDrag(plot.selectedCurve)
+                plot.viewBox.clearZoomBox()  # in case one was showing
                 return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         self._dragStartPos = None
         super().mouseReleaseEvent(event)
+        plot = self._plotWidget()
+        if plot is not None and not event.buttons():
+            plot.viewBox.clearZoomBox()  # every drag is over: no box belongs
 
     def keyPressEvent(self, ev) -> None:
         # Before the scene: pyqtgraph's view box takes Backspace (zoom history)
-        parent = self.parent()
-        if (
-            ev is not None
-            and ev.key() in DELETE_KEYS
-            and isinstance(parent, VardaPlotWidget)
-            and parent.removeSelectedCurve()
-        ):
-            ev.accept()
-            return
+        # and swallows Esc
+        plot = self._plotWidget()
+        if ev is not None and plot is not None:
+            if ev.key() == Qt.Key.Key_Escape:
+                plot.viewBox.clearZoomBox()
+            elif ev.key() in DELETE_KEYS and plot.removeSelectedCurve():
+                ev.accept()
+                return
         super().keyPressEvent(ev)
 
     def _initiateDrag(self, curve: Curve) -> None:
@@ -860,6 +882,8 @@ class VardaPlotWidget(QWidget):
         return int(self.viewConfig.dataPointSize.value)
 
     def keyPressEvent(self, a0) -> None:
+        if a0 is not None and a0.key() == Qt.Key.Key_Escape:
+            self.viewBox.clearZoomBox()  # a leftover box, should one remain
         # Keys the sidebar's fields and lists pass on (e.g. Backspace in the
         # marker list) are theirs, not a request to remove the curve
         focus = QApplication.focusWidget()

@@ -47,6 +47,13 @@ class ModifierDragViewBox(pg.ViewBox):
 
     def mouseDragEvent(self, ev, axis=None):
         if ev.isStart():
+            # A new drag: no box from an earlier one may linger, and the
+            # modifiers held now decide between panning and a box zoom for the
+            # whole drag. (pyqtgraph hides the box only on a box zoom's finish,
+            # so a drag that changed mode midway, e.g. Cmd let go just before
+            # the button, left the box on the plot.)
+            self.clearZoomBox()
+            self.setMouseMode(dragMouseMode(ev.modifiers()))
             pulls = self.pullGuides and axis == 1
             self._pullingGuide = (
                 None if pulls and ev.button() == Qt.MouseButton.LeftButton else False
@@ -65,8 +72,12 @@ class ModifierDragViewBox(pg.ViewBox):
             return
         if axis in (0, 1):
             self.sigAxisGesture.emit(axis)
-        self.setMouseMode(dragMouseMode(ev.modifiers()))
         super().mouseDragEvent(ev, axis)
+
+    def clearZoomBox(self) -> None:
+        """Hide the box zoom's rubber band, e.g. one left by a drag whose
+        release never arrived."""
+        self.rbScaleBox.hide()
 
     def _moveGuide(self, ev) -> None:
         pos = ev.scenePos()
