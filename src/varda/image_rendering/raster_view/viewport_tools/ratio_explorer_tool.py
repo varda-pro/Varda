@@ -67,8 +67,9 @@ class RatioExplorerTool(ViewportTool):
     toolCategory = "Selection"
 
     sigSelectionChanged = pyqtSignal(object)  # RatioSelection
-    sigSaveRequested = pyqtSignal()  # S
-    sigSavePointRequested = pyqtSignal()  # P
+    # S and P; True with Shift (a workspace that asks for a class always asks)
+    sigSaveRequested = pyqtSignal(bool)
+    sigSavePointRequested = pyqtSignal(bool)
 
     def __init__(self, viewport: ImageViewport, parent=None):
         super().__init__(viewport, parent)
@@ -164,11 +165,12 @@ class RatioExplorerTool(ViewportTool):
     @override
     def onKeyEvent(self, event: KeyEvent) -> bool:
         key = event.key.value if isinstance(event.key, Qt.Key) else event.key
+        shift = bool(event.modifiers & Qt.KeyboardModifier.ShiftModifier)
         if key == Qt.Key.Key_S.value:
-            self.sigSaveRequested.emit()
+            self.sigSaveRequested.emit(shift)
             return True
         if key == Qt.Key.Key_P.value:
-            self.sigSavePointRequested.emit()
+            self.sigSavePointRequested.emit(shift)
             return True
         if key == Qt.Key.Key_Escape.value:
             self._setSelection(None, None)

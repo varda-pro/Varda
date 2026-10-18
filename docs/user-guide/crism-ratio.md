@@ -592,11 +592,14 @@ the I/F cube is refused with a message.
    band, dimensionless). Plain clicks and drags pan and zoom as usual.
 4. Click a new numerator and everything updates: the denominator stays, or
    follows the column (below). **Esc** clears both boxes.
-5. **S** saves the pair as two ROIs (rectangles named `Ratio N numerator` and
-   `Ratio N denominator`, in the I/F cube's pixels) and makes the denominator
-   ROI the ratio reference in the ROI Manager. **P** saves the numerator's
-   center pixel as a point in the Points Manager. Both names end with the
-   verdict, for example `Ratio 3 numerator (denominator ✓ Generic)`: the mark
+5. **S** saves the pair as two ROIs (rectangles in the I/F cube's pixels)
+   and makes the denominator ROI the ratio reference in the ROI Manager.
+   **P** saves the numerator's center pixel as a point in the Points
+   Manager. Both first ask for a **class** (see
+   [Saving pairs](#saving-pairs-the-class) below; S then Enter saves). The
+   name ends with the verdict, for example
+   `Ratio 3 (denominator ✓ Generic)` for a pair and
+   `Ratio numerator (11, 21) (denominator ✓ Generic)` for a point: the mark
    and the check that was selected when you saved. Their **description**
    (the ROIs' `description` column, and the point's `description` attribute
    when exported) records the check, the limits (and which you changed), the
@@ -608,6 +611,55 @@ the I/F cube is refused with a message.
    1700–2650 nm: dip 4.0 % at 2305 nm (limit 3.0 %, noise 0.2 %), slope
    0.091 /µm ✗.` A point saved without a denominator has no verdict and an
    empty description.
+
+### Saving pairs: the class
+
+**S** opens **Save ratio pair as ROIs**, **P** opens **Save numerator pixel
+as a point**. Each has:
+
+- **Class**, editable, with the text selected so you can type over it. It is
+  prefilled with the **reference mineral**: the library spectrum overlaid on
+  the Ratio plot (with the plot's library picker). With several overlaid, the
+  one added last is prefilled and the others are listed first in the
+  dropdown, followed by the classes already used in this workspace's ROI
+  Manager. With none overlaid, the last class used is prefilled (empty at
+  first).
+- **Name**, prefilled with the automatic name above. Emptied, the automatic
+  name is used.
+- A summary: the numerator and denominator center pixels (I/F cube column,
+  row) and the denominator's blandness verdict.
+- **Don't ask; use the reference mineral**: from then on S and P save at
+  once with the class that would have been prefilled (the reference mineral,
+  else the last class) and the automatic name. **Shift+S** and **Shift+P**
+  always ask, and clear it if you uncheck it there.
+
+**Enter** saves and **Esc** cancels (nothing is saved). The class does not
+change any measurement: it is a label that travels with the ROIs and points.
+
+**How the pair is classed.** In Varda an ROI's class is its name (the ROI
+Manager's **Class** column): ROIs of one class share a color and are grouped
+together. A saved pair is:
+
+| ROI | Class (name) | `pair` | `role` | `target` |
+|---|---|---|---|---|
+| Numerator | the class entered, e.g. `Olivine` | the Name, e.g. `Ratio 3 (denominator ✓ Generic)` | `numerator` | `Olivine` |
+| Denominator | `Denominator` | the same Name | `denominator` | `Olivine` |
+
+So every numerator of one mineral is one class, and every denominator is in
+the one `Denominator` class (bland reference regions, whatever they were
+used against); `pair` joins a numerator to its denominator and `target` says
+what a denominator was the reference for. With the class left empty, the
+numerator's class is the Name. An ROI joining a class that already exists
+takes the class's color; a new class starts green (numerators) or magenta
+(the `Denominator` class), like the boxes. `pair`, `role`, `target` and
+`description` are ordinary ROI columns: they are kept by the session and
+written by ROI export (GeoJSON, GeoPackage, Shapefile).
+
+**Points** have a name and a description but no class, so the class opens
+the point's description, for example `Class: Olivine. Denominator
+blandness, Generic check: ✓ bland. …`, and the Name is the point's name.
+
+The session keeps the last class used and whether to ask.
 
 ### Column lock
 
@@ -721,8 +773,10 @@ Copy the windows and limits from the saved item's description. Cite
 Viviano-Beck et al. (2014) for the window positions and McGuire et al.
 (2009) for the CO₂ exclusion. The session
 keeps the link, box size, lock, chosen check and edited limits; the saved ROIs
-and points record where each pair was and, in their description, the verdict
-with its values and limits. Points are not yet kept by the session: export
+and points record where each pair was, the class you gave it (the ROIs'
+class and `target` column, the point's description; a label you chose, not a
+detection) and, in their description, the verdict with its values and
+limits. Points are not yet kept by the session: export
 them from the Points Manager before closing.
 
 ## References

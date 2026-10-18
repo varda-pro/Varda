@@ -9,7 +9,7 @@ on, and can save the pair as ROIs so a promising spot is not lost.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
 
 import attrs
@@ -108,13 +108,16 @@ class RatioExplorerController(QObject):
         showComponents: bool = False,
         nameSuffix: Callable[[], str] = lambda: "",
         describe: Callable[[], str] = lambda: "",
+        onSaveRequested: Callable[[bool], None] | None = None,
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
         images uses it to apply its Spectrum Source setting. ``showComponents``
         also plots the numerator and denominator spectra next to the ratio.
         ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict),
-        and ``describe()`` goes in their ``description`` column when not empty."""
+        and ``describe()`` goes in their ``description`` column when not empty.
+        ``onSaveRequested(shift)`` takes over S (e.g. to ask for a class);
+        without it S saves at once with :meth:`saveCurrentBoxes`."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -125,6 +128,7 @@ class RatioExplorerController(QObject):
         self._showComponents = showComponents
         self._nameSuffix = nameSuffix
         self._describe = describe
+        self._onSaveRequested = onSaveRequested
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -168,7 +172,7 @@ class RatioExplorerController(QObject):
             functools.partial(self._mirrorSelection, tool.viewport)
         )
         tool.sigDeactivated.connect(self._clearMirrors)
-        tool.sigSaveRequested.connect(self.saveCurrentBoxes)
+        tool.sigSaveRequested.connect(self._saveRequested)
 
     def _mirrorSelection(self, ownViewport: object, selection: RatioSelection) -> None:
         self._lastMirror = (ownViewport, selection)
@@ -201,41 +205,77 @@ class RatioExplorerController(QObject):
             VBoxBuilder()
             .withWidget(groupWidget(self.config))
             .withWidget(
-                ButtonBuilder("Save Boxes as ROIs").onClick(self.saveCurrentBoxes)
+                # as S: clicked's bool is the "shift" flag, never a name
+                ButtonBuilder("Save Boxes as ROIs").onClick(self._saveRequested)
             )
             .withWidget(hint),
         )
 
-    def saveCurrentBoxes(self) -> None:
-        """Add the current numerator/denominator boxes to the ROI collection and
-        make the denominator the ratio reference, so the pair can be re-plotted."""
+    def _saveRequested(self, shift: bool) -> None:
+        if self._onSaveRequested is not None:
+            self._onSaveRequested(shift)
+        else:
+            self.saveCurrentBoxes()
+
+    def currentPair(self) -> RatioSelection | None:
+        """The selection S would save: a numerator and a denominator."""
         if self._current is None:
+            return None
+        selection = self._current[1]
+        if selection.numerator is None or selection.denominator is None:
+            return None
+        return selection
+
+    @property
+    def saveCount(self) -> int:
+        """How many pairs were saved; the next is pair ``saveCount + 1``."""
+        return self._saveCount
+
+    def saveCurrentBoxes(
+        self,
+        names: tuple[str, str] | None = None,
+        properties: tuple[Mapping[str, str], Mapping[str, str]] = ({}, {}),
+    ) -> None:
+        """Add the current numerator/denominator boxes to the ROI collection and
+        make the denominator the ratio reference, so the pair can be re-plotted.
+        ``names`` are the two ROIs' names (their classes; by default
+        ``Ratio N numerator`` and ``Ratio N denominator`` with the suffix), and
+        ``properties`` their user columns (added to the collection when new).
+        An ROI joining an existing class takes the class's color."""
+        if self._current is None or self.currentPair() is None:
             return
         image, selection = self._current
-        if selection.numerator is None or selection.denominator is None:
-            return
+        assert selection.numerator is not None and selection.denominator is not None
         self._saveCount += 1
         n = self._saveCount
-        suffix = self._nameSuffix()
+        if names is None:
+            suffix = self._nameSuffix()
+            names = (f"Ratio {n} numerator{suffix}", f"Ratio {n} denominator{suffix}")
         description = self._describe()
-        properties = {"description": description} if description else {}
-        if description and "description" not in self._collection.userColumns:
-            self._collection.addColumn("description")
-        self._collection.addROI(
-            self._geometryFor(image, selection.numerator),
-            f"Ratio {n} numerator{suffix}",
-            NUMERATOR_ROI_COLOR,
-            ROIMode.RECTANGLE,
-            **properties,
-        )
-        denominatorFid = self._collection.addROI(
-            self._geometryFor(image, selection.denominator),
-            f"Ratio {n} denominator{suffix}",
-            DENOMINATOR_ROI_COLOR,
-            ROIMode.RECTANGLE,
-            **properties,
-        )
-        self._roiManager.setDenominator(denominatorFid)
+        rows = [dict(p) for p in properties]
+        for row in rows:
+            if description:
+                row["description"] = description
+            for column in row:
+                if column not in self._collection.userColumns:
+                    self._collection.addColumn(column)
+        fids = [
+            self._collection.addROI(
+                self._geometryFor(image, polygon),
+                name,
+                self._collection.classColor(name) or color,
+                ROIMode.RECTANGLE,
+                **row,
+            )
+            for polygon, name, color, row in zip(
+                (selection.numerator, selection.denominator),
+                names,
+                (NUMERATOR_ROI_COLOR, DENOMINATOR_ROI_COLOR),
+                rows,
+                strict=True,
+            )
+        ]
+        self._roiManager.setDenominator(fids[1])
 
     def _lockedBox(
         self, image: VardaRaster, numerator: np.ndarray, row: int, col: int

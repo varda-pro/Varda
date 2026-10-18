@@ -73,10 +73,20 @@ def tool(workspace, index=0) -> RatioExplorerTool:
     return active
 
 
-def key(workspace, qtKey, index=0):
-    assert tool(workspace, index).onKeyEvent(
-        KeyEvent(qtKey.value, Qt.KeyboardModifier(0))
-    )
+def key(workspace, qtKey, index=0, modifiers=Qt.KeyboardModifier(0)):
+    assert tool(workspace, index).onKeyEvent(KeyEvent(qtKey.value, modifiers))
+
+
+def accept(qtbot, workspace, className=None):
+    """Press Enter in the save dialog (after typing ``className``)."""
+    dialog = workspace.saveDialog
+    assert dialog is not None and dialog.isVisible()
+    if className is not None:
+        dialog.classBox.setCurrentText(className)
+    edit = dialog.classBox.lineEdit()
+    assert edit is not None
+    qtbot.keyClick(edit, Qt.Key.Key_Return)
+    assert not dialog.isVisible()
 
 
 def curveY(plot, name=None):
@@ -216,18 +226,24 @@ def _pair(workspace):
     tool(workspace).onPointerEvent(press(RIGHT, 31.5, 5.5))
 
 
-def test_s_saves_the_pair_as_rois_named_with_the_verdict(qtbot, spectralPair):
+def test_s_with_no_class_names_the_pair_with_the_verdict(qtbot, spectralPair):
     workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
 
     key(workspace, Qt.Key.Key_S)
+    assert workspace.saveDialog is not None
+    assert workspace.saveDialog.className() == ""  # nothing overlaid, none used
+    accept(qtbot, workspace)
 
     verdict = workspace.plots.readout.lastResult
     mark = "✓" if verdict.passed else "✗"
-    names = [roi.name for roi in workspace.roiCollection.getAllROIs()]
-    assert names == [
-        f"Ratio 1 numerator (denominator {mark} Generic)",
-        f"Ratio 1 denominator (denominator {mark} Generic)",
+    pair = f"Ratio 1 (denominator {mark} Generic)"
+    collection = workspace.roiCollection
+    assert [roi.name for roi in collection.getAllROIs()] == [pair, "Denominator"]
+    assert [collection.getProperty(f, "pair") for f in collection.fids] == [pair] * 2
+    assert [collection.getProperty(f, "role") for f in collection.fids] == [
+        "numerator",
+        "denominator",
     ]
 
 
@@ -238,6 +254,7 @@ def test_p_saves_the_numerator_pixel_as_a_point_named_with_the_verdict(
     _pair(workspace)
 
     key(workspace, Qt.Key.Key_P)
+    accept(qtbot, workspace)
 
     (point,) = workspace.pointCollection.getAllPoints()
     mark = "✓" if workspace.plots.readout.lastResult.passed else "✗"
@@ -267,6 +284,7 @@ def test_s_puts_the_windows_values_and_limits_in_the_rois_description(
     _editSlopeLimit(workspace, 0.5)
 
     key(workspace, Qt.Key.Key_S)
+    accept(qtbot, workspace)
 
     result = workspace.plots.readout.lastResult
     assert result.windows
@@ -288,6 +306,7 @@ def test_p_puts_the_verdict_in_the_points_description(qtbot, spectralPair):
     workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
     _pair(workspace)
     key(workspace, Qt.Key.Key_P)
+    accept(qtbot, workspace)
     (point,) = workspace.pointCollection.getAllPoints()
     assert point.description == workspace.plots.readout.describe()
     assert "1.05–1.7 µm" in point.description
@@ -634,6 +653,7 @@ def test_p_without_a_denominator_adds_no_stale_verdict(qtbot, pixelPair):
     tool(workspace).onPointerEvent(press(LEFT, 20.5, 10.5))
 
     key(workspace, Qt.Key.Key_P)
+    accept(qtbot, workspace)
 
     (point,) = workspace.pointCollection.getAllPoints()
     assert "denominator" not in point.name

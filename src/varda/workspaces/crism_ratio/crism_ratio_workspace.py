@@ -9,15 +9,18 @@ blandness verdict in a strip below. Every panel is a dock, and where they are
 is kept with the session. With column
 lock on, each new numerator moves the denominator into its sensor column.
 S saves the pair as ROIs, P the numerator pixel as a point, both named with
-the verdict and described with every check's value and limit.
+the verdict and described with every check's value and limit. Both ask for a
+class, prefilled with the reference mineral on the Ratio plot (Enter accepts);
+the numerator ROI gets that class, the denominator the Denominator class.
 """
 
 from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Callable, MutableSequence, Sequence
 
+import numpy as np
 import PyQt6Ads as ads
 from PyQt6.QtCore import QByteArray, QSize, QTimer
 from PyQt6.QtGui import QShowEvent, QStandardItemModel
@@ -79,6 +82,7 @@ from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_manager_widget import ROIManagerWidget
 from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
+from varda.workspaces.crism_ratio.save_dialog import SaveRatioDialog
 from varda.workspaces.linked_images.linked_images_workspace import ViewGroupLink
 from varda.workspaces.linked_images.linking import Link, linkWarnings
 from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
@@ -94,8 +98,11 @@ LINK_LABELS = {Link.PIXEL: "Pixel match", Link.MAP: "Map link"}
 KEYS_HINT = (
     "Ctrl/⌘+left-click: numerator box · Ctrl/⌘+right-click: denominator box "
     "(on either view) · S: save the pair as ROIs · P: save the numerator pixel "
-    "as a point · Esc: clear"
+    "as a point (both ask for a class: Enter saves; Shift+S and Shift+P always "
+    "ask) · Esc: clear"
 )
+# the class of every saved denominator ROI; its target is in the "target" column
+DENOMINATOR_CLASS = "Denominator"
 
 
 def columnSource(image: VardaRaster) -> str:
@@ -216,7 +223,14 @@ class CrismRatioWorkspace(QMainWindow):
             imagesFor=lambda _clicked: [data],  # always the I/F cube
             nameSuffix=self._verdictSuffix,
             describe=self.plots.readout.describe,
+            onSaveRequested=self._requestSavePair,
         )
+        # what S and P save as: asked each time, or the suggested class at once
+        self.askClass = True
+        self.lastClass = ""
+        self.saveDialog: SaveRatioDialog | None = None
+        self._saveChosen: Callable[[str, str], None] | None = None
+        self._pendingPoint: tuple[int, int, str] | None = None
         self.controller.sigComponents.connect(self.plots.showComponents)
 
         self.toolManagers = [
@@ -523,7 +537,7 @@ class CrismRatioWorkspace(QMainWindow):
         # both views show the one pair, so a click on either continues it
         # bound methods (not partials), so Qt drops the connections with the tool
         tool.sigSelectionChanged.connect(self._syncViews)
-        tool.sigSavePointRequested.connect(self._savePoint)
+        tool.sigSavePointRequested.connect(self._requestSavePoint)
 
     def _browseToData(self, x: float, y: float) -> tuple[float, float] | None:
         mapped = viewToData(self.browse, self.data, self.link, [[x, y]])
@@ -545,7 +559,95 @@ class CrismRatioWorkspace(QMainWindow):
         mark = "✓" if readout.lastResult.passed else "✗"
         return f" (denominator {mark} {readout.currentCheckName()})"
 
-    def _savePoint(self) -> None:
+    # --- saving ----------------------------------------------------------------------
+
+    def referenceMinerals(self) -> list[str]:
+        """The library spectra overlaid on the Ratio plot, most recently
+        added first."""
+        names = [
+            curve.librarySpectrum.name
+            for curve in self.plots.ratioPlot.plots
+            if curve.librarySpectrum is not None
+        ]
+        return list(dict.fromkeys(reversed(names)))
+
+    def suggestedClass(self) -> str:
+        """The reference mineral on the Ratio plot, else the last class used."""
+        minerals = self.referenceMinerals()
+        return minerals[0] if minerals else self.lastClass
+
+    def classChoices(self) -> list[str]:
+        """The Class dropdown: the reference minerals, the last class, and the
+        ROI classes already in this workspace."""
+        existing = [n for n in self.roiCollection.classes() if n != DENOMINATOR_CLASS]
+        return [*self.referenceMinerals(), self.lastClass, *existing]
+
+    def _summary(self, numerator: np.ndarray, denominator: np.ndarray | None) -> str:
+        nc, nr = centerPixel(numerator)
+        parts = [f"Numerator ({nc}, {nr})"]
+        readout = self.plots.readout
+        if denominator is not None:
+            dc, dr = centerPixel(denominator)
+            parts.append(f"denominator ({dc}, {dr})")
+        if denominator is None or not readout.lastResult.windows:
+            parts.append("no blandness verdict")
+        else:
+            verdict = "✓ bland" if readout.lastResult.passed else "✗ not bland"
+            parts.append(f"{verdict} ({readout.currentCheckName()} check)")
+        return " · ".join(parts)
+
+    def _ask(
+        self, title: str, name: str, summary: str, save: Callable[[str, str], None]
+    ) -> None:
+        """Ask for the class and the name; ``save(class, name)`` on Save."""
+        if self.saveDialog is not None:
+            self.saveDialog.deleteLater()
+        self.saveDialog = SaveRatioDialog(
+            title,
+            self.classChoices(),
+            self.suggestedClass(),
+            name,
+            summary,
+            dontAsk=not self.askClass,
+            parent=self,
+        )
+        self._saveChosen = save
+        self.saveDialog.accepted.connect(self._onSaveAccepted)
+        self.saveDialog.open()
+
+    def _onSaveAccepted(self) -> None:
+        dialog, save = self.saveDialog, self._saveChosen
+        assert dialog is not None and save is not None
+        self.askClass = not dialog.dontAsk()
+        save(dialog.className(), dialog.itemName())
+
+    def _requestSavePair(self, shift: bool) -> None:
+        selection = self.controller.currentPair()
+        if selection is None:
+            return
+        name = f"Ratio {self.controller.saveCount + 1}{self._verdictSuffix()}"
+        if self.askClass or shift:
+            assert selection.numerator is not None
+            summary = self._summary(selection.numerator, selection.denominator)
+            self._ask("Save ratio pair as ROIs", name, summary, self._savePair)
+        else:
+            self._savePair(self.suggestedClass(), name)
+
+    def _savePair(self, className: str, name: str) -> None:
+        """The numerator ROI's class is ``className`` (the pair's name when
+        empty), the denominator's :data:`DENOMINATOR_CLASS`; both record the
+        pair's name, their role and the target class in their own columns."""
+        if className:
+            self.lastClass = className
+        self.controller.saveCurrentBoxes(
+            (className or name, DENOMINATOR_CLASS),
+            (
+                {"pair": name, "role": "numerator", "target": className},
+                {"pair": name, "role": "denominator", "target": className},
+            ),
+        )
+
+    def _requestSavePoint(self, shift: bool) -> None:
         tool = self.sender()
         if not isinstance(tool, RatioExplorerTool):
             return
@@ -554,12 +656,28 @@ class CrismRatioWorkspace(QMainWindow):
             return
         col, row = centerPixel(numerator)
         denominator = tool.selection.denominator
+        name = f"Ratio numerator ({col}, {row}){self._verdictSuffix(denominator)}"
+        description = "" if denominator is None else self.plots.readout.describe()
+        self._pendingPoint = (col, row, description)
+        if self.askClass or shift:
+            summary = self._summary(numerator, denominator)
+            self._ask("Save numerator pixel as a point", name, summary, self._savePoint)
+        else:
+            self._savePoint(self.suggestedClass(), name)
+
+    def _savePoint(self, className: str, name: str) -> None:
+        """Points have no class: it opens the point's description."""
+        if self._pendingPoint is None:
+            return
+        col, row, description = self._pendingPoint
+        self._pendingPoint = None
+        if className:
+            self.lastClass = className
+            description = " ".join(
+                d for d in (f"Class: {className}.", description) if d
+            )
         self.pointCollection.addPixel(
-            self.data,
-            col,
-            row,
-            name=f"Ratio numerator ({col}, {row}){self._verdictSuffix(denominator)}",
-            description="" if denominator is None else self.plots.readout.describe(),
+            self.data, col, row, name=name, description=description
         )
 
     # --- sessions --------------------------------------------------------------------
@@ -582,6 +700,8 @@ class CrismRatioWorkspace(QMainWindow):
                 "ratio": self.plots.ratioShape.shape.name,
             },
             "dockLayout": self._dockLayout(),
+            "askClass": self.askClass,
+            "lastClass": self.lastClass,
             **plotLibrariesState(self.plots.ratioPlot),
         }
 
@@ -602,6 +722,8 @@ class CrismRatioWorkspace(QMainWindow):
             bool(state.get("blandnessExcludeCo2", True))
         )
         restorePlotLibraries(state, self.plots.ratioPlot)
+        self.askClass = bool(state.get("askClass", True))
+        self.lastClass = str(state.get("lastClass", ""))
         self.plots.readout.setDetailsVisible(bool(state.get("blandnessDetails", False)))
         self.plots.setSeparate(bool(state.get("separateSpectra", False)))
         shapes = state.get("plotShapes", {})
