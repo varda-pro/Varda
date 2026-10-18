@@ -4,13 +4,18 @@ import numpy as np
 import pytest
 from psygnal import Signal
 from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtWidgets import QPushButton
 from shapely.geometry import Polygon
 
 from varda.common.entities import ROIMode
 from varda.image_loading.crism_geometry import ColumnGeometry
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
-from varda.image_rendering.raster_view.pointer_event import PointerAction, PointerEvent
+from varda.image_rendering.raster_view.pointer_event import (
+    KeyEvent,
+    PointerAction,
+    PointerEvent,
+)
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
     RatioExplorerTool,
 )
@@ -133,6 +138,26 @@ def test_saving_adds_both_boxes_as_rois_and_sets_the_denominator(setup):
     saved = Polygon(collection.getPixelCoordinates(collection.fids[1]))
     assert saved.equals(Polygon(boxPolygonPixels(31, 5, 5, 5)))
     assert roiManager.denominatorFid == collection.fids[1]
+
+
+def test_s_and_the_sidebar_button_save_the_boxes(qtbot, setup):
+    _i, tool, collection, _d, _m, ctrl = setup
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
+    tool.onKeyEvent(KeyEvent(Qt.Key.Key_S.value, Qt.KeyboardModifier(0)))
+    section = ctrl.createSidebarSection()
+    qtbot.addWidget(section)
+    (button,) = [
+        b for b in section.findChildren(QPushButton) if b.text() == "Save Boxes as ROIs"
+    ]
+    button.click()
+    names = [roi.name for roi in collection.getAllROIs()]
+    assert names == [
+        "Ratio 1 numerator",
+        "Ratio 1 denominator",
+        "Ratio 2 numerator",
+        "Ratio 2 denominator",
+    ]
 
 
 def test_saving_without_both_boxes_adds_nothing(setup):
