@@ -1,6 +1,6 @@
 [project]
 name = "varda"
-version = "0.9.0"
+version = "0.10.0"
 description = "An extensible GUI application for analyzing hyperspectral images."
 readme = "README.md"
 license = "GPL-3.0-or-later"
