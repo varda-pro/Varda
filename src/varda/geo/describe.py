@@ -21,11 +21,14 @@ from pyproj.database import get_codes
 from pyproj.enums import PJType
 from pyproj.exceptions import CRSError
 
-from varda.geo.bodies import Body, identifyBody, surfaceText
+from varda.geo.bodies import Body, identifyBody, latitudeType, surfaceText
 from varda.geo.equivalence import sameCrs
+from varda.geo.measure import cumulativeDistance
 from varda.utilities.proj_lock import PROJ_LOCK
 
 NO_CRS_TEXT = "No coordinate system (pixel coordinates)"
+# a pixel's two ground sides are both shown when they differ by more than this
+PIXEL_SIZES_DIFFER = 0.01
 # map units PROJ names, as short labels
 _UNITS = {
     "metre": "m",
@@ -71,8 +74,14 @@ class CrsDescription:
     centerLatitude: float | None  # lat_ts or latitude of origin, degrees
     centerLongitude: float | None  # lon_0, degrees
     units: str  # "m", "km", "°"
-    pixelSizeM: float | None  # ground size of a pixel at the image center, m
+    # the larger side of a pixel on the ground at the image center, m
+    # (geodesic on the CRS's own surface)
+    pixelSizeM: float | None
     authority: str | None  # "IAU_2015:49910", "EPSG:4326", or None
+    # a pixel's sides on the ground across the image center, m: along its
+    # row (east–west in a north-up image) and along its column
+    pixelSizeEastWestM: float | None = None
+    pixelSizeNorthSouthM: float | None = None
 
     @property
     def text(self) -> str:
@@ -91,9 +100,24 @@ class CrsDescription:
             parts.append(f"center lat {_degrees(self.centerLatitude)}°")
         if self.centerLongitude:
             parts.append(f"lon_0 {_degrees(self.centerLongitude)}°")
-        if self.pixelSizeM is not None:
-            parts.append(f"{formatMeters(self.pixelSizeM)} m/px")
+        parts.extend(self._pixelSizeText())
         return ", ".join(parts)
+
+    def _pixelSizeText(self) -> list[str]:
+        """ "18 m/px", or both sides when they differ by more than 1%."""
+        eastWest, northSouth = self.pixelSizeEastWestM, self.pixelSizeNorthSouthM
+        if self.pixelSizeM is None:
+            return []
+        if (
+            eastWest is not None
+            and northSouth is not None
+            and abs(eastWest - northSouth) > PIXEL_SIZES_DIFFER * self.pixelSizeM
+        ):
+            return [
+                f"{formatMeters(eastWest)} m/px (east–west)",
+                f"{formatMeters(northSouth)} m/px (north–south)",
+            ]
+        return [f"{formatMeters(self.pixelSizeM)} m/px"]
 
 
 def _degrees(value: float) -> str:
@@ -129,9 +153,13 @@ def describeCrs(
         if transform is None:
             return description
         parsed = CRS.from_user_input(key)
+        eastWest, northSouth = _pixelSides(parsed, key, transform, width, height)
+        known = [size for size in (eastWest, northSouth) if size is not None]
         return attrs.evolve(
             description,
-            pixelSizeM=_pixelSizeM(parsed, transform, width, height),
+            pixelSizeM=max(known) if known else None,
+            pixelSizeEastWestM=eastWest,
+            pixelSizeNorthSouthM=northSouth,
             longitudeDomain=_longitudeDomain(description, transform, width, height),
         )
 
@@ -183,7 +211,7 @@ def _describe(key: str) -> CrsDescription:
         kind="projected" if projected else "geographic",
         projection=_projection(crs) if projected else "Geographic (lon/lat)",
         surface=surfaceText(ellipsoid),
-        latitudeType=_latitudeType(crs),
+        latitudeType=latitudeType(crs),
         longitudeDirection=_longitudeDirection(crs),
         longitudeDomain="0..360"
         if centerLongitude is not None and centerLongitude >= 180
@@ -228,22 +256,6 @@ def _projection(crs: CRS) -> str:
     if polar or (method in _STEREOGRAPHIC and origin is not None and abs(origin) == 90):
         return f"Polar Stereographic ({'south' if (origin or 0) < 0 else 'north'})"
     return method
-
-
-def _latitudeType(crs: CRS) -> str:
-    """Planetocentric when the geodetic CRS says so (its latitude axis, or a
-    spherical coordinate system) or its surface is a sphere; otherwise its
-    geodetic latitude is planetographic (Seidelmann et al., 2002)."""
-    geodetic = crs.geodetic_crs or crs
-    ellipsoid = geodetic.ellipsoid
-    if ellipsoid is None or ellipsoid.inverse_flattening == 0:
-        return "planetocentric"
-    names = " ".join(axis.name.lower() for axis in geodetic.axis_info)
-    system = geodetic.coordinate_system
-    subtype = system.to_json_dict().get("subtype") if system is not None else None
-    if "planetocentric" in names or "geocentric" in names or subtype == "spherical":
-        return "planetocentric"
-    return "planetographic"
 
 
 def _longitudeDirection(crs: CRS) -> str:
@@ -312,18 +324,30 @@ def _longitudeDomain(
     return "0..360" if longitudes.max() > 180 + 1e-9 else "-180..180"
 
 
-def _pixelSizeM(crs: CRS, transform: Affine, width: int, height: int) -> float:
-    """A pixel's larger side on the ground at the image center: map units
-    times the unit's size (projected; the projection's scale error is not
-    corrected), or degrees times π·a/180 (·cos φ east–west; geographic)."""
-    across = math.hypot(transform.a, transform.d)
-    down = math.hypot(transform.b, transform.e)
-    factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-    ellipsoid = crs.ellipsoid
-    if not _isGeographic(crs) or ellipsoid is None:
-        return max(across, down) * factor
-    across, down = (_inDegrees(size, factor) for size in (across, down))
-    perDegree = math.pi * ellipsoid.semi_major_metre / 180
-    _, latitude = transform * (width / 2, height / 2)
-    eastWest = across * perDegree * math.cos(math.radians(latitude))
-    return max(eastWest, down * perDegree)
+def _pixelSides(
+    crs: CRS, key: str, transform: Affine, width: int, height: int
+) -> tuple[float | None, float | None]:
+    """A pixel's sides on the ground across the image center: the geodesics
+    from the middle of one edge to the middle of the opposite one, on the
+    CRS's own surface (``measure.cumulativeDistance``), along its row and
+    along its column; None where PROJ can't invert. A CRS on no body: map
+    units times the unit's size. The caller holds PROJ_LOCK."""
+    if crs.ellipsoid is None:
+        factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
+        return (
+            math.hypot(transform.a, transform.d) * factor,
+            math.hypot(transform.b, transform.e) * factor,
+        )
+    col, row = width / 2, height / 2
+    sides = []
+    for start, end in (
+        ((col - 0.5, row), (col + 0.5, row)),
+        ((col, row - 0.5), (col, row + 0.5)),
+    ):
+        xy = np.array([transform * start, transform * end])
+        try:
+            size = float(cumulativeDistance(key, xy)[-1])
+        except ValueError:
+            size = math.nan
+        sides.append(size if math.isfinite(size) else None)
+    return sides[0], sides[1]

@@ -27,7 +27,7 @@ radius at its standard parallel, 15°N. The parts, in order:
 | Projection | **Equirectangular**, **Polar Stereographic (north)** or **(south)**, **Geographic (lon/lat)** for plain degrees, otherwise PROJ's method name (e.g. Transverse Mercator) | The CRS's conversion method. PROJ's "Equidistant Cylindrical" is shown as Equirectangular; a stereographic projection centered on a pole as Polar Stereographic |
 | center lat | The projection's standard parallel (`lat_ts`), else its latitude of origin (`lat_0`), in degrees. Not shown for polar projections, whose name says the pole | The conversion's parameters |
 | lon_0 | The central meridian, in degrees; shown when it isn't 0° | The conversion's parameters |
-| m/px | A pixel's size on the ground at the image center, in meters; the larger side for rectangular pixels. Whole meters from 100 m, otherwise three significant figures | The image's transform (see the limitations below) |
+| m/px | A pixel's size on the ground at the image center, in meters, measured on the body (see [How Varda measures](#how-varda-measures)). When its east–west and north–south sides differ by more than 1% both are shown, e.g. "17.7 m/px (east–west), 18 m/px (north–south)"; otherwise the larger. Whole meters from 100 m, otherwise three significant figures | The image's transform and CRS (see the limitations below) |
 
 The group also shows:
 
@@ -71,20 +71,20 @@ header line, followed by the WKT (see
 
 ### Limitations of the ground pixel size
 
-- In a **projected** CRS it is the map pixel size times the size of the
-  map unit (1 for meters, 1000 for km). It does **not** include the
-  projection's scale error. In equirectangular with standard parallel φ₁,
-  east–west map distances at latitude φ are too long by cos φ₁/cos φ
-  (Snyder, 1987, pp. 90–91): 2× at 60° when φ₁ = 0°. A polar stereographic
-  pixel is true to scale only at the latitude of true scale (Snyder, 1987,
-  ch. 21). Use it as a label, not a measurement.
-- In **geographic** degrees it is the larger of the east–west size
-  (Δλ · π a/180 · cos φ) and the north–south size (Δφ · π a/180), on a
-  sphere of the semi-major axis a, at the center latitude φ. On a flattened
-  ellipsoid it is approximate to about the flattening (0.6% on Mars).
-
-Geodesic measurement on the body (Karney, 2013) will replace both in a
-later version of Varda.
+- It is a geodesic on the CRS's own surface across the center pixel: from
+  the middle of its west edge to the middle of its east edge (east–west),
+  and from its north edge to its south edge (north–south). "East–west" is
+  along the image's rows, so in a rotated or polar image it is the pixel's
+  row direction. Other pixels differ wherever the projection's scale
+  changes: in equirectangular with standard parallel φ₁, a map pixel's
+  east–west side at latitude φ is cos φ/cos φ₁ of its map size on the
+  ground (Snyder, 1987, pp. 90–91). For the real CRISM MTRDR (φ₁ = 15°) at
+  18.4°N that is 18 m / 1.018 = 17.7 m.
+- A HiRISE polar product's 1 m map pixel at 85°N reads 0.998 m/px: polar
+  stereographic is true to scale only at the pole there, k = 2/(1 + sin φ)
+  (Snyder, 1987, eq. 21-4).
+- A CRS on no body (a local CRS) has no ground: its size is the map pixel
+  size times the unit's size.
 
 ## Conventions
 
@@ -267,7 +267,90 @@ assumed to be Earth.
 
 ## How Varda measures
 
-<!-- Filled in by a later change: geodesic lengths, areas and pixel spacing on the body. -->
+Varda measures ground lengths and areas **on the body**, whatever the
+image's projection, so a projection's scale error never enters them. The
+image's ground pixel size (above) is measured this way; each tool's page
+says whether its lengths and areas are (see
+[Lines and profiles](lines-and-profiles.md)). The method, in order:
+
+1. **Positions.** Map coordinates (x, y in the CRS's units) are converted
+   with PROJ to longitude and latitude on the CRS's **own** surface (its
+   sphere or ellipsoid), whatever the axis order, units or longitude
+   direction.
+2. **Geodesics.** Lengths are the sum of the shortest paths on that surface
+   between consecutive points, by Karney's (2013) algorithm (PROJ's
+   `geod`). Its error is a few nanometers: negligible.
+3. **Densification.** A line is measured through the points you drew it
+   with, densified to about one pixel so it follows the line as drawn on the
+   image. A polygon's edges are densified to one pixel before they are
+   converted, so they follow the straight edges on the image; its area and
+   perimeter are then Karney's (2013) geodesic polygon area and perimeter.
+   Holes are subtracted from the area and their edges added to the
+   perimeter; the parts of a multi-part polygon are summed.
+4. **Body-model term.** The CRS's surface is the one the data were
+   projected on, which is what ISIS, ArcGIS and QGIS measure on too. When it
+   differs from the body's IAU 2015 reference ellipsoid (Archinal et al.,
+   2018) by more than 1 m in either radius, the same points are also
+   measured on the reference ellipsoid and the relative difference is
+   reported:
+
+   *difference* = |*value* − *reference*| / *reference*.
+
+   "The same points" means the same planetocentric longitude and latitude
+   (the same direction from the body's center). The ellipsoid's geodesics
+   take geodetic (planetographic) latitude, so each planetocentric
+   latitude φc is converted with
+
+   tan φg = (a/c)² tan φc
+
+   (Snyder, 1987, eq. 3-28), with a and c the ellipsoid's equatorial and
+   polar radii. On the Moon and other bodies whose reference is a sphere,
+   and for a CRS already on the reference ellipsoid, there is no
+   difference to report. Typical values on Mars:
+
+   | CRS surface | Where | Difference |
+   |---|---|---|
+   | Mars 2000 sphere, R = 3396.19 km (= a) | equator | 0% |
+   | Mars 2000 sphere | 60°N | 0.44% |
+   | Mars 2000 sphere | 85°N | 0.59%, about (a − c)/c |
+   | HiRISE polar sphere, R = 3376.20 km (= c) | 85°N | 0.005% |
+   | HiRISE polar sphere | 60°N | 0.15% |
+   | HiRISE polar sphere | equator | 0.59% |
+
+   The HiRISE polar sphere's radius is Mars's polar radius, so near the
+   pole it nearly is the ellipsoid. (Comparing at the same latitude
+   *number* instead, i.e. not converting it, would put the point about
+   3.4 km farther south on the ellipsoid and give about 1.2% at 85°N; that
+   compares two different places.)
+
+**What a measurement does not include:**
+
+- **Topography.** Measurements are horizontal, on the reference surface:
+  a slope's length along a DEM is longer.
+- **The image's georeferencing error**, which Varda can't know: a position
+  is only as good as the image's map placement. Cite the product's own
+  accuracy where its documentation gives it.
+
+So the uncertainty to report is: the geodesic algorithm (nanometers), the
+densification (at most about one pixel of path following), the body-model
+term (above), and the georeferencing error of the image.
+
+**The projection's distortion** (see the distortion tips) is reported
+alongside a measurement over its extent, as a tip about planar map-unit
+values, shapes and slopes. It is never used to compute the measurement.
+
+**Worked example.** A line drawn east–west at 60°N on a Mars 2000 sphere
+equirectangular image with standard parallel 0° (`+proj=eqc +lat_ts=0
++R=3396190`) spans 20 km of map x. Planar map units would call it 20 km, but
+equirectangular stretches parallels by 1/cos 60° = 2 there (Snyder, 1987,
+p. 91). Varda converts the two ends to 60°N, ±0.1687° longitude on the
+3396.19 km sphere and measures the geodesic between them: **9,999.99 m**
+(the arc along the parallel is 10,000.00 m; the geodesic cuts slightly
+inside it). On the IAU 2015 ellipsoid the same two planetocentric points
+are 9,955.75 m apart, so the body-model difference is 0.44%. Report it as
+"9.999 km, geodesic (Karney 2013) on the Mars 2000 sphere (R = 3396.19 km);
+0.44% shorter on the IAU 2015 ellipsoid; plus the image's georeferencing
+error".
 
 ## What Varda checks when an image opens
 

@@ -129,6 +129,24 @@ def surfaceText(ellipsoid: Ellipsoid) -> str:
     return f"ellipsoid a = {a:.2f}, c = {ellipsoid.semi_minor_metre / 1000:.2f} km"
 
 
+def latitudeType(crs: CRS) -> str:
+    """The latitude convention of ``crs``'s geodetic CRS: planetocentric when
+    it says so (its latitude axis, or a spherical coordinate system) or its
+    surface is a sphere; otherwise its geodetic latitude is planetographic
+    (Seidelmann et al., 2002). Holds PROJ_LOCK."""
+    with PROJ_LOCK:
+        geodetic = crs.geodetic_crs or crs
+        ellipsoid = geodetic.ellipsoid
+        if ellipsoid is None or ellipsoid.inverse_flattening == 0:
+            return "planetocentric"
+        names = " ".join(axis.name.lower() for axis in geodetic.axis_info)
+        system = geodetic.coordinate_system
+        subtype = system.to_json_dict().get("subtype") if system is not None else None
+    if "planetocentric" in names or "geocentric" in names or subtype == "spherical":
+        return "planetocentric"
+    return "planetographic"
+
+
 def bodyNamed(name: str) -> Body | None:
     """The body called ``name``, ignoring case, IAU and ESRI decorations
     ("Mars (2015) - Sphere", "D_MARS", "GCS_Mars_2000") and aliases ("Luna")."""

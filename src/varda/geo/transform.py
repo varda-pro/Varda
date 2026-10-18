@@ -19,8 +19,9 @@ import numpy as np
 import numpy.typing as npt
 from attrs import frozen
 from pyproj import CRS, Transformer
+from pyproj.exceptions import CRSError
 
-from varda.geo.describe import describeCrs
+from varda.geo.bodies import latitudeType
 from varda.geo.equivalence import canTransform, sameCrs
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -88,6 +89,40 @@ def transformPoints(
     return (second, first) if route.dst.latitudeFirst else (first, second)
 
 
+def planetocentricLonLat(
+    crs: CRS | str, xs: npt.ArrayLike, ys: npt.ArrayLike
+) -> tuple[np.ndarray, np.ndarray]:
+    """Points (``xs``, ``ys`` as in ``transformPoints``) on ``crs`` as
+    longitude east and planetocentric latitude, degrees, on the CRS's own
+    surface (steps 1 and 2 of ``transformPoints``). NaN or inf where PROJ
+    can't invert. Raises ValueError for a CRS on no body surface (a local
+    CRS) or one PROJ can't read. Holds PROJ_LOCK; no Qt."""
+    x = np.asarray(xs, dtype=np.float64)
+    y = np.asarray(ys, dtype=np.float64)
+    with PROJ_LOCK:
+        key = _key(crs)
+        try:
+            parsed = CRS.from_user_input(key)
+        except CRSError as error:
+            raise ValueError(f"Unreadable coordinate system: {error}") from error
+        if parsed.ellipsoid is None or parsed.geodetic_crs is None:
+            raise ValueError(f"{parsed.name} is on no body (no ellipsoid)")
+        side = _source(key)
+        first, second = (y, x) if side.latitudeFirst else (x, y)
+        out = side.plain.transform(first.ravel().tolist(), second.ravel().tolist())
+    lon, lat = (np.asarray(v, dtype=np.float64).reshape(x.shape) for v in out)
+    if not side.centricNumbers:
+        lat = _tanScaled(lat, side.ratio)  # → planetocentric
+    return lon, lat
+
+
+def ographicLatitude(centric: npt.ArrayLike, a: float, c: float) -> np.ndarray:
+    """Planetocentric latitude (degrees) as geodetic (planetographic)
+    latitude on an ellipsoid of radii ``a``, ``c``: tan φg = (a/c)² tan φc
+    (Snyder, 1987, eq. 3-28); unchanged on a sphere."""
+    return _tanScaled(np.asarray(centric, dtype=np.float64), (a / c) ** 2)
+
+
 @frozen
 class _Side:
     """One CRS's part of the route."""
@@ -128,18 +163,24 @@ def _route(srcKey: str, dstKey: str) -> _Route:
     if not _sameSurface(src, dst) and "ballpark" in direct.description.lower():
         direct = None
     return _Route(
-        _side(srcKey, src, Transformer.from_crs(src, _plain(src))),
-        _side(dstKey, dst, Transformer.from_crs(_plain(dst), dst)),
-        direct,
+        _source(srcKey), _side(dst, Transformer.from_crs(_plain(dst), dst)), direct
     )
 
 
-def _side(key: str, crs: CRS, plain: Transformer) -> _Side:
-    """The latitude type as ``describeCrs`` reads it; PROJ converts its
+@lru_cache(maxsize=64)
+def _source(key: str) -> _Side:
+    """The side reading points on the CRS ``key``; the caller holds
+    PROJ_LOCK."""
+    crs = CRS.from_user_input(key)
+    return _side(crs, Transformer.from_crs(crs, _plain(crs)))
+
+
+def _side(crs: CRS, plain: Transformer) -> _Side:
+    """The latitude type as ``describeCrs`` reads it (``latitudeType``); PROJ converts its
     spherical (planetocentric) coordinate systems to geodetic itself."""
     ellipsoid = crs.ellipsoid
     assert ellipsoid is not None  # canTransform found the body
-    centric = describeCrs(key).latitudeType == "planetocentric"
+    centric = latitudeType(crs) == "planetocentric"
     return _Side(
         plain,
         (ellipsoid.semi_minor_metre / ellipsoid.semi_major_metre) ** 2,

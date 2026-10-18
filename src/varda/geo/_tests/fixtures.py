@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import numpy as np
 from affine import Affine
-from pyproj import CRS, Transformer
+from pyproj import CRS
 
 from varda.common.entities import VardaRaster
+from varda.geo.transform import transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -94,13 +95,16 @@ def makeImage(
     name: str = "fixture",
 ) -> VardaRaster:
     """A north-up image of ``width`` × ``height`` pixels of ``pixelSize``
-    (in the CRS's units) centered on ``centerLonLat`` (degrees on the CRS's
-    own body), with ``label`` as its PDS3 label when given."""
+    (in the CRS's units) centered on ``centerLonLat`` (longitude first, in
+    the geodetic CRS's own units, directions and latitude type), with ``label`` as its PDS3 label when given."""
     with PROJ_LOCK:
         crs = CRS.from_user_input(crs)
         geodetic = crs.geodetic_crs if crs.is_projected else crs
-        toCrs = Transformer.from_crs(geodetic, crs, always_xy=True)
-        centerX, centerY = toCrs.transform(*centerLonLat)
+        # not a Transformer with always_xy, which leaves the IAU_2015
+        # ellipsoids' latitude first
+        (centerX,), (centerY,) = transformPoints(
+            geodetic, crs, [centerLonLat[0]], [centerLonLat[1]]
+        )
     transform = Affine(
         pixelSize,
         0.0,

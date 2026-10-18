@@ -42,11 +42,48 @@ def test_crism_mtrdr(crs):
     assert description.authority is None
 
 
+def test_crism_mtrdr_away_from_its_standard_parallel_has_two_ground_sizes():
+    """The real MTRDR's standard parallel is 15°N, so at 18.4°N a pixel's
+    east–west side on the ground is 18 m / k with
+    k = cos 15° / cos 18.4° = 1.0180 (Snyder, 1987, p. 91): 17.68 m, which
+    differs from its 18 m north–south side by more than 1%."""
+    description = _described(CRISM_MTRDR_WKT, (77.0, 18.4), 18.0)
+    k = math.cos(math.radians(15)) / math.cos(math.radians(18.4))
+    assert description.pixelSizeEastWestM == pytest.approx(18 / k, rel=1e-6)
+    assert description.pixelSizeEastWestM == pytest.approx(17.68, abs=0.01)
+    assert description.pixelSizeNorthSouthM == pytest.approx(18.0, rel=1e-9)
+    assert description.pixelSizeM == pytest.approx(18.0, rel=1e-9)
+    assert description.text == (
+        "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, "
+        "17.7 m/px (east–west), 18 m/px (north–south)"
+    )
+
+
+def test_ground_sizes_within_1_percent_are_one_size():
+    """At 16°N k = cos 15°/cos 16° = 1.0049: one size, the larger."""
+    description = _described(CRISM_MTRDR_WKT, (77.0, 16.0), 18.0)
+    assert description.pixelSizeEastWestM == pytest.approx(18 / 1.0049, rel=1e-4)
+    assert description.text.endswith(", 18 m/px")
+
+
+def test_a_projected_pixel_is_measured_on_the_ground():
+    """eqc with lat_ts = 0 at 60°N: 100 m map pixels are 50 m east–west."""
+    crs = "+proj=eqc +lat_ts=0 +lon_0=0 +R=3396190 +units=m +no_defs"
+    description = _described(crs, (0.0, 60.0), 100.0)
+    assert description.pixelSizeEastWestM == pytest.approx(50.0, rel=1e-4)
+    assert description.pixelSizeNorthSouthM == pytest.approx(100.0, rel=1e-6)
+    assert description.text.endswith("50 m/px (east–west), 100 m/px (north–south)")
+
+
 def test_hirise_polar():
+    """A 1 m map pixel at 85°N is 1 m / k on the ground, k = 2/(1 + sin 85°)
+    = 1.0019 (Snyder, 1987, eq. 21-4): 0.998 m."""
     description = _described(HIRISE_POLAR_PROJ, (0.0, 85.0), 1.0)
     assert description.text == (
-        "Mars, sphere R = 3376.20 km, Polar Stereographic (north), 1 m/px"
+        "Mars, sphere R = 3376.20 km, Polar Stereographic (north), 0.998 m/px"
     )
+    k = 2 / (1 + math.sin(math.radians(85)))
+    assert description.pixelSizeM == pytest.approx(1 / k, rel=1e-4)
     assert description.centerLatitude == 90
 
 
