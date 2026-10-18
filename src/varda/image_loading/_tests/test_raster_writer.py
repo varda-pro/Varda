@@ -49,6 +49,19 @@ def test_envi_round_trip_keeps_data_and_spectral_metadata(tmp_path):
     assert loaded.crs is not None and loaded.crs.to_epsg() == 32612
 
 
+def _headerDescription(hdr) -> str:
+    text = hdr.read_text()
+    start = text.index("description = {") + len("description = {")
+    return text[start : text.index("}", start)].strip()
+
+
+def test_envi_header_carries_the_images_description(tmp_path):
+    # GDAL's ENVI driver writes the file's path there unless told otherwise
+    writeRaster(_spectralImage(), tmp_path / "scene.img")
+    assert _headerDescription(tmp_path / "scene.hdr").startswith("a test scene")
+    assert str(tmp_path) not in _headerDescription(tmp_path / "scene.hdr")
+
+
 def test_envi_round_trip_of_a_parameter_image_keeps_its_band_labels(tmp_path):
     names = ["BD1900", "OLINDEX3", "R770"]
     source = ArrayDataSource(

@@ -43,7 +43,10 @@ def test_boxes_on_the_secondary_ratio_the_primary_when_source_is_primary(qtbot):
         "Ratio Spectra"
     )
     assert workspace.pixelPlotWidget.pixelCurves == []
-    (curve,) = ratioPlot.pixelCurves
+    # the ratio, then the numerator and denominator spectra
+    curve, numeratorCurve, denominatorCurve = ratioPlot.pixelCurves
+    assert numeratorCurve.plotDataItem.name().startswith(primary.name)
+    assert denominatorCurve.plotDataItem.name().startswith(primary.name)
     _x, values = curve.plotDataItem.getData()
     numerator = computeRegionStatistics(boxPolygonPixels(11, 21, 5, 5), primary)["mean"]
     denominator = computeRegionStatistics(boxPolygonPixels(31, 5, 5, 5), primary)

@@ -12,9 +12,10 @@ import functools
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
+import attrs
 import numpy as np
 from psygnal import SignalInstance
-from PyQt6.QtCore import QObject, QPointF
+from PyQt6.QtCore import QObject, QPointF, pyqtSignal
 from PyQt6.QtGui import QColor
 from shapely.geometry import Polygon
 
@@ -22,8 +23,8 @@ from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.common.parameter import IntParameter, ParameterGroup
 from varda.common.ui import ButtonBuilder, SectionBox, VBoxBuilder, MutedLabel
 from varda.image_loading.crism_geometry import (
+    columnGeometryFor,
     computeColumnLockedTranslation,
-    loadColumnGeometry,
 )
 from varda.image_rendering.raster_view.viewport_protocol import ROIOverlayHandle
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
@@ -41,6 +42,18 @@ from varda.common.parameter_widgets import groupWidget
 
 NUMERATOR_ROI_COLOR = Color(0.0, 0.86, 0.0, 0.5)
 DENOMINATOR_ROI_COLOR = Color(1.0, 0.0, 1.0, 0.5)
+
+
+@attrs.frozen
+class RatioComponents:
+    """A measured selection on one image: the box means and their ratio."""
+
+    image: VardaRaster
+    wavelengths: np.ndarray
+    numerator: np.ndarray
+    denominator: np.ndarray
+    ratio: np.ndarray
+    selection: RatioSelection
 
 
 class RatioExplorerConfig(ParameterGroup):
@@ -80,6 +93,8 @@ class DenominatorOwner(Protocol):
 
 
 class RatioExplorerController(QObject):
+    sigComponents = pyqtSignal(object)  # RatioComponents, one per measured image
+
     def __init__(
         self,
         collection: ROICollection,
@@ -90,10 +105,16 @@ class RatioExplorerController(QObject):
         *,
         imagesFor: Callable[[VardaRaster], Sequence[VardaRaster]] | None = None,
         labelWithImageName: bool = False,
+        showComponents: bool = False,
+        nameSuffix: Callable[[], str] = lambda: "",
+        describe: Callable[[], str] = lambda: "",
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
-        images uses it to apply its Spectrum Source setting."""
+        images uses it to apply its Spectrum Source setting. ``showComponents``
+        also plots the numerator and denominator spectra next to the ratio.
+        ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict),
+        and ``describe()`` goes in their ``description`` column when not empty."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -101,6 +122,9 @@ class RatioExplorerController(QObject):
         self._docks = docks
         self._imagesFor = imagesFor or (lambda clicked: [clicked])
         self._labelWithImageName = labelWithImageName
+        self._showComponents = showComponents
+        self._nameSuffix = nameSuffix
+        self._describe = describe
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -125,13 +149,20 @@ class RatioExplorerController(QObject):
         if self._lastMirror is not None:
             self._mirrorSelection(*self._lastMirror)
 
-    def bindTool(self, tool: RatioExplorerTool) -> None:
-        """Drive a freshly activated tool: box size, placement, plotting, saving."""
-        image = tool.viewport.imageEntity
+    def bindTool(
+        self, tool: RatioExplorerTool, boxImage: VardaRaster | None = None
+    ) -> None:
+        """Drive a freshly activated tool: box size, placement, plotting, saving.
+        ``boxImage`` is the image the tool's boxes are in pixels of, when that
+        isn't the image its viewport shows (a browse view of another grid)."""
+        image = boxImage or tool.viewport.imageEntity
         tool.setBoxSizeProvider(
             lambda: (int(self.config.boxWidth.value), int(self.config.boxHeight.value))
         )
         tool.setDenominatorPlacer(functools.partial(self._placeDenominator, image))
+        tool.setDenominatorFollower(
+            functools.partial(self._followNumerator, tool, image)
+        )
         tool.sigSelectionChanged.connect(functools.partial(self._onSelection, image))
         tool.sigSelectionChanged.connect(
             functools.partial(self._mirrorSelection, tool.viewport)
@@ -185,34 +216,75 @@ class RatioExplorerController(QObject):
             return
         self._saveCount += 1
         n = self._saveCount
+        suffix = self._nameSuffix()
+        description = self._describe()
+        properties = {"description": description} if description else {}
+        if description and "description" not in self._collection.userColumns:
+            self._collection.addColumn("description")
         self._collection.addROI(
             self._geometryFor(image, selection.numerator),
-            f"Ratio {n} numerator",
+            f"Ratio {n} numerator{suffix}",
             NUMERATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
+            **properties,
         )
         denominatorFid = self._collection.addROI(
             self._geometryFor(image, selection.denominator),
-            f"Ratio {n} denominator",
+            f"Ratio {n} denominator{suffix}",
             DENOMINATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
+            **properties,
         )
         self._roiManager.setDenominator(denominatorFid)
+
+    def _lockedBox(
+        self, image: VardaRaster, numerator: np.ndarray, row: int, col: int
+    ) -> np.ndarray | None:
+        """The numerator's box moved onto the clicked row in its own sensor
+        column, or None when the lock is off or can't be satisfied (no detector
+        columns, or the column's strip doesn't reach that row)."""
+        if not self._roiManager.lockColumn:
+            return None
+        geometry = columnGeometryFor(
+            image.filePath, (image.height, image.width), image.crs is not None
+        )
+        if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
+            return None
+        shift = computeColumnLockedTranslation(
+            numerator, clickRow=row, clickCol=col, geometry=geometry
+        )
+        return None if shift is None else numerator + np.array(shift)
 
     def _placeDenominator(
         self, image: VardaRaster, numerator: np.ndarray, row: int, col: int
     ) -> np.ndarray:
         """Same-size box at the click; on the numerator's sensor column if locked."""
-        fallback = boxPolygonPixels(col, row, *boxSize(numerator))
-        if not self._roiManager.lockColumn or not image.filePath:
-            return fallback
-        geometry = loadColumnGeometry(image.filePath)
-        if geometry is None:
-            return fallback
-        shift = computeColumnLockedTranslation(
-            numerator, clickRow=row, clickCol=col, geometry=geometry
-        )
-        return fallback if shift is None else numerator + np.array(shift)
+        locked = self._lockedBox(image, numerator, row, col)
+        if locked is not None:
+            return locked
+        return boxPolygonPixels(col, row, *boxSize(numerator))
+
+    def _followNumerator(
+        self,
+        tool: RatioExplorerTool,
+        image: VardaRaster,
+        numerator: np.ndarray,
+        denominator: np.ndarray,
+    ) -> np.ndarray | None:
+        """With column lock on, the denominator moves into the new numerator's
+        column, keeping its row. Where the lock can't be satisfied it stays put,
+        and the status text says so."""
+        if not self._roiManager.lockColumn:
+            return None
+        col, row = centerPixel(denominator)
+        locked = self._lockedBox(image, numerator, row, col)
+        if locked is None:
+            tool.showText(
+                "Denominator left in place: its row has no pixels in the "
+                "numerator's sensor column (or there is no geometry file)",
+                timeout=4000,
+            )
+        return locked
 
     def _onSelection(self, image: VardaRaster, selection: RatioSelection) -> None:
         self._current = (image, selection)
@@ -229,17 +301,46 @@ class RatioExplorerController(QObject):
             ratio = computeRatioSpectrum(numerator, denominator)
             wavelengths = VardaPlotWidget.getPlottableWavelengths(source, len(ratio))
             entries.append((wavelengths, ratio, self._label(source, selection)))
+            if self._showComponents:
+                entries.append(
+                    (
+                        wavelengths,
+                        numerator,
+                        self._label(source, selection, "numerator"),
+                    )
+                )
+                entries.append(
+                    (
+                        wavelengths,
+                        denominator,
+                        self._label(source, selection, "denominator"),
+                    )
+                )
+            self.sigComponents.emit(
+                RatioComponents(
+                    source, wavelengths, numerator, denominator, ratio, selection
+                )
+            )
         # one batch, so Replace mode keeps every image of this selection
         self._docks.addSpectra(entries)
 
-    def _label(self, image: VardaRaster, selection: RatioSelection) -> str:
+    def _label(
+        self,
+        image: VardaRaster,
+        selection: RatioSelection,
+        part: str = "ratio",
+    ) -> str:
         assert selection.numerator is not None and selection.denominator is not None
-        nc, nr = _centerPixel(selection.numerator)
-        dc, dr = _centerPixel(selection.denominator)
-        boxes = f"({nc}, {nr}) / ({dc}, {dr})"
+        nc, nr = centerPixel(selection.numerator)
+        dc, dr = centerPixel(selection.denominator)
+        boxes = {
+            "ratio": f"({nc}, {nr}) / ({dc}, {dr})",
+            "numerator": f"({nc}, {nr})",
+            "denominator": f"({dc}, {dr})",
+        }[part]
         if self._labelWithImageName:
-            return f"{image.name} ratio {boxes}"
-        return f"Ratio {boxes}"
+            return f"{image.name} {part} {boxes}"
+        return f"{part.capitalize()} {boxes}"
 
     @staticmethod
     def _geometryFor(image: VardaRaster, pixels: np.ndarray) -> Polygon:
@@ -267,7 +368,7 @@ def _drawMirroredBox(
     return handle
 
 
-def _centerPixel(polygon: np.ndarray) -> tuple[int, int]:
+def centerPixel(polygon: np.ndarray) -> tuple[int, int]:
     """The pixel a ``boxPolygonPixels`` box was centered on (inverse of that function)."""
     width, height = boxSize(polygon)
     return int(polygon[0, 0]) + (width - 1) // 2, int(polygon[0, 1]) + (height - 1) // 2

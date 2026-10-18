@@ -12,6 +12,7 @@ from varda.common.entities import VardaRaster
 from varda.common.parameter import copyValues
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.rois.roi_json import roisFromJson, roisToJson
+from varda.workspaces.crism_ratio.crism_ratio_workspace import CrismRatioWorkspace
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
     DualImageWorkspace,
     DualImageWorkspaceConfig,
@@ -51,6 +52,8 @@ def describeWorkspace(workspace: object) -> tuple[str, list[VardaRaster]] | None
         return "terrain", workspace.sessionImages()
     if isinstance(workspace, LinkedImagesWorkspace):
         return "linked", list(workspace.images)
+    if isinstance(workspace, CrismRatioWorkspace):
+        return "crism_ratio", [workspace.browse, workspace.data]
     return None
 
 
@@ -91,11 +94,20 @@ def buildWorkspace(
         workspace = TerrainWorkspace(projectImages, images[0])
         workspace.restoreSessionState(dict(extra or {}), images[1:])
         return workspace
+    state = dict(extra or {})
+    link = state.get("link", Link.PIXEL.name)
+    if kind in ("linked", "crism_ratio") and link not in Link.__members__:
+        logger.warning("Unknown link %r in a %s workspace; skipped", link, kind)
+        return None
     if kind == "linked" and len(images) >= 2:
-        state = dict(extra or {})
-        workspace = LinkedImagesWorkspace(
-            images, projectImages, Link[state.get("link", Link.PIXEL.name)]
-        )
+        workspace = LinkedImagesWorkspace(images, projectImages, Link[link])
+        workspace.restoreSessionState(state)
+        return workspace
+    if kind == "crism_ratio" and len(images) != 2:
+        logger.warning("CRISM Ratio workspace needs its browse and I/F images; skipped")
+        return None
+    if kind == "crism_ratio":
+        workspace = CrismRatioWorkspace(images[0], images[1], projectImages, Link[link])
         workspace.restoreSessionState(state)
         return workspace
     logger.warning("Unknown workspace kind %r; skipped", kind)
@@ -111,6 +123,8 @@ def displayRenderers(workspace: object) -> list[ImageRenderer]:
         return [workspace.primaryRenderer, workspace.secondaryRenderer]
     if isinstance(workspace, LinkedImagesWorkspace):
         return list(workspace.renderers)
+    if isinstance(workspace, CrismRatioWorkspace):
+        return [workspace.browseRenderer, workspace.dataRenderer]
     return []
 
 

@@ -8,6 +8,49 @@ can alter results.
 
 ### Added
 
+- **Collapsing panels documented:** the pin button on any panel's title bar
+  collapses it to an edge tab (see Sessions and saving), and a test guards it
+  in every workspace.
+- **CRISM Ratio workspace** (Workspace → New CRISM Ratio Workspace…): a
+  browse image (such as a CRISM summary product) beside the I/F cube,
+  linked by pixel or map location. Ctrl/⌘-click a numerator and a
+  denominator box to plot the numerator, denominator and ratio spectra
+  (always measured on the I/F cube), with a blandness readout for the
+  denominator: for Generic or a target preset, every wavelength window's
+  deepest continuum-removed dip (how deep, and where), its noise-aware
+  limit and its slope, with failing windows shaded and their dips marked
+  on the Denominator plot (floor, k, slope and the CO₂ exclusion
+  editable). The
+  denominator follows the numerator along its sensor column, and says so
+  when it can't. S saves the pair as ROIs and P the numerator pixel as a
+  point, named with the verdict and described with every check's value and
+  limit (edited limits are marked, and kept by the session). The three plots always show the same
+  wavelength range, and bad bands are left out of them and of the readout.
+  See the CRISM ratio cubes guide.
+- **Ratio Explorer numerator and denominator curves:** General Image
+  Analysis and the dual-image workspace now plot the numerator and
+  denominator box spectra next to the ratio, so you can see which one a
+  feature comes from.
+- **Ratio Cube (Column Denominators)** (Processing → CRISM): divides a CRISM
+  I/F cube by one denominator spectrum per sensor detector column, read
+  from the backplane next to the cube (an MTRDR's or TER3's IN file) or, for
+  an unprojected cube such as a TRR3, from its own image columns (recorded),
+  so the result can replace the
+  I/F cube in other software. The denominator is the mean of the whole
+  column or of its bland pixels, tested on runs of neighbors within the
+  column: no window of the chosen check (Generic or a target preset, after
+  Viviano-Beck et al. 2014) may have a continuum-removed dip deeper than
+  both a floor and k × the spectrum's own noise, or too steep a slope, with
+  the CO₂ residual, the detector join and everything past 2650 nm left out
+  (defaults calibrated on a real MTRDR scene and recorded with the cube), with recorded fallbacks to
+  neighboring columns or the whole column. It adds a second image of the
+  pixels used and counts, and records each column's spectrum and standard
+  deviation, per-band valid counts, the distinct sensor pixels and an
+  effective sample size that accounts for map-projection oversampling, and
+  which neighbor columns a fallback borrowed. The input's no-data is kept:
+  missing values are never interpolated, counted or pooled. Saved, it
+  carries a methods description in its header and a per-column table
+  (`<name>.columns.csv`) beside it. See the new CRISM ratio cubes guide.
 - **Find Data: basemaps, feature names and Go to, for finding your way
   around.** The map's **Basemap** now offers each body's global imagery
   (Mercury, Venus, the Moon, Mars, Phobos, Ceres, Vesta, Io, Europa,
@@ -219,6 +262,29 @@ can alter results.
 
 ### Fixed
 
+- **ENVI exports keep their description in the header.** GDAL wrote the
+  file's path into the `.hdr`'s `description`, so ENVI and other software
+  never saw the image's description or how Varda made it (Varda itself read
+  it from the `.aux.xml`). The header now has it, and names the files that
+  must travel with the image.
+- **CRISM companion files are found by their real names:** a TRR3's DDR
+  (`…_if166l_trr3` → `…_de166l_ddr1`) and an MTRDR's DDR (`…_de166l_mtr1`)
+  are now found, also with ODE's upper-case names on case-sensitive disks,
+  so the Shadow Mask reads the incidence angle from them. Column lock (ROI
+  Manager, Ratio Explorer) uses the IN file's IR Sample band, or an
+  unprojected CRISM cube's image columns, and is no longer offered for a
+  companion that has no detector columns.
+- **Tool hints wrap in narrow views** instead of running off the right edge,
+  including after the view is resized.
+- **Map links no longer trip a NumPy deprecation** when one point is mapped
+  across map projections (every Map-link click in the CRISM Ratio and Linked
+  Images workspaces), which a future NumPy would turn into an error.
+- **A session with an unknown link mode** in a Linked Images or CRISM Ratio
+  workspace now skips that workspace with a warning instead of failing to
+  open.
+- **Ratio Explorer, column lock:** placing a new numerator now moves the
+  existing denominator into the new numerator's detector column (keeping its
+  row and box size), where before only a denominator click was snapped.
 - **A Shadow Mask can be applied, and a co-registered DEM chosen.** Apply
   Mask didn't offer a Shadow Mask made from the same image (it has 2 or 3
   bands), and the Shadow Mask's DEM dropdown didn't offer a DEM that was

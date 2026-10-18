@@ -3,13 +3,28 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
+import rasterio
 
+from varda.image_loading import crism_geometry
 from varda.image_loading.crism_geometry import (
+    IMAGE_COLUMNS,
     ColumnGeometry,
+    columnGeometryFor,
     computeColumnLockedTranslation,
     findBandIndex,
+    geometryFileCandidates,
+    loadColumnGeometry,
     resolveGeometryFile,
+    sceneIncidence,
 )
+
+
+@pytest.fixture(autouse=True)
+def _freshCache():
+    crism_geometry._geometry_cache.clear()
+    yield
+    crism_geometry._geometry_cache.clear()
 
 
 def _touch(p: Path) -> None:
@@ -179,3 +194,120 @@ def test_find_band_index_prefers_ir_over_vnir_sample():
         "VNIR/IR Mask",
     )
     assert findBandIndex(descriptions, "ir_sample") == 6
+
+
+# --- real CRISM product names (PDS Geosciences Node, checked 2026-10-17) ------
+#
+# TRR3 (sensor space): frt000107a7_07_if166l_trr3.img, its DDR (in the DDR
+# volume) frt000107a7_07_de166l_ddr1.img, 14 bands, no detector sample band.
+# MTRDR (map projected): frt000107a7_07_if166j_mtr3.img with
+# frt000107a7_07_in166j_mtr3.img (9 bands, "IR Sample" and "IR Line") and
+# frt000107a7_07_de166l_mtr1.img (14 DDR bands). TER3 (sensor space):
+# frt000107a7_07_if166j_ter3.img with frt000107a7_07_in166j_ter3.img.
+
+_IN_BANDS = (
+    "VNIR/IR Spectral Continuity Residual",
+    "VNIR/IR Spatial Gradient Residual",
+    "ATM Correction Spectral Shift Artifact",
+    "VNIR Sample",
+    "VNIR Line",
+    "IR Sample",
+    "IR Line",
+    "VNIR/IR Ground Sampling Offset",
+    "VNIR/IR Mask",
+)
+_DDR_BANDS = ("INA at areoid; deg", "EMA at areoid; deg", "Phase angle; deg")
+
+
+def _envi(path: Path, bands: dict[str, np.ndarray]) -> None:
+    first = next(iter(bands.values()))
+    with rasterio.open(
+        path,
+        "w",
+        driver="ENVI",
+        width=first.shape[1],
+        height=first.shape[0],
+        count=len(bands),
+        dtype="float32",
+        nodata=65535.0,
+    ) as out:
+        for index, (name, values) in enumerate(bands.items(), start=1):
+            out.write(values.astype(np.float32), index)
+            out.set_band_description(index, name)
+
+
+def test_a_trr3_resolves_its_ddr(tmp_path):
+    src = tmp_path / "frt000107a7_07_if166l_trr3.img"
+    _touch(src)
+    ddr = tmp_path / "frt000107a7_07_de166l_ddr1.img"
+    _touch(ddr)
+    assert resolveGeometryFile(str(src)) == str(ddr)
+    vnir = tmp_path / "frt000107a7_07_if166s_trr3.img"
+    _touch(vnir)
+    _touch(tmp_path / "frt000107a7_07_de166s_ddr1.img")
+    assert str(resolveGeometryFile(str(vnir))).endswith("de166s_ddr1.img")
+
+
+def test_upper_case_names_resolve_to_the_file_as_named(tmp_path):
+    # ODE downloads keep PDS's upper-case names, also on case-sensitive disks
+    src = tmp_path / "FRT000107A7_07_IF166J_MTR3.IMG"
+    _touch(src)
+    companion = tmp_path / "FRT000107A7_07_IN166J_MTR3.IMG"
+    _touch(companion)
+    assert resolveGeometryFile(str(src)) == str(companion)
+
+
+def test_an_mtrdr_lists_its_in_file_then_its_ddr(tmp_path):
+    src = tmp_path / "frt000107a7_07_if166j_mtr3.img"
+    _touch(src)
+    for name in ("frt000107a7_07_de166l_mtr1.img", "frt000107a7_07_in166j_mtr3.img"):
+        _touch(tmp_path / name)
+    assert [Path(p).name for p in geometryFileCandidates(str(src))] == [
+        "frt000107a7_07_in166j_mtr3.img",
+        "frt000107a7_07_de166l_mtr1.img",
+    ]
+
+
+def test_an_mtrdr_in_file_gives_detector_columns_and_lines(tmp_path):
+    rows, cols = 6, 9
+    sample = np.tile(np.arange(cols) // 2 + 100.0, (rows, 1))  # 2x oversampled
+    line = np.repeat(np.arange(rows)[:, None] // 2 + 50.0, cols, axis=1)
+    bands = {name: np.zeros((rows, cols)) for name in _IN_BANDS}
+    bands["IR Sample"], bands["IR Line"] = sample, line
+    bands["VNIR Sample"] = sample + 7  # must not be taken for the IR sample
+    src = tmp_path / "frt000107a7_07_if166j_mtr3.img"
+    _touch(src)
+    _envi(tmp_path / "frt000107a7_07_in166j_mtr3.img", bands)
+    geometry = loadColumnGeometry(str(src))
+    assert geometry is not None
+    np.testing.assert_array_equal(geometry.ir_sample, sample)
+    assert geometry.ir_line is not None
+    np.testing.assert_array_equal(geometry.ir_line, line)
+    assert geometry.sampleBand == "IR Sample"
+    assert geometry.source.endswith("in166j_mtr3.img")
+
+
+def test_an_unprojected_trr3_uses_its_image_columns(tmp_path):
+    rows = 4
+    src = tmp_path / "frt000107a7_07_if166l_trr3.img"
+    _touch(src)
+    # the real DDR: incidence and so on, but no detector sample band
+    _envi(
+        tmp_path / "frt000107a7_07_de166l_ddr1.img",
+        {name: np.full((rows, 640), 40.0) for name in _DDR_BANDS},
+    )
+    assert loadColumnGeometry(str(src)) is None
+    geometry = columnGeometryFor(str(src), (rows, 640), projected=False)
+    assert geometry is not None
+    assert geometry.source == IMAGE_COLUMNS and geometry.binning == 1
+    np.testing.assert_array_equal(geometry.ir_sample[0], np.arange(640))
+    # the DDR still gives the solar incidence
+    incidence = sceneIncidence(str(src))
+    assert incidence is not None and incidence.mean == 40.0
+
+
+def test_image_columns_need_a_confidently_unprojected_crism_cube():
+    binned = columnGeometryFor(None, (4, 320), projected=False)
+    assert binned is not None and binned.binning == 2
+    assert columnGeometryFor(None, (4, 320), projected=True) is None
+    assert columnGeometryFor(None, (4, 600), projected=False) is None

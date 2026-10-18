@@ -322,6 +322,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
             self.pixelSpectraDocks.dedicated("Ratio Spectra"),
             self.ratioExplorerConfig,
             parent=self,
+            showComponents=True,
         )
         # All three views show the same image: show the boxes in each
         self.ratioExplorer.setMirrorViewports(viewports)

@@ -17,6 +17,7 @@ from varda.analysis.image_math import (
     RoiToMaskAnalysis,
     ThresholdToMaskAnalysis,
 )
+from varda.analysis.ratio_cube_analysis import RatioCubeAnalysis
 from varda.analysis.sensor_bands import SensorBandsAnalysis
 from varda.analysis.shadow_mask import ShadowMaskAnalysis
 from varda.analysis.detection import (
@@ -136,6 +137,7 @@ ANALYSES: list[type[Analysis]] = [
     RotateFlipAnalysis,
     SubsetAnalysis,
     CropToRoiAnalysis,
+    RatioCubeAnalysis,
 ]
 
 

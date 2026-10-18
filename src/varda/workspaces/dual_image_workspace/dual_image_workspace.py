@@ -317,6 +317,7 @@ class DualImageWorkspace(QMainWindow):
             parent=self,
             imagesFor=self._imagesForSource,  # honors Spectrum Source
             labelWithImageName=True,
+            showComponents=True,
         )
         # The images are co-registered: show the boxes on both views
         self.ratioExplorer.setMirrorViewports(self._allViewports())
@@ -411,6 +412,7 @@ class DualImageWorkspace(QMainWindow):
             parent=self,
             imagesFor=self._imagesForSource,  # honors Spectrum Source
             labelWithImageName=True,
+            showComponents=True,
         )
         # The images are co-registered: show the boxes on both views
         self.ratioExplorer.setMirrorViewports(self._allViewports())

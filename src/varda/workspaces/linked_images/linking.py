@@ -53,7 +53,11 @@ def linkedPoints(
         if crs != originCrs:
             with PROJ_LOCK:
                 transformer = Transformer.from_crs(originCrs, crs, always_xy=True)
-                there = np.column_stack(transformer.transform(*mapped.T))
+                # lists, not arrays: pyproj takes a one-element array for a
+                # scalar, which NumPy deprecates
+                there = np.column_stack(
+                    transformer.transform(mapped[:, 0].tolist(), mapped[:, 1].tolist())
+                )
         out.append(image.geoToImage(there))
     return out
 

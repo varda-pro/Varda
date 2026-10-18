@@ -8,6 +8,16 @@ window of its own, and close it with its × or a middle click. Closing a
 workspace's own window puts it back in the tabs. Sessions reopen the
 workspaces in the tabs' order.
 
+### Collapsing panels
+
+Every workspace's panels can be collapsed out of the way. Click the pin
+button on a panel's title bar to collapse it to a tab on the edge of the
+workspace; click that tab to slide the panel back out, and click the pin again
+to put it back where it was. Collapsing the panels you aren't using leaves more
+room for the images and plots. The CRISM Ratio workspace starts with most of
+its panels collapsed (the ROI and Points managers, ROI Plots, and each view's
+render settings and histogram), leaving the two images and the ratio plots.
+
 ## Sessions
 
 **File → Save Session…** (⌘S) writes a `.varda` file recording the open

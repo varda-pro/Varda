@@ -23,17 +23,33 @@ from rasterio.errors import RasterioError
 logger = logging.getLogger(__name__)
 
 
+# How ``ColumnGeometry.source`` names geometry taken from an unprojected
+# cube's own pixel grid rather than from a backplane file
+IMAGE_COLUMNS = "image columns (unprojected)"
+# Image widths of unprojected CRISM cubes and their pixel binning (640
+# detector columns at full resolution)
+CRISM_SENSOR_WIDTHS = {640: 1, 320: 2, 128: 5, 64: 10}
+
+
 @attrs.define
 class ColumnGeometry:
     """Per-pixel CRISM geometry arrays, all shape (height, width).
 
-    ``ir_sample`` is the detector column index; ``target_id`` and ``segment_id``
-    identify the source observation strip. Missing values are NaN.
+    ``ir_sample`` is the detector column index and ``ir_line`` (when the
+    backplane has it) the detector line, i.e. the sensor frame; ``target_id``
+    and ``segment_id`` identify the source observation strip. Missing values
+    are NaN. ``source`` is the backplane file read, or :data:`IMAGE_COLUMNS`;
+    ``sampleBand`` the backplane band the columns came from ("" for image
+    columns); ``binning`` how many detector columns one image column spans.
     """
 
     ir_sample: np.ndarray
     target_id: np.ndarray | None = None
     segment_id: np.ndarray | None = None
+    ir_line: np.ndarray | None = None
+    source: str = ""
+    sampleBand: str = ""
+    binning: int = 1
 
 
 def _modeUnderMask(arr: np.ndarray | None, mask: np.ndarray) -> int | None:
@@ -157,6 +173,8 @@ _BAND_ALIASES: dict[str, tuple[str, ...]] = {
         "l-detector sample",
         "sample",
     ),
+    # never plain "line": "VNIR Line" would match it
+    "ir_line": ("ir (l-detector) line", "ir line", "l-detector line"),
     "target_id": ("target id",),
     "segment_id": ("segment id (counter)", "segment id", "segment"),
     # the solar incidence angle to the reference surface, not the MOLA-local one
@@ -188,87 +206,132 @@ def findBandIndex(descriptions: tuple[str, ...], kind: str) -> int | None:
 _geometry_cache: dict[str, ColumnGeometry | None] = {}
 
 
-def loadColumnGeometry(sourceFilename: str) -> ColumnGeometry | None:
-    """Resolve and read the DDR geometry for a CRISM source file, or None.
-
-    Results (including None) are cached by source path so repeated placements do
-    not re-read the (large) DDR file.
-    """
-    import rasterio as rio  # local import: keep module import-light
-
-    if sourceFilename in _geometry_cache:
-        return _geometry_cache[sourceFilename]
-
-    geomPath = resolveGeometryFile(sourceFilename)
-    if geomPath is None:
-        _geometry_cache[sourceFilename] = None
-        return None
+def _readColumnGeometry(geomPath: str) -> ColumnGeometry | None:
+    """The backplane bands of ``geomPath``, or None when it has no detector
+    sample band (a TRR3's DDR, for example) or can't be read."""
     try:
-        with rio.open(geomPath) as geom:
+        with rasterio.open(geomPath) as geom:
             descs = geom.descriptions or ()
             irIdx = findBandIndex(descs, "ir_sample")
             if irIdx is None:
-                logger.warning(
-                    "DDR %s has no IR Sample band; column-lock unavailable", geomPath
-                )
-                _geometry_cache[sourceFilename] = None
+                logger.info("%s has no IR Sample band", geomPath)
                 return None
-            tgtIdx = findBandIndex(descs, "target_id")
-            segIdx = findBandIndex(descs, "segment_id")
             nodata = geom.nodata
 
-            def _readBand(arr: np.ndarray) -> np.ndarray:
-                arr = arr.astype(np.float64)
+            def _read(idx: int | None) -> np.ndarray | None:
+                if idx is None:
+                    return None
+                arr = geom.read(idx).astype(np.float64)
                 if nodata is not None:
                     arr = np.where(arr == nodata, np.nan, arr)
                 return arr
 
-            def _readOptional(idx: int | None) -> np.ndarray | None:
-                if idx is None:
-                    return None
-                return _readBand(geom.read(idx))
-
-            result = ColumnGeometry(
-                ir_sample=_readBand(geom.read(irIdx)),
-                target_id=_readOptional(tgtIdx),
-                segment_id=_readOptional(segIdx),
+            sample = _read(irIdx)
+            assert sample is not None
+            return ColumnGeometry(
+                ir_sample=sample,
+                target_id=_read(findBandIndex(descs, "target_id")),
+                segment_id=_read(findBandIndex(descs, "segment_id")),
+                ir_line=_read(findBandIndex(descs, "ir_line")),
+                source=geomPath,
+                sampleBand=descs[irIdx - 1] or "",
             )
-            _geometry_cache[sourceFilename] = result
-            return result
-    except Exception as e:  # pragma: no cover - I/O error path
+    except RasterioError as e:
         logger.warning("Failed to read DDR geometry %s: %s", geomPath, e)
-        _geometry_cache[sourceFilename] = None
         return None
 
 
-# (pattern, replacement) applied to the filename stem to find the DDR companion.
+def loadColumnGeometry(sourceFilename: str) -> ColumnGeometry | None:
+    """The detector columns of a CRISM product from the first companion
+    backplane that has an IR Sample band (:func:`geometryFileCandidates`), or
+    None.
+
+    Results (including None) are cached by source path so repeated placements do
+    not re-read the (large) backplane file.
+    """
+    if sourceFilename in _geometry_cache:
+        return _geometry_cache[sourceFilename]
+    result = None
+    for geomPath in geometryFileCandidates(sourceFilename):
+        result = _readColumnGeometry(geomPath)
+        if result is not None:
+            break
+    else:
+        logger.debug("CRISM GEOMETRY: no backplane with detector columns")
+    _geometry_cache[sourceFilename] = result
+    return result
+
+
+def imageColumnGeometry(height: int, width: int) -> ColumnGeometry:
+    """An unprojected cube's own grid as its sensor geometry: image column c
+    is detector column c (in binned columns) and image row r is frame r."""
+    return ColumnGeometry(
+        ir_sample=np.tile(np.arange(width, dtype=np.float64), (height, 1)),
+        ir_line=np.repeat(np.arange(height, dtype=np.float64)[:, None], width, 1),
+        source=IMAGE_COLUMNS,
+        binning=CRISM_SENSOR_WIDTHS.get(width, 1),
+    )
+
+
+def columnGeometryFor(
+    sourceFilename: str | None, shape: tuple[int, int], projected: bool
+) -> ColumnGeometry | None:
+    """The detector columns of a CRISM cube of ``shape`` (rows, cols): from
+    its backplane when one is found, else, for a cube that is confidently
+    unprojected (no map projection and a CRISM width, 640, 320, 128 or 64
+    columns), its own image columns. None otherwise."""
+    geometry = loadColumnGeometry(sourceFilename) if sourceFilename else None
+    if geometry is not None:
+        return geometry
+    height, width = shape
+    if not projected and width in CRISM_SENSOR_WIDTHS:
+        return imageColumnGeometry(height, width)
+    return None
+
+
+# (pattern, replacement) applied to the lower-case filename stem to find the
+# geometry companions, most useful first: the IN file's detector sample and
+# line, then the DDR (incidence angle and the like). Names as on the PDS
+# Geosciences Node: a TRR3 ``..._if166l_trr3`` has the DDR ``..._de166l_ddr1``
+# (no detector sample band: the cube is in sensor space); an MTRDR
+# ``..._if166j_mtr3`` has ``..._in166j_mtr3`` and ``..._de166l_mtr1``; a TER3
+# ``..._if166j_ter3`` has ``..._in166j_ter3``.
 _GEOMETRY_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"_mrr(al|if|ir|sr|su|ra)_", re.IGNORECASE), "_mrrde_"),
-    (re.compile(r"_vrr(al|if|ir|sr|su|ra)_", re.IGNORECASE), "_vrrde_"),
-    (re.compile(r"_(if|sr|su)(\d{3}[a-z])", re.IGNORECASE), r"_in\2"),
+    (re.compile(r"_mrr(al|if|ir|sr|su|ra)_"), "_mrrde_"),
+    (re.compile(r"_vrr(al|if|ir|sr|su|ra)_"), "_vrrde_"),
+    (re.compile(r"_(if|sr|su)(\d{3}[a-z])"), r"_in\2"),
+    (re.compile(r"_(if|ra)(\d{3})([ls])_trr3"), r"_de\2\3_ddr1"),
+    (re.compile(r"_(if|sr|su)(\d{3})[a-z]_ter3"), r"_de\2l_ddr1"),
+    (re.compile(r"_(if|sr|su)(\d{3})[a-z]_mtr3"), r"_de\2l_mtr1"),
 ]
 
 
-def resolveGeometryFile(sourceFilename: str) -> str | None:
-    """Map a CRISM source ``.img``/``.hdr`` path to its geometry companion path.
-
-    Returns the companion ``.img`` path if it exists on disk, else None.
-    """
+def geometryFileCandidates(sourceFilename: str) -> list[str]:
+    """The geometry companions of a CRISM product found next to it, in the
+    order of ``_GEOMETRY_NAME_PATTERNS``. Names match whatever their case
+    (PDS names are lower case, ODE downloads upper case); the paths returned
+    are the files as named on disk."""
     directory = os.path.dirname(sourceFilename)
-    filename = os.path.basename(sourceFilename)
-    stem, _ext = os.path.splitext(filename)
-
+    stem = os.path.splitext(os.path.basename(sourceFilename))[0].lower()
+    try:
+        onDisk = {name.lower(): name for name in os.listdir(directory or ".")}
+    except OSError:
+        return []
+    found: list[str] = []
     for pattern, replacement in _GEOMETRY_NAME_PATTERNS:
         newStem, nSubs = pattern.subn(replacement, stem)
-        if nSubs == 0 or newStem == stem:
-            continue
-        candidate = os.path.join(directory, newStem + ".img")
-        if os.path.exists(candidate):
-            logger.debug(f"CRISM GEOMETRY: geometry file path: {candidate}")
-            return candidate
-    logger.debug("CRISM GEOMETRY: NO geometry file path")
+        name = onDisk.get(newStem + ".img") if nSubs and newStem != stem else None
+        path = os.path.join(directory, name) if name else None
+        if path and path not in found:
+            found.append(path)
+    return found
 
-    return None
+
+def resolveGeometryFile(sourceFilename: str) -> str | None:
+    """The first geometry companion of a CRISM ``.img``/``.hdr`` path found on
+    disk (see :func:`geometryFileCandidates`), or None."""
+    found = geometryFileCandidates(sourceFilename)
+    return found[0] if found else None
 
 
 @attrs.frozen
@@ -285,9 +348,14 @@ def sceneIncidence(sourceFilename: str) -> Incidence | None:
     """The solar incidence angle at the areoid (the DDR's "INA at areoid"
     band) over the scene of a CRISM product, or None without a DDR that has
     it. The DDR gives no solar azimuth."""
-    geomPath = resolveGeometryFile(sourceFilename)
-    if geomPath is None:
-        return None
+    for geomPath in geometryFileCandidates(sourceFilename):
+        incidence = _readIncidence(geomPath)
+        if incidence is not None:
+            return incidence
+    return None
+
+
+def _readIncidence(geomPath: str) -> Incidence | None:
     try:
         with rasterio.open(geomPath) as geom:
             index = findBandIndex(geom.descriptions or (), "incidence")

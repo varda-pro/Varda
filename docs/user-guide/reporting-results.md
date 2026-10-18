@@ -77,7 +77,10 @@ the file's `VARDA` metadata domain as JSON:
 - **GeoTIFF:** inside the `.tif`.
 - **ENVI:** in `<file>.img.aux.xml` beside the `.img` and `.hdr`. Keep the
   three together. A [packaged project](sessions-and-saving.md#sharing-a-project)
-  includes it.
+  includes it. The `.hdr`'s `description` holds the human-readable
+  description and how the image was made, and names the files that must
+  travel with it (some analyses add their own, such as a ratio cube's
+  `.columns.csv`).
 
 The domain has two keys: `provenance` (the record) and `metadata` (class
 names and colors, eigenvalues, explained variance and the inverse transform,

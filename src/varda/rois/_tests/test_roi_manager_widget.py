@@ -107,6 +107,7 @@ def test_plot_spectrum_fill_band_is_mean_plus_minus_std(qtbot):
         bandCount=1,
         nodata=None,
         filePath=None,
+        crs=None,
         wavelengths=np.array([0.0]),
         wavelengthsType=float,
         bandModel=BandModel.empty(1),

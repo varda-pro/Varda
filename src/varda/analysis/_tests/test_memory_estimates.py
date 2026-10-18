@@ -30,6 +30,7 @@ NOT_MEASURED = {
     "Sieve Classes",
     "Clump Classes",
     "Accuracy Assessment",
+    "Ratio Cube (Column Denominators)",  # needs a DDR/DE backplane: measured in its own test
 }
 
 

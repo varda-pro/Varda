@@ -23,9 +23,9 @@ from PyQt6.QtWidgets import (
 from shapely.geometry import Polygon
 
 from varda.image_loading.crism_geometry import (
+    ColumnGeometry,
+    columnGeometryFor,
     computeColumnLockedTranslation,
-    loadColumnGeometry,
-    resolveGeometryFile,
     wholePixels,
 )
 from varda.common.ui import FlowLayout
@@ -124,9 +124,7 @@ class ROIManagerWidget(QWidget):
         # "Lock to sensor column" toggle for template placement, enabled only
         # when a CRISM DDR geometry companion resolves for this image.
         self._lockColumnCheck = QCheckBox("Lock to sensor column")
-        hasDdr = (
-            bool(image.filePath) and resolveGeometryFile(image.filePath) is not None
-        )
+        hasDdr = self._columnGeometry() is not None
         self._lockColumnCheck.setEnabled(hasDdr)
         if not hasDdr:
             self._lockColumnCheck.setToolTip(
@@ -271,11 +269,7 @@ class ROIManagerWidget(QWidget):
         dy = wholePixels((float(clickRow) + 0.5) - centroid.y)
 
         if self.lockColumn:
-            colGeom = (
-                loadColumnGeometry(self._image.filePath)
-                if self._image.filePath
-                else None
-            )
+            colGeom = self._columnGeometry()
             if colGeom is not None:
                 locked = computeColumnLockedTranslation(
                     pixelCoords, clickRow=clickRow, clickCol=clickCol, geometry=colGeom
@@ -368,6 +362,16 @@ class ROIManagerWidget(QWidget):
             self.setDenominator(None)
         if fid == self._templateFid:
             self.setTemplate(None)
+
+    def _columnGeometry(self) -> ColumnGeometry | None:
+        """The image's detector columns (backplane or unprojected CRISM grid)."""
+        image = self._image
+        geometry = columnGeometryFor(
+            image.filePath, (image.height, image.width), image.crs is not None
+        )
+        if geometry is None or geometry.ir_sample.shape != (image.height, image.width):
+            return None
+        return geometry
 
     def _plotSelected(self) -> None:
         fid = self.selectedFid()

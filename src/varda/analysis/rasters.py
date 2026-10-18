@@ -28,14 +28,16 @@ def validPixels(cube: np.ndarray, nodata: float | None) -> np.ndarray:
     return valid
 
 
-def readCube(image: VardaRaster) -> tuple[np.ndarray, np.ndarray]:
+def readCube(image: VardaRaster, fill: bool = True) -> tuple[np.ndarray, np.ndarray]:
     """The image as a float64 (rows, cols, bands) cube ready for analysis, and
     the (rows, cols) mask of usable pixels.
 
     Nodata and the image's bad bands (ENVI ``bbl``) become NaN; a pixel's
     missing bands are filled along its spectrum (see ``fillAlongSpectrum``) so
     that a bad band here and there does not knock the pixel out; pixels
-    missing most of their good bands stay NaN.
+    missing most of their good bands stay NaN. With ``fill=False`` nothing is
+    filled: missing values stay NaN and the mask is of the pixels with a value
+    in every good band.
     """
     raw = image.getData()
     if np.asarray(raw).dtype != np.float64:
@@ -46,11 +48,13 @@ def readCube(image: VardaRaster) -> tuple[np.ndarray, np.ndarray]:
         cube[cube == model.noData] = np.nan
     if model.badBands.any():
         logger.info(
-            "%s: ignoring %d bad band(s) marked in its header (filled along the spectrum)",
+            "%s: ignoring %d bad band(s) marked in its header",
             image.name,
             int(model.badBands.sum()),
         )
         cube[:, :, model.badBands] = np.nan
+    if not fill:
+        return cube, np.all(np.isfinite(cube[:, :, goodBands(image)]), axis=2)
     return fillAlongSpectrum(cube, badBands=model.badBands)
 
 
@@ -62,13 +66,15 @@ def goodBands(image: VardaRaster) -> np.ndarray:
     return np.flatnonzero(~bad)
 
 
-def readGoodBands(image: VardaRaster) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def readGoodBands(
+    image: VardaRaster, fill: bool = True
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``readCube`` without the bad bands, and the indices of the bands kept.
 
     For analyses that compute statistics or fits across bands: a bad band
     filled from its neighbors is a linear combination of them, which makes a
     covariance (nearly) singular and counts its neighbors twice."""
-    cube, valid = readCube(image)
+    cube, valid = readCube(image, fill)
     bands = goodBands(image)
     if bands.size < image.bandCount:
         cube = np.ascontiguousarray(cube[:, :, bands])

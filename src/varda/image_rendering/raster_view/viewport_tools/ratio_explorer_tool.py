@@ -27,6 +27,13 @@ DENOMINATOR_COLOR = QColor(255, 0, 255)
 
 # (numerator polygon, clicked row, clicked col) -> denominator polygon
 DenominatorPlacer = Callable[[np.ndarray, int, int], np.ndarray]
+# (new numerator polygon, current denominator polygon) -> new denominator
+# polygon, or None to keep the denominator where it is
+DenominatorFollower = Callable[[np.ndarray, np.ndarray], np.ndarray | None]
+# clicked view (x, y) -> data pixel (x, y), or None when outside the data
+ClickMapper = Callable[[float, float], tuple[float, float] | None]
+# box polygon in data pixels -> the same polygon in this view's pixels
+BoxProjector = Callable[[np.ndarray], np.ndarray]
 
 
 @attrs.frozen
@@ -55,17 +62,21 @@ class RatioExplorerTool(ViewportTool):
     toolName = "Ratio Explorer"
     toolDescription = (
         "Ctrl/Cmd+left-click: numerator box, Ctrl/Cmd+right-click: denominator "
-        "box. S saves both as ROIs, Esc clears."
+        "box. S saves both as ROIs, P saves the numerator pixel as a point, Esc clears."
     )
     toolCategory = "Selection"
 
     sigSelectionChanged = pyqtSignal(object)  # RatioSelection
-    sigSaveRequested = pyqtSignal()
+    sigSaveRequested = pyqtSignal()  # S
+    sigSavePointRequested = pyqtSignal()  # P
 
     def __init__(self, viewport: ImageViewport, parent=None):
         super().__init__(viewport, parent)
         self._boxSize: Callable[[], tuple[int, int]] = lambda: (5, 5)
         self._placeDenominator: DenominatorPlacer | None = None
+        self._followDenominator: DenominatorFollower | None = None
+        self._mapClick: ClickMapper | None = None
+        self._projectBox: BoxProjector | None = None
         self.selection = RatioSelection(None, None)
         self._numeratorOverlay: ROIOverlayHandle | None = None
         self._denominatorOverlay: ROIOverlayHandle | None = None
@@ -79,6 +90,26 @@ class RatioExplorerTool(ViewportTool):
 
     def setDenominatorPlacer(self, placer: DenominatorPlacer | None) -> None:
         self._placeDenominator = placer
+
+    def setDenominatorFollower(self, follower: DenominatorFollower | None) -> None:
+        """Let the denominator move when a new numerator is placed."""
+        self._followDenominator = follower
+
+    def setClickMapper(self, mapper: ClickMapper | None) -> None:
+        """Convert clicks on this view to the pixels the boxes are defined in
+        (for a view on another grid than the data)."""
+        self._mapClick = mapper
+
+    def setBoxProjector(self, projector: BoxProjector | None) -> None:
+        """Draw the boxes (always in data pixels) through ``projector``."""
+        self._projectBox = projector
+        self._redraw()
+
+    def showSelection(self, selection: RatioSelection) -> None:
+        """Show ``selection`` made on another view (without reporting it
+        again), so a click here continues from it."""
+        self.selection = selection
+        self._redraw()
 
     def activate(self):
         super().activate()
@@ -101,12 +132,22 @@ class RatioExplorerTool(ViewportTool):
         if event.action != PointerAction.PRESS:
             return False
 
-        col, row = int(event.imagePos.x()), int(event.imagePos.y())
+        x, y = event.imagePos.x(), event.imagePos.y()
+        if self._mapClick is not None:
+            mapped = self._mapClick(x, y)
+            if mapped is None:
+                self.showText("Outside the I/F cube", timeout=2000)
+                return True
+            x, y = mapped
+        col, row = int(x), int(y)
         if event.button == Qt.MouseButton.LeftButton:
             width, height = self._boxSize()
-            self._setSelection(
-                boxPolygonPixels(col, row, width, height), self.selection.denominator
-            )
+            numerator = boxPolygonPixels(col, row, width, height)
+            denominator = self.selection.denominator
+            if denominator is not None and self._followDenominator is not None:
+                moved = self._followDenominator(numerator, denominator)
+                denominator = denominator if moved is None else moved
+            self._setSelection(numerator, denominator)
             return True
 
         numerator = self.selection.numerator
@@ -125,6 +166,9 @@ class RatioExplorerTool(ViewportTool):
         key = event.key.value if isinstance(event.key, Qt.Key) else event.key
         if key == Qt.Key.Key_S.value:
             self.sigSaveRequested.emit()
+            return True
+        if key == Qt.Key.Key_P.value:
+            self.sigSavePointRequested.emit()
             return True
         if key == Qt.Key.Key_Escape.value:
             self._setSelection(None, None)
@@ -160,6 +204,8 @@ class RatioExplorerTool(ViewportTool):
             if handle is not None:
                 handle.remove()
             return None
+        if self._projectBox is not None:
+            polygon = self._projectBox(polygon)
         points = [
             QPointF(float(c), float(r))
             for c, r in self.viewport.pixelToLocalCoords(polygon)

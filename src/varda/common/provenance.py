@@ -73,6 +73,7 @@ KEPT_METADATA_KEYS = (
     "fatt",
     "shadowMask",
     "sensorBands",
+    "ratioCube",
     "kmeans",
     "componentSelection",
     "unmixing",
