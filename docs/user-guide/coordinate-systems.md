@@ -282,6 +282,67 @@ tell, and doesn't combine them ("Can't tell whether … are the same body
 against a known one with a different radius. An unknown body is never
 assumed to be Earth.
 
+### Recommended projections
+
+Where Varda chooses a map projection for you (Reproject Image's
+**Recommended projection**; later Mosaic and 3D Terrain), it follows four
+rules, from the scene's **footprint**: its extent in planetocentric
+longitude (east) and latitude, from 21 points along each edge of the image.
+The footprint contains a pole when the pole's map point falls inside the
+image; it then spans all longitudes. "Center" is the middle of the
+footprint.
+
+1. **Polar scenes** (|center latitude| ≥ 65°, or the footprint contains a
+   pole) get **polar stereographic** centered on the pole (`lat_0` = ±90,
+   `lon_0` = 0). For a **mosaic** the scale is true at the pole (`k` = 1),
+   the HiRISE/PDS convention, so products match. For **terrain and
+   measurement** it's true at the center latitude rounded to 0.1°
+   (`lat_ts`), so the scale is right where the data are. The 65° threshold
+   is HiRISE's projection rule (McEwen et al., 2010): equirectangular maps
+   above it have large scale errors (137% at 65° for `lat_ts` = 0, k = 1/cos 65°).
+2. **Mosaics** otherwise get **equirectangular** with `lat_ts` and `lon_0`
+   the center rounded to 1°, the convention of CTX, HiRISE and ISIS
+   `cam2map` products, so most inputs need no resampling. When every input
+   is in one coordinate system (the same CRS, on the scene's body) that is
+   good enough over the scene (below), Varda keeps it instead.
+3. **Terrain and measurement** otherwise:
+   - Keep the image's own **projected** CRS when it's good enough over the
+     scene: at most 1% scale error and 1° angular distortion on a 9 × 9
+     grid of longitudes and latitudes over the footprint (see
+     [The distortion check](#the-distortion-check)). A geographic CRS
+     (degrees) is never kept, because its pixels aren't square on the
+     ground.
+   - Otherwise **transverse Mercator** centered on the scene (`lat_0`,
+     `lon_0` = the center rounded to 0.01°, k₀ = 1), when every point of
+     the footprint's edge lies within 0.14 R of the central meridian. That
+     is the angular distance B from the central meridian, with
+     sin B = cos φ · |sin Δλ| ≤ sin 0.14 (φ the latitude, Δλ the longitude
+     from the center). The scale error there is k − 1 = 1/cos B − 1 ≤ 0.99%
+     (Snyder, 1987, eq. 8-1, on a sphere): 475 km either side of the center
+     on Mars (950 km wide), 243 km on the Moon.
+   - Wider scenes get **Lambert azimuthal equal-area** centered on the scene
+     (the center rounded to 0.01°): areas are exact, and the reason states
+     the worst angular (shape) distortion over the footprint.
+4. **The surface** is the body's IAU 2015 sphere (Archinal et al., 2018),
+   unless every input is on the body's IAU reference ellipsoid, when it's
+   that ellipsoid. For an unknown body it's the image's own surface. On an
+   ellipsoid, the center latitude is converted to planetographic before
+   rounding, since PROJ reads `lat_ts` and `lat_0` as geodetic latitudes.
+
+**Rounding** is half away from zero (77.5° → 78°, −77.5° → −78°), not
+"round half to even".
+
+Each recommendation states its reason in one line, e.g. "Polar
+stereographic: the scene reaches 85.0°N", "Kept its own projection: under
+1% scale error over the scene", or "Transverse Mercator centered on the
+scene: its equirectangular map has 15.5% scale error here" (a 300 km-wide
+scene at 30°N in an equirectangular map with `lat_ts` = 0, where
+k = 1/cos 30°). The recommended CRS is a PROJ string with the surface as
+`+R=` (sphere) or `+a= +b=` (ellipsoid), `+units=m +no_defs`; report it
+from its WKT. Its limits are those of the distortion check: the 9 × 9 grid
+can miss a sharper extreme between samples, and the footprint is the image's
+rectangle, not its valid data.
+
 ### Limitations
 
 - Equivalence compares the projection, not the datum's realization: two
@@ -665,6 +726,9 @@ projection, not the accuracy of the image's georeferencing.
   geospatial data analysis. *Planetary and Space Science*, 150, 36–42.
 - Karney, C. F. F. (2013). Algorithms for geodesics. *Journal of Geodesy*,
   87, 43–55. https://doi.org/10.1007/s00190-012-0578-z
+- McEwen, A. S., et al. (2010). The High Resolution Imaging Science
+  Experiment (HiRISE) during MRO's Primary Science Phase (PSP). *Icarus*,
+  205, 2–37. https://doi.org/10.1016/j.icarus.2009.04.023
 - PROJ contributors. PROJ documentation: the `IAU_2015` authority and CRS
   identification. https://proj.org
 - Seidelmann, P. K., et al. (2002). Report of the IAU/IAG Working Group on
