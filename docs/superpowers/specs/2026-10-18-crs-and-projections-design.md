@@ -635,7 +635,10 @@ measures by other means (planar map-unit ROI columns, shapes, slopes).
   Planetocentric latitudes are converted to planetographic first with
   tan φg = (a/c)² tan φc. The relative difference is reported. It's
   typically ≤ 0.6% on Mars (flattening 0.0059) and 0 on the Moon. With
-  HiRISE's 3376.2 km polar sphere it's about 1.2% near the pole.
+  HiRISE's 3376.2 km polar sphere it's about 0.005% near the pole (that
+  sphere's radius is Mars's polar radius); the Mars 2000 sphere differs by
+  about 0.6% at 85°N. (Not converting the latitude would instead compare
+  points ~3.5 km apart and give ~1.2%.)
 - **Not covered.** Measurements are horizontal, on the reference surface.
   Slope distance over topography (the 3D path length along a DEM) is a
   Phase 3 option for profiles with a DEM.
@@ -738,7 +741,7 @@ def groundSpacing(crs, transform: Affine, rows: np.ndarray, cols: np.ndarray
   ± 0.1%.
 - LRO WAC (Moon sphere): `reference is None`, body-model difference 0.
 - HiRISE polar sphere (3376.2 km) at 85°N: body-model difference
-  ≈ 1.1–1.3%.
+  ≈ 4.5e-5 (Mars 2000 sphere: ≈ 0.59%).
 - `distortionAt` for eqc `lat_ts=0` at 60°: k = 2.000, h = 1.000 (Snyder,
   p. 91).
 - Polar stereographic (sphere, k₀ = 1 at the pole) at 65°: k = 2/(1 + sin
