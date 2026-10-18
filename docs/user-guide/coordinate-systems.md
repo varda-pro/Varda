@@ -325,7 +325,7 @@ says whether its lengths and areas are (see
    The HiRISE polar sphere's radius is Mars's polar radius, so near the
    pole it nearly is the ellipsoid. (Comparing at the same latitude
    *number* instead, i.e. not converting it, would put the point about
-   3.4 km farther south on the ellipsoid and give about 1.2% at 85°N; that
+   3.5 km farther south on the ellipsoid and give about 1.2% at 85°N; that
    compares two different places.)
 
 **What a measurement does not include:**
@@ -353,7 +353,7 @@ p. 91). Varda converts the two ends to 60°N, ±0.1687° longitude on the
 (the arc along the parallel is 10,000.00 m; the geodesic cuts slightly
 inside it). On the IAU 2015 ellipsoid the same two planetocentric points
 are 9,955.75 m apart, so the body-model difference is 0.44%. Report it as
-"9.999 km, geodesic (Karney 2013) on the Mars 2000 sphere (R = 3396.19 km);
+"10.000 km, geodesic (Karney 2013) on the Mars 2000 sphere (R = 3396.19 km);
 0.44% shorter on the IAU 2015 ellipsoid; plus the image's georeferencing
 error".
 

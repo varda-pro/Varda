@@ -1,3 +1,5 @@
+from affine import Affine
+
 from varda.geo.describe import describeCrs
 from varda.geo.format import formatLonLat, formatMapXY
 from varda.geo._tests.fixtures import CRISM_MTRDR_WKT, MOLA_MEGDR_PROJ, WGS84
@@ -33,6 +35,4 @@ def test_map_xy_has_units():
 
 
 def _affine360():
-    from affine import Affine
-
     return Affine(1.0, 0, 250.0, 0, -1.0, 0.0)
