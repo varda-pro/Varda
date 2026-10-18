@@ -8,6 +8,15 @@ can alter results.
 
 ### Added
 
+- **Ratio Cube (Column Denominators)** (Processing → CRISM): divides a CRISM
+  I/F cube by one denominator spectrum per sensor detector column, read
+  from the DDR/DE backplane next to the cube, so the result can replace the
+  I/F cube in other software. The denominator is the mean of the whole
+  column or of its bland pixels (a Generic check or a target preset), tested
+  on runs of neighbors within the column, with recorded fallbacks to
+  neighboring columns or the whole column. It adds a second image of the
+  pixels used and counts, and records each column's spectrum and standard
+  deviation. See the new CRISM ratio cubes guide.
 - **Shadow Mask** (Processing → Image Math): a 0/1 mask of shadow from the
   image's brightness (the mean over a wavelength range, 1280–1380 nm by
   default, below a percentile of the scene or a value), from the terrain
