@@ -92,21 +92,45 @@ def inColumnRunMeans(
     return out.reshape(cube.shape)
 
 
+def oversamplingEstimate(
+    strip: np.ndarray, column: np.ndarray
+) -> dict[ColumnKey, float]:
+    """For each key, an estimate of how many image pixels show one sensor
+    pixel: (pixels of the key per image row it appears in)², which assumes a
+    map grid oversamples along track as much as across. 1 for an image whose
+    columns are the detector's."""
+    rows = np.broadcast_to(np.arange(strip.shape[0])[:, None], strip.shape)
+    flatRows = rows.reshape(-1)
+    return {
+        key: float((idx.size / np.unique(flatRows[idx]).size) ** 2)
+        for key, idx in _groups(strip, column).items()
+    }
+
+
 @frozen
 class ColumnDenominators:
     """Denominator spectra per key, with their spread, support and fallbacks.
 
     ``fallback[key]`` is ``"neighbors"`` or ``"whole column"``; absent means the
-    key had enough used pixels of its own. ``pooled`` is the (rows, cols) mask
-    of pixels that went into at least one key's denominator: a key's own used
-    pixels, the used pixels it borrowed from neighbors, or every pixel of the
-    column in the whole-column fallback.
+    key had enough used pixels of its own. ``borrowed[key]`` lists the
+    ``(column, pixels)`` a ``"neighbors"`` key took from each neighbor, nearest
+    first. ``counts`` is the number of pixels that went into the key's
+    denominator (with a value in at least one band), ``validCounts`` the
+    number with a value in each band, and ``sensorPixels`` (only when the
+    backplane's lines were given) the number of distinct sensor pixels
+    (detector column, line) among them. ``pooled`` is the (rows, cols) mask of
+    pixels that went into at least one key's denominator: a key's own used
+    pixels, the used pixels it borrowed from neighbors, or the pixels of the
+    column with data in the whole-column fallback.
     """
 
     spectra: dict[ColumnKey, np.ndarray]
     std: dict[ColumnKey, np.ndarray]
     counts: dict[ColumnKey, int]
+    validCounts: dict[ColumnKey, np.ndarray]
+    sensorPixels: dict[ColumnKey, int]
     fallback: dict[ColumnKey, str]
+    borrowed: dict[ColumnKey, list[tuple[int, int]]]
     pooled: np.ndarray
 
 
@@ -117,27 +141,36 @@ def columnDenominators(
     use: np.ndarray | None,
     minCount: int,
     radius: int,
+    line: np.ndarray | None = None,
 ) -> ColumnDenominators:
-    """Mean (and std) over each key's used pixels.
+    """Mean (and std) over each key's used pixels, band by band, ignoring
+    missing (NaN) values.
 
     ``use`` is a boolean (rows, cols) mask of pixels allowed in the denominator
     (all pixels with a key when None). A key with fewer than ``minCount`` used
     pixels borrows used pixels from columns ±1..±``radius`` of the same strip,
     nearest first, until it has ``minCount`` (recorded as ``"neighbors"``); if
     still short it uses all pixels of its own column (``"whole column"``).
+    ``line`` (rows, cols), the backplane's detector line, gives the distinct
+    sensor pixels.
     """
     flat = cube.reshape(-1, cube.shape[-1])
     groups = _groups(strip, column)
     usable = np.ones(flat.shape[0], dtype=bool) if use is None else use.reshape(-1)
     used = {key: idx[usable[idx]] for key, idx in groups.items()}
+    flatColumn = column.reshape(-1)
+    flatLine = None if line is None else np.rint(line.reshape(-1))
 
     spectra: dict[ColumnKey, np.ndarray] = {}
     std: dict[ColumnKey, np.ndarray] = {}
     counts: dict[ColumnKey, int] = {}
+    validCounts: dict[ColumnKey, np.ndarray] = {}
+    sensorPixels: dict[ColumnKey, int] = {}
     fallback: dict[ColumnKey, str] = {}
+    borrowed: dict[ColumnKey, list[tuple[int, int]]] = {}
     pooled = np.zeros(flat.shape[0], dtype=bool)
     for key, own in used.items():
-        picked, how = own, None
+        picked, how, taken = own, None, []
         if own.size < minCount:
             parts = [own]
             total = own.size
@@ -145,27 +178,44 @@ def columnDenominators(
                 for neighbor in ((key[0], key[1] - d), (key[0], key[1] + d)):
                     if total >= minCount:
                         break
-                    if neighbor in used:
+                    if neighbor in used and used[neighbor].size:
                         parts.append(used[neighbor])
+                        taken.append((neighbor[1], int(used[neighbor].size)))
                         total += used[neighbor].size
             if total >= minCount:
                 picked, how = np.concatenate(parts), NEIGHBORS
             else:
-                picked, how = groups[key], WHOLE_COLUMN
-        pooled[picked] = True
+                picked, how, taken = groups[key], WHOLE_COLUMN, []
         values = flat[picked].astype(np.float64)
+        good = np.isfinite(values)
+        withData = good.any(axis=1)
+        picked, values, good = picked[withData], values[withData], good[withData]
+        pooled[picked] = True
         with np.errstate(all="ignore"):
-            good = np.isfinite(values)
             n = good.sum(axis=0)
             mean = np.where(n > 0, np.where(good, values, 0.0).sum(axis=0) / n, np.nan)
             var = np.where(
                 n > 0, (np.where(good, values - mean, 0.0) ** 2).sum(axis=0) / n, np.nan
             )
         spectra[key], std[key], counts[key] = mean, np.sqrt(var), int(picked.size)
+        validCounts[key] = n.astype(np.int64)
+        if flatLine is not None:
+            sensor = np.stack([flatColumn[picked], flatLine[picked]], axis=1)
+            finite = np.isfinite(sensor).all(axis=1)
+            sensorPixels[key] = int(np.unique(sensor[finite], axis=0).shape[0])
         if how:
             fallback[key] = how
+        if taken:
+            borrowed[key] = taken
     return ColumnDenominators(
-        spectra, std, counts, fallback, pooled.reshape(cube.shape[:2])
+        spectra,
+        std,
+        counts,
+        validCounts,
+        sensorPixels,
+        fallback,
+        borrowed,
+        pooled.reshape(cube.shape[:2]),
     )
 
 

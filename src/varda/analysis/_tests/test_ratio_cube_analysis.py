@@ -1,5 +1,6 @@
 import tracemalloc
 
+import attrs
 import numpy as np
 import pytest
 
@@ -201,6 +202,65 @@ def test_a_column_with_no_finite_pixels_is_flagged_not_silently_nan(geometry):
     assert np.all(np.isnan(ratio.getData()[:, 2, :]))
     assert "no data" in ratio.description
     assert np.all(companion.getData()[:, 2, 1] == 0)
+
+
+def _withMissing(nodata: float | None = None) -> VardaRaster:
+    """The scene with three bands of pixel (5, 2) missing (NaN, or ``nodata``)."""
+    image = _scene()
+    cube = image.getData().copy()
+    cube[5, 2, 3:6] = np.nan if nodata is None else nodata
+    source = ArrayDataSource(
+        cube,
+        wavelengths=np.asarray(image.wavelengths),
+        wavelengthUnits="nm",
+        filePath=PATH,
+        nodata=nodata,
+    )
+    return VardaRaster(source, name="missing")
+
+
+@pytest.mark.parametrize("nodata", [None, 65535.0], ids=["nan", "nodata"])
+@pytest.mark.parametrize("method", list(RatioCubeMethod), ids=lambda m: m.name)
+def test_missing_values_stay_missing_and_are_not_pooled(geometry, nodata, method):
+    ratio, companion = _run(_withMissing(nodata), method=method)
+    values = ratio.getData()
+    assert np.isnan(values[5, 2, 3:6]).all()  # not interpolated
+    assert np.isfinite(np.delete(values[5, 2], [3, 4, 5])).all()
+    assert companion.getData()[5, 2, 0] == 0  # not in the denominator
+    entry = next(
+        c for c in ratio.extraMetadata["ratioCube"]["columns"] if c["column"] == 2
+    )
+    assert entry["count"] == ROWS - 1 and entry["fallback"] is None
+    assert entry["validCount"] == [ROWS - 1] * BANDS
+
+
+def test_the_record_gives_each_columns_support(geometry):
+    ratio, _ = _run(_absorbing(2))
+    record = ratio.extraMetadata["ratioCube"]
+    columns = {c["column"]: c for c in record["columns"]}
+    assert columns[2]["fallback"] == "neighbors"
+    assert columns[2]["borrowed"] == [[1, ROWS]]
+    assert columns[0]["borrowed"] == []
+    # no backplane lines: the oversampling is estimated from the backplane
+    assert record["oversamplingFrom"] == "estimate: (pixels per row)²"
+    for entry in record["columns"]:
+        assert entry["oversampling"] == 1.0
+        assert entry["sensorPixels"] is None
+        assert entry["effectiveCount"] == entry["count"]
+        assert len(entry["validCount"]) == BANDS
+
+
+def test_backplane_lines_give_the_effective_count(monkeypatch):
+    line = np.repeat(np.arange(ROWS)[:, None] // 2, COLS, axis=1)  # 2x along track
+    geometry = attrs.evolve(_geometry(), ir_line=line)
+    monkeypatch.setattr(ratio_cube_analysis, "columnGeometryFor", lambda *_: geometry)
+    ratio, _ = _run(_scene(), method=RatioCubeMethod.WHOLE_COLUMN)
+    record = ratio.extraMetadata["ratioCube"]
+    assert record["oversamplingFrom"] == "backplane lines"
+    for entry in record["columns"]:
+        assert entry["sensorPixels"] == ROWS // 2
+        assert entry["oversampling"] == 2.0
+        assert entry["effectiveCount"] == ROWS / 2
 
 
 def test_the_whole_column_method_uses_every_finite_pixel(geometry):

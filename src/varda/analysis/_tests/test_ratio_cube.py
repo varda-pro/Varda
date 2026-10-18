@@ -5,6 +5,7 @@ from varda.analysis.ratio_cube import (
     columnDenominators,
     columnKeys,
     inColumnRunMeans,
+    oversamplingEstimate,
 )
 from varda.image_loading.crism_geometry import ColumnGeometry
 
@@ -147,3 +148,49 @@ def test_run_of_one_is_identity():
     np.testing.assert_allclose(
         inColumnRunMeans(cube, strip, column, 1), cube, atol=1e-6
     )
+
+
+def test_neighbor_fallback_records_which_columns_it_borrowed_and_how_many():
+    cube = _artifactCube()
+    strip, column = columnKeys(_geometry())
+    use = np.ones((ROWS, COLS), bool)
+    use[:, 2] = False  # column 2 has no bland pixel of its own
+    den = columnDenominators(cube, strip, column, use, minCount=30, radius=1)
+    # nearest first: column 1 (20 pixels) is not enough, so column 3 too
+    assert den.fallback[(0, 2)] == "neighbors"
+    assert den.borrowed[(0, 2)] == [(1, ROWS), (3, ROWS)]
+
+
+def test_whole_column_skips_missing_values_band_by_band():
+    cube = _artifactCube()
+    cube[3, 1, 2] = np.nan  # one band missing in one pixel
+    cube[4, 1, :] = np.nan  # a pixel with no data at all
+    strip, column = columnKeys(_geometry())
+    use = np.zeros((ROWS, COLS), bool)  # nothing bland: every column falls back
+    den = columnDenominators(cube, strip, column, use, minCount=1, radius=0)
+    key = (0, 1)
+    assert den.fallback[key] == "whole column"
+    assert den.counts[key] == ROWS - 1  # the empty pixel is not counted
+    expected = np.full(BANDS, ROWS - 1)
+    expected[2] = ROWS - 2
+    np.testing.assert_array_equal(den.validCounts[key], expected)
+    assert not den.pooled[4, 1]  # nor marked as used
+    assert den.pooled[3, 1]
+    np.testing.assert_allclose(den.spectra[key], cube[0, 1])
+
+
+def test_distinct_sensor_pixels_come_from_the_backplane_lines():
+    cube = _artifactCube()
+    strip, column = columnKeys(_geometry())
+    line = np.repeat(np.arange(ROWS)[:, None] // 2, COLS, axis=1)  # 2 rows/line
+    den = columnDenominators(cube, strip, column, None, 1, 0, line=line)
+    assert den.counts[(0, 0)] == ROWS
+    assert den.sensorPixels[(0, 0)] == ROWS // 2
+
+
+def test_the_oversampling_estimate_is_the_square_of_pixels_per_row():
+    # each detector column covers two image columns (a 2x finer map grid)
+    sample = np.tile(np.arange(COLS, dtype=np.float64) // 2, (ROWS, 1))
+    strip, column = columnKeys(ColumnGeometry(ir_sample=sample))
+    estimate = oversamplingEstimate(strip, column)
+    assert estimate == {(0, c): 4.0 for c in range(COLS // 2)}

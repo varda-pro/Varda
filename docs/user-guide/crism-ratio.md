@@ -52,7 +52,7 @@ with a backplane of another size, the dialog says so instead of offering Run.
 
 1. **Denominator method** (default Bland pixels):
    - **Whole column**: the mean spectrum of all pixels of the column that have
-     data.
+     a value in every analysis band.
    - **Bland pixels**: the mean spectrum of the column's pixels whose spectrum
      is bland (featureless), so real mineral absorptions in the scene do not
      leak into the denominator and appear, inverted, in every other row of the
@@ -62,22 +62,29 @@ with a backplane of another size, the dialog says so instead of offering Run.
    default 9; centered on the pixel and shifted inward at the ends of a
    column), and the run mean is tested. The run is never taken across columns.
    This reduces the noise the test sees; the denominator itself averages the
-   pixels' own spectra.
+   pixels' own spectra. A run mean averages, band by band, only the values
+   present.
 3. **The blandness test** (Generic or a target preset, below) is applied to the
    run mean. A pixel is used only if its run mean passes **and** the pixel has
    a value in every analysis band. The image's bad bands are left out of the
-   test and the denominators.
+   test and the denominators. **Missing values are never filled:** no-data
+   (the image's data ignore value, such as CRISM's 65535) and NaN stay
+   missing throughout; nothing is interpolated along the spectrum.
 4. **Fallbacks.** A column with fewer than **Minimum Pixels** (1–10000,
    default 20) used pixels:
    1. borrows used pixels from columns ±1 to ±**Neighbor Radius** (0–10,
       default 2; 0 never borrows) of the same strip, nearest first, until it
-      has enough (recorded as *neighbors*);
-   2. if still short, uses every pixel of its own column (*whole column*);
+      has enough (recorded as *neighbors*, with `borrowed` listing each
+      neighbor column and how many of its pixels were taken);
+   2. if still short, uses every pixel of its own column that has data
+      (*whole column*), each band averaged over the pixels with a value in
+      that band (`validCount` records how many);
    3. if the column has no pixel with data at all, it is flagged *no data* and
       its ratio pixels are NaN. A denominator is never silently NaN.
 5. Every pixel is divided, band by band, by its column's denominator. The
-   result is NaN where the pixel has no backplane column or no data, or the
-   denominator is 0 or NaN in that band. Bad bands stay NaN.
+   result is NaN where the pixel has no column, where the pixel has no value
+   in that band (the input's no-data is kept), or where the denominator is 0
+   or NaN in that band. Bad bands stay NaN.
 
 ### Blandness: Generic and presets
 
@@ -143,27 +150,59 @@ is column-matched and not flagged.
   column, or had no data). Its `ratioCube` metadata record is kept when
   exporting to GeoTIFF or ENVI and holds the method, blandness name and
   thresholds, run length, Minimum Pixels, Neighbor Radius, where the columns
-  came from (`geometry`, `geometryFile`, `binning`), the good bands used, and for every column `{strip, column, count, fallback,
-  spectrum, std}`.
+  came from (`geometry`, `geometryFile`, `binning`), how the oversampling
+  was found (`oversamplingFrom`), the good bands used, and for every column:
+  - `strip`, `column`;
+  - `count`: pixels that went into the denominator (with a value in at least
+    one band); `validCount`: per band, the pixels with a value in that band;
+  - `sensorPixels`: distinct sensor pixels (detector column, line) among
+    them, from the backplane's IR Line band (`null` without one);
+    `oversampling`: map pixels per sensor pixel (below); `effectiveCount`:
+    `count / oversampling`;
+  - `fallback` (`null`, `neighbors`, `whole column` or `no data`) and
+    `borrowed` (`[[column, pixels], …]`, for *neighbors*);
+  - `spectrum` and `std`: the denominator and its spread, per band.
 - **Denominators** (`… ratio denominators`): band 1 "Used as denominator" is 1
-  where the pixel was pooled into at least one column's denominator, and 0
+  where the pixel was pooled into at least one column's denominator (with a
+  value in at least one band), and 0
   otherwise (NaN with no backplane column). That is the pixel's own column's
   bland pixels; the bland pixels another column borrowed (*neighbors*, so
   they are 1 for that column too); or every pixel of the column in the
   *whole column* fallback, bland or not. A column that borrowed has 0 in its
   own pixels unless they were bland. Band 2 "Column denominator count" is the
-  number of pixels pooled for the pixel's column (0 for *no data*); in the
-  whole-column fallback it includes pixels of the column that have missing
-  data, which the mean ignores.
+  number of pixels pooled for the pixel's column (`count`; 0 for *no data*).
+  In the whole-column fallback a pixel with no value in any band is neither
+  pooled nor counted.
 
 ### Assessing uncertainty and quality
 
 - **`std` is the population standard deviation (ddof = 0)** of the pixels
   pooled for the column's denominator, per band. It is a spread, not a standard
-  error: the standard error of the denominator is `std / √count`.
+  error.
+- **Effective sample size.** On a map-projected cube (MTRDR) one sensor pixel
+  is resampled into several map pixels, which are not independent. Per band
+  *b*, the effective number of independent samples is
+  n_eff,b = `validCount`_b / `oversampling`, where `oversampling` is
+  `count / sensorPixels` when the backplane has an IR Line band (an MTRDR's
+  IN file does: distinct (IR Sample, IR Line) pairs are counted), and
+  otherwise an estimate, (pixels of the column per image row)², which assumes
+  the grid oversamples along track as much as across (`oversamplingFrom`
+  says which). An unprojected cube's image pixels are sensor pixels
+  (`oversampling` 1). On MTRDR FRT000107A7 the IN file gives 1.92 map pixels
+  per sensor pixel, where the estimate would give 1.72, so prefer the IN
+  file. In the same way, the 9-pixel run that judges blandness spans only
+  about 9 / √oversampling sensor lines (about 6.5 there).
+- **Standard error of the denominator:** σ_D,b = `std`_b / √n_eff,b. For
+  bland and neighbor denominators every pooled pixel has every band, so
+  `validCount` equals `count`; in the whole-column fallback it can be
+  smaller.
+- **Neighbor fallback:** a *neighbors* denominator pools pixels of other
+  columns, so its `std` includes the column-to-column gain differences as
+  well as the scene: it overstates the spread of one column's pixels, and
+  its mean carries the neighbors' gain, which the ratio does not cancel.
 - The relative uncertainty of a ratio pixel R = N / D, with numerator
   uncertainty σ_N (for example the cube's noise) and denominator D with
-  σ_D = std / √count, is
+  σ_D as above, is
   σ_R / R ≈ √((σ_N / N)² + (σ_D / D)²), treating the two as independent. The
   denominator term is not independent of the numerator for the pixels that are
   pooled into D; for a column with many pooled pixels it is small.

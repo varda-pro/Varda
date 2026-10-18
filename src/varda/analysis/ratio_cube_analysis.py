@@ -36,6 +36,7 @@ from varda.analysis.ratio_cube import (
     columnDenominators,
     columnKeys,
     inColumnRunMeans,
+    oversamplingEstimate,
 )
 from varda.common.entities import VardaRaster
 from varda.common.parameter import (
@@ -155,12 +156,13 @@ def _vnirApproximate(centersNm: np.ndarray, geometry: ColumnGeometry) -> bool:
     return bothDetectors and not geometry.sampleBand.lower().startswith("vnir")
 
 
+def _round(value: float) -> float:
+    return float(f"{value:.{_SIGNIFICANT_DIGITS}g}")
+
+
 def _numbers(values: np.ndarray) -> list[float | None]:
     """JSON-safe numbers (NaN as None), kept to six significant digits."""
-    return [
-        float(f"{v:.{_SIGNIFICANT_DIGITS}g}") if np.isfinite(v) else None
-        for v in values
-    ]
+    return [_round(v) if np.isfinite(v) else None for v in values]
 
 
 def _perPixel(
@@ -380,12 +382,13 @@ class RatioCubeAnalysis(Analysis):
         geometry = self._geometry(image)
         assert geometry is not None
         reportProgress(0, "reading the image")
-        cube, valid, bands = readGoodBands(image)
+        # missing values (no-data, NaN) stay NaN: never filled, so they are not
+        # counted as data, kept out of the denominators and NaN in the ratio
+        cube, complete, bands = readGoodBands(image, fill=False)
         centers = image.bandModel.centers
         assert centers is not None
         wavelengths = centers[bands]
         strip, column = columnKeys(geometry)
-        finite = valid & np.isfinite(cube).all(axis=2)
 
         whole = self.method.get() is RatioCubeMethod.WHOLE_COLUMN
         record: dict = {
@@ -407,16 +410,28 @@ class RatioCubeAnalysis(Analysis):
             "bands": [int(b) + 1 for b in bands],
         }
         if whole:
-            use, minimum, radius = finite, 1, 0
+            use, minimum, radius = complete, 1, 0
         else:
             reportProgress(15, "finding bland pixels")
             runMeans = inColumnRunMeans(cube, strip, column, self.runLength.get())
-            use = self._blandMask(runMeans, wavelengths) & finite
+            with np.errstate(invalid="ignore"):
+                use = self._blandMask(runMeans, wavelengths) & complete
             del runMeans
             minimum, radius = self.minimumPixels.get(), self.neighborRadius.get()
         reportProgress(60, "averaging each column")
-        denominators = columnDenominators(cube, strip, column, use, minimum, radius)
+        denominators = columnDenominators(
+            cube, strip, column, use, minimum, radius, line=geometry.ir_line
+        )
         fallback, counts = self._flagMissing(denominators)
+        if geometry.ir_line is not None:
+            record["oversamplingFrom"] = "backplane lines"
+            oversampling = {
+                key: max(counts[key] / n, 1.0) if n else 1.0
+                for key, n in denominators.sensorPixels.items()
+            }
+        else:
+            record["oversamplingFrom"] = "estimate: (pixels per row)²"
+            oversampling = oversamplingEstimate(strip, column)
         reportProgress(80, "dividing")
         ratio = np.full((*cube.shape[:2], image.bandCount), np.nan, dtype=np.float32)
         ratio[:, :, bands] = applyRatio(cube, strip, column, denominators)
@@ -426,7 +441,12 @@ class RatioCubeAnalysis(Analysis):
                 "strip": key[0],
                 "column": key[1],
                 "count": counts[key],
+                "validCount": denominators.validCounts[key].tolist(),
+                "sensorPixels": denominators.sensorPixels.get(key),
+                "oversampling": _round(oversampling.get(key, 1.0)),
+                "effectiveCount": _round(counts[key] / oversampling.get(key, 1.0)),
                 "fallback": fallback.get(key),
+                "borrowed": [list(b) for b in denominators.borrowed.get(key, [])],
                 "spectrum": _numbers(denominators.spectra[key]),
                 "std": _numbers(denominators.std[key]),
             }

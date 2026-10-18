@@ -37,7 +37,11 @@ can alter results.
   on runs of neighbors within the column, with recorded fallbacks to
   neighboring columns or the whole column. It adds a second image of the
   pixels used and counts, and records each column's spectrum and standard
-  deviation. See the new CRISM ratio cubes guide.
+  deviation, per-band valid counts, the distinct sensor pixels and an
+  effective sample size that accounts for map-projection oversampling, and
+  which neighbor columns a fallback borrowed. The input's no-data is kept:
+  missing values are never interpolated, counted or pooled. See the new
+  CRISM ratio cubes guide.
 - **Spectral plots: pull a marker off the Y axis, and remove curves with
   the keyboard.** Dragging sideways off the Y axis pulls out a vertical
   marker that drops at the wavelength where you release it (released over
