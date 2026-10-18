@@ -4,7 +4,6 @@ replaces each plot's spectrum and refits its Y range."""
 
 from __future__ import annotations
 
-import functools
 
 import numpy as np
 import pyqtgraph as pg
@@ -53,9 +52,7 @@ class RatioPlotsPanel(QWidget):
         # so a narrower plot would show only a slice of the spectrum.
         self._syncingX = False
         for plot in self._plots:
-            plot.viewBox.sigXRangeChanged.connect(
-                functools.partial(self._followX, plot)
-            )
+            plot.viewBox.sigXRangeChanged.connect(self._followX)
         self.readout = BlandnessReadout()
         # what marks the failing windows on the Denominator plot: a shaded
         # region per window, and a marker with a label at its deepest dip
@@ -83,13 +80,13 @@ class RatioPlotsPanel(QWidget):
         plot.setSpectralUnit(SpectralUnit.NANOMETRE)
         return plot
 
-    def _followX(self, source: VardaPlotWidget, _viewBox, xRange) -> None:
+    def _followX(self, source: pg.ViewBox, xRange) -> None:
         if self._syncingX:
             return
         self._syncingX = True
         try:
             for plot in self._plots:
-                if plot is not source:
+                if plot.viewBox is not source:
                     plot.viewBox.setXRange(*xRange, padding=0)
         finally:
             self._syncingX = False

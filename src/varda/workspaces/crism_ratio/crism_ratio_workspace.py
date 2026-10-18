@@ -181,8 +181,8 @@ class CrismRatioWorkspace(QMainWindow):
             self.lockCheck.setToolTip(
                 f"No CRISM backplane with detector columns (an IN or DDR file "
                 f"with an IR Sample band) was found next to {self.data.name}, and "
-                "it is not an unprojected CRISM cube (no map projection, 640, 320 "
-                "or 160 columns), so the denominator can't be placed by sensor column."
+                "it is not an unprojected CRISM cube (no map projection, 640, 320, "
+                "128 or 64 columns), so the denominator can't be placed by sensor column."
             )
         else:
             self.lockCheck.setToolTip(f"Detector columns from {self.columnSource}")
@@ -308,14 +308,16 @@ class CrismRatioWorkspace(QMainWindow):
                 lambda polygon: dataToView(self.browse, self.data, self.link, polygon)
             )
         # both views show the one pair, so a click on either continues it
-        tool.sigSelectionChanged.connect(functools.partial(self._syncViews, tool))
-        tool.sigSavePointRequested.connect(functools.partial(self._savePoint, tool))
+        # bound methods (not partials), so Qt drops the connections with the tool
+        tool.sigSelectionChanged.connect(self._syncViews)
+        tool.sigSavePointRequested.connect(self._savePoint)
 
     def _browseToData(self, x: float, y: float) -> tuple[float, float] | None:
         mapped = viewToData(self.browse, self.data, self.link, [[x, y]])
         return None if mapped is None else (float(mapped[0, 0]), float(mapped[0, 1]))
 
-    def _syncViews(self, source: object, selection: RatioSelection) -> None:
+    def _syncViews(self, selection: RatioSelection) -> None:
+        source = self.sender()
         for manager in self.toolManagers:
             other = manager.activeTool
             if isinstance(other, RatioExplorerTool) and other is not source:
@@ -330,7 +332,10 @@ class CrismRatioWorkspace(QMainWindow):
         mark = "✓" if readout.lastResult.passed else "✗"
         return f" (denominator {mark} {readout.currentCheckName()})"
 
-    def _savePoint(self, tool: RatioExplorerTool) -> None:
+    def _savePoint(self) -> None:
+        tool = self.sender()
+        if not isinstance(tool, RatioExplorerTool):
+            return
         numerator = tool.selection.numerator
         if numerator is None:
             return

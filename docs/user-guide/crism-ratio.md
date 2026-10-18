@@ -125,7 +125,12 @@ and |slope| ≤ **Maximum Slope**. A spectrum is **bland** for a check when
 every window passes. So a dip fails only if it is deeper than both an
 absolute floor and k times what the spectrum's own noise could make: a
 noisier spectrum (a single pixel, a dark area, a short run) is not failed for
-its noise alone, while a quiet one is held to the floor.
+its noise alone, while a quiet one is held to the floor. The other side of
+this: the limit has no upper cap, so a very noisy spectrum (a dark or
+shadowed area) can pass with a real band hidden in its noise. A pass means
+"no dip stands out from this spectrum's noise", not "no band". The readout
+shows each window's noise and limit; treat a pass with a limit well above the
+floor as weak, and prefer a quieter denominator.
 
 **Why the upper hull, not a line between the window's edges.** The hull does
 not depend on which bands are taken as shoulders, is never above the

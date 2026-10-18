@@ -324,7 +324,7 @@ class RatioCubeAnalysis(Analysis):
             return (
                 "No CRISM backplane with detector columns (an IN or DDR file with "
                 f"an IR Sample band) was found {where}, and the image is not an "
-                "unprojected CRISM cube (no map projection, 640, 320 or 160 "
+                "unprojected CRISM cube (no map projection, 640, 320, 128 or 64 "
                 "columns), so each pixel's detector column is unknown."
             )
         if geometry.ir_sample.shape != (image.height, image.width):
@@ -428,7 +428,9 @@ class RatioCubeAnalysis(Analysis):
         )
         fallback, counts = self._flagMissing(denominators)
         if geometry.ir_line is not None:
-            record["oversamplingFrom"] = "backplane lines"
+            record["oversamplingFrom"] = (
+                "image rows" if geometry.source == IMAGE_COLUMNS else "backplane lines"
+            )
             oversampling = {
                 key: max(counts[key] / n, 1.0) if n else 1.0
                 for key, n in denominators.sensorPixels.items()
