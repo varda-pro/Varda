@@ -28,7 +28,7 @@ from varda.geo._tests.fixtures import (
     WGS84,
     makeImage,
 )
-from varda.geo.transform import transformPoints
+from varda.geo.transform import transformPoints, warpOptions
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 UTM = CRS.from_epsg(32612)
@@ -292,3 +292,23 @@ def test_resampling_record_names_the_operation():
     crism, _, dem, *_ = _scene()
     same = resamplingRecord(dem, crism, Resampling.average)
     assert same is not None and same["coordinateOperation"] == "PROJ"
+
+
+def test_onGridOf_onto_a_lon_wrap_ellipsoid_keeps_planetocentric_latitude():
+    """PROJ names this pair's operation "Transformation from unknown to
+    unknown", not a ballpark, yet it keeps the latitude's number too."""
+    source, _ = _markerScene()
+    wrapped = CRS.from_user_input(
+        "+proj=longlat +a=3396190 +b=3376200 +lon_wrap=180 +no_defs"
+    )
+    assert warpOptions(SPHERE_DEGREES, wrapped)
+    (lon,), (lat,) = transformPoints(
+        SPHERE_DEGREES, wrapped, [MARKER_LON_LAT[0]], [MARKER_LON_LAT[1]]
+    )
+    transform = Affine(0.01, 0, lon - 0.505, 0, -0.01, lat + 0.505)
+    target = _raster(np.zeros((100, 100)), "wrapped", transform, wrapped)
+    out = onGridOf(source, target, Resampling.nearest)[..., 0]
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    # PROJ's latitude-keeping operation put it 34 rows (0.34°) south
+    assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5

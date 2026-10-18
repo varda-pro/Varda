@@ -12,6 +12,7 @@ from varda.geo._tests.fixtures import (
     HIRISE_POLAR_PROJ,
     WGS84,
 )
+from varda.geo.transform import _latitudeFirst as _crsLatitudeFirst
 from varda.geo.transform import transformPoints, warpOperation, warpOptions
 
 MARS_SPHERE = "+proj=longlat +R=3396190 +no_defs"
@@ -24,13 +25,7 @@ def _gridOn(crs: str, south: float, north: float) -> tuple[np.ndarray, np.ndarra
 
 
 def _latitudeFirst(crs: str) -> bool:
-    """Latitude, then longitude (a polar stereographic's axes both point
-    "south", and it is x first)."""
-    first, second = CRS.from_user_input(crs).axis_info[:2]
-    return first.direction in ("north", "south") and second.direction in (
-        "east",
-        "west",
-    )
+    return _crsLatitudeFirst(CRS.from_user_input(crs))
 
 
 @pytest.mark.parametrize(
@@ -40,6 +35,8 @@ def _latitudeFirst(crs: str) -> bool:
         ("IAU_2015:49911", "IAU_2015:49910", -80, 80),
         (CRISM_MTRDR_WKT, "IAU_2015:49912", -80, 80),
         (HIRISE_POLAR_PROJ, "IAU_2015:49901", 60, 89),  # west, ographic, lat first
+        # PROJ's "Transformation from unknown to unknown", not "ballpark"
+        (CRISM_MTRDR_WKT, "+proj=eqc +a=3396190 +b=3376200 +over +units=m", -80, 80),
     ],
 )
 def test_pipeline_matches_transformPoints(src, dst, south, north):

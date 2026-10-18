@@ -357,7 +357,8 @@ def resamplingRecord(
     source: VardaRaster, target: VardaRaster, resampling: Resampling
 ) -> dict | None:
     """The resampling, for a result's provenance metadata (None on the same
-    grid)."""
+    grid). Call it after ``onGridOf`` succeeded: for images that can't be
+    placed it raises ValueError (``warpOperation``)."""
     if sameGrid(source, target):
         return None
     assert source.crs is not None and target.crs is not None

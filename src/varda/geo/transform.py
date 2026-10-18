@@ -38,9 +38,11 @@ def transformPoints(
     points on ``dst``, the same direction from the body's center (the same
     planetocentric longitude and latitude).
 
-    When both share one surface (or PROJ knows a real transformation, such
-    as Earth's datum shifts) this is PROJ's own operation. Between different
-    surfaces of one body, where PROJ has only a ballpark:
+    When both share one surface (or PROJ knows a real transformation
+    between registered datums, such as Earth's datum shifts) this is PROJ's
+    own operation. Between other surfaces of one body, where PROJ only keeps
+    the latitude's number (its ballpark, or what it calls "Transformation
+    from unknown to unknown" for ``+lon_wrap`` or ``+over``):
 
     1. ``src`` → longitude (east) and geodetic latitude on ``src``'s own
        datum, with PROJ (an exact conversion: projection, axes, west-positive
@@ -134,13 +136,10 @@ def _warpOperation(srcKey: str, dstKey: str) -> str | None:
     if route.direct is not None:
         return None
     steps = [*_steps(route.src.plain), "proj=unitconvert xy_in=deg xy_out=rad"]
-    for side, key, inverse in ((route.src, srcKey, ""), (route.dst, dstKey, "inv ")):
+    for side, inverse in ((route.src, ""), (route.dst, "inv ")):
         if not side.centricNumbers:
-            ellipsoid = CRS.from_user_input(key).ellipsoid
-            assert ellipsoid is not None  # canTransform found the body
             steps.append(
-                f"{inverse}proj=geoc a={ellipsoid.semi_major_metre!r} "
-                f"b={ellipsoid.semi_minor_metre!r}"
+                f"{inverse}proj=geoc a={side.semiMajor!r} b={side.semiMinor!r}"
             )
     steps += ["proj=unitconvert xy_in=rad xy_out=deg", *_steps(route.dst.plain)]
     return " ".join(
@@ -236,6 +235,8 @@ class _Side:
     # (planetocentric) CRS latitude first
     plain: Transformer
     ratio: float  # (c/a)² of its ellipsoid; 1 on a sphere
+    semiMajor: float  # a, meters
+    semiMinor: float  # c, meters
     # the numbers PROJ reads as geodetic latitude are planetocentric (an
     # ellipsoidal coordinate system whose latitude is named planetocentric)
     centricNumbers: bool
@@ -247,8 +248,8 @@ class _Route:
     src: _Side
     dst: _Side
     # PROJ's own operation, when it is exact or a real transformation (the
-    # same surface, or Earth's datum shifts); None when PROJ has only a
-    # ballpark between different surfaces, which goes through the sides
+    # same surface, or Earth's datum shifts between registered datums); None
+    # between different surfaces otherwise, which go through the sides
     direct: Transformer | None
 
 
@@ -263,7 +264,7 @@ def _route(srcKey: str, dstKey: str) -> _Route:
     build), used only inside PROJ_LOCK; the caller holds it."""
     src, dst = CRS.from_user_input(srcKey), CRS.from_user_input(dstKey)
     direct = Transformer.from_crs(src, dst)
-    if not _sameSurface(src, dst) and "ballpark" in direct.description.lower():
+    if not _sameSurface(src, dst) and not _datumShift(src, dst, direct):
         direct = None
     return _Route(
         _source(srcKey), _side(dst, Transformer.from_crs(_plain(dst), dst)), direct
@@ -287,18 +288,37 @@ def _side(crs: CRS, plain: Transformer) -> _Side:
     return _Side(
         plain,
         (ellipsoid.semi_minor_metre / ellipsoid.semi_major_metre) ** 2,
+        ellipsoid.semi_major_metre,
+        ellipsoid.semi_minor_metre,
         centric and _subtype(crs) != "spherical",
         _latitudeFirst(crs),
     )
 
 
 def _sameSurface(a: CRS, b: CRS) -> bool:
+    """The same ellipsoid (or sphere), to 1 mm in each radius. Decided from
+    the CRSs, never from PROJ's description of its operation: PROJ names the
+    latitude-keeping operation between PROJ strings with ``+lon_wrap`` or
+    ``+over`` "Transformation from unknown to unknown", not a ballpark."""
     ellipsoidA, ellipsoidB = a.ellipsoid, b.ellipsoid
     assert ellipsoidA is not None and ellipsoidB is not None
     return (
-        ellipsoidA.semi_major_metre == ellipsoidB.semi_major_metre
-        and ellipsoidA.semi_minor_metre == ellipsoidB.semi_minor_metre
+        abs(ellipsoidA.semi_major_metre - ellipsoidB.semi_major_metre) <= 1e-3
+        and abs(ellipsoidA.semi_minor_metre - ellipsoidB.semi_minor_metre) <= 1e-3
     )
+
+
+def _datumShift(a: CRS, b: CRS, operation: Transformer) -> bool:
+    """Whether ``operation`` is a real transformation between two different
+    surfaces (Earth's datum shifts, e.g. NAD27 → WGS 84): both datums are
+    registered with an authority (EPSG, IAU) and PROJ found more than a
+    ballpark between them. Otherwise PROJ only keeps the latitude's number,
+    whatever it calls the operation."""
+    registered = all(
+        crs.datum is not None and crs.datum.to_json_dict().get("id") is not None
+        for crs in (a, b)
+    )
+    return registered and "ballpark" not in operation.description.lower()
 
 
 def _subtype(crs: CRS) -> str | None:

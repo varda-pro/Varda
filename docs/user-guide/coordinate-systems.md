@@ -298,8 +298,12 @@ On a sphere the geoc steps change nothing. Every pixel position then
 matches the points' route to 1e-6 m (tested over Mars, including polar
 stereographic onto the west-positive, planetographic `IAU_2015:49901`), and
 the 45°N pixel above lands on its own row. When both CRSs share one
-surface, or PROJ knows a real transformation, GDAL's own operation is used
-unchanged. Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
+surface (radii equal to 1 mm), or PROJ knows a real transformation between
+two registered datums (Earth's datum shifts), GDAL's own operation is used
+unchanged. Varda decides this from the two CRSs, not from PROJ's name for
+its operation: between PROJ strings with `+lon_wrap` or `+over`, PROJ calls
+the same latitude-keeping operation "Transformation from unknown to
+unknown", and points and rasters take the route above there too. Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
 Mask…), display overlays and Reproject Image all place rasters this way,
 and a resampled input's provenance metadata records the operation
 (`coordinateOperation`: the pipeline, or `PROJ` for PROJ's own). The

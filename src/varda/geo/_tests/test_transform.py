@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 import pytest
+from pyproj import Transformer
 
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_WKT,
@@ -14,6 +15,7 @@ from varda.geo._tests.fixtures import (
     WGS84,
 )
 from varda.geo.transform import eastLonLat, geodeticLonLat, transformPoints
+from varda.utilities.proj_lock import PROJ_LOCK
 
 MARS_SPHERE = "+proj=longlat +R=3396190 +no_defs"
 OGRAPHIC = "IAU_2015:49901"  # Mars ellipsoid, planetographic, west-positive
@@ -77,6 +79,46 @@ def test_earth_keeps_projs_own_operation_and_x_is_longitude():
     lon, lat = transformPoints("EPSG:32612", WGS84, [500000.0], [4000000.0])
     assert lon[0] == pytest.approx(-111.0, abs=1e-9)
     assert lat[0] == pytest.approx(36.14, abs=0.01)
+
+
+# PROJ-string CRSs whose operation PROJ names "Transformation from unknown
+# to unknown" (not "ballpark"), though it keeps the latitude's number too
+WRAPPED_ELLIPSOID = "+proj=longlat +a=3396190 +b=3376200 +lon_wrap=180 +no_defs"
+OVER_ELLIPSOID = "+proj=eqc +a=3396190 +b=3376200 +over +units=m +no_defs"
+
+
+def test_sphere_to_a_lon_wrap_ellipsoid_converts_the_latitude():
+    lon, lat = transformPoints(MARS_SPHERE, WRAPPED_ELLIPSOID, [200.0], [45.0])
+    assert lat[0] == pytest.approx(_ographic(45.0), abs=1e-9)
+    assert lat[0] == pytest.approx(45.338, abs=1e-3)
+    assert lon[0] % 360 == pytest.approx(200.0, abs=1e-9)
+
+
+def test_a_lon_wrap_ellipsoid_to_the_sphere_converts_back():
+    lon, lat = transformPoints(WRAPPED_ELLIPSOID, MARS_SPHERE, [200.0], [_ographic(45)])
+    assert lat[0] == pytest.approx(45.0, abs=1e-9)
+    assert lon[0] % 360 == pytest.approx(200.0, abs=1e-9)
+
+
+def test_sphere_to_a_projected_over_ellipsoid_converts_the_latitude():
+    plain = "+proj=eqc +a=3396190 +b=3376200 +units=m +no_defs"
+    over = transformPoints(MARS_SPHERE, OVER_ELLIPSOID, [77.5], [45.0])
+    np.testing.assert_allclose(
+        over, transformPoints(MARS_SPHERE, plain, [77.5], [45.0]), atol=1e-6
+    )
+    back = transformPoints(OVER_ELLIPSOID, MARS_SPHERE, *over)
+    np.testing.assert_allclose(back, [[77.5], [45.0]], atol=1e-9)
+
+
+def test_earth_datum_shifts_stay_projs():
+    """A real transformation between two Earth datums is PROJ's, not the
+    planetocentric route (NAD27 → WGS 84 moves points tens of meters)."""
+    ours = transformPoints("EPSG:4267", WGS84, [-100.0], [40.0])
+    with PROJ_LOCK:
+        theirs = Transformer.from_crs("EPSG:4267", WGS84, always_xy=True).transform(
+            -100.0, 40.0
+        )
+    np.testing.assert_allclose(ours, [[theirs[0]], [theirs[1]]], atol=1e-9)
 
 
 @pytest.mark.parametrize(
