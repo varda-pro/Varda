@@ -1,4 +1,5 @@
-"""Points Manager: a table of the saved pixel points with delete and export."""
+"""Points Manager: a table of the saved pixel points with delete, import
+and export."""
 
 from __future__ import annotations
 
@@ -13,8 +14,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from varda.common.ui import ButtonBuilder, HBoxBuilder, VBoxBuilder
+from varda.common.entities import VardaRaster
+from varda.common.ui import ButtonBuilder, FlowLayout, VBoxBuilder
 from varda.points.point_collection import EXPORT_FILE_FILTER, PointCollection
+from varda.vector_import import ImportPlan, Target, addToPoints
+from varda.vector_import_dialog import VectorImporter
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +75,17 @@ class PointTableModel(QAbstractTableModel):
 class PointManagerWidget(QWidget):
     sigSelectionChanged = pyqtSignal(object)  # fid (int) or None
 
-    def __init__(self, collection: PointCollection, parent: QWidget | None = None):
+    def __init__(
+        self,
+        collection: PointCollection,
+        parent: QWidget | None = None,
+        image: VardaRaster | None = None,
+    ):
+        """``image``: the image imported points are placed on (Import… is
+        off without one)."""
         super().__init__(parent)
         self._collection = collection
+        self._image = image
         self.model = PointTableModel(collection, parent=self)
         self.table = QTableView(self)
         self.table.setModel(self.model)
@@ -86,13 +98,21 @@ class PointManagerWidget(QWidget):
             self._deleteSelected
         )
         self.exportButton = ButtonBuilder("Export…").onClick(self._export)
+        self.importer = VectorImporter(Target.POINTS, image, self._addImported, self)
+        self.importButton = ButtonBuilder("Import…").onClick(self.importer.chooseFile)
+        self.importButton.setEnabled(image is not None)
+        self.importButton.setToolTip(
+            "Add points from a vector file or a CSV of coordinates"
+            if image is not None
+            else "Open an image to import points onto"
+        )
         self.setLayout(
             VBoxBuilder()
             .withLayout(
-                HBoxBuilder()
+                FlowLayout()  # wraps in a narrow dock
                 .withWidget(self.deleteButton)
+                .withWidget(self.importButton)
                 .withWidget(self.exportButton)
-                .withStretch()
             )
             .withWidget(self.table)
         )
@@ -111,6 +131,10 @@ class PointManagerWidget(QWidget):
         fid = self.selectedFid()
         if fid is not None:
             self._collection.removePoint(fid)
+
+    def _addImported(self, plan: ImportPlan) -> None:
+        if self._image is not None:
+            addToPoints(self._collection, self._image, plan)
 
     def _export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

@@ -20,6 +20,16 @@ can alter results.
   suggested class (Shift+S and Shift+P still ask); the session keeps it and
   the last class. Previously the ROIs were named `Ratio N numerator …` and
   `Ratio N denominator …`, one class each.
+- **Import ROIs, points and lines from GIS files.** **Import…** in the ROI
+  Manager, Points Manager and Lines tab reads shapefiles, GeoPackages (choose
+  the layer), GeoJSON, KML, FlatGeobuf, GPX and CSV tables of points,
+  reprojects them onto the image (or reads them as pixel coordinates), and
+  says what it imported and skipped: other geometry types, features outside
+  the image. GeoJSON's WGS 84 degrees are read as degrees on the image's body
+  for planetary images. Name and class columns are chosen in the dialog; the
+  other columns become ROI table columns or point and line properties (now
+  exported with them too). Varda's own exports round-trip. See
+  [Importing vector data](docs/user-guide/importing-vector-data.md).
 - **Varda has a DOI.** Releases are archived on Zenodo:
   10.5281/zenodo.23447208 cites every version, and v0.10.0 is
   10.5281/zenodo.23447209. Help → Cite Varda and CITATION.cff now include

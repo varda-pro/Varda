@@ -18,7 +18,10 @@ profile across a DEM. Lines work in the General Image Analysis workspace.
 Each line is shown on every view in its color. In the Lines tab you can
 rename a line (double-click its name), change its color (double-click the
 swatch), delete lines, and export them as GeoJSON, GeoPackage or a
-shapefile, in the image's map coordinates. Lines are saved with the session.
+shapefile, in the image's map coordinates. **Import…** adds lines from a GIS
+file, such as a rover traverse or mapped contacts (see
+[Importing vector data](importing-vector-data.md)). Lines are saved with the
+session.
 On a georeferenced image, a 3D Terrain workspace can drape them over a DEM
 (its **Add Lines** menu lists the open workspaces' lines; see
 [3D Terrain](3d-terrain.md)).

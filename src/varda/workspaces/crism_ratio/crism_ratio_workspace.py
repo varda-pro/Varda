@@ -215,7 +215,9 @@ class CrismRatioWorkspace(QMainWindow):
             parent=self,
             images=projectImages,
         )
-        self.pointManager = PointManagerWidget(self.pointCollection, parent=self)
+        self.pointManager = PointManagerWidget(
+            self.pointCollection, parent=self, image=data
+        )
 
         self.config = RatioExplorerConfig()
         self.plots = RatioPlots(self)

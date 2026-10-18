@@ -44,6 +44,8 @@ from varda.rois.roi_drawing_widgets import ROIClassPicker, ROIShapePicker
 from varda.rois.roi_table_model import ROITableModel
 from varda.rois.roi_table_view import ROITableView
 from varda.spectral_libraries.spectrum import SpectrumOrigin
+from varda.vector_import import ImportPlan, Target, addToROIs
+from varda.vector_import_dialog import VectorImporter
 
 if TYPE_CHECKING:
     from varda.common.entities import VardaRaster
@@ -121,6 +123,13 @@ class ROIManagerWidget(QWidget):
 
         self._exportBtn = QPushButton("Export...")
         self._exportBtn.clicked.connect(self._exportCollection)
+        self.importer = VectorImporter(Target.ROIS, image, self._addImported, self)
+        self.importButton = QPushButton("Import…")
+        self.importButton.setToolTip(
+            "Add polygons from a vector file (shapefile, GeoPackage, GeoJSON, "
+            "KML, …) as ROIs"
+        )
+        self.importButton.clicked.connect(self.importer.chooseFile)
 
         self._plotBtn = QPushButton("Plot Spectrum")
         self._plotBtn.clicked.connect(self._plotSelected)
@@ -144,6 +153,7 @@ class ROIManagerWidget(QWidget):
             self._deleteBtn,
             self.fromMaskButton,
             self._addColumnBtn,
+            self.importButton,
             self._exportBtn,
             self._plotBtn,
             self._lockColumnCheck,
@@ -437,6 +447,9 @@ class ROIManagerWidget(QWidget):
     def _addColumn(self) -> None:
         images = [self._image, *self._images]
         AddColumnDialog(self.calculatedColumns, images, parent=self).exec()
+
+    def _addImported(self, plan: ImportPlan) -> None:
+        addToROIs(self._collection, plan)
 
     def _exportCollection(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
