@@ -22,8 +22,7 @@ import numpy as np
 import numpy.typing as npt
 import geopandas as gpd
 from PyQt6.QtGui import QColor
-import rasterio as rio
-from pyproj import CRS, Transformer
+from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from varda.common.deprecation import warnDeprecated
@@ -32,6 +31,7 @@ from psygnal import Signal
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, BandModel, bandModelFor
 from varda.geo.health import CrsHealth
 from varda.geo.labels import LabelHints
+from varda.geo.measure import toLonLat
 from varda.utilities.proj_lock import PROJ_LOCK
 from shapely.geometry.base import BaseGeometry
 
@@ -92,7 +92,7 @@ class VardaRaster:
         self._overrideCrs = overrideCrs
         if name:
             self._name = name
-        for cached in ("bandModel", "raster", "_geodeticTransformer"):
+        for cached in ("bandModel", "raster"):
             self.__dict__.pop(cached, None)
         self.sigMetadataChanged.emit()
 
@@ -210,35 +210,22 @@ class VardaRaster:
         col, row = ~self.transform * (xy[:, 0], xy[:, 1])
         return np.column_stack([col, row])
 
-    @cached_property
-    def _geodeticTransformer(self) -> Transformer | None:
-        """Cached transformer from this raster's CRS to its geographic (lat/lon) CRS.
-
-        Targets ``crs.geodetic_crs`` rather than a hardcoded Earth datum, so this
-        works for planetary data too (e.g. Mars CRISM images) — converting to an
-        Earth CRS across celestial bodies raises a pyproj ``ProjError``.
-        """
-        with PROJ_LOCK:
-            if self.crs is None:
-                return None
-            geodetic = self.crs.geodetic_crs
-            if geodetic is None:
-                return None
-            return Transformer.from_crs(self.crs, geodetic, always_xy=True)
-
     def pixelToLatLon(self, col: int, row: int) -> tuple[float, float] | None:
-        """Pixel center as (lat, lon) in degrees, in the CRS's own geographic datum.
+        """Pixel center as (lat, lon) in degrees on the CRS's own geodetic CRS:
+        its body, latitude type (planetocentric or planetographic) and
+        longitude direction, as the readout labels them (``geo.measure.toLonLat``,
+        which reads the axis order rather than trusting ``always_xy``).
 
-        Returns ``None`` if the raster has no CRS. The datum matches the image's
-        celestial body (Earth, Mars, etc.), not a hardcoded WGS84.
-        """
+        Returns ``None`` if the raster has no CRS or the CRS has no longitude
+        and latitude (a local CRS)."""
+        crs = self.crs
+        if crs is None:
+            return None
         with PROJ_LOCK:
-            transformer = self._geodeticTransformer
-            if transformer is None:
+            if crs.geodetic_crs is None:
                 return None
-            x, y = self.pixelToGeo(col, row)
-            lon, lat = transformer.transform(x, y)
-        return lat, lon
+        ((lon, lat),) = toLonLat(crs, [self.pixelToGeo(col, row)])
+        return float(lat), float(lon)
 
     # --- Delegated properties from DataSource ---
 
@@ -929,98 +916,6 @@ class ROI:
 
     def __str__(self):
         return f"ROI '{self.name}' ({self.id}) with {len(self.points)} points"
-
-
-class GeoReferencer:
-    """
-    A class to handle georeferencing operations,
-    converting between pixel coordinates and geographic coordinates (longitude/latitude)
-    using a given affine transform and coordinate reference system (CRS).
-    """
-
-    def __init__(self, transform: Affine, crs: str):
-        """
-        Initializes the GeoReferencer with a given affine transform and CRS.
-
-        Args:
-            transform (Affine): The affine transformation matrix for the raster.
-            crs (str): The coordinate reference system of the raster as WKT string.
-
-        Raises:
-            ValueError: If the CRS cannot be parsed or transformers cannot be created.
-        """
-        self.transform = transform
-        self.crs = None
-        self.toGeo = None
-        self.fromGeo = None
-
-        try:
-            # Ensure the CRS is properly initialized from its WKT representation
-            self.crs = CRS.from_wkt(crs)
-
-            # Check if the CRS has a geodetic CRS for transformation
-            if self.crs.geodetic_crs is None:
-                logger.warning(f"CRS has no geodetic CRS, cannot create transformers")
-                raise ValueError("CRS has no geodetic CRS")
-
-            # transformer: map coordinates (meters) → geographic coordinates (longitude/latitude)
-            self.toGeo = Transformer.from_crs(
-                self.crs, self.crs.geodetic_crs, always_xy=True
-            )
-            # transformer: geographic coordinates → map coordinates
-            self.fromGeo = Transformer.from_crs(
-                self.crs.geodetic_crs, self.crs, always_xy=True
-            )
-
-        except (CRSError, ValueError) as e:
-            logger.warning(f"Failed to create GeoReferencer: {e}")
-            raise ValueError(f"Invalid CRS or unsupported coordinate system: {e}")
-
-    def pixelToCoordinates(self, px: int, py: int) -> Tuple[float, float]:
-        """
-        Converts pixel coordinates to geographic coordinates (longitude, latitude).
-
-        Args:
-            px (int): The x-coordinate (column) of the pixel.
-            py (int): The y-coordinate (row) of the pixel.
-
-        Returns:
-            Tuple[float, float]: The geographic coordinates (longitude, latitude).
-
-        Raises:
-            RuntimeError: If transformers are not available.
-        """
-        if self.toGeo is None:
-            raise RuntimeError("Geographic transformation not available")
-
-        # Convert pixel coordinates to map coordinates (x, y)
-        x, y = rio.transform.xy(self.transform, px, py)
-        # Transform map coordinates to geographic coordinates
-        lon, lat = self.toGeo.transform(x, y)
-        return lon, lat
-
-    def coordinatesToPixel(self, lon: float, lat: float) -> Tuple[int, int]:
-        """
-        Converts geographic coordinates (longitude, latitude) to pixel coordinates.
-
-        Args:
-            lon (float): The longitude of the geographic coordinate.
-            lat (float): The latitude of the geographic coordinate.
-
-        Returns:
-            Tuple[int, int]: The pixel coordinates (column, row) as integers.
-
-        Raises:
-            RuntimeError: If transformers are not available.
-        """
-        if self.fromGeo is None:
-            raise RuntimeError("Geographic transformation not available")
-
-        # Transform geographic coordinates to map coordinates (x, y)
-        x, y = self.fromGeo.transform(lon, lat)
-        # Convert map coordinates to pixel coordinates
-        py, px = rio.transform.rowcol(self.transform, x, y)
-        return int(px), int(py)
 
 
 @dataclass

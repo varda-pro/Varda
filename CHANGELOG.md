@@ -181,6 +181,11 @@ can alter results.
   off on Mars. Images whose coordinate
   systems differ only in names are linked and given ROIs without
   reprojection.
+- **The pixel readout swapped latitude and longitude for map projections
+  on the IAU 2015 ellipsoid codes (e.g. `IAU_2015:49911`, `49912`).** It now
+  reads the coordinate system's own axis order, so a pixel near 18.4° N,
+  77.5° E reads `lat 18.39916° N  lon -77.49916° W  (Mars, planetographic)` in
+  49911 and `… lon 77.50084° E  (Mars, planetocentric)` in 49912.
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never
