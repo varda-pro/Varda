@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import PyQt6Ads as ads
-from PyQt6.QtCore import QEvent, QObject, QSignalBlocker, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import QChildEvent, QEvent, QObject, QSignalBlocker, pyqtSignal
+from PyQt6.QtWidgets import QWidget
 
 from varda.common.entities import VardaRaster
 from varda.common.ui import VardaDockWidget
@@ -48,21 +48,29 @@ class PixelSpectraDocks(QObject):
         self._active: PixelSpectraPlotWidget | None = None
         # Restored Libraries choices for plots not opened yet, by plot number
         self._savedLibrariesOff: list[list[str]] = []
-        # Clicking in a plot, or on its dock tab, makes it the active one; those
-        # presses go to child widgets, so watch them application-wide.
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+
+    # Clicking in a plot, or on its dock tab, makes it the active one. Those
+    # presses go to whichever child widget is under the mouse, so each plot and
+    # tab is watched with all its children, including ones added later; never
+    # the whole application, which would see every event of every window.
+
+    def _watch(self, widget: QWidget) -> None:
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
-        if (
-            a1 is not None
-            and a1.type() == QEvent.Type.MouseButtonPress
-            and isinstance(a0, QWidget)
-        ):
+        if a1 is None or not isinstance(a0, QWidget):
+            return False
+        if a1.type() == QEvent.Type.MouseButtonPress:
             clicked = self._plotAt(a0)
             if clicked is not None and clicked is not self._active:
                 self.setActive(clicked)
+        elif a1.type() == QEvent.Type.ChildAdded:
+            assert isinstance(a1, QChildEvent)
+            child = a1.child()
+            if isinstance(child, QWidget):
+                self._watch(child)
         return False
 
     def _plotAt(self, widget: QWidget) -> PixelSpectraPlotWidget | None:
@@ -108,6 +116,11 @@ class PixelSpectraDocks(QObject):
             )
         if self._configurePlot is not None:
             self._configurePlot(plot)
+
+        self._watch(plot)
+        tab = dock.tabWidget()
+        if tab is not None:
+            self._watch(tab)
 
         plot.newPlotButton.clicked.connect(lambda: self.newPlot())
         plot.activeCheckBox.toggled.connect(
