@@ -1,0 +1,83 @@
+"""Real-style coordinate systems, written exactly as the producing software
+writes them (spec §6), and small synthetic images on them (no data files)."""
+
+from __future__ import annotations
+
+import numpy as np
+from affine import Affine
+from pyproj import CRS, Transformer
+
+from varda.common.entities import VardaRaster
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.utilities.proj_lock import PROJ_LOCK
+
+# GDAL's PDS3 driver, a CRISM MTRDR at Jezero (18 m/px, 18.4°N 77.5°E)
+CRISM_MTRDR_WKT = (
+    'PROJCS["EQUIRECTANGULAR MARS",'
+    'GEOGCS["GCS_MARS",'
+    'DATUM["D_MARS",SPHEROID["MARS",3396190,0]],'
+    'PRIMEM["Reference_Meridian",0],'
+    'UNIT["degree",0.0174532925199433]],'
+    'PROJECTION["Equirectangular"],'
+    'PARAMETER["standard_parallel_1",0],'
+    'PARAMETER["central_meridian",0],'
+    'PARAMETER["false_easting",0],'
+    'PARAMETER["false_northing",0],'
+    'UNIT["metre",1]]'
+)
+# The Ames Stereo Pipeline's point2dem, a CTX DEM (20 m/px)
+CTX_DEM_PROJ = (
+    "+proj=eqc +lat_ts=18.4 +lat_0=0 +lon_0=77.5 +x_0=0 +y_0=0 "
+    "+R=3396190 +units=m +no_defs"
+)
+# HiRISE polar products, on a 3376.2 km sphere (1 m/px at 85°N)
+HIRISE_POLAR_PROJ = (
+    "+proj=stere +lat_0=90 +lon_0=0 +k=1 +x_0=0 +y_0=0 +R=3376200 +units=m +no_defs"
+)
+# LRO WAC (100 m/px), and its south polar stereographic variant
+LRO_WAC_PROJ = "+proj=eqc +lat_ts=0 +lon_0=0 +R=1737400 +units=m +no_defs"
+LRO_WAC_SOUTH_POLAR_PROJ = (
+    "+proj=stere +lat_0=-90 +lon_0=0 +k=1 +x_0=0 +y_0=0 +R=1737400 +units=m +no_defs"
+)
+# Earth's degrees, as a Mars product sometimes (wrongly) declares them
+WGS84 = "EPSG:4326"
+# MOLA MEGDR, lon 0–360 (1/128°)
+MOLA_MEGDR_PROJ = "+proj=longlat +R=3396000 +no_defs"
+# Vesta's IAU 2015 sphere: the regression for "Earth"
+VESTA_IAU = "IAU_2015:200000400"
+
+
+def makeImage(
+    crs: CRS | str,
+    *,
+    centerLonLat: tuple[float, float],
+    pixelSize: float,
+    width: int = 64,
+    height: int = 64,
+    bands: int = 1,
+    label: str | None = None,
+) -> VardaRaster:
+    """A north-up image of ``width`` × ``height`` pixels of ``pixelSize``
+    (in the CRS's units) centered on ``centerLonLat`` (degrees on the CRS's
+    own body), with ``label`` as its PDS3 label when given."""
+    with PROJ_LOCK:
+        crs = CRS.from_user_input(crs)
+        geodetic = crs.geodetic_crs if crs.is_projected else crs
+        toCrs = Transformer.from_crs(geodetic, crs, always_xy=True)
+        centerX, centerY = toCrs.transform(*centerLonLat)
+    transform = Affine(
+        pixelSize,
+        0.0,
+        centerX - width / 2 * pixelSize,
+        0.0,
+        -pixelSize,
+        centerY + height / 2 * pixelSize,
+    )
+    data = np.random.default_rng(0).random((height, width, bands)).astype(np.float32)
+    source = ArrayDataSource(
+        data,
+        transform=transform,
+        crs=crs,
+        extraMetadata={"pds3Label": label} if label is not None else None,
+    )
+    return VardaRaster(source, name="fixture")
