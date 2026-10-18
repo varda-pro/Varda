@@ -6,13 +6,11 @@ import numpy as np
 import pytest
 
 from varda.analysis import ratio_cube_analysis
-from varda.analysis.blandness import PRESETS
+from varda.analysis.blandness import CHECKS, RATIO_CUBE_LIMITS
 from varda.analysis.ratio_cube_analysis import (
     BLANDNESS_GENERIC,
     RatioCubeAnalysis,
     RatioCubeMethod,
-    formatPresetLimits,
-    parsePresetLimits,
 )
 from varda.common.entities import VardaRaster
 from varda.image_loading.crism_geometry import ColumnGeometry
@@ -20,8 +18,9 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.image_loading.raster_writer import writeRaster
 
+WHOLE = RatioCubeMethod.WHOLE_COLUMN  # for cubes too small for a blandness check
 QUIET = lambda percent, message: None  # noqa: E731
-ROWS, COLS, BANDS = 40, 6, 30
+ROWS, COLS, BANDS = 40, 6, 120
 PATH = "/data/frt0000_07_if165j_mtr3.img"
 BACKPLANE = "/data/frt0000_07_in165j_mtr3.img"
 
@@ -90,7 +89,7 @@ def _absorbing(column: int) -> VardaRaster:
     image = _scene()
     cube = image.getData().astype(np.float64)
     wavelengths = np.asarray(image.wavelengths)
-    cube[:, column, :] *= 1 - 0.5 * np.exp(-0.5 * ((wavelengths - 2000) / 60) ** 2)
+    cube[:, column, :] *= 1 - 0.5 * np.exp(-0.5 * ((wavelengths - 2300) / 60) ** 2)
     source = ArrayDataSource(
         cube.astype(np.float32),
         wavelengths=wavelengths,
@@ -144,7 +143,14 @@ def test_the_record_holds_the_settings_and_each_columns_denominator(geometry):
     record = ratio.extraMetadata["ratioCube"]
     assert record["method"] == "Bland pixels"
     assert record["blandness"] == BLANDNESS_GENERIC
-    assert record["thresholds"]["maxDepth"] == 0.02
+    thresholds = record["thresholds"]
+    assert thresholds["depthFloor"] == RATIO_CUBE_LIMITS.floor
+    assert thresholds["noiseMultiple"] == RATIO_CUBE_LIMITS.noiseMultiple
+    assert thresholds["maxSlope"] == RATIO_CUBE_LIMITS.maxSlope
+    assert thresholds["excludedNm"] == [[1000, 1050], [1950, 2100], [2650, 4000]]
+    assert [w["name"] for w in thresholds["windows"]] == [
+        w.name for w in CHECKS["Generic"].windows
+    ]
     assert record["runLength"] == 9 and record["minimumPixels"] == 20
     assert record["geometryFile"] == BACKPLANE
     assert record["geometry"] == "backplane band 'IR Sample'"
@@ -165,19 +171,21 @@ def _cube(wavelengths, cols: int = COLS, path: str | None = PATH) -> VardaRaster
 
 def test_vnir_bands_are_flagged_as_approximately_column_matched(geometry):
     assert _run(_scene())[0].extraMetadata["ratioCube"]["vnirApproximate"] is False
-    ratio, _ = _run(_cube([500.0, 700.0, 1200.0, 1500.0]))
+    ratio, _ = _run(_cube([500.0, 700.0, 1200.0, 1500.0]), method=WHOLE)
     assert ratio.extraMetadata["ratioCube"]["vnirApproximate"] is True
     assert "VNIR" in ratio.description
 
 
 def test_a_vnir_only_cube_is_not_flagged(geometry):
-    ratio, _ = _run(_cube([450.0, 600.0, 750.0, 900.0]))
+    ratio, _ = _run(_cube([450.0, 600.0, 750.0, 900.0]), method=WHOLE)
     assert ratio.extraMetadata["ratioCube"]["vnirApproximate"] is False
     assert "VNIR" not in ratio.description
 
 
 def test_an_unprojected_crism_cube_without_a_backplane_uses_its_image_columns():
-    ratio, _ = _run(_cube(np.linspace(1100, 2500, 6), cols=320, path=None))
+    ratio, _ = _run(
+        _cube(np.linspace(1100, 2500, 6), cols=320, path=None), method=WHOLE
+    )
     record = ratio.extraMetadata["ratioCube"]
     assert record["geometry"] == "image columns (unprojected)"
     assert record["binning"] == 2 and record["geometryFile"] == ""
@@ -296,7 +304,7 @@ def test_an_image_without_a_file_or_a_crism_width_has_no_columns():
     assert "backplane" in reason and "unprojected" in reason
 
 
-def test_fewer_than_three_bands_are_refused_clearly(geometry):
+def test_too_few_bands_in_a_window_are_refused_clearly(geometry):
     source = ArrayDataSource(
         np.ones((ROWS, COLS, 2), np.float32),
         wavelengths=np.array([1200.0, 1500.0]),
@@ -304,22 +312,24 @@ def test_fewer_than_three_bands_are_refused_clearly(geometry):
         filePath=PATH,
     )
     reason = RatioCubeAnalysis().unavailableReason(VardaRaster(source, name="two"))
-    assert "three good bands" in reason
+    assert "at least 5 good bands in each window" in reason
+    assert "1.05–1.7 µm (2)" in reason
 
 
-def test_a_preset_without_hypyrameter_names_it(geometry, monkeypatch):
-    monkeypatch.setattr(ratio_cube_analysis, "HYPYRAMETER_AVAILABLE", False)
+@pytest.mark.parametrize("name", list(CHECKS))
+def test_every_check_runs_without_hypyrameter(geometry, name):
     analysis = RatioCubeAnalysis()
     analysis.blandness.set(
-        next(b for b in analysis.blandness.enumType if b.value == "Olivine")
+        next(b for b in analysis.blandness.enumType if b.value == name)
     )
-    reason = analysis.unavailableReason(_scene())
-    assert "HyPyRameter" in reason
-    with pytest.raises(ValueError, match="HyPyRameter"):
-        analysis.runAll(_scene(), QUIET)
-    # the Generic check works without it
-    analysis.blandness.resetToDefault()
     assert analysis.unavailableReason(_scene()) == ""
+    ratio, _ = _run_with(analysis, _scene())
+    assert ratio.extraMetadata["ratioCube"]["blandness"] == name
+
+
+def _run_with(analysis: RatioCubeAnalysis, image: VardaRaster) -> list[VardaRaster]:
+    analysis.prepareFor(image)
+    return analysis.runAll(image, QUIET)
 
 
 def test_parameter_ranges_guard_the_pooling_settings():
@@ -356,7 +366,10 @@ def test_an_envi_ratio_cube_has_a_methods_description_and_a_column_table(
     start = header.index("description = {")
     description = header[start : header.index("}", start)]
     assert "Ratio cube of absorbing: Bland pixels" in description
-    assert "maximum depth 0.02" in description and "Neighbor Radius 2" in description
+    assert "Generic check (windows 1.05–1.7 µm 1050–1700 nm" in description
+    assert "excluded 1000–1050, 1950–2100, 2650–4000 nm" in description
+    assert "max(0.03, 3 × its per-band noise)" in description
+    assert "Neighbor Radius 2" in description
     # the files that must travel together are named
     for name in ("ratio.hdr", "ratio.img.aux.xml", "ratio.columns.csv"):
         assert name in description
@@ -373,6 +386,8 @@ def test_an_envi_ratio_cube_has_a_methods_description_and_a_column_table(
     assert float(column2["std_B1"]) == pytest.approx(entry["std"][0])
     assert int(column2["n_B1"]) == entry["validCount"][0]
     assert float(column2["effectiveCount"]) == entry["effectiveCount"]
+    assert column2["blandness"] == "Generic"
+    assert "max(0.03, 3 × its per-band noise)" in column2["blandnessSettings"]
 
 
 def test_a_geotiff_ratio_cube_gets_the_column_table_too(geometry, tmp_path):
@@ -381,37 +396,7 @@ def test_a_geotiff_ratio_cube_gets_the_column_table_too(geometry, tmp_path):
     assert (tmp_path / "ratio.columns.csv").exists()
 
 
-# --- presets, with HyPyRameter replaced by a stand-in ------------------------
-
-
-def _olivine(analysis: RatioCubeAnalysis) -> None:
-    analysis.blandness.set(
-        next(b for b in analysis.blandness.enumType if b.value == "Olivine")
-    )
-
-
-def _fakeHypyrameter(monkeypatch) -> None:
-    """Parameter values that grow with the detector column: (c + 0.5) / 100."""
-
-    def parameters(cube, wavelengthsNm, names):
-        values = (np.arange(cube.shape[1]) + 0.5) / 100
-        return np.broadcast_to(
-            values[None, :, None], (*cube.shape[:2], len(names))
-        ).copy()
-
-    monkeypatch.setattr(ratio_cube_analysis, "HYPYRAMETER_AVAILABLE", True)
-    monkeypatch.setattr(ratio_cube_analysis, "parameterCube", parameters)
-    monkeypatch.setattr(
-        ratio_cube_analysis, "validParameterNames", lambda wavelengths: list(_ALL_NAMES)
-    )
-
-
-@pytest.fixture
-def fakeHypyrameter(monkeypatch):
-    _fakeHypyrameter(monkeypatch)
-
-
-_ALL_NAMES = {limit.name for preset in PRESETS.values() for limit in preset.limits}
+# --- the blandness settings ---------------------------------------------------
 
 
 def _blandColumns(ratio: VardaRaster) -> set[int]:
@@ -422,122 +407,106 @@ def _blandColumns(ratio: VardaRaster) -> set[int]:
     }
 
 
-def test_choosing_a_preset_fills_its_editable_limits():
-    analysis = RatioCubeAnalysis()
-    assert analysis.presetLimits.get() == ""
-    _olivine(analysis)
-    assert analysis.presetLimits.get() == (
-        "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
-        "slope ≤ 0.1 /µm over 1000–1700 nm"
-    )
-    analysis.blandness.resetToDefault()
-    assert analysis.presetLimits.get() == ""
-
-
-@pytest.mark.parametrize("preset", list(PRESETS.values()), ids=lambda p: p.name)
-def test_every_presets_text_parses_back_to_itself(preset):
-    assert parsePresetLimits(formatPresetLimits(preset), preset) == preset
-
-
-def test_a_preset_runs_end_to_end_and_records_its_limits(geometry, fakeHypyrameter):
-    analysis = RatioCubeAnalysis()
-    image = _scene()
-    analysis.prepareFor(image)
-    _olivine(analysis)
-    analysis.minimumPixels.set(1)
-    analysis.neighborRadius.set(0)
-    assert analysis.unavailableReason(image) == ""
-    ratio, companion = analysis.runAll(image, QUIET)
-    record = ratio.extraMetadata["ratioCube"]
-    assert record["blandness"] == "Olivine"
-    assert record["thresholds"] == {
-        "limits": {"OLINDEX3": 0.02, "LCPINDEX2": 0.02, "HCPINDEX2": 0.02},
-        "maxSlope": 0.1,
-        "slopeWindowNm": [1000.0, 1700.0],
-    }
-    # values 0.005 and 0.015 are under 0.02; the others fall back to the whole column
-    assert _blandColumns(ratio) == {0, 1}
-    assert "Olivine" in ratio.description
-
-
-def test_edited_preset_limits_change_which_pixels_are_bland(geometry, fakeHypyrameter):
-    analysis = RatioCubeAnalysis()
-    image = _scene()
-    analysis.prepareFor(image)
-    _olivine(analysis)
-    analysis.minimumPixels.set(1)
-    analysis.neighborRadius.set(0)
-    analysis.presetLimits.set(
-        "OLINDEX3 ≤ 0.04, LCPINDEX2 ≤ 0.04, HCPINDEX2 ≤ 0.04; "
-        "slope ≤ 0.10 /µm over 1000–1700 nm"
-    )
-    ratio, _ = analysis.runAll(image, QUIET)
-    assert _blandColumns(ratio) == {0, 1, 2, 3}
-    assert ratio.extraMetadata["ratioCube"]["thresholds"]["limits"]["OLINDEX3"] == 0.04
-
-
-def test_the_edited_slope_limit_applies(geometry, fakeHypyrameter):
+def _withBand(depths: list[float], center: float = 2310) -> VardaRaster:
+    """The scene with an absorption of the given depth in each column."""
     image = _scene()
     cube = image.getData().astype(np.float64)
-    cube[:, 1, :] *= np.linspace(1.0, 2.0, BANDS)  # a steep slope in column 1
+    wavelengths = np.asarray(image.wavelengths)
+    shape = np.exp(-0.5 * ((wavelengths - center) / 30) ** 2)
+    for column, depth in enumerate(depths):
+        cube[:, column, :] *= 1 - depth * shape
     source = ArrayDataSource(
         cube.astype(np.float32),
-        wavelengths=np.asarray(image.wavelengths),
+        wavelengths=wavelengths,
         wavelengthUnits="nm",
         filePath=PATH,
     )
-    tilted = VardaRaster(source, name="tilted")
-    analysis = RatioCubeAnalysis()
-    analysis.prepareFor(tilted)
-    _olivine(analysis)
+    return VardaRaster(source, name="bands")
+
+
+def _settings(analysis: RatioCubeAnalysis, check: str, **values) -> None:
+    analysis.blandness.set(
+        next(b for b in analysis.blandness.enumType if b.value == check)
+    )
     analysis.minimumPixels.set(1)
     analysis.neighborRadius.set(0)
-    ratio, _ = analysis.runAll(tilted, QUIET)
-    assert _blandColumns(ratio) == {0}  # column 1 is too steep
-    analysis.presetLimits.set(
-        "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
-        "slope ≤ 5 /µm over 1000–1700 nm"
+    for name, value in values.items():
+        getattr(analysis, name).set(value)
+
+
+def test_the_depth_floor_decides_which_columns_are_bland(geometry):
+    image = _withBand([0.0, 0.02, 0.05, 0.08, 0.0, 0.0])
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(image)
+    _settings(analysis, "Fe/Mg phyllosilicates")
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert _blandColumns(ratio) == {0, 1, 4, 5}  # the 5 and 8 % bands fail
+    analysis.depthFloor.set(0.06)
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert _blandColumns(ratio) == {0, 1, 2, 4, 5}
+    assert ratio.extraMetadata["ratioCube"]["thresholds"]["depthFloor"] == 0.06
+    assert "max(0.06, 3 × its per-band noise)" in ratio.description
+
+
+def test_the_noise_multiple_spares_noisy_columns(geometry):
+    """A 2 % band in a column with 1 % noise is within 3 × its noise."""
+    image = _withBand([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    cube = image.getData().astype(np.float64)
+    rng = np.random.default_rng(3)
+    cube[:, 2, :] *= 1 + 0.01 * rng.normal(size=cube[:, 2, :].shape)
+    image = VardaRaster(
+        ArrayDataSource(
+            cube.astype(np.float32),
+            wavelengths=np.asarray(image.wavelengths),
+            wavelengthUnits="nm",
+            filePath=PATH,
+        ),
+        name="noisy",
     )
-    ratio, _ = analysis.runAll(tilted, QUIET)
-    assert _blandColumns(ratio) == {0, 1}
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(image)
+    _settings(analysis, "Fe/Mg phyllosilicates", depthFloor=0.0, runLength=3)
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert 2 in _blandColumns(ratio)  # noisy, but nothing beyond its noise
+
+
+def test_the_co2_range_can_be_included(geometry):
+    """A band at 2.0 µm is invisible while the CO2 range is excluded."""
+    image = _withBand([0.0, 0.1, 0.0, 0.0, 0.0, 0.0], center=2020)
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(image)
+    _settings(analysis, "Generic")
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert 1 in _blandColumns(ratio)
+    analysis.excludedRanges.set("1000-1050, 2650-4000")
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert 1 not in _blandColumns(ratio)
+    assert ratio.extraMetadata["ratioCube"]["thresholds"]["excludedNm"] == [
+        [1000, 1050],
+        [2650, 4000],
+    ]
 
 
 @pytest.mark.parametrize(
-    "text, message",
+    "setting, value, message",
     [
-        ("garbage", "slope part"),
-        ("OLINDEX3 ≤ 0.02; slope ≤ 0.1 /µm over 1000–1700 nm", "missing"),
-        (
-            "OLINDEX3 ≤ x, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
-            "slope ≤ 0.1 /µm over 1000–1700 nm",
-            "not like",
-        ),
-        (
-            "OLINDEX3 ≤ 0.02, BD1900r2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
-            "slope ≤ 0.1 /µm over 1000–1700 nm",
-            "not a parameter",
-        ),
-        (
-            "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
-            "slope ≤ 0.1 /µm over 1700–1000 nm",
-            "start < end",
-        ),
+        ("excludedRanges", "garbage", "not like"),
+        ("excludedRanges", "2100-1950", "start < end"),
+        ("depthFloor", float("nan"), "Depth Floor"),
     ],
 )
-def test_malformed_preset_limits_are_refused_clearly(
-    geometry, fakeHypyrameter, text, message
-):
+def test_bad_blandness_settings_are_refused_clearly(geometry, setting, value, message):
     analysis = RatioCubeAnalysis()
-    _olivine(analysis)
-    analysis.presetLimits.set(text)
+    getattr(analysis, setting).value = value  # bypassing the widget
     assert message in analysis.unavailableReason(_scene())
     with pytest.raises(ValueError, match=message):
         analysis.runAll(_scene(), QUIET)
 
 
-def test_generic_ignores_the_preset_limits_text(geometry):
+def test_the_whole_column_method_ignores_the_blandness_settings(geometry):
     analysis = RatioCubeAnalysis()
-    analysis.presetLimits.set("garbage")
+    analysis.method.set(RatioCubeMethod.WHOLE_COLUMN)
+    analysis.excludedRanges.value = "garbage"
     assert analysis.unavailableReason(_scene()) == ""
 
 
@@ -552,9 +521,10 @@ def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch, preset):
     analysis = RatioCubeAnalysis()
     image = _scene(rows, cols)
     analysis.prepareFor(image)
-    if preset:  # HyPyRameter's own working memory is not measured here
-        _fakeHypyrameter(monkeypatch)
-        _olivine(analysis)
+    if preset:
+        analysis.blandness.set(
+            next(b for b in analysis.blandness.enumType if b.value == "Hydrated (any)")
+        )
     analysis.runAll(image, QUIET)  # warm up
     tracemalloc.start()
     try:
@@ -563,3 +533,25 @@ def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch, preset):
     finally:
         tracemalloc.stop()
     assert peak <= analysis.estimateMemory(image)
+
+
+def test_a_micrometer_cube_finds_the_same_bland_pixels(geometry):
+    nm = _withBand([0.0, 0.02, 0.05, 0.08, 0.0, 0.0])
+    um = VardaRaster(
+        ArrayDataSource(
+            nm.getData(),
+            wavelengths=np.asarray(nm.wavelengths) / 1000,
+            wavelengthUnits="micrometers",
+            filePath=PATH,
+        ),
+        name="um",
+    )
+    results = []
+    for image in (nm, um):
+        analysis = RatioCubeAnalysis()
+        analysis.prepareFor(image)
+        _settings(analysis, "Fe/Mg phyllosilicates")
+        ratio, companion = analysis.runAll(image, QUIET)
+        results.append((_blandColumns(ratio), companion.getData()[:, :, 0].tolist()))
+    assert results[0] == results[1]
+    assert results[0][0] == {0, 1, 4, 5}

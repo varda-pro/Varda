@@ -11,7 +11,6 @@ from __future__ import annotations
 import csv
 import io
 import math
-import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -19,18 +18,19 @@ import numpy as np
 
 from varda.analysis.analysis import Analysis, ProgressCallback
 from varda.analysis.blandness import (
-    DEFAULT_MAX_DEPTH,
-    DEFAULT_MAX_SLOPE,
-    PRESETS,
-    ParameterLimit,
-    Preset,
-    genericBlandMask,
-    presetBlandMask,
-)
-from varda.analysis.hypyrameter_adapter import (
-    HYPYRAMETER_AVAILABLE,
-    computeParameterCube,
-    validParameterNames,
+    CHECKS,
+    DEFAULT_EXCLUSIONS,
+    GENERIC,
+    LIMIT_RANGES,
+    MIN_WINDOW_BANDS,
+    RATIO_CUBE_LIMITS,
+    SMOOTHING_BANDS,
+    Limits,
+    blandMask,
+    describeSettings,
+    formatExclusions,
+    parseExclusions,
+    windowBandCounts,
 )
 from varda.analysis.rasters import bandMetadata, goodBands, readGoodBands
 from varda.analysis.ratio_cube import (
@@ -63,8 +63,7 @@ NO_DATA = "no data"
 # the IR (L) detector's, so in a cube with bands on both detectors the VNIR
 # bands are only approximately column-matched
 VNIR_BELOW_NM = 1000.0
-MIN_BANDS = 3  # the continuum and the slope need at least three bands
-BLANDNESS_GENERIC = "Generic"
+BLANDNESS_GENERIC = GENERIC
 RUN_RANGE = (3, 51)
 MINIMUM_PIXELS_RANGE = (1, 10000)
 NEIGHBOR_RADIUS_RANGE = (0, 10)
@@ -76,94 +75,19 @@ class RatioCubeMethod(LabeledEnum):
     BLAND_PIXELS = "Bland pixels"
 
 
-# "Generic", then the target presets of blandness.PRESETS
+# "Generic", then the target presets of blandness.CHECKS
 Blandness: type[LabeledEnum] = LabeledEnum(  # ty: ignore[invalid-assignment]
     "Blandness",
     {
         "GENERIC": BLANDNESS_GENERIC,
-        **{f"PRESET{i}": name for i, name in enumerate(PRESETS)},
+        **{f"PRESET{i}": name for i, name in enumerate(CHECKS) if name != GENERIC},
     },
 )
 
 
-# What a preset's parameter cube comes from; a test can replace it (HyPyRameter
-# is an optional extra), as presetBlandMask's own parameterCube argument.
-parameterCube = computeParameterCube
-
-_NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
-_LIMIT = re.compile(rf"^\s*(\w+)\s*(?:≤|<=)\s*({_NUMBER})\s*$")
-_SLOPE = re.compile(
-    rf"^\s*slope\s*(?:≤|<=)\s*({_NUMBER})\s*(?:/\s*µm|per\s*µm)?\s*over\s*"
-    rf"({_NUMBER})\s*(?:–|-|to)\s*({_NUMBER})\s*nm\s*$",
-    re.IGNORECASE,
-)
-
-
-def formatPresetLimits(preset: Preset) -> str:
-    """A preset's limits as the editable text, e.g.
-    ``LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; slope ≤ 0.1 /µm over 1000–1700 nm``."""
-    limits = ", ".join(f"{p.name} ≤ {p.maximum:g}" for p in preset.limits)
-    low, high = preset.slopeWindowNm
-    return f"{limits}; slope ≤ {preset.maxSlope:g} /µm over {low:g}–{high:g} nm"
-
-
-def parsePresetLimits(text: str, preset: Preset) -> Preset:
-    """``preset`` with the limits written in ``text`` (the format of
-    :func:`formatPresetLimits`); ValueError says what is wrong. Every one of the
-    preset's parameters must appear once: only the numbers are edited."""
-    limitsText, separator, slopeText = text.partition(";")
-    slope = _SLOPE.match(slopeText) if separator else None
-    if slope is None:
-        raise ValueError(
-            f"Preset limits need a slope part after ';', like "
-            f"'slope ≤ 0.10 /µm over 1000–1700 nm'; got '{text.strip()}'."
-        )
-    maximum, low, high = (float(g) for g in slope.groups())
-    if not (math.isfinite(maximum) and maximum >= 0 and 0 <= low < high):
-        raise ValueError(
-            "The slope limit must be 0 or more over a window with start < end."
-        )
-    found: dict[str, float] = {}
-    for part in limitsText.split(","):
-        match = _LIMIT.match(part)
-        if match is None:
-            raise ValueError(
-                f"Preset limits: '{part.strip()}' is not like 'NAME ≤ 0.02'."
-            )
-        name, value = match.group(1), float(match.group(2))
-        if name in found or name not in {p.name for p in preset.limits}:
-            raise ValueError(
-                f"Preset limits: {name} is repeated or not a parameter of the "
-                f"{preset.name} preset ({', '.join(p.name for p in preset.limits)})."
-            )
-        if not (math.isfinite(value) and value >= 0):
-            raise ValueError(f"Preset limits: {name} must be 0 or more.")
-        found[name] = value
-    missing = [p.name for p in preset.limits if p.name not in found]
-    if missing:
-        raise ValueError(f"Preset limits are missing {', '.join(missing)}.")
-    return Preset(
-        preset.name,
-        tuple(ParameterLimit(p.name, found[p.name]) for p in preset.limits),
-        (low, high),
-        maximum,
-    )
-
-
 def _limitsText(record: dict) -> str:
-    """The blandness limits of a record, as text."""
-    thresholds = record["thresholds"]
-    if "limits" not in thresholds:
-        return (
-            f"maximum depth {thresholds['maxDepth']:g}, maximum |slope| "
-            f"{thresholds['maxSlope']:g} per µm"
-        )
-    low, high = thresholds["slopeWindowNm"]
-    limits = ", ".join(f"{name} ≤ {v:g}" for name, v in thresholds["limits"].items())
-    return (
-        f"{limits}, |slope| ≤ {thresholds['maxSlope']:g} per µm over "
-        f"{low:g}-{high:g} nm"
-    )
+    """The blandness settings of a record, as text."""
+    return record["thresholds"]["settings"]
 
 
 COLUMN_TABLE_SUFFIX = ".columns.csv"
@@ -176,20 +100,30 @@ _COLUMN_FIELDS = (
     "effectiveCount",
     "fallback",
 )
+_BLANDNESS_FIELDS = ("blandness", "blandnessSettings")
 
 
 def columnTableCsv(record: dict) -> str:
     """A ratio cube record's per-column table as CSV: one row per column with
     its support, fallback, the neighbor columns borrowed (``column:pixels``,
     ``;``-separated), and per good band (``B`` + the image's 1-based band
-    number) the denominator mean, its std and the number of valid pixels."""
+    number) the denominator mean, its std and the number of valid pixels.
+    Every row also names the blandness check and its settings (windows,
+    excluded ranges, floor, k and slope; empty for the Whole column method),
+    so the table stands on its own."""
     bands = [f"B{b}" for b in record["bands"]]
+    blandness = (
+        (record["blandness"], record["thresholds"]["settings"])
+        if record["blandness"]
+        else ("", "")
+    )
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(
         [
             *_COLUMN_FIELDS,
             "borrowed",
+            *_BLANDNESS_FIELDS,
             *(f"mean_{b}" for b in bands),
             *(f"std_{b}" for b in bands),
             *(f"n_{b}" for b in bands),
@@ -200,6 +134,7 @@ def columnTableCsv(record: dict) -> str:
             [
                 *("" if entry[k] is None else entry[k] for k in _COLUMN_FIELDS),
                 ";".join(f"{c}:{n}" for c, n in entry["borrowed"]),
+                *blandness,
                 *("" if v is None else v for v in entry["spectrum"]),
                 *("" if v is None else v for v in entry["std"]),
                 *entry["validCount"],
@@ -259,9 +194,10 @@ class RatioCubeAnalysis(Analysis):
     analysisId = "ratio_cube"
     name = "Ratio Cube (Column Denominators)"
     category = CATEGORY
-    # the cube in float64, its in-column run means and the bland mask's work
-    # copies, then the float32 result: measured 5.6 on the default (Bland, Generic)
-    # settings, plus 25 percent (test_ratio_cube_analysis)
+    # the cube in float64, its in-column run means, then the float32 result
+    # (the bland mask works in blocks of pixels, so adds little): measured 5.6
+    # on the default (Bland, Generic) settings, plus 25 percent
+    # (test_ratio_cube_analysis)
     memoryFactor = 7.0
     description = (
         "Divides a CRISM I/F cube by one denominator spectrum per sensor "
@@ -284,28 +220,45 @@ class RatioCubeAnalysis(Analysis):
     blandness = EnumParameter(
         "Blandness",
         Blandness,
-        description="Generic: shallow absorptions and a flat slope. A target "
-        "preset keeps only pixels free of that mineral's spectral parameters "
-        "(needs HyPyRameter)",
+        description="Which wavelength windows must be free of absorptions: "
+        "Generic (broad windows over 1.05-2.65 µm) or a target preset (the "
+        "windows of that mineral group's bands)",
     )
-    maxDepth = FloatParameter(
-        "Generic Maximum Depth",
-        DEFAULT_MAX_DEPTH,
-        range=(0.0, 1.0),
+    depthFloor = FloatParameter(
+        "Depth Floor",
+        RATIO_CUBE_LIMITS.floor,
+        range=LIMIT_RANGES["floor"],
         decimals=3,
         showSlider=False,
-        description="Generic check: the deepest continuum-removed absorption "
-        "allowed (1 minus the continuum-removed value)",
+        description="A window fails only if its deepest continuum-removed dip "
+        "(a fraction: 0.03 is 3 percent) is deeper than this floor and than "
+        "Noise Multiple times the spectrum's own noise",
+    )
+    noiseMultiple = FloatParameter(
+        "Noise Multiple",
+        RATIO_CUBE_LIMITS.noiseMultiple,
+        range=LIMIT_RANGES["noiseMultiple"],
+        decimals=2,
+        showSlider=False,
+        description="k: a dip within k times the spectrum's per-band noise "
+        "(estimated in each window) is not counted as a feature",
     )
     maxSlope = FloatParameter(
-        "Generic Maximum Slope",
-        DEFAULT_MAX_SLOPE,
-        range=(0.0, 10.0),
+        "Maximum Slope",
+        RATIO_CUBE_LIMITS.maxSlope,
+        range=LIMIT_RANGES["maxSlope"],
         units="per µm",
         decimals=3,
         showSlider=False,
-        description="Generic check: the largest |relative slope| allowed "
-        "(slope divided by the mean, per micrometer)",
+        description="The largest |relative slope| allowed in a window (the "
+        "least-squares slope divided by the mean, per micrometer)",
+    )
+    excludedRanges = StringParameter(
+        "Excluded Ranges",
+        formatExclusions(DEFAULT_EXCLUSIONS),
+        "Wavelength ranges (nm) no window looks at: the VNIR/IR detector join, "
+        "the 1950-2100 nm CO2 residual (delete it to include it), and beyond "
+        "2650 nm",
     )
     runLength = IntParameter(
         "Run Length",
@@ -333,32 +286,15 @@ class RatioCubeAnalysis(Analysis):
         "borrow bland pixels from; 0 never borrows",
     )
 
-    presetLimits = StringParameter(
-        "Preset Limits",
-        "",
-        "The chosen preset's maxima and slope limit, editable (refilled when "
-        "the preset changes). Maxima are the largest parameter values a bland "
-        "pixel may have",
-    )
+    def _check(self):
+        return CHECKS[self.blandness.get().value]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.blandness.sigParameterChanged.connect(self._fillPresetLimits)
-
-    def _fillPresetLimits(self, _=None) -> None:
-        name = self.blandness.get().value
-        self.presetLimits.set(
-            "" if name == BLANDNESS_GENERIC else formatPresetLimits(PRESETS[name])
+    def _limits(self) -> Limits:
+        return Limits(
+            float(self.depthFloor.get()),
+            float(self.noiseMultiple.get()),
+            float(self.maxSlope.get()),
         )
-
-    def _preset(self) -> Preset | None:
-        """The chosen preset with the limits as edited (None for Generic);
-        ValueError when the text is malformed."""
-        name = self.blandness.get().value
-        if name == BLANDNESS_GENERIC:
-            return None
-        text = self.presetLimits.get().strip()
-        return parsePresetLimits(text, PRESETS[name]) if text else PRESETS[name]
 
     def _problem(self, image: VardaRaster) -> str:
         """Why this cannot run on ``image`` ("" when it can)."""
@@ -405,31 +341,27 @@ class RatioCubeAnalysis(Analysis):
         if self.method.get() is RatioCubeMethod.WHOLE_COLUMN:
             return ""
         try:
-            preset = self._preset()
+            exclusions = parseExclusions(self.excludedRanges.get())
         except ValueError as error:
             return str(error)
-        if preset is None:
-            if wavelengths.size < MIN_BANDS:
-                return "The blandness check needs at least three good bands."
-            return ""
-        if not HYPYRAMETER_AVAILABLE:
+        for name, value in (
+            ("Depth Floor", self.depthFloor.get()),
+            ("Noise Multiple", self.noiseMultiple.get()),
+            ("Maximum Slope", self.maxSlope.get()),
+        ):
+            if not (math.isfinite(value) and value >= 0):
+                return f"{name} must be 0 or more."
+        check = self._check()
+        short = [
+            f"{name} ({count})"
+            for name, count in windowBandCounts(wavelengths, check, exclusions).items()
+            if count < MIN_WINDOW_BANDS
+        ]
+        if short:
             return (
-                f"The {preset.name} preset needs HyPyRameter (an optional "
-                "feature, see Optional Features); the Generic check works without it."
-            )
-        low, high = sorted(preset.slopeWindowNm)
-        if ((wavelengths >= low) & (wavelengths <= high)).sum() < MIN_BANDS:
-            return (
-                f"Fewer than three good bands fall in the {preset.name} "
-                f"preset's {low:g}-{high:g} nm slope window."
-            )
-        missing = {limit.name for limit in preset.limits} - set(
-            validParameterNames(wavelengths)
-        )
-        if missing:
-            return (
-                f"The image's wavelengths can't support the {preset.name} "
-                f"preset's parameters: {', '.join(sorted(missing))}."
+                f"The {check.name} check needs at least {MIN_WINDOW_BANDS} good "
+                f"bands in each window, outside the excluded ranges; too few in "
+                f"{', '.join(short)}."
             )
         return ""
 
@@ -554,25 +486,31 @@ class RatioCubeAnalysis(Analysis):
         ]
 
     def _thresholds(self) -> dict:
-        preset = self._preset()
-        if preset is None:
-            return {
-                "maxDepth": float(self.maxDepth.get()),
-                "maxSlope": float(self.maxSlope.get()),
-            }
+        check, limits = self._check(), self._limits()
+        exclusions = parseExclusions(self.excludedRanges.get())
         return {
-            "limits": {limit.name: limit.maximum for limit in preset.limits},
-            "maxSlope": preset.maxSlope,
-            "slopeWindowNm": list(preset.slopeWindowNm),
+            "windows": [
+                {"name": w.name, "lowNm": w.lowNm, "highNm": w.highNm}
+                for w in check.windows
+            ],
+            "excludedNm": [list(r) for r in exclusions],
+            "depthFloor": limits.floor,
+            "noiseMultiple": limits.noiseMultiple,
+            "maxSlope": limits.maxSlope,
+            "continuum": "upper convex hull of each window",
+            "smoothingBands": SMOOTHING_BANDS,
+            "noise": "MAD of second differences between neighboring bands",
+            "settings": describeSettings(check, limits, exclusions),
         }
 
     def _blandMask(self, cube: np.ndarray, wavelengths: np.ndarray) -> np.ndarray:
-        preset = self._preset()
-        if preset is None:
-            return genericBlandMask(
-                cube, wavelengths, self.maxDepth.get(), self.maxSlope.get()
-            )
-        return presetBlandMask(cube, wavelengths, preset, parameterCube)
+        return blandMask(
+            cube,
+            wavelengths,
+            self._check(),
+            self._limits(),
+            parseExclusions(self.excludedRanges.get()),
+        )
 
     @staticmethod
     def _flagMissing(
@@ -599,8 +537,8 @@ class RatioCubeAnalysis(Analysis):
         ]
         if record["blandness"]:
             parts[0] += (
-                f" ({record['blandness']} blandness, {_limitsText(record)}, "
-                f"judged on means of {record['runLength']} pixels in the column)"
+                f" (blandness: {_limitsText(record)}, judged on means of "
+                f"{record['runLength']} pixels in the column)"
             )
         parts.append(
             f"{total} columns, at least {record['minimumPixels']} pixels each, "
