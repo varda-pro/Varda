@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 from affine import Affine
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
@@ -253,3 +254,13 @@ def test_clicking_a_swatch_recolors_the_class_in_every_view(bar, qtbot, monkeypa
     assert "#00ff00" in viewports[0].legendText()
     rgb = other.renderer.image.getData()
     assert tuple(rgb[0, 7]) == (0.0, 1.0, 0.0)  # the other workspace follows
+
+
+def test_a_deleted_bar_ignores_new_project_images(qtbot):
+    """The project's image list outlives a closed workspace's bar: an image
+    added afterwards must not call into the deleted bar."""
+    base = _base()
+    images = ProjectImages([base])
+    widget = OverlayBar(images, base, [])
+    sip.delete(widget)
+    images.append(_classification(base))  # raised RuntimeError (deleted object)

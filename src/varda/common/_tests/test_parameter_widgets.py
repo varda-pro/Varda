@@ -63,3 +63,20 @@ def test_the_connection_does_not_keep_its_widget_alive(qapp):
     gc.collect()
     param.set(5)  # nothing left to call, and no error
     assert len(param.sigParameterChanged) == 0
+
+
+def test_a_deleted_widgets_connection_goes_without_waiting_for_the_collector(qapp):
+    """The connection must not be a reference cycle (a slot holding the signal
+    that holds it): that left garbage only the cyclic collector frees, and a
+    collection during Qt's event dispatch segfaulted the suite."""
+    param = IntParameter("Count", 3)
+
+    class Receiver(QWidget):
+        def onChanged(self, value):
+            pass
+
+    receiver = Receiver()
+    connectWhileAlive(param.sigParameterChanged, receiver.onChanged, receiver)
+    sip.delete(receiver)
+    del receiver
+    assert len(param.sigParameterChanged) == 0  # no emit or gc.collect() needed

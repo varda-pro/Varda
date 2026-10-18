@@ -27,6 +27,7 @@ from varda.common.ui import MutedLabel
 from varda.analysis.eigenvalue_plot import EigenvaluePlot
 from varda.analysis.unmixing import Constraint
 from varda.common.parameter import IntParameter
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.spectral_axis import SpectralUnit
 from varda.workspaces.spectral_hourglass.hourglass_model import (
     DEFAULT_MAX_CANDIDATES,
@@ -473,9 +474,10 @@ class PipelinePanel(QToolBox):
             self.purityPage.moreButton,
             self.mapPage.runButton,
         ]
-        model.sigStepChanged.connect(lambda _: self.refresh())
-        model.sigEndmembersChanged.connect(self.refresh)
-        model.sigCandidatesChanged.connect(self.refresh)
+        # the model is plain psygnal state: drop these once the panel is deleted
+        connectWhileAlive(model.sigStepChanged, self._onStepChanged, self)
+        connectWhileAlive(model.sigEndmembersChanged, self.refresh, self)
+        connectWhileAlive(model.sigCandidatesChanged, self.refresh, self)
         runner.sigBusyChanged.connect(self._onBusy)
         self.refresh()
 
@@ -487,6 +489,9 @@ class PipelinePanel(QToolBox):
             button.setEnabled(not busy)
         if not busy:
             self.refresh()
+
+    def _onStepChanged(self, _step: Step) -> None:
+        self.refresh()
 
     def refresh(self) -> None:
         for index, step in enumerate(self._pages):

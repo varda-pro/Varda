@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import sip
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFormLayout,
@@ -23,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from shapely.geometry import Polygon
 
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.image_loading.crism_geometry import (
     ColumnGeometry,
     columnGeometryFor,
@@ -132,7 +132,8 @@ class ROIManagerWidget(QWidget):
         self._lockColumnCheck = QCheckBox("Lock to sensor column")
         self.chooseGeometryButton = chooseGeometryButton(image, parent=self)
         self._refreshColumnLock()
-        image.sigMetadataChanged.connect(self._refreshColumnLock)  # held weakly
+        # the image outlives this widget
+        connectWhileAlive(image.sigMetadataChanged, self._refreshColumnLock, self)
 
         # Layout
         btnRow = FlowLayout()  # wraps in a narrow dock
@@ -233,8 +234,6 @@ class ROIManagerWidget(QWidget):
     def _refreshColumnLock(self) -> None:
         """Enable the column lock when the detector columns are known; offer
         to choose the geometry file when they aren't, or one was chosen."""
-        if sip.isdeleted(self):  # the image outlived this widget
-            return
         geometry = self._columnGeometry()
         crism = looksLikeCrism(self._image)
         self._lockColumnCheck.setEnabled(geometry is not None)

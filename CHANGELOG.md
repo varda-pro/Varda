@@ -27,6 +27,14 @@ can alter results.
   description and column table; the Shadow Mask's sun elevation now uses the
   incidence over the image's own pixels rather than the whole DDR.
 
+### Fixed
+
+- **No more errors or crashes after closing a workspace.** Loading an image
+  after closing a workspace with an overlay bar, Find Data or 3D Terrain
+  tab, the Find Data map moving as its window closed, or a Spectral
+  Hourglass step finishing after its workspace was closed could call into
+  the deleted window.
+
 ## 0.10.0 (2026-10-17)
 
 ### Added

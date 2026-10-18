@@ -204,7 +204,9 @@ class OverlayBar(QWidget):
         # psygnal holds the bar weakly, so a closed workspace drops out by itself
         classColorEvents.changed.connect(self._onClassColorsChanged)
         if isinstance(images, ObservableList):
-            images.sigDataChanged.connect(lambda _: self._refreshImages())
+            # a bound method: Qt disconnects it when the bar is deleted, while
+            # the project's list lives on
+            images.sigDataChanged.connect(self._refreshImages)
         self._refreshImages()
 
     def _choices(self, menu: QMenu, names) -> QActionGroup:

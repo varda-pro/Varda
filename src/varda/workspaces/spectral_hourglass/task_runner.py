@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from varda.utilities.background import onMainThread, runInBackground
@@ -31,7 +32,8 @@ class TaskRunner(QObject):
         self.sigBusyChanged.emit(True)
 
         def progress(percent: int, message: str) -> None:
-            self.sigProgress.emit(percent, f"{label}: {message}")
+            if not sip.isdeleted(self):  # the workspace may have been closed
+                self.sigProgress.emit(percent, f"{label}: {message}")
 
         def finished(result: object) -> None:
             self.busy = False
@@ -56,4 +58,5 @@ class TaskRunner(QObject):
             finished,
             failed,
             description=f"Spectral hourglass step {label}",
+            owner=self,  # a closed workspace's step is dropped when it ends
         )

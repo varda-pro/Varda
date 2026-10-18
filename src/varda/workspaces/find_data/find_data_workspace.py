@@ -130,10 +130,9 @@ class FindDataWorkspace(QMainWindow):
         self.setWindowTitle("Find Data")
         self.projectImages = projectImages if projectImages is not None else []
         if isinstance(self.projectImages, ObservableList):
-            # images loaded later (a download, say) can be basemaps too
-            self.projectImages.sigDataChanged.connect(
-                lambda _: self._refreshImageLists()
-            )
+            # images loaded later (a download, say) can be basemaps too; a
+            # bound method, so Qt disconnects it when the workspace is deleted
+            self.projectImages.sigDataChanged.connect(self._onProjectImagesChanged)
         self._catalogs: dict[str, Catalog] = {}  # one each, so filters persist
         self._collections: list[Collection] = []
         self._query: SearchQuery | None = None
@@ -493,6 +492,9 @@ class FindDataWorkspace(QMainWindow):
         self._refreshImageLists(keep=False)
         self._onArea()
         self._onBasemap()
+
+    def _onProjectImagesChanged(self, _images: list) -> None:
+        self._refreshImageLists()
 
     def _refreshImageLists(self, keep: bool = True) -> None:
         """The loaded images of the collection's body, offered as basemaps
