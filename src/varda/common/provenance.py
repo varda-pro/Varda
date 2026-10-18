@@ -8,7 +8,7 @@ A provenance record is plain JSON-friendly data in an image's
       "process": "Band Math", "processId": "band_math",
       "parameters": {...},                       # every setting
       "inputs": [{"name", "path", "provenance"?, "crismColumnsFile"?,
-                  "crismIncidenceFile"?}],
+                  "crismIncidenceFile"?, "labelHints"?}],
       "vardaVersion": "0.9.0", "created": "2026-10-17T12:00:00+00:00",
       "plugin": "name version",                  # when a plugin made it
       "software": {"spectral": "0.24"},          # libraries/tools that did the work
@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from varda.geo.labels import hintsRecord, labelHints
 from varda.version import vardaVersion
 
 if TYPE_CHECKING:
@@ -46,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 PROVENANCE_KEY = "provenance"
+# An input's label facts (``geo.labels.hintsRecord``): the body survives into
+# what is made from it, for the CRS health check
+LABEL_HINTS_KEY = "labelHints"
 # GDAL metadata domain and its two keys (JSON text)
 VARDA_NAMESPACE = "VARDA"
 METADATA_TAG = "metadata"
@@ -128,9 +132,12 @@ def softwareVersions(names: Iterable[str]) -> dict[str, str]:
 
 
 def inputRecord(image: VardaRaster) -> dict:
-    """An input as a record names it, with its own record and its
-    hand-chosen CRISM geometry files when it has them."""
+    """An input as a record names it, with its own record, its hand-chosen
+    CRISM geometry files and the facts its label states when it has them."""
     entry: dict = {"name": image.name, "path": image.filePath}
+    facts = hintsRecord(labelHints(image.filePath))
+    if facts is not None:
+        entry[LABEL_HINTS_KEY] = facts
     record = image.extraMetadata.get(PROVENANCE_KEY)
     if record:
         entry[PROVENANCE_KEY] = record
