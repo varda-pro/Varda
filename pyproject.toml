@@ -130,6 +130,7 @@ source_modules = [
     "varda.spectral_libraries",
     "varda.common.expressions",
     "varda.common.grid",
+    "varda.common.display_grid",
     "varda.common.provenance",
     "varda.common.memory",
     "varda.common.parameter",
