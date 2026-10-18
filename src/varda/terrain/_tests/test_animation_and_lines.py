@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 import shapely
 from PIL import Image
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from varda.terrain.animation import writeAnimation
-from varda.terrain.vectors import placeLines, readLines
+from varda.geo._tests.fixtures import CTX_DEM_PROJ
+from varda.terrain.vectors import placeLines, readLines, toDemCoordinates
 
 MARS_EQC = CRS.from_user_input("+proj=eqc +R=3389500 +units=m +no_defs")
 
@@ -57,6 +58,18 @@ def test_planetary_geojson_degrees_are_taken_on_the_dems_body(tmp_path):
     start, end = line.paths[0]
     np.testing.assert_allclose(start, (0.5, 0.5))
     assert end[0] == pytest.approx(0.5 + 0.01 * perDegree / 2000, rel=1e-3)
+
+
+def test_degrees_on_a_ctx_dem_are_the_iau_2015_mars_degrees():
+    # GeoJSON's CRS84 degrees on a Mars DEM land where IAU_2015:49900's do
+    points = [(77.5, 18.4), (77.6, 18.45), (77.45, 18.3)]
+    frame = gpd.GeoDataFrame(geometry=[shapely.LineString(points)], crs="OGC:CRS84")
+    dem = CRS.from_user_input(CTX_DEM_PROJ)
+    (placed,) = toDemCoordinates(frame, dem)
+    expected = Transformer.from_crs("IAU_2015:49900", dem, always_xy=True)
+    x, y = expected.transform(*np.array(points).T)
+    pixel = 20.0  # m
+    np.testing.assert_allclose(placed, np.column_stack([x, y]), atol=0.5 * pixel)
 
 
 def test_lines_that_miss_the_dem_are_an_error_for_the_user(tmp_path):

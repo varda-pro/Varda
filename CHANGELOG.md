@@ -84,6 +84,17 @@ can alter results.
 
 ### Fixed
 
+- **Images and footprint files of Vesta and other bodies with IAU 2015
+  radii were identified as Earth; unknown bodies are now reported as
+  unknown.** Varda now identifies a body from a coordinate system's
+  `IAU_2015` code, the names in it, else its radius against PROJ's IAU 2015
+  radii, in the Find Data map, footprint files, the Terrain workspace and
+  vector import. A projected footprint file on no known body is refused with
+  a message. Projected footprints are now converted to degrees on the body's
+  IAU 2015 sphere (Mars: 3396.19 km, was the 3389.5 km mean radius); latitude
+  and longitude on a sphere don't depend on its radius, so footprints don't
+  move. Degrees placed on a Terrain DEM are read in the DEM's own geographic
+  coordinate system.
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never

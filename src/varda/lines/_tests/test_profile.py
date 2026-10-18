@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from affine import Affine
 
-from varda.catalogs.bodies import RADII_M, geographicCrs
+from varda.geo.bodies import BODIES
 from varda.lines.profile import (
     densify,
     lineLength,
@@ -47,13 +47,15 @@ def test_a_dem_profile_runs_up_a_slope_in_meters():
 
 
 def test_geographic_distances_are_geodesic_on_the_body():
-    # one degree of longitude at the equator of Varda's Mars sphere (mean radius)
+    # one degree of longitude at the equator of Mars's IAU 2015 sphere
     transform = Affine(0.1, 0, 0.0, 0, -0.1, 0.0)
     distance, units = mapDistances(
-        np.array([[0.0, 0.0], [10.0, 0.0]]), transform, geographicCrs("Mars")
+        np.array([[0.0, 0.0], [10.0, 0.0]]), transform, BODIES["Mars"].sphereCrs()
     )
     assert units == "m"
-    assert distance[-1] == pytest.approx(2 * np.pi * RADII_M["Mars"] / 360, rel=1e-6)
+    assert distance[-1] == pytest.approx(
+        2 * np.pi * BODIES["Mars"].equatorialRadius / 360, rel=1e-6
+    )
 
 
 def test_without_georeferencing_distances_are_pixels():

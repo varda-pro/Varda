@@ -13,7 +13,6 @@ from PIL import Image
 
 from varda.catalogs import basemaps, registry
 from varda.catalogs.basemaps import BasemapLayer
-from varda.catalogs.bodies import geographicCrs
 from varda.catalogs.catalog import Catalog, Collection, Product, SearchPage
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
@@ -25,6 +24,8 @@ from varda.workspaces.find_data.find_data_workspace import AREA_BOX, FindDataWor
 from varda.workspaces.find_data.map_view import ADD, REMOVE, REPLACE
 from varda.workspaces.find_data.projection import MapProjection
 
+# Mars degrees on its IAU 2015 sphere
+MARS_DEGREES = "+proj=longlat +R=3396190 +no_defs"
 PRODUCTS = [
     Product(
         "obs_a",
@@ -145,7 +146,7 @@ def test_clicking_a_footprint_selects_it_and_shows_it(workspace, qtbot):
 
 
 def test_a_mars_image_becomes_the_basemap(workspace, qtbot, monkeypatch):
-    crs = geographicCrs("Mars")
+    crs = MARS_DEGREES
     image = VardaRaster(
         ArrayDataSource(
             np.random.default_rng(0).random((50, 60, 3)).astype(np.float32),
@@ -171,7 +172,7 @@ def test_a_mars_image_becomes_the_basemap(workspace, qtbot, monkeypatch):
 def test_overlays_are_drawn_and_saved(workspace, tmp_path):
     traverse = gpd.GeoDataFrame(
         geometry=[shapely.LineString([(77.4, 18.4), (77.5, 18.5)])],
-        crs=geographicCrs("Mars"),
+        crs=MARS_DEGREES,
     )
     traverse.to_file(tmp_path / "traverse.gpkg", driver="GPKG")
     workspace.addOverlay(str(tmp_path / "traverse.gpkg"))
@@ -276,7 +277,7 @@ def _marsImage(name="mars image", data=None):
             data,
             wavelengths=np.array([400.0, 500.0, 600.0]),
             transform=Affine(0.05, 0, 76.5, 0, -0.05, 19.5),
-            crs=geographicCrs("Mars"),
+            crs=MARS_DEGREES,
         ),
         name=name,
     )

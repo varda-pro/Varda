@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import shapely
 from attrs import frozen
 
-from varda.catalogs.bodies import bodyName
+from varda.geo.bodies import bodyNamed
 from varda.catalogs.catalog import (
     Catalog,
     CatalogProgress,
@@ -71,8 +71,10 @@ def _body(collection: dict) -> str:
         "ssys:targets"
     )
     if isinstance(targets, list) and targets:
-        return bodyName(str(targets[0]))
-    return "Earth"
+        target = str(targets[0]).strip()
+        body = bodyNamed(target)
+        return body.name if body is not None else target.title()
+    return "Earth"  # STAC without solar-system targets is Earth's
 
 
 class StacCatalog(Catalog):

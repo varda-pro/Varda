@@ -37,10 +37,10 @@ from pyproj.exceptions import CRSError, ProjError
 from shapely.geometry import Point, box
 from shapely.geometry.base import BaseGeometry
 
-from varda.catalogs.bodies import bodyOf, geographicCrs
 from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.common.palette import classColor
 from varda.common.parameter import LabeledEnum
+from varda.geo.bodies import Body, identifyBody
 from varda.lines.line_collection import LineCollection, LineKind
 from varda.points.point_collection import PointCollection
 from varda.rois.roi_collection import NewROI, ROICollection
@@ -339,8 +339,23 @@ def _looksLikeDegrees(frame: gpd.GeoDataFrame) -> bool:
     return max(abs(west), abs(east)) <= 360 and max(abs(south), abs(north)) <= 90
 
 
+def _body(crs: CRS | None) -> Body | None:
+    """The body ``crs`` is on (None when it's on no known body)."""
+    return identifyBody(crs).body
+
+
+def bodyLabel(crs: CRS | None) -> str:
+    """The name of the body ``crs`` is on, for messages and labels."""
+    body = _body(crs)
+    return body.name if body is not None else "the image's body"
+
+
+def _isEarth(body: Body | None) -> bool:
+    return body is not None and body.name == "Earth"
+
+
 def _isEarthDegrees(crs: CRS) -> bool:
-    return crs.is_geographic and bodyOf(crs) == "Earth"
+    return crs.is_geographic and _isEarth(_body(crs))
 
 
 def _fileCrs(
@@ -438,7 +453,12 @@ def _defaultCoordinates(source: VectorSource, image: VardaRaster) -> Coordinates
         return Coordinates.PIXELS if crs is None or geojsonDegrees else Coordinates.FILE
     if crs is not None:
         with PROJ_LOCK:
-            otherBody = _isEarthDegrees(crs) and bodyOf(image.crs) != "Earth"
+            imageBody = _body(image.crs)
+            otherBody = (
+                _isEarthDegrees(crs)
+                and imageBody is not None
+                and not _isEarth(imageBody)
+            )
         return Coordinates.BODY if otherBody else Coordinates.FILE
     west, south, east, north = source.frame.total_bounds
     fits = (
@@ -585,9 +605,18 @@ def _pixelMapping(
     assert imageCrs is not None  # hasGeospatialData
     notes = []
     with PROJ_LOCK:
-        body = bodyOf(imageCrs)
+        imageBody = _body(imageCrs)
+        body = imageBody.name if imageBody is not None else "the image's body"
         if mode is Coordinates.BODY:
-            sourceCrs = imageCrs.geodetic_crs or CRS(geographicCrs(body))
+            if imageCrs.geodetic_crs is not None:
+                sourceCrs = imageCrs.geodetic_crs
+            elif imageBody is not None:
+                sourceCrs = imageBody.sphereCrs()
+            else:
+                raise VectorImportError(
+                    "The image's coordinate system has no longitude and latitude, "
+                    "and its body is unknown: choose another coordinate system."
+                )
             notes.append(
                 f"Coordinates read as degrees of longitude and latitude on {body}, "
                 f"in the image's own geographic coordinate system "
@@ -609,8 +638,9 @@ def _pixelMapping(
             )
         else:
             sourceCrs = source.crs
-        sourceBody = bodyOf(sourceCrs)
-        if sourceBody != body:
+        sourceBody = _body(sourceCrs)
+        # bodies are compared only when both are known
+        if sourceBody is not None and imageBody is not None and sourceBody != imageBody:
             hint = (
                 f"GeoJSON always says WGS 84: choose “Degrees on {body}” if they "
                 f"are degrees on {body}."
@@ -618,7 +648,7 @@ def _pixelMapping(
                 else "Choose the coordinate system the file is in."
             )
             raise VectorImportError(
-                f"The file's coordinates are on {sourceBody} and the image is of "
+                f"The file's coordinates are on {sourceBody.name} and the image is of "
                 f"{body}. {hint}"
             )
         center, projector = None, None

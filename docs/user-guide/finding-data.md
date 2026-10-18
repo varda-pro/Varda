@@ -28,8 +28,14 @@ collections by body, mission or instrument). Plugins can add more catalogs.
 - **Footprint files**: a vector file of footprints (shapefile, GeoJSON,
   GeoPackage, KML, FlatGeobuf), such as ODE's footprint shapefiles, searched
   offline. Add one with **Add Footprint File…**. The body comes from the
-  file's coordinate system (by its radius, within 1 %); set **Body** when the
-  file doesn't say, as GeoJSON always declares Earth's. Filter: **Product ID
+  file's coordinate system: its `IAU_2015` code, else the body its datum,
+  ellipsoid or name names, else its radius (within 1 % of one body's IAU 2015
+  radii; radii from PROJ's `IAU_2015` authority, Archinal et al., 2018).
+  Projected footprints are converted to degrees on that body's IAU 2015
+  sphere (3396.19 km for Mars). A projected file on no known body is refused
+  with a message rather than taken as Earth, and a geographic one is listed
+  with no body. Set **Body** when the file doesn't say, as GeoJSON always
+  declares Earth's. Filter: **Product ID
   contains**. A product's ID comes from the first of these columns the file
   has: `ProductId`, `pdsid`, `product_id`, `id`, `obs`, `name`, `Name`; its
   time from `UTCstart`, `UTC_start_time`, `start_datetime`, `datetime`,
@@ -62,7 +68,8 @@ your system's keychain. The three catalogs above don't need one.
 
 The map shows the collection's body in **Equirectangular**, **North Polar
 Stereographic** or **South Polar Stereographic** projection, on a sphere of
-the body's mean radius (for drawing only). **Basemap** shows the body's
+the body's IAU mean radius (for drawing only; footprints and images keep
+their longitude and latitude). **Basemap** shows the body's
 global imagery (see below) or an open georeferenced image of the same body
 under the footprints; **Names** labels features with their IAU names; **Go
 to** zooms to a feature by name; **Add Overlay…** draws a vector file (a

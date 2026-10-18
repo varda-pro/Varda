@@ -23,7 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-from varda.catalogs.bodies import RADII_M, bodyName, normalizeLongitude
+from varda.catalogs.bodies import normalizeLongitude
+from varda.geo.bodies import bodyNamed
 from varda.utilities.resources import resource_path
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north
@@ -57,7 +58,11 @@ class Gazetteer:
 
     @property
     def radiusKm(self) -> float:
-        return RADII_M[self.body] / 1000.0
+        """The body's IAU mean radius."""
+        body = bodyNamed(self.body)
+        if body is None:
+            raise ValueError(f"Varda doesn't know {self.body}'s size.")
+        return body.meanRadius / 1000.0
 
     @property
     def kmPerDegree(self) -> float:
@@ -93,15 +98,19 @@ def eastLongitude(longitude: float, positiveWest: bool = False) -> float:
 
 
 def namesPath(body: str) -> Path:
-    return Path(resource_path(f"{NAMES_FOLDER}/{bodyName(body).lower()}.csv.gz"))
+    return Path(resource_path(f"{NAMES_FOLDER}/{body.lower()}.csv.gz"))
 
 
 @functools.cache
 def loadGazetteer(body: str) -> Gazetteer | None:
-    """The body's bundled names (None when Varda has none, as for Earth)."""
-    body = bodyName(body) if body else ""
-    path = namesPath(body) if body else None
-    if path is None or not path.exists() or body not in RADII_M:
+    """The body's bundled names (None when Varda has none, as for Earth, or
+    doesn't know the body)."""
+    known = bodyNamed(body) if body else None
+    if known is None:
+        return None
+    body = known.name
+    path = namesPath(body)
+    if not path.exists():
         return None
     with gzip.open(path, "rt", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(row for row in f if not row.startswith("#")))
