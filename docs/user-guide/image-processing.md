@@ -223,7 +223,9 @@ Earth's degrees over a Mars image, say) is never placed: the list says
 differ, Varda can't tell and doesn't place it either. In degrees,
 longitudes 0–360 and −180–180 name the same ground: an image at 257°E
 overlaps one at −103°E, and is placed there by shifting its longitudes by
-360°, with no resampling beyond what the grids need.
+360°, with no resampling beyond what the grids need. A footprint that
+straddles 0°/360° (e.g. −1° to 1° over a 0–360 image) is placed only where
+one convention covers it; the rest is no data.
 
 **Same grid only** (the same size, map projection and pixel positions):
 Image Arithmetic's second image, Band Math's other images (`i3_b1`), PCA/

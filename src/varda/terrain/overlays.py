@@ -136,8 +136,9 @@ def toProjection(
 ) -> tuple[np.ndarray, Affine]:
     """An array (rows, cols, bands), NaN for no data, reprojected into
     another map projection at about its own resolution (unchanged when the
-    projections are the same, however they're written). Takes WKT so a worker thread can call it: map
-    projection objects mustn't be shared between threads."""
+    projections are the same, however they're written). Takes WKT so a
+    worker thread can call it: map projection objects mustn't be shared
+    between threads."""
     if sameCrs(sourceWkt, targetWkt):
         return data, transform
     source, target = RasterioCRS.from_wkt(sourceWkt), RasterioCRS.from_wkt(targetWkt)

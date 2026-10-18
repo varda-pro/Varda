@@ -12,7 +12,7 @@ from collections.abc import Collection, Sequence
 import attrs
 import numpy as np
 from affine import Affine
-from rasterio import CRS
+from pyproj import CRS
 from rasterio.enums import Resampling
 from rasterio.errors import RasterioError
 from rasterio.transform import array_bounds
@@ -30,13 +30,9 @@ _MARGIN = 2
 SAME_GRID = "this needs the same grid"
 
 
-def _wkt(crs: CRS | None) -> str | None:
-    return None if crs is None else crs.to_wkt()
-
-
 def _sameCrs(a: VardaRaster, b: VardaRaster) -> bool:
     """The same map projection, however it's written (names may differ)."""
-    return sameCrs(_wkt(a.crs), _wkt(b.crs))
+    return sameCrs(a.crs, b.crs)
 
 
 def sameGrid(a: VardaRaster, b: VardaRaster) -> bool:
@@ -100,7 +96,7 @@ def gridDifference(image: VardaRaster, base: VardaRaster) -> str:
             else "georeferenced, and this image isn't"
         )
     if image.hasGeospatialData and not _sameCrs(image, base):
-        match = compatibility(_wkt(image.crs), _wkt(base.crs))
+        match = compatibility(image.crs, base.crs)
         if match == Compatibility.DIFFERENT_BODY:
             return "a different body"
         return "a different map projection"
@@ -157,7 +153,7 @@ def placementProblem(image: VardaRaster, base: VardaRaster) -> str | None:
         )
     if not image.hasGeospatialData:
         return "not georeferenced, can't be placed on this image"
-    reason = canTransform(_wkt(image.crs), _wkt(base.crs))
+    reason = canTransform(image.crs, base.crs)
     if reason is not None:
         return reason
     try:
@@ -205,7 +201,7 @@ def _footprintIn(
 ) -> tuple[float, float, float, float]:
     """``image``'s bounds (west, south, east, north) in ``crs``."""
     bounds = _bounds(image)
-    if crs is None or sameCrs(_wkt(crs), _wkt(image.crs)):
+    if crs is None or sameCrs(crs, image.crs):
         return bounds
     return transform_bounds(image.crs, crs, *bounds, densify_pts=21)
 
@@ -219,7 +215,7 @@ def _longitudeShift(source: VardaRaster, target: VardaRaster) -> float | None:
     left, bottom, right, top = _bounds(source)
     if south >= top or north <= bottom:
         return None
-    geographic = describeCrs(_wkt(source.crs)).units == "°"
+    geographic = describeCrs(source.crs).units == "°"
     for shift in (0.0, 360.0, -360.0) if geographic else (0.0,):
         if west + shift < right and east + shift > left:
             return shift

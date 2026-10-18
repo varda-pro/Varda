@@ -173,13 +173,11 @@ class MosaicProject:
         if len(images) < 2:
             raise MosaicError("A mosaic needs at least two images.")
         first = images[0].crs
-        firstWkt = None if first is None else first.to_wkt()
         for image in images[1:]:
-            wkt = None if image.crs is None else image.crs.to_wkt()
-            if not sameCrs(firstWkt, wkt):
+            if not sameCrs(first, image.crs):
                 raise MosaicError(
                     "The images are in different map projections ("
-                    f"{describeCrs(firstWkt).text}; {describeCrs(wkt).text}); "
+                    f"{describeCrs(first).text}; {describeCrs(image.crs).text}); "
                     "reproject them to one first (Varda doesn't yet reproject "
                     "while mosaicking)."
                 )

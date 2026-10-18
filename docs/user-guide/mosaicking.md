@@ -8,7 +8,8 @@ often as you like.
 
 "The same map projection" means the same geometry, not the same text: the
 projection and its parameters, the body's radii, the prime meridian and the
-axes match (angles to 1e-9°, lengths to 1e-6 m, radii to 1e-3 m), whatever
+axes match (angles to 1e-9°, lengths to 1e-6 m, scale factors to 1e-12,
+radii to 1e-3 m), whatever
 the coordinate systems are named. A Mars equirectangular written by GDAL
 (`D_MARS`) and the same projection written by the Ames Stereo Pipeline
 (`IAU_2015:49910`) are one projection, and their pixels are used as they
