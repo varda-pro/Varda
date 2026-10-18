@@ -168,7 +168,13 @@ def test_diagnostics_name_the_platform_build_and_folder(qtbot, runtime):
     assert str(runtime.root) in text and "linux-x64-cu130" in text
 
 
-def test_the_dialog_scrolls_on_a_short_laptop_screen(qtbot, runtime):
+@pytest.mark.parametrize("freeMB", [500_000, 1_000])  # plenty of disk, almost none
+def test_the_dialog_scrolls_on_a_short_laptop_screen(
+    qtbot, runtime, monkeypatch, freeMB
+):
+    # the low-space note lengthens the size text, so the free disk space of
+    # the machine running the test must not decide the result
+    monkeypatch.setattr(optional_features_dialog, "_freeSpaceMB", lambda path: freeMB)
     dialog = _dialog(qtbot, runtime)
     assert dialog.minimumSizeHint().height() < 400  # its sections scroll
     dialog.resize(dialog.minimumSizeHint().width(), 500)
