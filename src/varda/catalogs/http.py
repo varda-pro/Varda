@@ -63,9 +63,13 @@ def fetchJson(
 
 
 def fetchBytes(
-    url: str, headers: Mapping[str, str] | None = None, limit: int = 5_000_000
+    url: str,
+    headers: Mapping[str, str] | None = None,
+    limit: int = 5_000_000,
+    timeout: float = TIMEOUT_S,
 ) -> bytes:
-    """A small file (a thumbnail, say) in memory; at most ``limit`` bytes."""
+    """A small file (a thumbnail, say) in memory; at most ``limit`` bytes,
+    giving up after ``timeout`` seconds without a reply."""
     request = urllib.request.Request(
         url, headers={**_headers(headers), "Accept": "*/*"}
     )
@@ -74,7 +78,7 @@ def fetchBytes(
     try:
         with urllib.request.urlopen(
             request,
-            timeout=TIMEOUT_S,
+            timeout=timeout,
             context=context if url.startswith("https") else None,
         ) as response:
             return response.read(limit)

@@ -35,6 +35,8 @@ from varda.analysis.band_parameters import BandParametersAnalysis
 from varda.analysis.transforms import PcaAnalysis
 from varda.app import VardaApplication
 from varda.branding.title_mark import ICON_DIR
+from varda.catalogs.basemaps import LAYERS, bundledImage
+from varda.catalogs.gazetteer import loadGazetteer
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import ImageLoadingService
@@ -63,6 +65,7 @@ def runSelfTest(app: VardaApplication) -> int:
                 lambda: _spectralLibraries(Path(folder) / "lib.sli"),
             ),
             ("coordinate systems", _coordinateSystems),
+            ("Find Data basemaps and names", _basemaps),
             ("ENVI write and read", lambda: _roundTrip(image, Path(folder) / "a.img")),
             (
                 "GeoTIFF write and read",
@@ -168,6 +171,16 @@ def _spectralLibraries(path: Path) -> str:
     loaded = loadEnviLibrary(writeEnviLibrary(path, spectra))
     assert [s.name for s in loaded] == [s.name for s in spectra], "names differ"
     return ", ".join(f"{name} ({size})" for name, size in sizes.items())
+
+
+def _basemaps() -> str:
+    """Every bundled global image decodes, and every body has its names."""
+    for layer in LAYERS:
+        assert bundledImage(layer).shape[0] >= 512, f"{layer.layerId} is broken"
+    bodies = {layer.body for layer in LAYERS}
+    counts = {body: len(loadGazetteer(body) or ()) for body in bodies}
+    assert all(counts.values()), f"names: {counts}"
+    return f"{len(LAYERS)} images, {sum(counts.values())} names"
 
 
 def _coordinateSystems() -> str:

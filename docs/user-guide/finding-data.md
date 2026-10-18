@@ -62,9 +62,11 @@ your system's keychain. The three catalogs above don't need one.
 
 The map shows the collection's body in **Equirectangular**, **North Polar
 Stereographic** or **South Polar Stereographic** projection, on a sphere of
-the body's mean radius (for drawing only). **Basemap** puts an open
-georeferenced image of the same body under the footprints; **Add Overlay…**
-draws a vector file (a traverse, a geologic map); **Whole Body** zooms out.
+the body's mean radius (for drawing only). **Basemap** shows the body's
+global imagery (see below) or an open georeferenced image of the same body
+under the footprints; **Names** labels features with their IAU names; **Go
+to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
+traverse, a geologic map); **Whole Body** zooms out.
 
 Click a footprint to select it, Shift-click to add, Ctrl-click (Cmd-click on
 a Mac) to remove, and Shift-drag to add every footprint in a box. The
@@ -73,6 +75,97 @@ column: for ODE, observation type, incidence, emission and phase angles,
 solar longitude, map resolution (px/°) and comment, rounded to four
 decimal places. **Preview** shows the selected product's thumbnail and details.
 **Show only selected** narrows the table to the selection.
+
+### Basemaps, names and Go to
+
+The basemap and names are for finding your way around: where Isidis Planitia
+or Valles Marineris is, or which part of Gale crater a footprint covers.
+They're not data: don't measure on them (see [Uncertainty and
+quality](#uncertainty-and-quality)).
+
+**Global imagery.** For each body, **Basemap** offers one or more global
+mosaics, the first chosen by default. Each comes in two parts:
+
+- A small global image bundled with Varda (2048 × 1024 pixels for Mars's
+  MOLA relief, the Moon, Mercury and Titan, 1024 × 512 for the others), so
+  the basemap works offline.
+- Sharper tiles streamed from NASA's Solar System Treks as you zoom in.
+  Varda works out the zoom whose pixels are no larger than the screen's
+  (up to the layer's deepest), fetches only the tiles in view (at most 48;
+  a coarser zoom beyond that), and draws them over the bundled image. Tiles
+  are fetched in the background, six at a time, a third of a second after
+  the view stops moving; the map never waits for them. One view's tiles are
+  fetched at a time: when you move on, tiles not yet started for the old
+  view are skipped. A tile that hasn't arrived within 10 seconds is left to
+  the bundled image. Only replies that are images are cached.
+
+| Body | Layer (Trek identifier) | Deepest zoom | Credit |
+|---|---|---|---|
+| Mercury | MESSENGER MDIS global mosaic (`Mercury_MESSENGER_MDIS_Basemap_BDR_Mosaic_Global_166m`) | 7 | NASA/JHUAPL/Carnegie Institution of Washington (MESSENGER MDIS) |
+| Venus | Magellan radar global mosaic (`Venus_Magellan_C3-MDIR_Global_Mosaic_2025m`) | 5 | NASA/JPL (Magellan SAR); USGS |
+| Moon | LRO WAC global mosaic (`LRO_WAC_Mosaic_Global_303ppd_v02`) | 8 | NASA/GSFC/Arizona State University (LRO LROC WAC) |
+| Mars | MOLA color shaded relief (`Mars_MGS_MOLA_ClrShade_merge_global_463m`) | 7 | NASA/JPL/GSFC (MGS MOLA); USGS |
+| Mars | Viking MDIM 2.1 color mosaic (`Mars_Viking_MDIM21_ClrMosaic_global_232m`) | 7 | NASA/JPL (Viking Orbiter); USGS |
+| Phobos | Viking global mosaic (`Phobos_Viking_Mosaic_40ppd_DLRcontrol`) | 5 | NASA/JPL (Viking Orbiter); DLR |
+| Ceres | Dawn FC global mosaic (`Ceres_Dawn_FC_DLR_global_59ppd_Feb2016`) | 5 | NASA/JPL-Caltech/UCLA/MPS/DLR/IDA (Dawn FC) |
+| Vesta | Dawn FC HAMO global mosaic (`Vesta_Dawn_HAMO_Photo_DLR_global_74ppd_IAU`) | 6 | NASA/JPL-Caltech/UCLA/MPS/DLR/IDA (Dawn FC) |
+| Io | Voyager and Galileo color mosaic (`Io_GalileoSSI_Voyager_Global_Mosaic_ClrMerge_1km`) | 4 | NASA/JPL (Voyager ISS, Galileo SSI); USGS |
+| Europa | Voyager and Galileo global mosaic (`Europa_Voyager_GalileoSSI_global_mosaic_500m`) | 5 | NASA/JPL (Voyager ISS, Galileo SSI); USGS |
+| Ganymede | Voyager and Galileo global mosaic (`Ganymede_Voyager_GalileoSSI_global_mosaic_1km`) | 5 | NASA/JPL (Voyager ISS, Galileo SSI); USGS |
+| Callisto | Voyager and Galileo global mosaic (`Callisto_Voyager_GalileoSSI_global_mosaic_1km`) | 5 | NASA/JPL (Voyager ISS, Galileo SSI); USGS |
+| Enceladus | Cassini ISS global mosaic (`Enceladus_Cassini_mosaic_global_110m`) | 5 | NASA/JPL/Space Science Institute (Cassini ISS) |
+| Titan | Cassini ISS global mosaic (`Titan_ISS_P19658_Mosaic_Global_4km`) | bundled only | NASA/JPL/Space Science Institute (Cassini ISS) |
+
+All are served by NASA Solar System Treks (https://trek.nasa.gov) as WMTS
+tiles in their equirectangular ("EQ") projection, which is the map's own:
+tile URLs are
+`https://trek.nasa.gov/tiles/<Body>/EQ/<layer>/1.0.0/default/default028mm/<zoom>/<row>/<column>.<jpg or png>`,
+with 2^(zoom+1) × 2^zoom tiles of 256 pixels, each 180°/2^zoom on a side,
+rows from 90°N and columns from 180°W. Each layer's capabilities are at
+`https://trek.nasa.gov/tiles/<Body>/EQ/<layer>/1.0.0/WMTSCapabilities.xml`;
+all were checked on 2026-10-17. Trek's Titan tiles are centered on 180°
+though their capabilities say -180° (Kraken Mare, Ligeia Mare and Menrva
+fall 180° from their IAU positions), so Varda bundles a copy shifted back to
+IAU longitudes and doesn't stream Titan. Earth has no global imagery or
+names. The map shows the active layer's credit under it.
+
+**Projections.** Tiles are streamed only in **Equirectangular**. In the
+polar projections, Varda reprojects the bundled image to the view
+(nearest neighbor, 1500 × 1500 pixels for the hemisphere, clear beyond the
+equator), so the polar basemap is no sharper than the bundled image.
+
+**Offline.** When a tile can't be fetched (no connection, or Trek is down),
+the bundled image shows in its place and the status bar says how many tiles
+are missing. Tiles already fetched are kept in a cache and work offline.
+
+**The tile cache** is the `basemap-tiles` folder in Varda's cache folder
+(on macOS `~/Library/Caches/Varda/basemap-tiles`, on Windows
+`%LOCALAPPDATA%\Varda\cache\basemap-tiles`, on Linux
+`~/.cache/Varda/basemap-tiles`), laid out as
+`<body>/<layer>/<zoom>/<row>/<column>.<ext>`. It holds at most 200 MB: past
+that, the least recently used tiles are deleted until it's under 180 MB.
+You can delete the folder at any time.
+
+**Names.** With **Names** checked, features are labeled with their names
+from the IAU Gazetteer of Planetary Nomenclature. Only names adopted by the
+IAU are included; Varda bundles them for every body above. A feature is
+labeled once its diameter spans at least 28 screen pixels, so large features
+show when zoomed out and smaller ones appear as you zoom in. Labels are
+placed largest feature first, and one that would overlap a label already
+placed is left out (at most 60 labels at once). A feature the Gazetteer
+gives no diameter (an eruptive center, say) counts as 1/400 of the body's
+circumference. Hover over a label for the feature's type and diameter.
+Positions are the Gazetteer's center points: latitudes planetocentric as
+published, longitudes converted from the Gazetteer's 0–360° east to the
+map's -180° to 180° east.
+
+**Go to.** Type a name in **Go to a feature…**: the list completes on any
+part of the name, ignoring case. Pick one or press Enter, and the map zooms
+to a view twice the feature's diameter across, centered on it (wider in
+longitude by 1/cos(latitude), so the feature keeps its shape). Pressing Enter
+on a partial name goes to the best match: an exact name first, then the
+largest feature whose name starts with what you typed, then the largest
+containing it. Accents are ignored ("angstrom" finds Ångström).
 
 ## Downloading
 
@@ -155,6 +248,14 @@ date, the version or the search. To keep that record:
 - **Viewing geometry** in the results (angles, solar longitude) is the
   catalog's, rounded for display. Quote the product's label for exact
   values.
+- **Basemaps and names are for orientation.** The bundled images are
+  0.35° per pixel (1024 pixels across) or 0.18° (2048 across); streamed tiles go down to
+  the Trek layer's resolution. Each mosaic has its own control network and
+  version, and may be offset from the coordinates of your data, from other
+  mosaics and from the Gazetteer by up to several of its pixels (more on
+  the older Voyager- and Galileo-based mosaics). Gazetteer center points are
+  approximate, and for large or irregular features (a planitia, a regio) only
+  nominal. To locate or measure, use the georeferenced products themselves.
 - **Integrity:** a checksum match means the file is the one the catalog
   published. A size match (all ODE gives) catches truncated files but not
   corrupted ones.
@@ -166,3 +267,13 @@ date, the version or the search. To keep that record:
   their description or in `sci:citation` and `sci:doi` fields.
 - PDS ODE REST interface: https://oderest.rsl.wustl.edu/ODE_REST_V2.1.pdf
 - STAC specification: https://stacspec.org
+- Basemap imagery: NASA Solar System Treks, https://trek.nasa.gov, with the
+  data credits in the table above; each layer's description on Trek names
+  its source products. The mosaics are released through NASA's PDS and served by
+  Trek without use restrictions; credit them as given.
+- Feature names: Gazetteer of Planetary Nomenclature, IAU Working Group for
+  Planetary System Nomenclature (WGPSN), https://planetarynames.wr.usgs.gov,
+  center points from USGS Astrogeology's GIS downloads
+  (`https://asc-planetarynames-data.s3.us-west-2.amazonaws.com/<BODY>_nomenclature_center_pts.zip`),
+  retrieved 2026-10-17. Each bundled table's first line gives its URL and
+  retrieval date (`resources/basemaps/names/`).
