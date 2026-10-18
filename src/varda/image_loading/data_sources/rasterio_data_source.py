@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import rasterio as rio
+from rasterio.enums import MaskFlags
 from rasterio.windows import Window
 from affine import Affine
 import affine as affine_module
@@ -40,6 +41,43 @@ if TYPE_CHECKING:
 logging.getLogger("rasterio").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+def _maskedToNan(
+    reader: rio.DatasetReader,
+    data: np.ndarray,
+    indexes: list[int],
+    window: Window,
+) -> np.ndarray:
+    """``data`` (bands, h, w) with the pixels GDAL's mask marks invalid set to
+    NaN, as ``read(masked=True).filled(nan)`` gave, but in place, one band's
+    mask at a time. Integer data holding no-data becomes float32 (8 and 16-bit)
+    or float64 first; integer data without any keeps its type. Other types
+    (complex) get the no-data value, as ``filled()`` gave."""
+    if all(MaskFlags.all_valid in reader.mask_flag_enums[i - 1] for i in indexes):
+        return data
+    mask = np.empty(data.shape[1:], dtype=np.uint8)
+
+    def invalid(index: int) -> np.ndarray:
+        reader.read_masks(index, window=window, out=mask)
+        return mask == 0
+
+    if data.dtype.kind in "iub":
+        if not any(invalid(index).any() for index in indexes):
+            return data
+        data = data.astype(np.float32 if data.dtype.itemsize <= 2 else np.float64)
+    if data.dtype.kind == "f":
+        fill = np.nan
+    elif (
+        len({reader.nodatavals[i - 1] for i in indexes}) == 1
+        and reader.nodata is not None
+    ):
+        fill = reader.nodata
+    else:
+        fill = np.ma.default_fill_value(data.dtype)
+    for band, index in zip(data, indexes):
+        np.putmask(band, invalid(index), fill)
+    return data
 
 
 @register_data_source("TIFF/GeoTIFF", (".tif", ".tiff", ".geotiff", ".gtiff"))
@@ -100,42 +138,46 @@ class RasterioDataSource(DataSource):
         window: tuple[int, int, int, int] | None = None,
         masked=True,
     ) -> np.ndarray:
-        # process window and band inputs into rasterio formats
-        rio_window = None
-        if window is not None:
-            row_off, col_off, height, width = window
-            rio_window = Window(
-                col_off=col_off, row_off=row_off, width=width, height=height
-            )
-        rio_indices = None
-        if bandIndices is not None:
-            bandIndices = np.asarray(bandIndices, dtype=np.uint)
-            # rasterio uses 1-based band indexing
-            rio_indices = [int(i) + 1 for i in bandIndices]
+        """Pixels as (h, w, bands); with ``masked``, GDAL's no-data mask as NaN
+        (integer data holding no-data becomes float first: NaN has no integer
+        form).
 
-        # get data
-        data = self._reader().read(
-            indexes=rio_indices, window=rio_window, masked=masked
+        Read into one array, band by band in memory (the result is a band-last
+        view of it, so a band stays contiguous for display), with the mask
+        applied in place: no masked array and no second copy, so a read peaks
+        at about the size of its result.
+        """
+        reader = self._reader()
+        rowOff, colOff, height, width = window or (0, 0, self.height, self.width)
+        # clipped to the image, as rasterio's read clips a window
+        rowOff, colOff = max(rowOff, 0), max(colOff, 0)
+        height = (
+            max(min(window[0] + height, self.height) - rowOff, 0) if window else height
         )
-
+        width = max(min(window[1] + width, self.width) - colOff, 0) if window else width
+        indexes = (
+            list(range(1, self.bandCount + 1))
+            if bandIndices is None
+            # rasterio uses 1-based band indexing
+            else [int(i) + 1 for i in np.asarray(bandIndices, dtype=np.uint)]
+        )
+        if len({reader.dtypes[i - 1] for i in indexes}) > 1:
+            raise ValueError(f"The bands of {self.filePath} have different data types")
+        data = np.empty(
+            (len(indexes), height, width), dtype=reader.dtypes[indexes[0] - 1]
+        )
+        if data.size:
+            rioWindow = Window.from_slices(
+                (rowOff, rowOff + height), (colOff, colOff + width)
+            )
+            reader.read(indexes, window=rioWindow, out=data)
+            if masked:
+                data = _maskedToNan(reader, data, indexes, rioWindow)
         # (bands, h, w) -> (h, w, bands)
-        data = np.moveaxis(data, 0, -1)
-
-        # replace nodata values with NaN; integer data holding nodata becomes
-        # float first (NaN has no integer form)
-        if np.ma.isMaskedArray(data):
-            if np.ma.is_masked(data) and data.dtype.kind in "iub":
-                data = data.astype(
-                    np.float32 if data.dtype.itemsize <= 2 else np.float64
-                )
-            data = data.filled(np.nan) if data.dtype.kind == "f" else data.filled()
-
-        return data
+        return np.moveaxis(data, 0, -1)
 
     def readAllBands(self) -> np.ndarray:
-        window = (0, 0, self.height, self.width)
-        data = self.getData(window=window)
-        return data
+        return self.getData()
 
     def __getitem__(self, key) -> np.ndarray:
         if not isinstance(key, tuple):

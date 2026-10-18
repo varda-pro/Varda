@@ -43,9 +43,25 @@ can alter results.
   tabbed, floated or folded, and the session keeps where they are, the
   shapes, Separate and Details. The failing-window markers are now on the
   Spectra plot's denominator curve. Results are unchanged.
+- **Open images use much less memory.** Loading an image now peaks at about
+  its own size, plus GDAL's shared block cache (a 1.5 GB CRISM MTRDR took
+  5.2 GB, now 2.6 GB, and loads in half the time), with the same values and
+  no-data. Images in memory aim to take at most 40 % of RAM together; beyond
+  that the least recently used are read on demand from their files, with
+  the same results (see Installing → Memory).
 
 ### Fixed
 
+- **Varda no longer slows down as more images are open.** The image list
+  draws each image from a small thumbnail made once (from a sample of its
+  pixels, and again after its metadata is edited) instead of rendering every
+  image in full on every repaint and hover. Overlay bars no longer redraw
+  their views each time an image is opened, removed or renamed, unless the
+  overlay shown is the one removed. Pixel-spectra plots watch only their own
+  widgets for clicks, not every event in the application, which made tab
+  switches and new workspaces slower with every workspace open. A new
+  General Image Analysis workspace no longer flashes up as its own window
+  before it's tabbed.
 - **No more errors or crashes after closing a workspace.** Loading an image
   after closing a workspace with an overlay bar, Find Data or 3D Terrain
   tab, the Find Data map moving as its window closed, or a Spectral

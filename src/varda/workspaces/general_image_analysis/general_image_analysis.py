@@ -102,8 +102,6 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         self._initUI()
         self._connectSignals()
 
-        self.showMaximized()
-
         self.setStatusMessage("General Image Analysis Workflow initialized")
 
     def _initComponents(self):

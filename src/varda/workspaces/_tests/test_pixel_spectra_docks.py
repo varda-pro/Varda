@@ -3,11 +3,26 @@
 import numpy as np
 import PyQt6Ads as ads
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QMainWindow
+from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGraphicsView,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+)
 
+from varda.common.di_types import ProjectImages
 from varda.common.ui import VardaDockWidget
 from varda.utilities.debug import generate_random_image
+from varda.workspaces.dual_image_workspace.dual_image_workspace import (
+    DualImageWorkspace,
+    DualImageWorkspaceConfig,
+)
+from varda.workspaces.general_image_analysis.general_image_analysis import (
+    GeneralImageAnalysisConfig,
+    GeneralImageAnalysisWorkflow,
+)
 from varda.workspaces.pixel_spectra_docks import PixelSpectraDocks
 
 
@@ -152,3 +167,67 @@ def test_configure_hook_runs_for_every_plot(qtbot):
     docks.newPlot()
     assert seen == docks.plots
     del window
+
+
+def test_clicking_deep_inside_a_plot_makes_it_active(qtbot, docks):
+    first = docks.newPlot()
+    docks.newPlot()
+    # the press goes to the plot's graphics view, not the plot widget
+    view = first.findChild(QGraphicsView)
+    assert view is not None and view.viewport() is not None
+
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton)
+
+    assert docks.active is first
+
+
+def test_clicking_a_widget_added_to_a_plot_later_makes_it_active(qtbot, docks):
+    first = docks.newPlot()
+    docks.newPlot()
+    late = QPushButton("late", first)
+
+    qtbot.mouseClick(late, Qt.MouseButton.LeftButton)
+
+    assert docks.active is first
+
+
+def test_clicks_elsewhere_leave_the_active_plot_alone(qtbot, docks):
+    docks.newPlot()
+    second = docks.newPlot()
+    elsewhere = QPushButton("elsewhere")
+    qtbot.addWidget(elsewhere)
+
+    qtbot.mouseClick(elsewhere, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(docks._anchor.tabWidget(), Qt.MouseButton.LeftButton)
+
+    assert docks.active is second
+
+
+def _appFilterInstalls(monkeypatch) -> list[QObject]:
+    """The filters installed on the application from now on."""
+    installed: list[QObject] = []
+    original = QObject.installEventFilter
+
+    def record(self, filterObj):
+        if self is QApplication.instance():
+            installed.append(filterObj)
+        original(self, filterObj)
+
+    monkeypatch.setattr(QObject, "installEventFilter", record)
+    return installed
+
+
+def test_workspaces_install_no_application_wide_filter(qtbot, monkeypatch):
+    installed = _appFilterInstalls(monkeypatch)
+    first = generate_random_image((20, 30, 10))
+    second = generate_random_image((20, 30, 10))
+    images = ProjectImages([first, second])
+    general = GeneralImageAnalysisWorkflow(GeneralImageAnalysisConfig(images))
+    qtbot.addWidget(general)
+    config = DualImageWorkspaceConfig(images)
+    config.image1Param.set(first)
+    config.image2Param.set(second)
+    dual = DualImageWorkspace(config)
+    qtbot.addWidget(dual)
+
+    assert installed == []

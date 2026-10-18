@@ -264,3 +264,83 @@ def test_a_deleted_bar_ignores_new_project_images(qtbot):
     widget = OverlayBar(images, base, [])
     sip.delete(widget)
     images.append(_classification(base))  # raised RuntimeError (deleted object)
+
+
+@pytest.fixture
+def projectBar(qtbot, monkeypatch):
+    """A bar over the project's image list, counting its views' redraws."""
+    base = _base()
+    images = ProjectImages([base])
+    viewports = [ImageViewport(ImageRenderer(image=base)) for _ in range(2)]
+    redraws = []
+    for viewport in viewports:
+        qtbot.addWidget(viewport)
+        monkeypatch.setattr(viewport, "refresh", lambda: redraws.append(1))
+    widget = OverlayBar(images, base, viewports)
+    qtbot.addWidget(widget)
+    return widget, viewports, images, redraws
+
+
+def test_without_an_overlay_new_images_are_offered_without_redrawing(projectBar):
+    widget, _viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    images.append(_raster(np.zeros((3, 8)), "smaller"))
+    images.refresh()  # e.g. Image Properties OK
+    assert widget.imageBox.count() == 2
+    assert widget.imageBox.itemText(1) == result.name
+    assert redraws == []
+
+
+def test_a_shown_overlay_stays_without_redrawing_until_it_is_removed(projectBar):
+    widget, viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    widget.setOverlay(result)
+    widget.layerBox.setCurrentText("P(bright)")
+    redraws.clear()
+
+    images.append(_classification(images[0]))
+    assert widget.currentOverlay() is result
+    assert widget.layerBox.currentText() == "P(bright)"
+    assert redraws == []
+
+    images.remove(result)
+    assert widget.currentOverlay() is None
+    assert not any(v.hasOverlayImage() for v in viewports)
+    assert redraws  # the overlay is taken off the views
+
+
+def test_a_renamed_image_is_listed_under_its_new_name(projectBar):
+    widget, _viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    result.setMetadataOverrides({}, name="renamed")
+    images.refresh()
+    assert widget.imageBox.itemText(1) == "renamed"
+    assert redraws == []
+
+
+def test_editing_the_shown_overlay_shows_it_again(projectBar):
+    widget, _viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    widget.setOverlay(result)
+    widget.layerBox.setCurrentText("P(dark)")
+    before = widget.renderer
+    redraws.clear()
+
+    result.setMetadataOverrides({"nodata": 0.0})
+
+    assert widget.renderer is not before
+    assert widget.layerBox.currentText() == "P(dark)"  # the layer chosen stays
+    assert redraws
+
+
+def test_a_rename_shows_at_once(projectBar):
+    widget, _viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    result.setMetadataOverrides({}, name="renamed")  # no list refresh
+    assert widget.imageBox.itemText(1) == "renamed"
+    assert redraws == []

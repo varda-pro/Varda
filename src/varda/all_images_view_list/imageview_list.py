@@ -1,22 +1,36 @@
 # standard library
+import logging
+import weakref
 
 # third party imports
+import numpy as np
+from psygnal import Signal
 from PyQt6 import QtWidgets, QtCore, QtGui
-from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QImage, QPixmap, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QListView,
     QListWidget,
     QListWidgetItem,
 )
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
 
 # local imports
+from varda.all_images_view_list.thumbnail import THUMBNAIL_SIZE, thumbnailRgba
 from varda.common import ObservableList
-from varda.image_rendering.image_renderer import ImageRenderer
-from varda.image_rendering.raster_view import VardaImageItem
+from varda.common.entities import VardaRaster
+from varda.common.parameter_widgets import connectWhileAlive
 
-ICON_SIZE = 64
+ICON_SIZE = THUMBNAIL_SIZE
+
+logger = logging.getLogger(__name__)
+
+
+def _pixmap(rgba: np.ndarray) -> QPixmap:
+    height, width = rgba.shape[:2]
+    data = np.ascontiguousarray(rgba).tobytes()
+    image = QImage(data, width, height, 4 * width, QImage.Format.Format_RGBA8888)
+    return QPixmap.fromImage(image.copy())  # copy: QImage doesn't own ``data``
 
 
 class ImageListWidget(QListWidget):
@@ -46,8 +60,17 @@ class ImageListWidget(QListWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setMouseTracking(True)  # hover state for the item delegate
         self.imageList = imageList
+        # One small thumbnail per image, made on its first paint and again
+        # after the image's metadata (e.g. its no-data value) changes
+        self._thumbnails: weakref.WeakKeyDictionary[VardaRaster, QPixmap] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._watched: weakref.WeakSet[VardaRaster] = weakref.WeakSet()
+        placeholder = QPixmap(ICON_SIZE, ICON_SIZE)
+        placeholder.fill(QtGui.QColor("pink"))
+        self._placeholderIcon = QIcon(placeholder)  # sizes the items
 
-        self.setItemDelegate(ImageItemDelegate(self))
+        self.setItemDelegate(ImageItemDelegate(self.thumbnail, self))
 
         self._updateItems()
         self.imageList.sigDataChanged.connect(self._updateItems)
@@ -77,61 +100,84 @@ class ImageListWidget(QListWidget):
         images = [item.data(Qt.ItemDataRole.UserRole) for item in [clicked, *others]]
         self.sigContextMenuRequested.emit(images, self.viewport().mapToGlobal(pos))
 
+    def thumbnail(self, image: VardaRaster) -> QPixmap:
+        """The image's thumbnail, made once and kept until the image changes."""
+        pixmap = self._thumbnails.get(image)
+        if pixmap is None:
+            ratio = self.devicePixelRatioF()  # sharp on high-DPI screens
+            try:
+                pixmap = _pixmap(thumbnailRgba(image, round(ICON_SIZE * ratio)))
+            except Exception:
+                logger.exception("Couldn't make a thumbnail of %s", image.name)
+                pixmap = self._placeholderIcon.pixmap(ICON_SIZE, ICON_SIZE)
+            pixmap.setDevicePixelRatio(ratio)
+            self._thumbnails[image] = pixmap
+        return pixmap
+
+    def _onImageEdited(self) -> None:
+        image = Signal.sender()
+        self._thumbnails.pop(image, None)
+        for row in range(self.count()):
+            item = self.item(row)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) is image:
+                item.setText(image.name)
+        viewport = self.viewport()
+        if viewport is not None:
+            viewport.update()
+
     def _updateItems(self):
         self.clear()
         for image in self.imageList:
             item = QListWidgetItem()
-            item.setText(image.metadata.name)
+            item.setText(image.name)
             item.setData(Qt.ItemDataRole.UserRole, image)
-            pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
-            pixmap.fill(QtGui.QColor("pink"))  # default color if image doesnt render
-            item.setIcon(QIcon(pixmap))
+            item.setIcon(self._placeholderIcon)
             self.addItem(item)
+            if image not in self._watched:
+                self._watched.add(image)
+                connectWhileAlive(image.sigMetadataChanged, self._onImageEdited, self)
         self.update()
 
 
 class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
-    """Delegate that allows for custom rendering of list items. This is used so we
-    can use the Image entity data to display a preview."""
+    """Draws each image's cached thumbnail with its name below."""
 
-    iconSize = QtCore.QRect(0, 0, ICON_SIZE, ICON_SIZE)
-
-    def __init__(self, parent=None):
+    def __init__(self, thumbnail, parent=None):
         super().__init__(parent)
+        self._thumbnail = thumbnail  # VardaRaster -> QPixmap
 
     def paint(self, painter, option, index):
-        """Renders an Image."""
-
-        # Get the data from the model
         image = index.data(QtCore.Qt.ItemDataRole.UserRole)
-        renderer = ImageRenderer(image)
+        label = index.data(QtCore.Qt.ItemDataRole.DisplayRole) or ""
+        rect = option.rect
+        iconRect = QRect(
+            rect.x() + (rect.width() - ICON_SIZE) // 2, rect.y(), ICON_SIZE, ICON_SIZE
+        )
+        if image is not None:
+            pixmap = self._thumbnail(image)
+            size = pixmap.size().scaled(
+                iconRect.size(), Qt.AspectRatioMode.KeepAspectRatio
+            )
+            target = QRect(QPoint(0, 0), size)
+            target.moveCenter(iconRect.center())
+            painter.drawPixmap(target, pixmap)
 
-        # Get the current stretch index from the main view
-        icon = VardaImageItem(renderer)
-        icon.setRect(self.iconSize)
-        label = index.data(QtCore.Qt.ItemDataRole.DisplayRole)
-
-        if icon is None:
-            return
-
-        # Create a QGraphicsScene and add items
-        scene = QtWidgets.QGraphicsScene()
-        scene.addItem(icon)
-
-        text = QtWidgets.QGraphicsTextItem(label)
-        text.setFont(QtGui.QFont(text.font().family(), 16))
-        text.setPos(0, self.iconSize.height())
-        scene.addItem(text)
-
-        # Set the painter to the scene
-        scene.render(painter, QtCore.QRectF(option.rect))
+        textRect = QRect(rect.x(), iconRect.bottom() + 1, rect.width(), 0)
+        textRect.setBottom(rect.bottom())
+        text = option.fontMetrics.elidedText(
+            label, Qt.TextElideMode.ElideRight, textRect.width()
+        )
+        painter.save()
+        painter.setPen(option.palette.text().color())
+        painter.drawText(
+            textRect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text
+        )
 
         # Selection: a translucent tint plus a solid frame in the palette's
         # highlight color over the whole item (thumbnail and label), so it
         # reads at a glance. Hover: a thin frame as a clickability cue.
         highlight = option.palette.highlight().color()
-        frame = option.rect.adjusted(1, 1, -2, -2)
-        painter.save()
+        frame = rect.adjusted(1, 1, -2, -2)
         if option.state & QtWidgets.QStyle.StateFlag.State_Selected:
             tint = QtGui.QColor(highlight)
             tint.setAlpha(60)
@@ -143,31 +189,3 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             painter.setPen(QtGui.QPen(highlight, 1))
             painter.drawRoundedRect(frame, 3, 3)
         painter.restore()
-
-    def _get_current_stretch_index(self, image_index):
-        """Get the current stretch index for an image from the main view"""
-        try:
-            # Get the main GUI by walking up the parent hierarchy
-            parent = self.parent()
-            while parent:
-                if hasattr(parent, "rasterViews") and hasattr(parent, "proj"):
-                    # Found MainGUI
-                    main_gui = parent
-                    if image_index in main_gui.rasterViews:
-                        raster_view = main_gui.rasterViews[image_index]
-                        if hasattr(raster_view, "viewModel") and hasattr(
-                            raster_view.viewModel, "stretchIndex"
-                        ):
-                            return raster_view.viewModel.stretchIndex
-                    break
-                parent = parent.parent()
-        except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.error(
-                f"Error getting current stretch index for image {image_index}: {e}"
-            )
-
-        # Fallback to stretch index 0 if we can't find the current one
-        return 0
