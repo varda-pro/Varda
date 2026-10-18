@@ -590,7 +590,7 @@ class FindDataWorkspace(QMainWindow):
             return self.map.areaBounds()
         if mode == AREA_IMAGE:
             image = self.areaImage.currentData()
-            return imageBounds(image, self.body()) if image is not None else None
+            return imageBounds(image) if image is not None else None
         return self.map.viewBounds()
 
     def query(self) -> SearchQuery | None:

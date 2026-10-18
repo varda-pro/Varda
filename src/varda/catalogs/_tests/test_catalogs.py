@@ -12,11 +12,12 @@ import shapely
 
 from varda.catalogs import ode, stac
 from varda.catalogs.catalog import CatalogError, SearchQuery
-from varda.catalogs.bodies import BodyChoice, bodyOf
+from varda.catalogs.bodies import BodyChoice
 from varda.catalogs.footprints import FootprintFileCatalog
 from varda.catalogs.ode import OdeCatalog, odeLongitudes
 from varda.catalogs.registry import availableCatalogs
 from varda.catalogs.stac import StacApi, StacCatalog, _checksum
+from varda.geo.bodies import BODIES, identifyBody
 
 FIXTURES = Path(__file__).parent / "fixtures"
 LIVE = os.environ.get("VARDA_LIVE_TESTS") == "1"
@@ -256,7 +257,39 @@ def footprintFile(monkeypatch):
 def test_the_body_comes_from_the_files_crs(footprintFile):
     (collection,) = footprintFile.collections()
     assert collection.body == "Mars"
-    assert bodyOf(gpd.read_file(FIXTURES / "ode_mtrdr_footprints.gpkg").crs) == "Mars"
+    crs = gpd.read_file(FIXTURES / "ode_mtrdr_footprints.gpkg").crs
+    assert identifyBody(crs).body == BODIES["Mars"]
+
+
+def _footprints(tmp_path, monkeypatch, crs, name):
+    path = tmp_path / f"{name}.gpkg"
+    frame = gpd.GeoDataFrame(
+        {"PRODUCT_ID": ["A"]}, geometry=[shapely.box(0, 0, 1000, 1000)], crs=crs
+    )
+    frame.to_file(path, driver="GPKG")
+    monkeypatch.setattr(FootprintFileCatalog, "paths", [str(path)])
+    return FootprintFileCatalog()
+
+
+def test_vesta_footprints_are_on_vesta_not_earth(tmp_path, monkeypatch):
+    # Vesta's IAU 2015 sphere, projected: identified as Earth before
+    vesta = "+proj=eqc +R=255000 +units=m +no_defs"
+    (collection,) = _footprints(tmp_path, monkeypatch, vesta, "vesta").collections()
+    assert collection.body == "Vesta"
+
+
+def test_geographic_footprints_on_an_unknown_body_have_no_body(tmp_path, monkeypatch):
+    unknown = "+proj=longlat +R=100000 +no_defs"
+    (collection,) = _footprints(tmp_path, monkeypatch, unknown, "x").collections()
+    assert collection.body == ""
+
+
+def test_footprints_on_an_unknown_body_say_so(tmp_path, monkeypatch):
+    catalog = _footprints(
+        tmp_path, monkeypatch, "+proj=eqc +R=100000 +units=m +no_defs", "unknown"
+    )
+    with pytest.raises(CatalogError, match="no known body"):
+        catalog.collections()
 
 
 def test_footprint_files_search_by_area_id_and_date(footprintFile):

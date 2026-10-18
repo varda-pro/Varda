@@ -6,7 +6,10 @@ from app_model import Application
 
 from varda.common.di_types import ProjectImages
 from varda.context_keys import IMAGE_LIST_VISIBLE
+from varda.geo._tests.fixtures import writeWgs84
+from varda.image_loading.image_loading_service import loadRaster
 from varda.maingui import MainGUI
+from varda.utilities.debug import generate_random_image
 
 APP_NAME = "varda-test-image-list"
 
@@ -39,3 +42,36 @@ def test_view_image_list_brings_it_back(gui):
     assert gui.app.context[IMAGE_LIST_VISIBLE] is True
     gui.toggleImageList()
     assert not gui.imageListDock.isVisible()
+
+
+def test_a_crs_problem_is_announced_once_per_image(gui, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    messages = []
+    gui.statusBar().messageChanged.connect(messages.append)
+    gui.app.images.append(image)
+    gui.app.images.refresh()  # a second change: not announced again
+    shown = [m for m in messages if m]
+    assert shown == [
+        "scene.tif — Its CRS says Earth; read as Mars (from its label). "
+        "Details in Image Properties."
+    ]
+
+
+def test_an_image_without_problems_is_not_announced(gui):
+    messages = []
+    gui.statusBar().messageChanged.connect(messages.append)
+    gui.app.images.append(generate_random_image((20, 20, 10)))
+    assert [m for m in messages if m] == []
+
+
+def test_several_problems_at_once_are_one_message(gui, tmp_path):
+    first = loadRaster(str(writeWgs84(tmp_path)))
+    (tmp_path / "b").mkdir()
+    second = loadRaster(str(writeWgs84(tmp_path / "b")))
+    messages = []
+    gui.statusBar().messageChanged.connect(messages.append)
+    gui.app.images.extend([first, second])
+    assert [m for m in messages if m] == [
+        "2 images have coordinate-system problems (a dot on their thumbnails). "
+        "Details in Image Properties."
+    ]

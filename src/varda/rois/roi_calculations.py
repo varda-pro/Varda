@@ -1,6 +1,8 @@
 """Calculated ROI columns.
 
-A column can be filled from each ROI's geometry (area, perimeter, centroid),
+A column can be filled from each ROI's geometry (area, perimeter, centroid;
+areas and perimeters also on the body, geodesically, with
+``geo.measure.polygonArea``),
 from a statistic of a raster band inside the ROI (zonal statistics), or from
 an expression over other columns. ``CalculatedColumns`` keeps them current as
 ROIs are drawn or edited. Expressions are parsed and evaluated by a small
@@ -15,8 +17,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from affine import Affine
 from pyproj import CRS
-from shapely.geometry import Polygon
+from shapely.geometry import MultiPolygon, Polygon
 
 from varda.common.expressions import (
     ExpressionError as ExpressionError,
@@ -26,18 +29,26 @@ from varda.common.expressions import (
     words,
 )
 from varda.common.entities import VardaRaster
+from varda.geo.measure import Measurement, polygonArea
 from varda.rois.roi_collection import ROICollection
 
 # kind -> (label, short name used in suggested column names)
 GEOMETRY_MEASURES = {
     "area_pixels": ("Area (pixels)", "area_px"),
     "perimeter_pixels": ("Perimeter (pixels)", "perimeter_px"),
-    "area_map": ("Area (map units²)", "area"),
-    "perimeter_map": ("Perimeter (map units)", "perimeter"),
+    "area_map": ("Area (map units², planar)", "area"),
+    "perimeter_map": ("Perimeter (map units, planar)", "perimeter"),
+    "area_body": ("Area on the body (km²)", "area_km2"),
+    "perimeter_body": ("Perimeter on the body (km)", "perimeter_km"),
     "centroid_x": ("Centroid x (map units)", "centroid_x"),
     "centroid_y": ("Centroid y (map units)", "centroid_y"),
 }
-MAP_MEASURES = {"area_map", "perimeter_map", "centroid_x", "centroid_y"}
+# measured on the body, geodesically: kind -> its unit per meter or m²
+BODY_MEASURES = {"area_body": 1e-6, "perimeter_body": 1e-3}
+MAP_MEASURES = {"area_map", "perimeter_map", "centroid_x", "centroid_y"} | set(
+    BODY_MEASURES
+)
+NO_MAP_COORDINATES = "the image has no map coordinates"
 
 
 def _finite(values: np.ndarray) -> np.ndarray:
@@ -138,6 +149,70 @@ def suggestName(calculation: Calculation, units: str | None = None) -> str:
     return "calc"
 
 
+def pixelSize(transform: Affine) -> float:
+    """The smaller side of a pixel, in map units: the densify step."""
+    return min(
+        math.hypot(transform.a, transform.d), math.hypot(transform.b, transform.e)
+    )
+
+
+@dataclass(frozen=True)
+class BodyValue:
+    """One ROI's area or perimeter on the body, and why it is blank."""
+
+    value: float  # km² or km; NaN when it can't be measured
+    measurement: Measurement | None
+    reason: str | None  # why it is blank
+
+
+def measureOnBody(collection: ROICollection, kind: str, fid: int) -> BodyValue:
+    """The ROI's area (km²) or perimeter (km) on the body, geodesic on the
+    CRS's own surface, its edges densified to one pixel (``polygonArea``)."""
+    crs = collection.crs
+    if crs is None:
+        return BodyValue(math.nan, None, NO_MAP_COORDINATES)
+    shape = collection.getROI(fid).geometry
+    if not isinstance(shape, Polygon | MultiPolygon):
+        return BodyValue(math.nan, None, "it is not a polygon")
+    try:
+        # points PROJ can't invert become NaN, with NumPy's invalid-value warnings
+        with np.errstate(invalid="ignore"):
+            area, perimeter = polygonArea(crs, shape, pixelSize(collection.transform))
+    except ValueError as error:
+        return BodyValue(math.nan, None, str(error))
+    measurement = area if kind == "area_body" else perimeter
+    value = measurement.value * BODY_MEASURES[kind]
+    if not math.isfinite(value):
+        return BodyValue(
+            math.nan,
+            None,
+            "some of its points are outside where the projection can be converted",
+        )
+    return BodyValue(value, measurement, None)
+
+
+def describeOnBody(kind: str, measured: Sequence[tuple[str, BodyValue]]) -> str:
+    """How a column of ``kind`` was measured, from its ROIs' (name, value)."""
+    found = [v.measurement for _, v in measured if v.measurement is not None]
+    parts = [GEOMETRY_MEASURES[kind][0]]
+    if found:
+        method = found[0].method
+        parts.append(f"{method[:1].upper()}{method[1:]}, edges densified to 1 pixel")
+        differences = [m.bodyModelDifference for m in found if m.reference]
+        if differences:
+            parts.append(
+                "On the body's IAU 2015 reference ellipsoid: up to "
+                f"{max(differences) * 100:.2g}% different"
+            )
+    reasons: dict[str, list[str]] = {}
+    for name, value in measured:
+        if value.reason is not None:
+            reasons.setdefault(value.reason, []).append(name)
+    for reason, names in reasons.items():
+        parts.append(f"Blank for {', '.join(names)}: {reason}")
+    return ". ".join(parts)
+
+
 def describe(calculation: Calculation) -> str:
     if isinstance(calculation, GeometryMeasure):
         return GEOMETRY_MEASURES[calculation.kind][0]
@@ -153,11 +228,14 @@ class CalculatedColumns:
     def __init__(self, collection: ROICollection):
         self.collection = collection
         self._columns: dict[str, Calculation] = {}
+        # body measures' last values per kind and ROI, for the descriptions
+        self._onBody: dict[str, dict[int, BodyValue]] = {}
         self._updating = False
         collection.sigROIAdded.connect(self._onROIChanged)
         collection.sigROIsAdded.connect(self._onROIsAdded)
         collection.sigROIUpdated.connect(self._onROIChanged)
         collection.sigColumnsChanged.connect(self._onColumnsChanged)
+        collection.sigGeoreferenceChanged.connect(self._onGeoreferenceChanged)
 
     def add(self, name: str, calculation: Calculation) -> str:
         """Add a calculated column; returns its name as stored."""
@@ -174,7 +252,19 @@ class CalculatedColumns:
 
     def describe(self, column: str) -> str | None:
         calculation = self._columns.get(column)
-        return describe(calculation) if calculation is not None else None
+        if calculation is None:
+            return None
+        if isinstance(calculation, GeometryMeasure) and calculation.kind in (
+            BODY_MEASURES
+        ):
+            known = self._onBody.get(calculation.kind, {})
+            measured = [
+                (self.collection.getROI(fid).name, known[fid])
+                for fid in self.collection.fids
+                if fid in known
+            ]
+            return describeOnBody(calculation.kind, measured)
+        return describe(calculation)
 
     def preview(self, calculation: Calculation) -> float | None:
         """The value for the first ROI, without adding a column."""
@@ -218,6 +308,10 @@ class CalculatedColumns:
         return results
 
     def _geometry(self, kind: str, fid: int) -> float:
+        if kind in BODY_MEASURES:
+            measured = measureOnBody(self.collection, kind, fid)
+            self._onBody.setdefault(kind, {})[fid] = measured
+            return measured.value
         if kind in MAP_MEASURES and self.collection.crs is not None:
             shape = self.collection.getROI(fid).geometry
         else:
@@ -247,6 +341,12 @@ class CalculatedColumns:
     def _onROIsAdded(self, fids: list[int]) -> None:
         if not self._updating and self._columns:
             self.recalculate(fids=fids)
+
+    def _onGeoreferenceChanged(self) -> None:
+        """A new CRS: every map and body measure is read anew."""
+        if self._columns:
+            self._onBody.clear()
+            self.recalculate()
 
     def _onColumnsChanged(self) -> None:
         present = set(self.collection.userColumns)

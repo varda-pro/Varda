@@ -11,6 +11,7 @@ from PyQt6.QtCore import QPointF, QRectF
 from pyproj import CRS
 
 from varda.common.entities import VardaRaster
+from varda.geo._tests.fixtures import CRISM_MTRDR_WKT, WGS84, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.raster_view.viewport_tools.pixel_select_tool import (
     PixelSelectTool,
@@ -228,3 +229,29 @@ def test_a_notice_says_when_images_are_not_linked_as_asked(workspace, qtbot, pro
     qtbot.addWidget(byMap)
     byMap.show()
     assert byMap.linkNotice.isVisible() and "PLAIN" in byMap.linkNotice.text()
+
+
+def test_images_of_two_bodies_are_not_linked_and_nothing_breaks(qtbot):
+    mars = makeImage(
+        CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0, name="CRISM"
+    )
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01, name="EARTH")
+    widget = LinkedImagesWorkspace([mars, earth], [], Link.MAP)
+    qtbot.addWidget(widget)
+    widget.show()
+    assert "EARTH: on Earth, not Mars; not linked" in widget.linkNotice.text()
+
+    widget.placeCursor(0, 3.5, 6.5)
+    assert widget.cursorShown == [True, False]
+    widget.placeCursor(1, 3.5, 6.5)
+    assert widget.cursorShown == [False, True]
+
+    before = widget.viewports[0].viewRect()
+    widget.viewports[1].setViewRange(QRectF(5, 5, 10, 8))
+    widget.viewports[1].sigViewRangeChangedManually.emit()
+    assert widget.viewports[0].viewRect() == before
+
+    widget.addLine(0, np.array([[1, 1], [9, 9]]), LineKind.STRAIGHT)
+    assert [len(c) for c in widget.imageLines] == [1, 0]
+    assert widget.addLine(1, np.array([[1, 1], [9, 9]]), LineKind.STRAIGHT) is None
+    assert len(widget.lines.lines()) == 1

@@ -1,14 +1,21 @@
 """Calculated ROI columns: geometry, zonal statistics and expressions."""
 
+import math
+
 import numpy as np
 import pytest
+import shapely
 from affine import Affine
+from pyproj import Geod, Proj
 from rasterio.crs import CRS
 from shapely.geometry import box
 
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.geo._tests.fixtures import HIRISE_POLAR_PROJ, MOLA_MEGDR_PROJ, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.rois.roi_calculations import (
+    GEOMETRY_MEASURES,
+    MAP_MEASURES,
     CalculatedColumns,
     Expression,
     ExpressionError,
@@ -19,7 +26,7 @@ from varda.rois.roi_calculations import (
     parseExpression,
     suggestName,
 )
-from varda.rois.roi_collection import ROICollection
+from varda.rois.roi_collection import NewROI, ROICollection
 
 RED = Color(1.0, 0.0, 0.0, 0.5)
 
@@ -177,3 +184,153 @@ def test_band_names_with_units_work_in_names_and_expressions():
     variable = next(iter(expressionVariables(rois)))
     calc.add("double", Expression(f"{variable} * 2"))
     assert rois.getProperty(fid, "double") == pytest.approx(4)
+
+
+# --- areas and perimeters on the body ----------------------------------------
+
+
+def _groundSquareOnPolarStereographic() -> tuple[ROICollection, int, Proj]:
+    """A 1 km × 1 km ground square at 85°N on HiRISE's polar sphere: its map
+    side is 1 km times the projection's scale there."""
+    image = makeImage(HIRISE_POLAR_PROJ, centerLonLat=(0.0, 85.0), pixelSize=10.0)
+    proj = Proj(HIRISE_POLAR_PROJ)
+    scale = proj.get_factors(0.0, 85.0).parallel_scale
+    (x,), (y,) = proj([0.0], [85.0])
+    half = 500.0 * scale
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(
+        box(x - half, y - half, x + half, y + half), "square", RED, ROIMode.RECTANGLE
+    )
+    return rois, fid, proj
+
+
+def test_a_ground_square_at_85N_has_its_ground_area_whatever_the_projection():
+    rois, fid, _ = _groundSquareOnPolarStereographic()
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    calc.add("perimeter_km", GeometryMeasure("perimeter_body"))
+    calc.add("area_m2", GeometryMeasure("area_map"))
+    assert rois.getProperty(fid, "area_km2") == pytest.approx(1.000, abs=0.001)
+    assert rois.getProperty(fid, "perimeter_km") == pytest.approx(4.000, abs=0.004)
+    # the planar column stays the flat map's area, scale error and all
+    assert rois.getProperty(fid, "area_m2") > 1.003e6
+
+
+def test_a_geographic_box_at_the_equator_has_the_geodesic_area():
+    image = makeImage(
+        MOLA_MEGDR_PROJ, centerLonLat=(0.05, 0.0), pixelSize=1 / 128, width=32
+    )
+    rois = ROICollection.fromImage(image)
+    polygon = box(0.0, -0.05, 0.1, 0.05)
+    fid = rois.addROI(polygon, "box", RED, ROIMode.RECTANGLE)
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    dense = shapely.segmentize(polygon, 0.001)
+    lon, lat = np.asarray(dense.exterior.coords).T
+    area, _ = Geod(a=3396000, b=3396000).polygon_area_perimeter(lon, lat)
+    assert abs(area) / 1e6 == pytest.approx(35.13, rel=0.001)
+    assert rois.getProperty(fid, "area_km2") == pytest.approx(
+        abs(area) / 1e6, rel=0.001
+    )
+
+
+def test_body_measures_are_described_with_method_and_body_model_term():
+    rois, _, _ = _groundSquareOnPolarStereographic()
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    text = calc.describe("area_km2")
+    assert text is not None
+    assert text.startswith("Area on the body (km²)")
+    assert "Geodesic (Karney 2013) on sphere R = 3376.20 km" in text
+    assert "densified to 1 pixel" in text
+    assert "IAU 2015 reference ellipsoid" in text
+
+
+def test_body_measures_compute_for_bulk_added_rois():
+    rois, fid, _ = _groundSquareOnPolarStereographic()
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    geometry = rois.getROI(fid).geometry
+    (added,) = rois.addROIs([NewROI(geometry, "copy", RED, ROIMode.RECTANGLE)])
+    assert rois.getProperty(added, "area_km2") == pytest.approx(1.000, abs=0.001)
+
+
+def test_body_measures_are_blank_with_the_reason_without_georeferencing():
+    image = _image()
+    rois = _rois(image)
+    fid = _addPixelBox(rois, image, 2, 2, 6, 4)
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    assert math.isnan(rois.getProperty(fid, "area_km2"))
+    assert "no map coordinates" in (calc.describe("area_km2") or "")
+
+
+def test_points_off_the_projection_are_blank_with_the_reason():
+    crs = "+proj=ortho +lat_0=0 +lon_0=0 +R=3396190 +units=m +no_defs"
+    image = makeImage(crs, centerLonLat=(0.0, 0.0), pixelSize=1e4)
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(box(3e6, 0, 4e6, 1e6), "off", RED, ROIMode.RECTANGLE)
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    assert math.isnan(rois.getProperty(fid, "area_km2"))
+    assert "Blank for off" in (calc.describe("area_km2") or "")
+
+
+def test_body_measure_names_and_planar_labels():
+    assert suggestName(GeometryMeasure("area_body")) == "area_km2"
+    assert suggestName(GeometryMeasure("perimeter_body")) == "perimeter_km"
+    assert GEOMETRY_MEASURES["area_map"][0] == "Area (map units², planar)"
+    assert GEOMETRY_MEASURES["perimeter_map"][0] == "Perimeter (map units, planar)"
+    assert {"area_body", "perimeter_body"} <= MAP_MEASURES
+
+
+def _earthBoxOnWgs84():
+    image = makeImage("EPSG:4326", centerLonLat=(10.0, 0.0), pixelSize=0.01)
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(box(9.9, -0.1, 10.1, 0.1), "box", RED, ROIMode.RECTANGLE)
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    return image, rois, fid, calc
+
+
+def test_a_crs_set_on_the_image_reaches_its_rois_and_their_body_areas():
+    image, rois, fid, calc = _earthBoxOnWgs84()
+    onEarth = rois.getProperty(fid, "area_km2")
+    before = rois.getROI(fid).geometry
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})  # Mars, geographic
+    assert rois.crs == image.crs
+    assert rois.gdf.crs == image.crs
+    assert rois.getROI(fid).geometry.equals(before)  # the same pixels
+    onMars = rois.getProperty(fid, "area_km2")
+    assert onMars < onEarth * 0.3
+    assert "sphere R = 3396.19 km" in (calc.describe("area_km2") or "")
+    # Undo: back to the file's CRS
+    image.setMetadataOverrides({})
+    assert rois.crs == image.crs
+    assert rois.getProperty(fid, "area_km2") == pytest.approx(onEarth)
+
+
+def test_other_metadata_edits_leave_the_rois_alone():
+    image, rois, fid, _ = _earthBoxOnWgs84()
+    crs = rois.crs
+    changed = []
+    rois.sigCollectionChanged.connect(lambda: changed.append(True))
+    image.setMetadataOverrides({"description": "edited"})
+    assert rois.crs is crs
+    assert not changed
+
+
+def test_rois_in_pixels_move_to_map_coordinates_when_the_image_gains_a_crs():
+    transform = Affine(10, 0, 1000, 0, -10, 5000)
+    data = np.zeros((20, 30, 1), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data, transform=transform), name="plain")
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(box(2, 2, 6, 4), "r", RED, ROIMode.RECTANGLE)
+    image.setMetadataOverrides({"crs": "EPSG:32633"})
+    assert rois.crs is not None
+    assert rois.getPixelCoordinates(fid) == pytest.approx(
+        np.asarray(box(2, 2, 6, 4).exterior.coords)
+    )
+    image.setMetadataOverrides({})
+    assert rois.crs is None
+    assert rois.getROI(fid).geometry.equals(box(2, 2, 6, 4))

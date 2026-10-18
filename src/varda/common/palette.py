@@ -1,4 +1,5 @@
-"""Distinct colors for categories: ROI classes and the classes of a class map."""
+"""Colors: distinct ones for categories (ROI classes and the classes of a
+class map), and the one for warnings."""
 
 CLASS_PALETTE = [
     "#e6194b",  # red
@@ -18,3 +19,8 @@ CLASS_PALETTE = [
 
 def classColor(index: int) -> str:
     return CLASS_PALETTE[index % len(CLASS_PALETTE)]
+
+
+# Something worth a look (e.g. a coordinate-system finding): amber, readable
+# on light and dark backgrounds alike
+WARNING_COLOR = "#f0a020"

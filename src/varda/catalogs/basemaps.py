@@ -26,9 +26,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from varda.catalogs.bodies import bodyName
 from varda.catalogs.catalog import CatalogError
 from varda.catalogs.http import fetchBytes
+from varda.geo.bodies import bodyNamed
 from varda.utilities.resources import resource_path
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north (degrees)
@@ -223,8 +223,10 @@ LAYERS: tuple[BasemapLayer, ...] = (
 
 def layersFor(body: str) -> list[BasemapLayer]:
     """The body's imagery layers, the default first (none for Earth)."""
-    body = bodyName(body) if body else ""
-    return [layer for layer in LAYERS if layer.body == body]
+    known = bodyNamed(body) if body else None
+    if known is None:
+        return []
+    return [layer for layer in LAYERS if layer.body == known.name]
 
 
 def layerById(layerId: str) -> BasemapLayer | None:

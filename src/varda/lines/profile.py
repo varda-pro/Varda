@@ -3,18 +3,34 @@
 Lines are in image pixel coordinates (x = column, y = row, with pixel
 corners at whole numbers, as the viewports and ROIs use), so a pixel's value
 sits at its center, (col + 0.5, row + 0.5). Distances are in meters when the
-image is georeferenced: planar in a projected coordinate system (converted
-from its units), geodesic on the body's ellipsoid in a geographic one; in
-pixels otherwise.
+image is georeferenced, in any coordinate system: the sum of the geodesics
+(Karney, 2013) between samples about 1 px apart, on the CRS's own ellipsoid
+or sphere (``varda.geo.measure``), so the projection's scale error doesn't
+enter them. On a CRS with no body ellipsoid (an engineering or local CRS)
+but known linear units, they are planar, in those units converted to
+meters; in pixels otherwise. Samples PROJ can't convert to longitude and
+latitude have NaN distances, and so do all after them.
 """
 
 from __future__ import annotations
+
+import logging
 
 import numpy as np
 import shapely
 from affine import Affine
 from attrs import frozen
-from pyproj import CRS, Geod
+from pyproj import CRS
+from pyproj.exceptions import CRSError
+
+from varda.geo import measure
+from varda.geo.measure import Measurement
+from varda.utilities.proj_lock import PROJ_LOCK
+
+logger = logging.getLogger(__name__)
+
+# how a length on a CRS with no body ellipsoid is measured
+PLANAR_METHOD = "planar, in the coordinate system's units (no body ellipsoid)"
 
 Points = np.ndarray  # (n, 2): x (column), y (row)
 
@@ -86,23 +102,27 @@ def mapDistances(
     positions: Points, transform: Affine | None, crs: CRS | str | None
 ) -> tuple[np.ndarray, str]:
     """Distance along ``positions`` from the first, and its units: meters
-    when the image is georeferenced, pixels otherwise."""
+    on the body (geodesic) when the image is georeferenced, meters on the
+    map (planar) on a CRS with no body but known linear units, pixels
+    otherwise. Never raises."""
+    mode, metersPerUnit = _distanceMode(transform, crs)
+    if mode == "geodesic":
+        assert transform is not None and crs is not None
+        try:
+            # samples PROJ can't convert are NaN, not warnings (np.errstate
+            # is per thread)
+            with np.errstate(invalid="ignore"):
+                points = _mapPoints(positions, transform)
+                return measure.cumulativeDistance(crs, points), "m"
+        except (ValueError, CRSError):
+            logger.exception("Couldn't measure on the body; using pixels")
+            mode = "px"
+    if mode == "planar":
+        assert transform is not None
+        steps = np.diff(_mapPoints(positions, transform), axis=0) * metersPerUnit
+        return np.concatenate([[0.0], np.cumsum(np.hypot(*steps.T))]), "m"
     steps = np.diff(positions, axis=0)
-    if transform is None or transform.is_identity or crs is None:
-        return np.concatenate([[0.0], np.cumsum(np.hypot(*steps.T))]), "px"
-    crs = CRS.from_user_input(crs)
-    xs, ys = transform * (positions[:, 0], positions[:, 1])
-    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
-    if crs.is_geographic:
-        geod = crs.get_geod() or Geod(ellps="WGS84")
-        _, _, lengths = geod.inv(
-            xs[:-1].tolist(), ys[:-1].tolist(), xs[1:].tolist(), ys[1:].tolist()
-        )
-        lengths = np.abs(np.asarray(lengths, float))
-    else:
-        factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-        lengths = np.hypot(np.diff(xs), np.diff(ys)) * factor
-    return np.concatenate([[0.0], np.cumsum(lengths)]), "m"
+    return np.concatenate([[0.0], np.cumsum(np.hypot(*steps.T))]), "px"
 
 
 def profile(
@@ -128,8 +148,73 @@ def simplify(points: Points, tolerance: float = 0.5) -> Points:
     return np.asarray(line.coords, dtype=float)
 
 
-def lineLength(vertices: Points, transform: Affine | None, crs) -> tuple[float, str]:
-    """The polyline's length (its vertices only) and units."""
-    positions, _ = densify(vertices, step=np.inf)
-    distance, units = mapDistances(positions, transform, crs)
-    return float(distance[-1]) if len(distance) else 0.0, units
+def lineMeasurement(
+    vertices: Points,
+    transform: Affine | None,
+    crs: CRS | str | None,
+    *,
+    withDistortion: bool = True,
+) -> Measurement | None:
+    """The polyline's length on the body, followed about 1 px at a time as
+    drawn on the image, with how it was measured, the body-model term and
+    (``withDistortion``) the projection's distortion over it; NaN when PROJ
+    can't convert part of it. On a CRS with no body but known linear units,
+    its planar length in meters (``PLANAR_METHOD``); None in pixels (no
+    georeferencing, or units unknown). Never raises."""
+    mode, metersPerUnit = _distanceMode(transform, crs)
+    if mode == "px":
+        return None
+    assert transform is not None and crs is not None
+    positions, _ = densify(vertices)
+    points = _mapPoints(positions, transform)
+    if mode == "planar":
+        steps = np.diff(points, axis=0) * metersPerUnit
+        length = float(np.sum(np.hypot(*steps.T)))
+        return Measurement(length, "m", PLANAR_METHOD, None, 0.0, None)
+    try:
+        with np.errstate(invalid="ignore"):  # NaN where PROJ can't convert
+            return measure.lineLength(
+                crs, points, transform=transform if withDistortion else None
+            )
+    except (ValueError, CRSError):
+        logger.exception("Couldn't measure on the body; using pixels")
+        return None
+
+
+def lineLength(
+    vertices: Points, transform: Affine | None, crs: CRS | str | None
+) -> tuple[float, str]:
+    """The polyline's length and units: meters on the body when the image
+    is georeferenced (``lineMeasurement``), pixels otherwise."""
+    measurement = lineMeasurement(vertices, transform, crs, withDistortion=False)
+    if measurement is not None:
+        return measurement.value, "m"
+    _, distance = densify(vertices, step=np.inf)
+    return float(distance[-1]) if len(distance) else 0.0, "px"
+
+
+def _distanceMode(transform: Affine | None, crs: CRS | str | None) -> tuple[str, float]:
+    """How to measure on this image: "geodesic" (its CRS is on a body's
+    sphere or ellipsoid), "planar" (no ellipsoid, but linear units: the
+    meters per unit) or "px" (no georeferencing, or unknown units)."""
+    if transform is None or transform.is_identity or crs is None:
+        return "px", 1.0
+    try:
+        with PROJ_LOCK:
+            crs = CRS.from_user_input(crs)
+            if crs.ellipsoid is not None:
+                return "geodesic", 1.0
+            axes = crs.axis_info
+            unit = axes[0].unit_name.lower() if axes else ""
+            factor = axes[0].unit_conversion_factor if axes else 0.0
+    except CRSError:
+        return "px", 1.0
+    angular = any(word in unit for word in ("degree", "radian", "grad", "arc"))
+    if unit in ("", "unknown") or angular or not factor > 0:
+        return "px", 1.0
+    return "planar", factor
+
+
+def _mapPoints(positions: Points, transform: Affine) -> np.ndarray:
+    xs, ys = transform * (positions[:, 0], positions[:, 1])
+    return np.column_stack([np.asarray(xs, float), np.asarray(ys, float)])

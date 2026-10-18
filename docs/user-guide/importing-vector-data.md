@@ -42,9 +42,19 @@ coordinate system Varda **detected** and how.
 - **The file's coordinate system** (the default when the file has one):
   coordinates are reprojected from it to the image's coordinate system with
   PROJ (through pyproj), then to pixels with the image's geotransform.
+  Between two surfaces of one body (a sphere and an ellipsoid), each point
+  keeps its planetocentric longitude and latitude, as everywhere in Varda
+  (see [Coordinate systems](coordinate-systems.md)); a file on another body,
+  or on an unknown body whose radii differ from the image's, is refused.
 - **Degrees on Mars** (named for the image's body): the coordinates are
   longitude (east) and latitude in degrees on the image's body, in the
-  image's own geographic coordinate system, whatever the file says.
+  image's own geographic coordinate system, whatever the file says. The body
+  is identified from the image's coordinate system (its `IAU_2015` code, the
+  names in it, else its radius within 1 % of one body's IAU 2015 radii); an
+  image on no known body is offered **Degrees on the image's body**. Such an
+  image is never taken as Earth: WGS 84 degrees default to degrees on the
+  image's body, read in its own geographic coordinate system (its sphere or
+  ellipsoid), and **The file's coordinate system** is refused for them.
 - **The image's map coordinates**: the coordinates are already in the image's
   coordinate system; no reprojection, only the geotransform.
 - **Image pixels (column, row)**: x is the column and y the row, 0-based, with

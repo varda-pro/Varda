@@ -12,6 +12,9 @@ import numpy as np
 
 from varda import log
 from varda.common.entities import VardaRaster
+from varda.common.parameter_widgets import connectWhileAlive
+from varda.geo.describe import CrsDescription, describeCrs
+from varda.geo.format import formatLonLat, formatMapXY
 from varda.image_rendering import ImageRenderer
 from varda.image_rendering.image_renderer import RenderMode
 from varda.image_rendering.raster_view.navigable_view_box import NavigableViewBox
@@ -183,6 +186,15 @@ class ImageViewport(QWidget):
 
         self._imageItem.sigImageChanged.connect(self.sigImageChanged.emit)
         self._imageRenderer.sigShouldRefresh.connect(self.autoRefresh)
+
+        # The image's coordinate system in words, for the readout; describing
+        # it is too slow for every mouse move, so it is rebuilt only on edits
+        self._crsDescription: CrsDescription = self._describeImageCrs()
+        connectWhileAlive(
+            self._imageRenderer.image.sigMetadataChanged,
+            self._refreshCrsDescription,
+            self,
+        )
 
         # Tools installed on this viewport. The viewport filters the imageItem's
         # scene events and delivers translated PointerEvents to each tool.
@@ -490,18 +502,25 @@ class ImageViewport(QWidget):
             return
         self._readoutOverlay.showReadout(self._buildReadoutText(col, row))
 
+    def _describeImageCrs(self) -> CrsDescription:
+        image = self._imageRenderer.image
+        return describeCrs(image.crs, image.transform, image.width, image.height)
+
+    def _refreshCrsDescription(self) -> None:
+        self._crsDescription = self._describeImageCrs()
+
     def _buildReadoutText(self, col: int, row: int) -> str:
         image = self._imageRenderer.image
         lines = [f"px {col}, {row}"]
         if image.hasGeospatialData:
-            crs = image.crs
-            if crs is not None and not crs.is_geographic:
+            description = self._crsDescription
+            if description.kind in ("projected", "local"):
                 x, y = image.pixelToGeo(col, row)
-                lines.append(f"xy  {x:.2f}, {y:.2f}")
+                lines.append(formatMapXY(x, y, description))
             latLon = image.pixelToLatLon(col, row)
             if latLon is not None:
                 lat, lon = latLon
-                lines.append(f"lat/lon  {lat:.5f}°, {lon:.5f}°")
+                lines.append(formatLonLat(lon, lat, description))
         lines.append(self._formatBandValues(image, col, row))
         return "\n".join(lines)
 

@@ -52,6 +52,36 @@ packaged projects; **Reset to the File's** drops them. For an ENVI image,
 **Also save into the ENVI header** writes them into its `.hdr` (backed up
 first as `.hdr.bak`), so other software sees them too.
 
+### Corrected coordinate systems
+
+An image can carry a **corrected coordinate system** that Varda uses
+instead of the one its file declares. Varda sets one on its own in a single
+case: a planetary image tagged with Earth's degrees (WGS 84) whose label
+names another body (see
+[Coordinate systems](coordinate-systems.md#the-one-automatic-fix-and-why-only-that-one)).
+
+- **The file isn't changed.** The correction lives in Varda, with the
+  image, like the edits above; it is never written into the original file
+  or its header.
+- **Sessions keep it.** A session (and a packaged project) records the
+  CRS each image uses, as WKT, among its edits (`"crs"` in the image's
+  `overrides`). Reopening the session uses that CRS, even when the
+  automatic check would choose another, and checks it again; a session
+  that names the file's own CRS (`"crs": null`) keeps the file's. The
+  image's `crsFix` record is saved beside its edits (`"crsFix"`) and
+  restored with them, so a fix applied by hand, a CRS set by hand and an
+  undone fix are recorded the same way after reopening. A session saved
+  before Varda checked CRSs doesn't say, so the check made when the image
+  opens stands; one saved before Varda kept the records restores the CRS
+  without a record of how it was chosen.
+- **Editing other metadata keeps it.** Saving edits in Image Properties
+  doesn't drop the corrected CRS; **Reset to the File's** returns the image
+  to how it opened, including the automatic correction.
+- **Exports use it.** Files Varda writes from the image, or from results
+  made from it, carry the corrected CRS, and their provenance records the
+  correction as `crsFix` (see
+  [Reporting results](reporting-results.md#what-varda-records-and-what-it-doesnt)).
+
 ## Sharing a project
 
 **File → Package Project…** puts the whole project into one `.varda.zip`

@@ -6,8 +6,15 @@ new no-data value; everything that asks the image sees the change."""
 import numpy as np
 import pytest
 
+from pyproj import CRS
+
 from varda.common.entities import VardaRaster
+from varda.geo._tests.fixtures import WGS84, makeImage
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+
+
+MARS_SPHERE = CRS.from_user_input("IAU_2015:49900")
 
 
 def _image():
@@ -80,3 +87,45 @@ def test_a_renderer_redraws_when_the_no_data_value_changes(qtbot):
     image.setMetadataOverrides({"nodata": -999.0})
     assert refreshed
     assert renderer.render()[0, 0, 3] == 0  # now see-through no-data
+
+
+# --- a corrected coordinate system ---
+
+
+def _onWgs84() -> VardaRaster:
+    return makeImage(WGS84, centerLonLat=(137.4, -4.6), pixelSize=1 / 256)
+
+
+def test_a_crs_override_takes_the_files_place():
+    image = _onWgs84()
+    before = image.pixelToLatLon(10, 20)
+    image.setMetadataOverrides({"crs": MARS_SPHERE.to_wkt()})
+    assert image.crs is not None and sameCrs(image.crs, "IAU_2015:49900")
+    assert image.crs is image.crs  # built once per override
+    assert image.dataSource.crs is not None and image.dataSource.crs.to_epsg() == 4326
+    after = image.pixelToLatLon(10, 20)  # the cached transformer was rebuilt
+    assert after == pytest.approx(before)
+    image.setMetadataOverrides({})
+    assert image.crs is not None and image.crs.to_epsg() == 4326
+
+
+def test_a_crs_override_of_none_is_the_files_crs():
+    image = _onWgs84()
+    image.setMetadataOverrides({"crs": None})
+    assert image.crs is not None and image.crs.to_epsg() == 4326
+    assert image.metadataOverrides == {"crs": None}
+
+
+def test_a_crs_override_that_isnt_a_crs_is_refused():
+    image = _onWgs84()
+    image.setMetadataOverrides({"crs": "EPSG:4326"})
+    with pytest.raises(ValueError, match="coordinate system"):
+        image.setMetadataOverrides({"crs": "garbage"})
+    with pytest.raises(ValueError, match="coordinate system"):
+        image.setMetadataOverrides({"crs": 4326})
+    assert image.metadataOverrides == {"crs": "EPSG:4326"}  # unchanged
+
+
+def test_an_image_starts_without_a_health_check_or_label_facts():
+    image = _image()
+    assert image.crsHealth is None and image.labelHints is None

@@ -6,6 +6,7 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 
+from varda.geo._tests.fixtures import MARS_EQC_PDS3_WKT
 from varda.mosaicking.transforms import TransformModel
 from varda.terrain.overlays import (
     Alignment,
@@ -74,6 +75,13 @@ def test_reprojection_is_skipped_within_one_projection_and_done_across():
     )
     assert moved.shape[2] == 1 and np.isfinite(moved).any()
     assert transform.c == pytest.approx(10 * np.pi * 3389500 / 180, rel=1e-3)
+
+
+def test_equivalent_projections_are_not_reprojected():
+    data = np.ones((20, 30, 1), np.float32)
+    iau = CRS.from_user_input("IAU_2015:49910").to_wkt()
+    same, _ = toProjection(data, Affine(10, 0, 0, 0, -10, 0), MARS_EQC_PDS3_WKT, iau)
+    assert same is data
 
 
 def test_the_drape_covers_the_footprint_with_a_clear_border():

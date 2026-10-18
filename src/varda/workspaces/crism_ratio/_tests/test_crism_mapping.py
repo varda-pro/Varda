@@ -5,6 +5,7 @@ from affine import Affine
 from pyproj import CRS, Transformer
 
 from varda.common.entities import VardaRaster
+from varda.geo._tests.fixtures import CRISM_MTRDR_WKT, WGS84, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
 from varda.workspaces.linked_images.linking import Link
@@ -64,3 +65,10 @@ def test_data_to_view_round_trips_a_box():
     back = viewToData(view, data, Link.MAP, onView)
     assert back is not None
     np.testing.assert_allclose(back, box, atol=0.01)
+
+
+def test_a_browse_view_of_another_body_maps_nowhere():
+    data = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    assert viewToData(earth, data, Link.MAP, [[3, 4]]) is None
+    assert np.isnan(dataToView(earth, data, Link.MAP, np.array([[3.0, 4.0]]))).all()

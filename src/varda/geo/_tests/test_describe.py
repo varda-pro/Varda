@@ -1,0 +1,238 @@
+"""describeCrs: each fixture's coordinate system in words a scientist
+recognizes, and the fields behind them."""
+
+import math
+
+import pytest
+from affine import Affine
+from pyproj import CRS
+
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_ENVI_WKT,
+    CRISM_MTRDR_WKT,
+    CTX_DEM_PROJ,
+    HIRISE_POLAR_PROJ,
+    LRO_WAC_PROJ,
+    LRO_WAC_SOUTH_POLAR_PROJ,
+    MOLA_MEGDR_PROJ,
+    VESTA_IAU,
+    WGS84,
+    makeImage,
+)
+from varda.geo.describe import describeCrs
+
+
+def _described(crs: str, centerLonLat: tuple[float, float], pixelSize: float):
+    image = makeImage(crs, centerLonLat=centerLonLat, pixelSize=pixelSize)
+    return describeCrs(image.crs, image.transform, image.width, image.height)
+
+
+@pytest.mark.parametrize("crs", [CRISM_MTRDR_WKT, CRISM_MTRDR_ENVI_WKT])
+def test_crism_mtrdr(crs):
+    description = _described(crs, (77.0, 15.0), 18.0)
+    assert description.text == (
+        "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px"
+    )
+    assert description.kind == "projected" and description.units == "m"
+    assert description.latitudeType == "planetocentric"
+    assert description.longitudeDirection == "east"
+    assert description.longitudeDomain == "-180..180"
+    assert description.centerLatitude == 15 and description.centerLongitude == 0
+    assert description.pixelSizeM == pytest.approx(18.0)
+    assert description.authority is None
+
+
+def test_crism_mtrdr_away_from_its_standard_parallel_has_two_ground_sizes():
+    """The real MTRDR's standard parallel is 15°N, so at 18.4°N a pixel's
+    east–west side on the ground is 18 m / k with
+    k = cos 15° / cos 18.4° = 1.0180 (Snyder, 1987, p. 91): 17.68 m, which
+    differs from its 18 m north–south side by more than 1%."""
+    description = _described(CRISM_MTRDR_WKT, (77.0, 18.4), 18.0)
+    k = math.cos(math.radians(15)) / math.cos(math.radians(18.4))
+    assert description.pixelSizeEastWestM == pytest.approx(18 / k, rel=1e-6)
+    assert description.pixelSizeEastWestM == pytest.approx(17.68, abs=0.01)
+    assert description.pixelSizeNorthSouthM == pytest.approx(18.0, rel=1e-9)
+    assert description.pixelSizeM == pytest.approx(18.0, rel=1e-9)
+    assert description.text == (
+        "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, "
+        "17.7 m/px (east–west), 18 m/px (north–south)"
+    )
+
+
+def test_ground_sizes_within_1_percent_are_one_size():
+    """At 16°N k = cos 15°/cos 16° = 1.0049: one size, the larger."""
+    description = _described(CRISM_MTRDR_WKT, (77.0, 16.0), 18.0)
+    assert description.pixelSizeEastWestM == pytest.approx(18 / 1.0049, rel=1e-4)
+    assert description.text.endswith(", 18 m/px")
+
+
+def test_a_projected_pixel_is_measured_on_the_ground():
+    """eqc with lat_ts = 0 at 60°N: 100 m map pixels are 50 m east–west."""
+    crs = "+proj=eqc +lat_ts=0 +lon_0=0 +R=3396190 +units=m +no_defs"
+    description = _described(crs, (0.0, 60.0), 100.0)
+    assert description.pixelSizeEastWestM == pytest.approx(50.0, rel=1e-4)
+    assert description.pixelSizeNorthSouthM == pytest.approx(100.0, rel=1e-6)
+    assert description.text.endswith("50 m/px (east–west), 100 m/px (north–south)")
+
+
+def test_hirise_polar():
+    """A 1 m map pixel at 85°N is 1 m / k on the ground, k = 2/(1 + sin 85°)
+    = 1.0019 (Snyder, 1987, eq. 21-4): 0.998 m."""
+    description = _described(HIRISE_POLAR_PROJ, (0.0, 85.0), 1.0)
+    assert description.text == (
+        "Mars, sphere R = 3376.20 km, Polar Stereographic (north), 0.998 m/px"
+    )
+    k = 2 / (1 + math.sin(math.radians(85)))
+    assert description.pixelSizeM == pytest.approx(1 / k, rel=1e-4)
+    assert description.centerLatitude == 90
+
+
+def test_south_polar_stereographic():
+    description = describeCrs(LRO_WAC_SOUTH_POLAR_PROJ)
+    assert (
+        description.text == "Moon, sphere R = 1737.40 km, Polar Stereographic (south)"
+    )
+
+
+def test_lro_wac():
+    description = _described(LRO_WAC_PROJ, (10.0, 5.0), 100.0)
+    assert description.text == (
+        "Moon, sphere R = 1737.40 km, Equirectangular, center lat 0°, 100 m/px"
+    )
+
+
+def test_ctx_dem_names_its_central_meridian():
+    description = _described(CTX_DEM_PROJ, (77.5, 18.4), 20.0)
+    assert description.text == (
+        "Mars, sphere R = 3396.19 km, Equirectangular, center lat 18.4°, "
+        "lon_0 77.5°, 20 m/px"
+    )
+
+
+def test_wgs84_is_earth_on_its_ellipsoid():
+    description = describeCrs(WGS84)
+    assert description.text == (
+        "Earth, ellipsoid a = 6378.14, c = 6356.75 km, Geographic (lon/lat)"
+    )
+    assert description.kind == "geographic" and description.units == "°"
+    assert description.latitudeType == "planetographic"
+    assert description.authority == "EPSG:4326"
+    assert description.centerLatitude is None
+
+
+def test_mola_megdr_in_0_to_360():
+    transform = Affine(1 / 128, 0.0, 0.0, 0.0, -1 / 128, 90.0)
+    description = describeCrs(MOLA_MEGDR_PROJ, transform, 46080, 23040)
+    assert description.longitudeDomain == "0..360"
+    assert description.pixelSizeM == pytest.approx(math.pi * 3396000 / 180 / 128)
+    assert description.text == (
+        "Mars, sphere R = 3396.00 km, Geographic (lon/lat), 463 m/px"
+    )
+
+
+def test_a_geographic_image_west_of_180_is_minus_180_to_180():
+    transform = Affine(0.01, 0.0, -10.0, 0.0, -0.01, 10.0)
+    assert describeCrs(MOLA_MEGDR_PROJ, transform, 100, 100).longitudeDomain == (
+        "-180..180"
+    )
+
+
+def test_a_projection_centered_on_180_is_0_to_360():
+    assert describeCrs("IAU_2015:49915").longitudeDomain == "0..360"
+
+
+def test_mars_planetographic_is_west_positive():
+    description = describeCrs("IAU_2015:49901")
+    assert description.longitudeDirection == "west"
+    assert description.latitudeType == "planetographic"
+    assert description.surface == "ellipsoid a = 3396.19, c = 3376.20 km"
+    assert description.body == "Mars"
+    assert description.authority == "IAU_2015:49901"
+
+
+def test_vesta_is_vesta():
+    assert describeCrs(VESTA_IAU).text.startswith("Vesta, sphere R = 255.00 km")
+
+
+def test_no_crs():
+    description = describeCrs(None)
+    assert description.text == "No coordinate system (pixel coordinates)"
+    assert description.kind == "none" and description.body is None
+
+
+def test_an_unknown_body_is_named_as_unknown():
+    description = describeCrs("+proj=longlat +R=3000000 +no_defs")
+    assert description.body is None
+    assert description.text == (
+        "Unknown body (sphere R = 3000.00 km), Geographic (lon/lat)"
+    )
+
+
+def test_an_equivalent_authority_code_is_found():
+    assert describeCrs("+proj=longlat +R=3396190 +no_defs").authority == (
+        "IAU_2015:49900"
+    )
+    assert describeCrs("IAU_2015:49910").authority == "IAU_2015:49910"
+
+
+def test_kilometre_units_scale_the_ground_size():
+    crs = "+proj=eqc +lat_ts=0 +lon_0=0 +R=3396190 +units=km +no_defs"
+    description = describeCrs(crs, Affine(0.5, 0, 0, 0, -0.5, 0), 10, 10)
+    assert description.units == "km"
+    assert description.pixelSizeM == pytest.approx(500.0)
+
+
+def test_strings_and_crs_objects_agree():
+    assert describeCrs(CRS.from_user_input(LRO_WAC_PROJ)) == describeCrs(LRO_WAC_PROJ)
+
+
+LOCAL_CS = (
+    'LOCAL_CS["arbitrary",UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+)
+
+
+@pytest.mark.parametrize(
+    ("code", "latitudeType", "direction", "kind"),
+    [
+        ("IAU_2015:49900", "planetocentric", "east", "geographic"),  # sphere
+        ("IAU_2015:49901", "planetographic", "west", "geographic"),  # ellipsoid
+        ("IAU_2015:49902", "planetocentric", "east", "geographic"),  # ellipsoid
+        ("IAU_2015:49910", "planetocentric", "east", "projected"),  # sphere
+        ("IAU_2015:49912", "planetocentric", "east", "projected"),  # ellipsoid
+    ],
+)
+def test_latitude_type_is_the_crs_own(code, latitudeType, direction, kind):
+    description = describeCrs(code)
+    assert description.latitudeType == latitudeType
+    assert description.longitudeDirection == direction
+    assert description.kind == kind and description.body == "Mars"
+
+
+def test_a_planetocentric_ellipsoid_is_geographic_degrees():
+    transform = Affine(0.01, 0.0, 200.0, 0.0, -0.01, 0.5)
+    description = describeCrs("IAU_2015:49902", transform, 100, 100)
+    assert description.projection == "Geographic (lon/lat)"
+    assert description.units == "°"
+    assert description.longitudeDomain == "0..360"
+    assert description.pixelSizeM == pytest.approx(
+        math.pi * 3396190 / 180 * 0.01, rel=1e-4
+    )
+    assert description.text == (
+        "Mars, ellipsoid a = 3396.19, c = 3376.20 km, Geographic (lon/lat), 593 m/px"
+    )
+
+
+def test_a_local_crs_has_no_body_and_its_own_units():
+    description = describeCrs(LOCAL_CS, Affine(2.0, 0, 0, 0, -2.0, 0), 10, 10)
+    assert description.kind == "local" and description.body is None
+    assert description.surface == "no ellipsoid"
+    assert description.units == "m" and description.pixelSizeM == pytest.approx(2.0)
+    assert description.latitudeType == "" and description.longitudeDirection == ""
+    assert description.text == "Local coordinates (no body), arbitrary, 2 m/px"
+
+
+def test_unreadable_text_is_described_not_raised():
+    description = describeCrs("not a coordinate system", Affine.identity(), 4, 4)
+    assert description.kind == "unreadable" and description.body is None
+    assert description.text.startswith("Unreadable coordinate system")
+    assert description.pixelSizeM is None

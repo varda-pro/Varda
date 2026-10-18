@@ -12,6 +12,8 @@ import numpy as np
 from attrs import define, field, frozen
 
 from varda.common.entities import VardaRaster
+from varda.geo.describe import describeCrs
+from varda.geo.equivalence import sameCrs
 from varda.mosaicking.recipe import (
     Blend,
     BlendMethod,
@@ -170,12 +172,15 @@ class MosaicProject:
     def __init__(self, images: Sequence[VardaRaster]):
         if len(images) < 2:
             raise MosaicError("A mosaic needs at least two images.")
-        crs = {str(image.crs) if image.crs is not None else None for image in images}
-        if len(crs) > 1:
-            raise MosaicError(
-                "The images are in different map projections; reproject them to "
-                "one first (Varda doesn't yet reproject while mosaicking)."
-            )
+        first = images[0].crs
+        for image in images[1:]:
+            if not sameCrs(first, image.crs):
+                raise MosaicError(
+                    "The images are in different map projections ("
+                    f"{describeCrs(first).text}; {describeCrs(image.crs).text}); "
+                    "reproject them to one first (Varda doesn't yet reproject "
+                    "while mosaicking)."
+                )
         bands = {image.bandCount for image in images}
         if len(bands) > 1:
             raise MosaicError(

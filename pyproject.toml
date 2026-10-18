@@ -136,6 +136,7 @@ source_modules = [
     "varda.updates",
     "varda.mosaicking",
     "varda.catalogs",
+    "varda.geo",
     "varda.lines.profile",
     "varda.lines.line_collection",
     "varda.terrain.scene",

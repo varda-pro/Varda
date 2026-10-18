@@ -5,6 +5,7 @@ search area (its bounds in longitude and latitude)."""
 
 from __future__ import annotations
 
+import functools
 import math
 from dataclasses import dataclass
 
@@ -15,8 +16,10 @@ from rasterio.transform import array_bounds, from_bounds
 from rasterio.warp import Resampling, reproject, transform_bounds
 
 from varda.catalogs.basemaps import GLOBE
-from varda.catalogs.bodies import bodyOf, geographicCrs
 from varda.common.entities import VardaRaster
+from varda.geo.bodies import identifyBody
+from varda.geo.transform import eastLonLat
+from varda.utilities.proj_lock import PROJ_LOCK
 from varda.workspaces.find_data.projection import Projector
 from varda.workspaces.mosaic.views import displayBands, downsampled, toRgba
 
@@ -26,23 +29,38 @@ Bounds = tuple[float, float, float, float]  # west, south, east, north
 
 
 def imageBody(image: VardaRaster) -> str | None:
-    """The body a georeferenced image shows (None without a CRS)."""
+    """The body a georeferenced image shows (None without a CRS, or when its
+    CRS is on no known body)."""
     if image.crs is None:
         return None
-    return bodyOf(CRS.from_user_input(image.crs))  # a rasterio CRS or a PROJ string
+    with PROJ_LOCK:  # a rasterio CRS or a PROJ string
+        wkt = CRS.from_user_input(image.crs).to_wkt()
+    return _crsBody(wkt)
 
 
-def imageBounds(image: VardaRaster, body: str) -> Bounds:
-    """The image's bounds in the body's longitude and latitude."""
+@functools.lru_cache(maxsize=64)
+def _crsBody(wkt: str) -> str | None:
+    """identifyBody, once per coordinate system: lists of images ask often."""
+    body = identifyBody(wkt).body
+    return body.name if body is not None else None
+
+
+def imageBounds(image: VardaRaster) -> Bounds:
+    """The image's bounds in longitude (east) and latitude on its own body:
+    its own geographic coordinate system's datum and latitude type, with
+    longitude east first whatever its axes (``eastLonLat``)."""
     bounds = array_bounds(image.height, image.width, image.transform)
-    return tuple(transform_bounds(image.crs, geographicCrs(body), *bounds))
+    with PROJ_LOCK:
+        crs = CRS.from_user_input(image.crs)
+        degrees = (eastLonLat(crs) if crs.geodetic_crs else crs).to_wkt()
+    return tuple(transform_bounds(image.crs, degrees, *bounds))
 
 
 def imageMapBounds(image: VardaRaster, projector: Projector) -> Bounds:
     """The image's bounds in map coordinates (in a polar view, of the part in
     its hemisphere). Call on the GUI thread: the projector's pyproj objects
     must stay there."""
-    bounds = projector.mapBounds(imageBounds(image, projector.body))
+    bounds = projector.mapBounds(imageBounds(image))
     if bounds is None:
         raise ValueError("The image is in the other hemisphere.")
     return bounds
@@ -82,6 +100,7 @@ class MapFrame:
 
     body: str
     crs: str
+    lonLatCrs: str  # longitude and latitude on the map's sphere
     polar: bool
     north: bool
     bounds: Bounds  # the hemisphere's (polar) or the globe's, in map coordinates
@@ -91,7 +110,12 @@ class MapFrame:
         bounds = projector.mapBounds(projector.hemisphere)
         assert bounds is not None  # a hemisphere is always on its own map
         return cls(
-            projector.body, projector.crs, projector.polar, projector.north, bounds
+            projector.body,
+            projector.crs,
+            projector.lonLatCrs,
+            projector.polar,
+            projector.north,
+            bounds,
         )
 
 
@@ -113,7 +137,7 @@ def globalBasemap(rgba: np.ndarray, frame: MapFrame) -> tuple[np.ndarray, Bounds
         source=source,
         destination=out,
         src_transform=from_bounds(*GLOBE, width, height),
-        src_crs=geographicCrs(frame.body),
+        src_crs=frame.lonLatCrs,
         dst_transform=from_bounds(
             west, south, east, north, BASEMAP_PIXELS, BASEMAP_PIXELS
         ),

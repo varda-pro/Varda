@@ -15,6 +15,7 @@ from varda.catalogs.gazetteer import (
     search,
     selectLabels,
 )
+from varda.geo.bodies import BODIES
 
 
 def test_east_longitude_conversion():
@@ -52,6 +53,13 @@ def test_every_imagery_body_has_names():
         assert set(names.approval) == {"Adopted by IAU"}
         assert (np.abs(names.longitude) <= 180).all()
     assert loadGazetteer("Earth") is None
+
+
+def test_names_use_the_bodys_iau_mean_radius_and_its_aliases():
+    mars = loadGazetteer("D_MARS")
+    assert mars is not None and mars.body == "Mars"
+    assert mars.radiusKm == pytest.approx(BODIES["Mars"].meanRadius / 1000.0)
+    assert loadGazetteer("Arrokoth") is None
 
 
 def fake(names, lats, lons, diameters) -> Gazetteer:

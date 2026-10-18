@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import shapely
 from attrs import frozen
 
-from varda.catalogs.bodies import bodyName
 from varda.catalogs.catalog import (
     Catalog,
     CatalogProgress,
@@ -28,6 +27,7 @@ from varda.catalogs.catalog import (
 )
 from varda.catalogs.http import fetchJson
 from varda.common.parameter import FloatParameter
+from varda.geo.bodies import bodyNamed
 
 BROWSE_ROLES = {"thumbnail", "overview", "visual"}
 MAX_PROPERTY_LENGTH = 80  # longer text (WKT, JSON) isn't shown in the table
@@ -71,8 +71,10 @@ def _body(collection: dict) -> str:
         "ssys:targets"
     )
     if isinstance(targets, list) and targets:
-        return bodyName(str(targets[0]))
-    return "Earth"
+        target = str(targets[0]).strip()
+        body = bodyNamed(target)
+        return body.name if body is not None else target.title()
+    return "Earth"  # STAC without solar-system targets is Earth's
 
 
 class StacCatalog(Catalog):

@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from varda.common.entities import VardaRaster
 from varda.common.grid import compatibleImages
 from varda.common.ui import ElidingComboBox, PanelScrollArea, VardaDockWidget
+from varda.geo.equivalence import canTransform
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -89,7 +90,8 @@ class ViewGroupLink(QObject):
         corners = [[rect.left(), rect.top()], [rect.right(), rect.bottom()]]
         placed = linkedPoints(self.images, source, corners, self.link)
         for index, ((x1, y1), (x2, y2)) in enumerate(placed):
-            if index != source:
+            # an image of another body isn't linked: it stays where it is
+            if index != source and np.isfinite([x1, y1, x2, y2]).all():
                 self.viewports[index].setViewRange(
                     QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
                 )
@@ -274,12 +276,22 @@ class LinkedImagesWorkspace(QMainWindow):
 
     # --- lines and profiles --------------------------------------------------------
 
-    def addLine(self, source: int, vertices: np.ndarray, kind: LineKind) -> int:
+    def addLine(self, source: int, vertices: np.ndarray, kind: LineKind) -> int | None:
         """A line drawn on image ``source``, kept in the first image's
-        coordinates; its profiles show for every image."""
+        coordinates; its profiles show for every image. None, said in the
+        status bar, when it can't be put on the first image (another body)."""
         onFirst = linkedPoints(
             [self.images[source], self.images[0]], 0, vertices, self.link
         )[1]
+        if not np.isfinite(onFirst).all():
+            reason = canTransform(self.images[source].crs, self.images[0].crs)
+            bar = self.statusBar()
+            if bar is not None:
+                bar.showMessage(
+                    f"Line not added: {self.images[source].name} isn't linked "
+                    f"to {self.images[0].name} ({reason or 'off its map'})."
+                )
+            return None
         fid = self.lines.addLine(onFirst, kind)
         self.lineManager.select([fid])
         self.profilesDock.toggleView(True)
@@ -289,10 +301,17 @@ class LinkedImagesWorkspace(QMainWindow):
     def _placeLines(self) -> None:
         for index, lines in enumerate(self.imageLines):
             lines.clear()
-            for line in self.lines.lines():
-                vertices = linkedPoints(
+            placed = [
+                linkedPoints(
                     [self.images[0], self.images[index]], 0, line.vertices, self.link
                 )[1]
+                for line in self.lines.lines()
+            ]
+            # all or none, so profiles stay in the lines' order; none on an
+            # image of another body
+            if not all(np.isfinite(vertices).all() for vertices in placed):
+                continue
+            for line, vertices in zip(self.lines.lines(), placed):
                 lines.addLine(vertices, line.kind, name=line.name, color=line.color)
         self._showProfiles()
 

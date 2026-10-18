@@ -38,6 +38,7 @@ from varda.branding.title_mark import ICON_DIR
 from varda.catalogs.basemaps import LAYERS, bundledImage
 from varda.catalogs.gazetteer import loadGazetteer
 from varda.common.entities import VardaRaster
+from varda.geo.bodies import identifyBody
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import ImageLoadingService
 from varda.image_loading.raster_writer import writeRaster
@@ -187,7 +188,10 @@ def _coordinateSystems() -> str:
     toLonLat = Transformer.from_crs(CRS_EPSG, 4326, always_xy=True)
     lon, lat = toLonLat.transform(500000.0, 3500000.0)
     assert np.isfinite([lon, lat]).all()
-    return f"EPSG:{CRS_EPSG} -> ({lon:.3f}, {lat:.3f})"
+    # PROJ's IAU_2015 authority is bundled: bodies are found by their codes
+    vesta = identifyBody("IAU_2015:200000400")
+    assert vesta.body is not None and vesta.body.name == "Vesta", vesta.evidence
+    return f"EPSG:{CRS_EPSG} -> ({lon:.3f}, {lat:.3f}), {vesta.evidence} is Vesta"
 
 
 def _roundTrip(image: VardaRaster, path: Path) -> str:
