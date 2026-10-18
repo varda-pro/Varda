@@ -14,6 +14,7 @@ from varda.image_rendering.raster_view.pointer_event import (
 )
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
     RatioExplorerTool,
+    RatioSelection,
 )
 from varda.rois.region_statistics import boxPolygonPixels
 from varda.utilities.debug import generate_random_image
@@ -134,6 +135,22 @@ def test_s_key_requests_a_save_and_escape_clears_both_boxes(qtbot, tool):
         assert tool.onKeyEvent(KeyEvent(Qt.Key.Key_Escape, NO_MOD)) is True
     assert blocker.args[0].numerator is None
     assert blocker.args[0].denominator is None
+
+
+def test_p_key_requests_saving_the_numerator_as_a_point(qtbot, tool):
+    with qtbot.waitSignal(tool.sigSavePointRequested):
+        assert tool.onKeyEvent(KeyEvent(Qt.Key.Key_P, NO_MOD, "p")) is True
+
+
+def test_a_selection_shown_from_another_view_is_continued_without_a_report(qtbot, tool):
+    selection = RatioSelection(boxPolygonPixels(10, 20, 5, 5), None)
+    with qtbot.assertNotEmitted(tool.sigSelectionChanged):
+        tool.showSelection(selection)
+
+    tool.onPointerEvent(_right(30.0, 5.0))  # no "numerator first" refusal
+    np.testing.assert_array_equal(
+        tool.selection.denominator, boxPolygonPixels(30, 5, 5, 5)
+    )
 
 
 def test_moves_are_not_consumed_so_hover_readouts_keep_working(tool):

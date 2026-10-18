@@ -12,6 +12,10 @@ from varda.workspaces.general_image_analysis import (
 from varda.workspaces.find_data.find_data_workspace import FindDataWorkspace
 from varda.workspaces.mosaic.new_mosaic_dialog import NewMosaicDialog
 from varda.workspaces.terrain.terrain_workspace import TerrainWorkspace
+from varda.workspaces.crism_ratio.crism_ratio_workspace import (
+    CrismRatioWorkspace,
+    NewCrismRatioDialog,
+)
 from varda.workspaces.linked_images.linked_images_workspace import (
     LinkedImagesWorkspace,
     NewLinkedImagesDialog,
@@ -63,6 +67,16 @@ def newLinkedImagesWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:
     dialog.accepted.connect(
         lambda: mainGui.addTab(
             LinkedImagesWorkspace(dialog.chosen(), images, dialog.link())
+        )
+    )
+    openOwnedDialog(dialog)
+
+
+def newCrismRatioWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:
+    dialog = NewCrismRatioDialog(images, parent=mainGui)
+    dialog.accepted.connect(
+        lambda: mainGui.addTab(
+            CrismRatioWorkspace(dialog.browse(), dialog.data(), images, dialog.link())
         )
     )
     openOwnedDialog(dialog)
@@ -149,6 +163,18 @@ WORKSPACE_ACTIONS: list[Action] = [
         callback=newLinkedImagesWorkspace,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=7)],
+    ),
+    Action(
+        id="varda.workspace.new_crism_ratio",
+        title="New CRISM Ratio Workspace…",
+        tooltip=(
+            "Navigate on a browse image and ratio I/F spectra by clicking boxes: "
+            "numerator, denominator and ratio plots, a blandness check of the "
+            "denominator, and a column lock that follows the numerator"
+        ),
+        callback=newCrismRatioWorkspace,
+        enablement=EXPR_HAS_IMAGES,
+        menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=8)],
     ),
     Action(
         id="varda.workspace.duplicate",

@@ -3,7 +3,9 @@
 CRISM spectra carry artifacts that are fixed for each sensor detector column:
 striping, a column-dependent gain, and residual calibration structure. Dividing
 a spectrum by one from the same detector column cancels them. This page
-describes the **Ratio Cube** analysis, which does that for a whole cube.
+describes the **Ratio Cube** analysis, which does that for a whole cube, and
+the **CRISM Ratio workspace**, which does it for one pair of regions at a time
+so you can judge a spot quickly.
 
 ## Ratio cube
 
@@ -158,6 +160,174 @@ means of <run length> pixels in the column; at least <Minimum Pixels> pixels,
 borrowing from columns within <Neighbor Radius> of the same strip, else the
 whole column)", then state how many columns fell back, taken from the
 description. Cite Viviano-Beck et al. (2014) when a preset is used.
+
+## The CRISM Ratio workspace
+
+**Workspace → New CRISM Ratio Workspace…** is for assessing regions fast:
+navigate on a browse image, drop a numerator box and a denominator box, look at
+the numerator, denominator and ratio spectra, judge whether the denominator is
+bland, save the pairs worth keeping, and move on. It does not change any image;
+what it saves is ROIs and points.
+
+### Layout
+
+- **Browse view** (left): usually a CRISM summary-parameter (SR) product, or any
+  image of the same scene such as a co-registered THEMIS image. It is only for
+  navigation: no spectrum is ever read from it.
+- **I/F view** (middle): the cube the spectra are measured on. The boxes are
+  defined in this cube's pixels and shown on both views.
+- **Ratio Plots** (right, scrolls when the window is short): the box size, the
+  column lock, and three plots on one wavelength axis: **Numerator**,
+  **Denominator** (with its blandness readout under it) and **Ratio**. Each new
+  pair replaces the curves and refits the Y ranges. The Ratio plot's sidebar
+  overlays library spectra.
+- **ROI Manager**, **Points Manager** and **ROI Plots** sit folded on the right
+  edge, and the render settings and histograms of both views on the bottom
+  edge: click their tabs to open them.
+
+The dialog picks a browse image (the one whose name contains `_SR`, else the
+first image) and an I/F image (one with a geometry file found, else the next
+image); change either.
+
+### Link modes
+
+- **Pixel match**: the same pixel in both views. Needs both images on one
+  pixel grid (same size and, if georeferenced, same projection and transform).
+- **Map link**: the same map location. Needs both images georeferenced, and is
+  required when the grids differ. A click on the browse view is converted to
+  map coordinates and then to the I/F pixel it falls in (floor of the
+  coordinate); the boxes are always I/F pixel boxes and are drawn on the
+  browse view through the same conversion. Panning and zooming the views
+  together uses the link too.
+
+The dialog does not offer a link that cannot work: without georeferencing on
+both images Map link is unavailable (it would silently fall back to pixels),
+and different grids rule out Pixel match; if neither works it will not open.
+If a restored session or a link still leaves something unlinked as asked, a
+notice across the top says which images and why. A click that falls outside
+the I/F cube is refused with a message.
+
+### The click loop
+
+1. **Ctrl/⌘+left-click** a numerator box on either view. It is centered on the
+   pixel; its size is **Box Width** and **Box Height** (pixels, 1 to 99,
+   default 5 by 5, the same for both boxes).
+2. **Ctrl/⌘+right-click** the denominator box (same size).
+3. The three plots show the **mean spectrum of each box** measured on the I/F
+   cube, and their ratio (numerator mean divided by denominator mean, band by
+   band, dimensionless). Plain clicks and drags pan and zoom as usual.
+4. Click a new numerator and everything updates: the denominator stays, or
+   follows the column (below). **Esc** clears both boxes.
+5. **S** saves the pair as two ROIs (rectangles named `Ratio N numerator` and
+   `Ratio N denominator`, in the I/F cube's pixels) and makes the denominator
+   ROI the ratio reference in the ROI Manager. **P** saves the numerator's
+   center pixel as a point in the Points Manager. Both names end with the
+   verdict, for example `Ratio 3 numerator (denominator ✓ Generic)`: the mark
+   and the check that was selected when you saved.
+
+### Column lock
+
+Sensor artifacts are fixed per detector column, so a denominator is only a good
+reference if it lies in the same column as the numerator (see the top of this
+page). With **Lock denominator to the numerator's sensor column** on (the
+default when a geometry file is found), the right-clicked denominator is put on
+the numerator's sensor column in the clicked row, and the denominator then
+**follows**: each new numerator moves it into the new numerator's column,
+keeping its row. The column comes from the I/F cube's DDR or DE geometry file
+(found next to the cube, as for the Ratio Cube analysis) and strips are kept
+apart.
+
+Two cases where the lock cannot be met are said, never silent:
+
+- **The denominator's row has no pixels in the numerator's column** (the
+  column's strip does not reach that row, or the box sits on no-data): the
+  denominator is **kept where it is** and the view you clicked shows
+  "Denominator left in place: …" for a few seconds. That ratio is not
+  column-matched; move the denominator to a row the column reaches.
+- **No geometry file for the I/F cube**: the lock is unavailable (the check box
+  is disabled and unchecked) and the status bar says "Column lock unavailable".
+  Ratioing still works; the denominator is simply where you click, so the
+  ratio keeps whatever column-dependent artifacts the two columns differ by.
+
+### Blandness readout
+
+Under the Denominator plot, the readout tests the **denominator box's mean
+spectrum**: is it featureless enough to divide by? Any feature in it appears
+inverted at the same wavelength in the ratio, where it could be mistaken for
+(or hide) a feature of the numerator.
+
+- **Generic** (default): the deepest absorption of the continuum-removed
+  spectrum must be at most 0.02 and the absolute relative slope at most 0.10
+  per µm. These are the Ratio Cube's Generic checks, described above.
+- **A target preset** (Plagioclase, Olivine, Fe/Mg phyllosilicates, Al
+  phyllosilicates, Carbonates, Sulfates, Hydrated (any)): every spectral
+  parameter of the preset must be at most its maximum, and the slope at most
+  0.10 per µm over the preset's window. The parameters, maxima and windows are
+  in the preset table above. Presets need **HyPyRameter**, an
+  [optional feature](optional-features.md); without it a preset says so in
+  the readout and Generic still works.
+
+Each row shows a check, its **value**, its **limit** (≤) and **✓** (within the
+limit) or **✗**; the overall verdict is ✓ only if every row is. A preset may be
+red where Generic is green, because it asks about the particular bands of its
+target.
+
+**Why a preset checks more than its target.** The aim is a denominator free of
+every feature that could pass for, or cover, the target in the ratio, not only
+the target's own:
+
+- *Plagioclase*: a ratio meant to bring out plagioclase is easily spoiled by
+  mafic absorption near 1 µm in the denominator, so it checks both pyroxene
+  indices (LCPINDEX2, HCPINDEX2) and the olivine index OLINDEX3.
+- *Olivine* checks OLINDEX3 and, in addition, the pyroxene indices, because
+  pyroxene bands overlap the 1 µm region: a pyroxene-bearing denominator would
+  put an inverted pyroxene feature into an olivine ratio.
+- *Fe/Mg phyllosilicates, Al phyllosilicates and Hydrated (any)* check
+  **BD1900r2** (the 1.9 µm H₂O band) together with the metal-OH parameters
+  (D2300, MIN2250, MIN2295_2480): water in the denominator produces an
+  inverted 1.9 µm band that reads as a loss of hydration in the numerator, and
+  one hydrated mineral's metal-OH band in the denominator would read as an
+  absence of another's.
+- *Carbonates* check BDCARB with both metal-OH/carbonate minima
+  (MIN2295_2480, MIN2345_2537), since the carbonate bands sit among the
+  metal-OH ones.
+- *Sulfates* add BD1900r2 to SINDEX2, because many sulfates are hydrated and a
+  hydrated denominator would imprint the 1.9 µm band.
+
+**Limits are editable**: double-click a value in the Limit column to change it
+(a number, at least 0; an invalid entry is refused and the old value kept).
+Choosing a different check, or Generic, puts the defaults back. The verdict
+suffix in saved names records only the check's name, so **report any limit you
+changed**. The limits are conservative starting points, not validated
+thresholds (see the Ratio Cube section).
+
+### Assessing uncertainty and quality
+
+- The plots show means of the boxes and carry **no error bars**. A box mean
+  averages Box Width × Box Height pixels, so its noise falls roughly with the
+  square root of that count, while a bigger box risks mixing materials: use the
+  saved ROIs' statistics (mean and standard deviation per band, in the ROI
+  Manager) for a spread, and compare against neighboring boxes.
+- A ratio is trustworthy where the denominator is bland **and** in the
+  numerator's column. Read both the verdict and the column-lock state (✗, a
+  "left in place" message, or an unavailable lock all mean a less reliable
+  ratio).
+- With a Map link, the box position is only as good as the browse image's
+  registration to the I/F cube, and one browse pixel may cover several I/F
+  pixels; the spectra are not affected, only where the box lands. Check the box
+  on the I/F view.
+- The blandness check is a heuristic on one spectrum, not a statistical test.
+
+### Reporting it
+
+A methods section can say: "Spectra were the means of <width> × <height> pixel
+boxes of the <I/F cube>, ratioed band by band to a denominator box in the same
+sensor column (column from the <DDR/DE> backplane; lock on / off), whose
+spectrum was judged bland by <Generic or preset> (limits: <list; note any
+changes>), with boxes chosen on <browse image> linked by <pixel / map
+location>." Cite Viviano-Beck et al. (2014) when a preset is used. The session
+keeps the link, box size, lock and chosen check; the saved ROIs and points
+record where each pair was.
 
 ## References
 

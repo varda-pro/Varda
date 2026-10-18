@@ -376,7 +376,7 @@ def test_following_with_an_even_box_does_not_drift(setup, monkeypatch):
 
 
 def _center(polygon):
-    return ratio_explorer._centerPixel(polygon)
+    return ratio_explorer.centerPixel(polygon)
 
 
 def test_components_carry_the_numerator_denominator_and_ratio(setup):
@@ -423,6 +423,34 @@ def test_both_spectra_are_plotted_next_to_the_ratio_when_asked(qtbot):
         "Ratio (11, 21) / (31, 5)",
         "Numerator (11, 21)",
         "Denominator (31, 5)",
+    ]
+    tool.deactivate()
+    del viewport
+
+
+def test_saved_rois_carry_the_name_suffix_and_boxes_are_in_the_box_image(qtbot):
+    shown = generate_random_image((40, 40, 10))
+    boxes = generate_random_image((40, 40, 10))
+    viewport = ImageViewport(ImageRenderer(image=shown))
+    qtbot.addWidget(viewport)
+    tool = RatioExplorerTool(viewport)
+    tool.activate()
+    collection = ROICollection.fromImage(boxes)
+    controller = RatioExplorerController(
+        collection,
+        FakeROIManager(),
+        FakeDocks(),
+        RatioExplorerConfig(),
+        nameSuffix=lambda: " (verdict)",
+    )
+    controller.bindTool(tool, boxes)
+    _selectBoxes(tool)
+
+    controller.saveCurrentBoxes()
+
+    assert [collection.getROI(f).name for f in collection.fids] == [
+        "Ratio 1 numerator (verdict)",
+        "Ratio 1 denominator (verdict)",
     ]
     tool.deactivate()
     del viewport

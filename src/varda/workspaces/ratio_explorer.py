@@ -106,11 +106,13 @@ class RatioExplorerController(QObject):
         imagesFor: Callable[[VardaRaster], Sequence[VardaRaster]] | None = None,
         labelWithImageName: bool = False,
         showComponents: bool = False,
+        nameSuffix: Callable[[], str] = lambda: "",
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
         images uses it to apply its Spectrum Source setting. ``showComponents``
-        also plots the numerator and denominator spectra next to the ratio."""
+        also plots the numerator and denominator spectra next to the ratio.
+        ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict)."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -119,6 +121,7 @@ class RatioExplorerController(QObject):
         self._imagesFor = imagesFor or (lambda clicked: [clicked])
         self._labelWithImageName = labelWithImageName
         self._showComponents = showComponents
+        self._nameSuffix = nameSuffix
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -143,9 +146,13 @@ class RatioExplorerController(QObject):
         if self._lastMirror is not None:
             self._mirrorSelection(*self._lastMirror)
 
-    def bindTool(self, tool: RatioExplorerTool) -> None:
-        """Drive a freshly activated tool: box size, placement, plotting, saving."""
-        image = tool.viewport.imageEntity
+    def bindTool(
+        self, tool: RatioExplorerTool, boxImage: VardaRaster | None = None
+    ) -> None:
+        """Drive a freshly activated tool: box size, placement, plotting, saving.
+        ``boxImage`` is the image the tool's boxes are in pixels of, when that
+        isn't the image its viewport shows (a browse view of another grid)."""
+        image = boxImage or tool.viewport.imageEntity
         tool.setBoxSizeProvider(
             lambda: (int(self.config.boxWidth.value), int(self.config.boxHeight.value))
         )
@@ -206,15 +213,16 @@ class RatioExplorerController(QObject):
             return
         self._saveCount += 1
         n = self._saveCount
+        suffix = self._nameSuffix()
         self._collection.addROI(
             self._geometryFor(image, selection.numerator),
-            f"Ratio {n} numerator",
+            f"Ratio {n} numerator{suffix}",
             NUMERATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
         )
         denominatorFid = self._collection.addROI(
             self._geometryFor(image, selection.denominator),
-            f"Ratio {n} denominator",
+            f"Ratio {n} denominator{suffix}",
             DENOMINATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
         )
@@ -257,7 +265,7 @@ class RatioExplorerController(QObject):
         and the status text says so."""
         if not self._roiManager.lockColumn:
             return None
-        col, row = _centerPixel(denominator)
+        col, row = centerPixel(denominator)
         locked = self._lockedBox(image, numerator, row, col)
         if locked is None:
             tool.showText(
@@ -312,8 +320,8 @@ class RatioExplorerController(QObject):
         part: str = "ratio",
     ) -> str:
         assert selection.numerator is not None and selection.denominator is not None
-        nc, nr = _centerPixel(selection.numerator)
-        dc, dr = _centerPixel(selection.denominator)
+        nc, nr = centerPixel(selection.numerator)
+        dc, dr = centerPixel(selection.denominator)
         boxes = {
             "ratio": f"({nc}, {nr}) / ({dc}, {dr})",
             "numerator": f"({nc}, {nr})",
@@ -349,7 +357,7 @@ def _drawMirroredBox(
     return handle
 
 
-def _centerPixel(polygon: np.ndarray) -> tuple[int, int]:
+def centerPixel(polygon: np.ndarray) -> tuple[int, int]:
     """The pixel a ``boxPolygonPixels`` box was centered on (inverse of that function)."""
     width, height = boxSize(polygon)
     return int(polygon[0, 0]) + (width - 1) // 2, int(polygon[0, 1]) + (height - 1) // 2

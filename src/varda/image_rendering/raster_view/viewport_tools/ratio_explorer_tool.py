@@ -62,12 +62,13 @@ class RatioExplorerTool(ViewportTool):
     toolName = "Ratio Explorer"
     toolDescription = (
         "Ctrl/Cmd+left-click: numerator box, Ctrl/Cmd+right-click: denominator "
-        "box. S saves both as ROIs, Esc clears."
+        "box. S saves both as ROIs, P saves the numerator pixel as a point, Esc clears."
     )
     toolCategory = "Selection"
 
     sigSelectionChanged = pyqtSignal(object)  # RatioSelection
-    sigSaveRequested = pyqtSignal()
+    sigSaveRequested = pyqtSignal()  # S
+    sigSavePointRequested = pyqtSignal()  # P
 
     def __init__(self, viewport: ImageViewport, parent=None):
         super().__init__(viewport, parent)
@@ -102,6 +103,12 @@ class RatioExplorerTool(ViewportTool):
     def setBoxProjector(self, projector: BoxProjector | None) -> None:
         """Draw the boxes (always in data pixels) through ``projector``."""
         self._projectBox = projector
+        self._redraw()
+
+    def showSelection(self, selection: RatioSelection) -> None:
+        """Show ``selection`` made on another view (without reporting it
+        again), so a click here continues from it."""
+        self.selection = selection
         self._redraw()
 
     def activate(self):
@@ -159,6 +166,9 @@ class RatioExplorerTool(ViewportTool):
         key = event.key.value if isinstance(event.key, Qt.Key) else event.key
         if key == Qt.Key.Key_S.value:
             self.sigSaveRequested.emit()
+            return True
+        if key == Qt.Key.Key_P.value:
+            self.sigSavePointRequested.emit()
             return True
         if key == Qt.Key.Key_Escape.value:
             self._setSelection(None, None)

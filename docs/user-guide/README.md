@@ -19,7 +19,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [PCA, MNF and ICA](transforms.md): choosing how many components to keep, inverse transforms
 - [Spectral Hourglass](spectral-hourglass.md): finding, identifying and mapping endmembers, preparing a spectral library
 - [Factor Analysis Target Transformation](fatt.md): which library spectra are components of an image, and where they fit
-- [CRISM ratio cubes](crism-ratio.md): dividing a CRISM I/F cube by a bland denominator spectrum per detector column
+- [CRISM ratio cubes](crism-ratio.md): dividing a CRISM I/F cube by a bland denominator spectrum per detector column, and the CRISM Ratio workspace for judging regions by clicking numerator and denominator boxes
 - [Mosaicking](mosaicking.md): joining overlapping images, aligning them with nudges and tie points, exporting
 - [Optional features](optional-features.md): HyPyRameter band parameters, PyTorch classifiers
 - [Kindle a Feature](kindle-a-feature.md): describe a feature and have your AI build it as a plugin

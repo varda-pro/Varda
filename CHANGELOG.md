@@ -8,6 +8,15 @@ can alter results.
 
 ### Added
 
+- **CRISM Ratio workspace** (Workspace → New CRISM Ratio Workspace…): a
+  browse image (such as a CRISM summary product) beside the I/F cube,
+  linked by pixel or map location. Ctrl/⌘-click a numerator and a
+  denominator box to plot the numerator, denominator and ratio spectra
+  (always measured on the I/F cube), with a blandness readout for the
+  denominator (Generic or a target preset, limits editable). The
+  denominator follows the numerator along its sensor column, and says so
+  when it can't. S saves the pair as ROIs and P the numerator pixel as a
+  point, named with the verdict. See the CRISM ratio cubes guide.
 - **Ratio Explorer numerator and denominator curves:** General Image
   Analysis and the dual-image workspace now plot the numerator and
   denominator box spectra next to the ratio, so you can see which one a
