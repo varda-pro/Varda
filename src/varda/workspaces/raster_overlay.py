@@ -11,6 +11,7 @@ kept in the result's metadata, so every view showing it follows.
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Sequence
 from html import escape
 
@@ -34,6 +35,7 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.ui import ElidingComboBox, MutedLabel
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
@@ -145,6 +147,9 @@ class OverlayBar(QWidget):
         self.viewports = list(viewports)
         self.renderer: ImageRenderer | None = None
         self._candidates: list[VardaRaster] = []
+        # what the image box lists, (image, name): rebuilt only when it changes
+        self._listed: list[tuple[VardaRaster, str]] | None = None
+        self._watched: weakref.WeakSet[VardaRaster] = weakref.WeakSet()
 
         self.imageBox = ElidingComboBox()
         self.imageBox.setToolTip(
@@ -208,6 +213,7 @@ class OverlayBar(QWidget):
             # the project's list lives on
             images.sigDataChanged.connect(self._refreshImages)
         self._refreshImages()
+        self._updateControls()
 
     def _choices(self, menu: QMenu, names) -> QActionGroup:
         """One checkable action per name, the first checked, one at a time."""
@@ -259,26 +265,42 @@ class OverlayBar(QWidget):
     # --- internals -------------------------------------------------------------
 
     def _refreshImages(self) -> None:
+        """List the project's images on this grid. The views are redrawn only
+        when the overlay shown is gone from the list (removed, or no longer
+        on this grid); every other change to the project leaves them be."""
         current = self.currentOverlay()
         choices = sameGridChoices(list(self.images), self.base)
-        self._candidates = choices.images
         left = len(choices.excluded)
         self.notListed.setText(f"({left} not on this grid)" if left else "")
         self.notListed.setToolTip(choices.note)
         self.notListed.setVisible(bool(left))
-        self.imageBox.blockSignals(True)
-        self.imageBox.clear()
-        self.imageBox.addItem(NO_OVERLAY)
-        for image in self._candidates:
-            self.imageBox.addItem(image.name)
-            self.imageBox.setItemData(
-                self.imageBox.count() - 1, image.name, Qt.ItemDataRole.ToolTipRole
-            )
-        self.imageBox.blockSignals(False)
-        if current in self._candidates:
-            self.setOverlay(current)
-        else:
-            self.imageBox.setCurrentIndex(0)
+        listed = [(image, image.name) for image in choices.images]
+        if listed == self._listed:
+            return
+        self._listed = listed
+        self._candidates = choices.images
+        with QSignalBlocker(self.imageBox):
+            self.imageBox.clear()
+            self.imageBox.addItem(NO_OVERLAY)
+            for image in self._candidates:
+                self.imageBox.addItem(image.name)
+                self.imageBox.setItemData(
+                    self.imageBox.count() - 1, image.name, Qt.ItemDataRole.ToolTipRole
+                )
+                if image not in self._watched:
+                    self._watched.add(image)
+                    connectWhileAlive(
+                        image.sigMetadataChanged, self._onImageEdited, self
+                    )
+            stillListed = current in self._candidates
+            self.setOverlay(current if stillListed else None)
+        if current is not None and not stillListed:
+            self._onImageChosen()
+
+    def _onImageEdited(self) -> None:
+        """The overlay shown was edited (its no-data value, band names): show
+        it again."""
+        if Signal.sender() is self.currentOverlay():
             self._onImageChosen()
 
     def _onImageChosen(self, *_args) -> None:
@@ -290,7 +312,8 @@ class OverlayBar(QWidget):
         self.layerBox.blockSignals(False)
         self._apply()
 
-    def _apply(self) -> None:
+    def _updateControls(self) -> None:
+        """Show the controls (and legend) the chosen overlay and layer need."""
         overlay = self.currentOverlay()
         layer = self.layerBox.currentText()
         hasOverlay = overlay is not None and bool(layer)
@@ -300,6 +323,11 @@ class OverlayBar(QWidget):
         self.legendButton.setVisible(hasOverlay and layer == CLASSES)
         self.colorsButton.setVisible(hasOverlay and layer != CLASSES)
         self._showLegend()
+
+    def _apply(self) -> None:
+        overlay = self.currentOverlay()
+        layer = self.layerBox.currentText()
+        self._updateControls()
         for viewport in self.viewports:
             if viewport.hasOverlayImage():
                 viewport.removeOverlayImage()
