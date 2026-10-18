@@ -138,6 +138,7 @@ source_modules = [
     "varda.terrain.animation",
     "varda.workspaces.linked_images.linking",
     "varda.workspaces.crism_ratio.mapping",
+    "varda.vector_import",
 ]
 forbidden_modules = ["PyQt6"]
 ignore_imports = [
