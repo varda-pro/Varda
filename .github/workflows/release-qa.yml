@@ -1,0 +1,89 @@
+name: Release QA
+
+# The five first-time-user personas (qa/, docs/developer/release-qa.md) on
+# Windows, macOS and Linux. It reports, it never blocks: every OS uploads its
+# screenshots and findings.json as release-qa-<os>, whatever the personas hit.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag, branch or commit to test (e.g. v0.10.0)
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  personas:
+    name: Personas (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-latest
+            name: linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # The release's tag, the dispatched ref, or main
+          ref: ${{ github.event.release.tag_name || inputs.ref || 'main' }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: '3.13'
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Qt WebEngine (the 3D view) needs these too
+          sudo apt-get install -y libegl1 libnss3 libnspr4 libxkbfile1 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxshmfence1 libgbm1 libasound2t64 libxkbcommon-x11-0
+
+      - name: Install dependencies
+        run: uv sync --extra hypyrameter
+
+      - name: Run the personas
+        # A finding is a result, not a failure; a broken QA script still shows
+        # here as a failed step, without failing the run
+        continue-on-error: true
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          VARDA_QA_OUT: ${{ github.workspace }}/release-qa
+          PYTHONFAULTHANDLER: '1'
+          PYTHONUTF8: '1'  # the findings name files in unicode, also on Windows
+        run: uv run pytest -m qa qa/ -p no:cacheprovider
+
+      - name: Summarize the findings
+        if: always()
+        shell: bash
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          echo "## Release QA on ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          uv run python -m qa.summary release-qa >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload screenshots and findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-qa-${{ matrix.name }}
+          path: |
+            release-qa
+            !release-qa/data
+          if-no-files-found: warn
+          retention-days: 30

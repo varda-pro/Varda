@@ -1,0 +1,320 @@
+"""The steps of "first success", done through the UI: open an image, view
+it, look at a pixel's spectrum, run one analysis from the Processing menu,
+and export the result. Personas combine them, each in their own way.
+
+Each function returns what the user got (or None) and leaves judging it to
+the persona; problems it can see itself become findings.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLineEdit,
+    QToolBar,
+    QToolButton,
+    QWidget,
+)
+
+from qa.harness import QaRun, mouseClick, plain
+from varda.analysis.dialog import RunAnalysisDialog
+from varda.common.entities import VardaRaster
+from varda.image_rendering.raster_view.image_viewport import ImageViewport
+from varda.image_loading.export_image_dialog import ExportImageDialog
+from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
+
+PCA_MENU = ("Processing", "Transforms", "Principal Component Analysis (PCA)")
+
+
+@dataclass
+class Outcome:
+    """How far a persona got towards first success."""
+
+    opened: VardaRaster | None = None
+    viewed: GeneralImageAnalysisWorkflow | None = None
+    spectrum: bool = False
+    result: VardaRaster | None = None
+    exported: Path | None = None
+
+    @property
+    def success(self) -> bool:
+        return bool(
+            self.opened and self.viewed and self.spectrum and self.result
+        ) and bool(self.exported and self.exported.exists())
+
+
+def images(run: QaRun) -> list[VardaRaster]:
+    assert run.app is not None
+    return list(run.app.images)
+
+
+def openImage(
+    run: QaRun, path: str | Path, timeout: float = 60.0
+) -> VardaRaster | None:
+    """File > Import Image(s), pick ``path``. None when it didn't load
+    (a message box, if any, is in ``run.messages``)."""
+    before, messages = len(images(run)), len(run.messages)
+    run.chooseFiles(path)
+    if not run.useMenu("File", "Import Image(s)"):
+        return None
+    run.waitFor(
+        lambda: len(images(run)) > before or len(run.messages) > messages,
+        f"{Path(path).name} to open",
+        timeout,
+    )
+    run.settle(0.3)
+    if len(images(run)) > before:
+        return images(run)[-1]
+    return None
+
+
+def viewImage(run: QaRun, image: VardaRaster) -> GeneralImageAnalysisWorkflow | None:
+    """Double-click the image in the Image List."""
+    gui = run.app.maingui if run.app else None
+    assert gui is not None
+    listWidget = gui.imageList
+    row = next(
+        (
+            i
+            for i in range(listWidget.count())
+            if (entry := listWidget.item(i)) is not None
+            and entry.data(Qt.ItemDataRole.UserRole) is image
+        ),
+        -1,
+    )
+    if row < 0:
+        run.finding("confused", f"{image.name} isn't in the Image List", widget=gui)
+        return None
+    item = listWidget.item(row)
+    assert item is not None
+    listWidget.scrollToItem(item)
+    center = listWidget.visualItemRect(item).center()
+    viewport = listWidget.viewport()
+    assert viewport is not None
+    run.doubleClick(viewport, center)
+    found = run.waitFor(
+        lambda: isinstance(gui.currentWorkspace(), GeneralImageAnalysisWorkflow),
+        f"{image.name} to show",
+        timeout=20,
+    )
+    run.settle(0.5)
+    if not found:
+        return None
+    workspace = gui.currentWorkspace()
+    assert isinstance(workspace, GeneralImageAnalysisWorkflow)
+    run.qaShot(gui, "viewing", f"{image.name} open in a workspace")
+    return workspace
+
+
+def mainViewport(
+    workspace: GeneralImageAnalysisWorkflow,
+) -> tuple[ImageViewport, QToolBar]:
+    """The image view the user works in, and its tool bar."""
+    return (
+        workspace.tripleRasterView.viewport1,
+        workspace.toolManager1.getToolbar(),
+    )
+
+
+def revealToolButton(run: QaRun, toolbar: QToolBar, action: QAction) -> QWidget | None:
+    """The tool bar button for ``action``; when the tool bar is too narrow
+    to show it, open the » overflow first (a finding: the user must find it)."""
+    button = toolbar.widgetForAction(action)
+    if button is not None and button.isVisible():
+        return button
+    overflow = toolbar.findChild(QToolButton, "qt_toolbar_ext_button")
+    run.finding(
+        "confused",
+        f"{plain(action.text())} is hidden behind the tool bar's » button "
+        f"at this window size ({run.mainWindow.width()}×{run.mainWindow.height()})",
+        widget=toolbar.window(),
+        reproduce="Open an image; look for the tool under the view",
+    )
+    if overflow is not None and overflow.isVisible():
+        # Outside a main window the overflow is a menu: pick the tool in it
+        run.menuAnswers.append(plain(action.text()))
+        run.click(overflow, "» overflow button")
+        run.settle(0.3)
+        if action.isChecked():
+            return None
+    button = toolbar.widgetForAction(action)
+    return button if button is not None and button.isVisible() else None
+
+
+def imageCenter(viewport: ImageViewport) -> tuple[QWidget, QPoint]:
+    """Where on screen the middle of the image is: the widget to click and
+    the point in it."""
+    view = viewport._gv  # noqa: SLF001 (only to find where the image is drawn)
+    item = viewport._imageItem  # noqa: SLF001
+    scenePoint = item.sceneBoundingRect().center()
+    target = view.viewport()
+    assert target is not None
+    return target, view.mapFromScene(scenePoint)
+
+
+def lookAtSpectrum(
+    run: QaRun,
+    workspace: GeneralImageAnalysisWorkflow,
+    modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.ControlModifier,
+) -> bool:
+    """Turn on Pixel Select in the tool bar and click the image as its
+    tooltip says (Ctrl+Click). True when a spectrum appeared."""
+    viewport, toolbar = mainViewport(workspace)
+    action = next(
+        (a for a in toolbar.actions() if plain(a.text()) == "Pixel Select"), None
+    )
+    if action is None:
+        run.finding("blocked", "No Pixel Select tool in the image's tool bar")
+        return False
+    run.log("tool tip", tool="Pixel Select", tip=action.toolTip())
+    if not action.isChecked():
+        button = revealToolButton(run, toolbar, action)
+        if action.isChecked():
+            pass  # picked from the » menu
+        elif button is None:
+            run.log(
+                "no button to click; using the tool bar action", tool="Pixel Select"
+            )
+            action.trigger()
+        else:
+            run.click(button, "Pixel Select tool")
+    before = len(workspace.pixelPlotWidget.pixelCurves)
+    target, point = imageCenter(viewport)
+    mouseClick(target, modifier, point)
+    plotted = run.waitFor(
+        lambda: len(workspace.pixelPlotWidget.pixelCurves) > before,
+        "a pixel spectrum",
+        timeout=5,
+        severity=None,
+    )
+    run.settle(0.3)
+    plot = workspace.pixelPlotWidget
+    if plotted and not plot.isVisible():
+        run.finding(
+            "confused",
+            "The spectrum is plotted in the Pixel Spectra tab, which stays hidden "
+            "behind another tab: clicking the image seems to do nothing",
+            widget=workspace,
+            reproduce="Pixel Select, Ctrl+Click the image; look at the plots",
+        )
+        run.click(workspace.pixelPlotDock.tabWidget(), "Pixel Spectra tab")
+        run.settle(0.3)
+    run.qaShot(workspace, "spectrum", "after clicking the image with Pixel Select")
+    return plotted
+
+
+def runAnalysis(
+    run: QaRun,
+    image: VardaRaster,
+    menu: tuple[str, ...] = PCA_MENU,
+    timeout: float = 120.0,
+) -> VardaRaster | None:
+    """Choose an analysis from the Processing menu, pick the image, Run."""
+    if not run.useMenu(*menu):
+        return None
+    dialog = run.newDialog(RunAnalysisDialog)
+    if dialog is None:
+        run.finding("blocked", f"{' > '.join(menu)} opened no dialog")
+        return None
+    pickImage(run, dialog, image)
+    run.qaShot(dialog, "analysis-dialog", dialog.windowTitle())
+    before, messages = len(images(run)), len(run.messages)
+    if not run.click(run.button(dialog, "Run"), "Run button"):
+        dialog.reject()
+        return None
+    run.waitFor(
+        lambda: len(images(run)) > before or len(run.messages) > messages,
+        f"{dialog.windowTitle()} to finish",
+        timeout,
+    )
+    run.settle(0.3)
+    if len(images(run)) > before:
+        run.qaShot(run.mainWindow, "analysis-done", "the result in the Image List")
+        return images(run)[-1]
+    return None
+
+
+def pickImage(run: QaRun, dialog: QWidget, image: VardaRaster) -> None:
+    """Pick ``image`` in the dialog's image drop-down."""
+    for combo in dialog.findChildren(QComboBox):
+        names = [combo.itemText(i) for i in range(combo.count())]
+        if image.name in names:
+            run.chooseInCombo(combo, image.name)
+            return
+
+
+def exportImage(
+    run: QaRun, image: VardaRaster, path: Path, timeout: float = 60.0
+) -> Path | None:
+    """File > Export Image…, pick the image, type where, Export."""
+    if not run.useMenu("File", "Export Image"):
+        return None
+    dialog = run.newDialog(ExportImageDialog)
+    if dialog is None:
+        run.finding("blocked", "File > Export Image opened no dialog")
+        return None
+    pickImage(run, dialog, image)
+    fields = [f for f in dialog.findChildren(QLineEdit) if f.isVisible()]
+    pathField = next((f for f in fields if f.placeholderText()), fields[-1])
+    run.typeInto(pathField, str(path))
+    run.qaShot(dialog, "export-dialog", f"exporting {image.name}")
+    messages = len(run.messages)
+    if not run.click(run.button(dialog, "Export"), "Export button"):
+        dialog.reject()
+        return None
+    written = run.waitFor(
+        lambda: (path.exists() and not _busy()) or len(run.messages) > messages,
+        f"{path.name} to be written",
+        timeout,
+    )
+    run.settle(0.3)
+    return path if written and path.exists() else None
+
+
+def _busy() -> bool:
+    return any(
+        w.isVisible() and type(w).__name__ == "BusyDialog"
+        for w in QApplication.topLevelWidgets()
+    )
+
+
+def firstSuccess(run: QaRun, path: Path, exportTo: Path) -> Outcome:
+    """The whole journey, each step its own; stops where the user would."""
+    outcome = Outcome()
+    with run.step("open image", f"File > Import Image(s) > {path.name}"):
+        outcome.opened = openImage(run, path)
+        if outcome.opened is None:
+            run.finding("blocked", f"{path.name} did not open", widget=run.mainWindow)
+    if outcome.opened is None:
+        return outcome
+    with run.step("view image", "Double-click the image in the Image List"):
+        outcome.viewed = viewImage(run, outcome.opened)
+        if outcome.viewed is None:
+            run.finding("blocked", "Double-clicking the image showed nothing")
+    if outcome.viewed is not None:
+        with run.step("pixel spectrum", "Pixel Select tool, Ctrl+Click the image"):
+            outcome.spectrum = lookAtSpectrum(run, outcome.viewed)
+            if not outcome.spectrum:
+                run.finding(
+                    "blocked",
+                    "Ctrl+Click with Pixel Select plotted no spectrum",
+                    widget=outcome.viewed,
+                )
+    with run.step("run analysis", " > ".join(PCA_MENU)):
+        outcome.result = runAnalysis(run, outcome.opened)
+        if outcome.result is None:
+            run.finding("blocked", "PCA gave no result", widget=run.mainWindow)
+    if outcome.result is None:
+        return outcome
+    with run.step("export", f"File > Export Image… > {exportTo.name}"):
+        outcome.exported = exportImage(run, outcome.result, exportTo)
+        if outcome.exported is None:
+            run.finding("blocked", f"Nothing was written to {exportTo}")
+    run.log("first success", success=outcome.success)
+    return outcome

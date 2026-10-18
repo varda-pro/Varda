@@ -138,6 +138,14 @@ can alter results.
 
 ### Fixed
 
+- **Planetary coordinate systems work when conda (or another GDAL/PROJ
+  installation) is active in your shell.** Such a shell exports its own
+  `PROJ_DATA`/`PROJ_LIB`/`GDAL_DATA`, and rasterio then read an older PROJ
+  database that fails on `IAU_2015` codes. At startup Varda now replaces
+  those with its bundled data only when they are unusable (an older database
+  or no `IAU_2015` authority), and logs what it changed. Set
+  `VARDA_KEEP_PROJ_DATA=1` to opt out. See
+  [Installing](docs/user-guide/installing.md#troubleshooting).
 - **Line lengths and profile distances in projected images were measured
   on the flat map (e.g. 2× too long east–west at 60° in a 0°-centered
   equirectangular map); they're now geodesic on the body.** In every
