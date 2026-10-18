@@ -224,6 +224,57 @@ def test_p_saves_the_numerator_pixel_as_a_point_named_with_the_verdict(
     assert point.image == "data"
 
 
+def _editSlopeLimit(workspace, value: str) -> None:
+    readout = workspace.plots.readout
+    row = [c.name for c in readout.lastResult.checks].index("Slope")
+    item = readout.table.item(row, 2)
+    assert item is not None
+    item.setText(value)
+
+
+def test_s_puts_the_checks_values_and_limits_in_the_rois_description(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    _pair(workspace)
+    _editSlopeLimit(workspace, "0.5")
+
+    key(workspace, Qt.Key.Key_S)
+
+    checks = workspace.plots.readout.lastResult.checks
+    for fid in workspace.roiCollection.fids:
+        description = workspace.roiCollection.getProperty(fid, "description")
+        assert "Generic" in description
+        for check in checks:
+            assert f"{check.name} {check.value:.4g}" in description
+            assert f"≤ {check.limit:.4g}" in description
+        assert "≤ 0.5 /µm (edited)" in description
+
+
+def test_p_puts_the_verdict_in_the_points_description(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    _pair(workspace)
+    key(workspace, Qt.Key.Key_P)
+    (point,) = workspace.pointCollection.getAllPoints()
+    assert point.description == workspace.plots.readout.describe()
+    assert "Absorption depth" in point.description
+
+
+def test_the_session_keeps_edited_limits(qtbot, pixelPair):
+    browse, data = pixelPair
+    workspace = build(qtbot, browse, data, Link.PIXEL)
+    _pair(workspace)
+    _editSlopeLimit(workspace, "0.5")
+    state = workspace.sessionState()
+    assert state["blandnessLimits"] == {"Slope": 0.5}
+
+    copy = buildWorkspace("crism_ratio", [browse, data], [browse, data], state)
+    assert isinstance(copy, CrismRatioWorkspace)
+    qtbot.addWidget(copy)
+    assert copy.plots.readout.limitOverrides() == {"Slope": 0.5}
+    _pair(copy)
+    slope = next(c for c in copy.plots.readout.lastResult.checks if c.name == "Slope")
+    assert slope.limit == 0.5
+
+
 def test_the_managers_start_auto_hidden(qtbot, pixelPair):
     workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
     assert workspace.roiDock.isAutoHide()

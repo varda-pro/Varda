@@ -19,7 +19,8 @@ can alter results.
   denominator (Generic or a target preset, limits editable). The
   denominator follows the numerator along its sensor column, and says so
   when it can't. S saves the pair as ROIs and P the numerator pixel as a
-  point, named with the verdict. The three plots always show the same
+  point, named with the verdict and described with every check's value and
+  limit (edited limits are marked, and kept by the session). The three plots always show the same
   wavelength range, and bad bands are left out of them and of the readout.
   See the CRISM ratio cubes guide.
 - **Ratio Explorer numerator and denominator curves:** General Image

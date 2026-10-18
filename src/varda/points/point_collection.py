@@ -33,6 +33,7 @@ class VardaPoint:
     geometry: (
         Point  # CRS coordinates when the image is georeferenced, else pixel center
     )
+    description: str = ""
 
 
 class PointCollection:
@@ -56,6 +57,7 @@ class PointCollection:
         *,
         name: str | None = None,
         color: Color = Color.white(),
+        description: str = "",
     ) -> int:
         """Save pixel (x, y) of ``image``; returns the point's fid."""
         if image.hasGeospatialData:
@@ -67,7 +69,14 @@ class PointCollection:
         fid = self._nextFid
         self._nextFid += 1
         self._points[fid] = VardaPoint(
-            fid, name or f"Point {fid + 1}", color, image.name, int(x), int(y), geometry
+            fid,
+            name or f"Point {fid + 1}",
+            color,
+            image.name,
+            int(x),
+            int(y),
+            geometry,
+            description,
         )
         self.sigPointAdded.emit(fid)
         self.sigCollectionChanged.emit()
@@ -93,7 +102,8 @@ class PointCollection:
 
     def toFile(self, path: str | Path, driver: str | None = None) -> Path:
         """Write the points as a GIS file (GeoJSON, GeoPackage or Shapefile by
-        suffix) with name, image, pixel column/row and color as attributes."""
+        suffix) with name, image, pixel column/row, color and description as
+        attributes."""
         if not self._points:
             raise ValueError("No points to export.")
         target = Path(path)
@@ -111,6 +121,7 @@ class PointCollection:
                 "pixel_x": [p.x for p in points],
                 "pixel_y": [p.y for p in points],
                 "color": [p.color.toHexString() for p in points],
+                "description": [p.description for p in points],
             },
             geometry=[p.geometry for p in points],
             crs=self.crs,

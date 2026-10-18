@@ -7,7 +7,7 @@ the spectra are always measured on the I/F cube, and the numerator, the
 denominator (with a blandness verdict) and the ratio are plotted. With column
 lock on, each new numerator moves the denominator into its sensor column.
 S saves the pair as ROIs, P the numerator pixel as a point, both named with
-the verdict.
+the verdict and described with every check's value and limit.
 """
 
 from __future__ import annotations
@@ -146,6 +146,7 @@ class CrismRatioWorkspace(QMainWindow):
             parent=self,
             imagesFor=lambda _clicked: [data],  # always the I/F cube
             nameSuffix=self._verdictSuffix,
+            describe=self.plots.readout.describe,
         )
         self.controller.sigComponents.connect(self.plots.showComponents)
 
@@ -317,11 +318,13 @@ class CrismRatioWorkspace(QMainWindow):
         if numerator is None:
             return
         col, row = centerPixel(numerator)
+        denominator = tool.selection.denominator
         self.pointCollection.addPixel(
             self.data,
             col,
             row,
-            name=f"Ratio numerator ({col}, {row}){self._verdictSuffix(tool.selection.denominator)}",
+            name=f"Ratio numerator ({col}, {row}){self._verdictSuffix(denominator)}",
+            description="" if denominator is None else self.plots.readout.describe(),
         )
 
     # --- sessions --------------------------------------------------------------------
@@ -335,6 +338,7 @@ class CrismRatioWorkspace(QMainWindow):
             ],
             "lockColumn": self.lockCheck.isChecked(),
             "blandness": self.plots.readout.currentCheckName(),
+            "blandnessLimits": self.plots.readout.limitOverrides(),
             **plotLibrariesState(self.plots.ratioPlot),
         }
 
@@ -348,6 +352,9 @@ class CrismRatioWorkspace(QMainWindow):
         self.plots.readout.checkCombo.setCurrentText(
             state.get("blandness", self.plots.readout.currentCheckName())
         )
+        limits = state.get("blandnessLimits", {})
+        if isinstance(limits, dict):
+            self.plots.readout.setLimitOverrides(limits)
         restorePlotLibraries(state, self.plots.ratioPlot)
 
 

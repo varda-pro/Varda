@@ -229,7 +229,13 @@ the I/F cube is refused with a message.
    ROI the ratio reference in the ROI Manager. **P** saves the numerator's
    center pixel as a point in the Points Manager. Both names end with the
    verdict, for example `Ratio 3 numerator (denominator ✓ Generic)`: the mark
-   and the check that was selected when you saved.
+   and the check that was selected when you saved. Their **description**
+   (the ROIs' `description` column, and the point's `description` attribute
+   when exported) records the check, every row's value and limit, and which
+   limits you edited, for example `Denominator blandness, Generic check: ✓
+   bland. Absorption depth 0.0123 (limit ≤ 0.02) ✓; Slope 0.0456 /µm (limit
+   ≤ 0.5 /µm (edited)) ✓.` A point saved without a denominator has no
+   verdict and an empty description.
 
 ### Column lock
 
@@ -303,9 +309,9 @@ the target's own:
 
 **Limits are editable**: double-click a value in the Limit column to change it
 (a number, at least 0; an invalid entry is refused and the old value kept).
-Choosing a different check, or Generic, puts the defaults back. The verdict
-suffix in saved names records only the check's name, so **report any limit you
-changed**. The limits are conservative starting points, not validated
+Choosing a different check, or Generic, puts the defaults back. The session
+keeps the edited limits, and each saved ROI's and point's description records
+the limits it was judged with; still, **report any limit you changed**. The limits are conservative starting points, not validated
 thresholds (see the Ratio Cube section).
 
 ### Assessing uncertainty and quality
@@ -333,8 +339,10 @@ sensor column (column from the <DDR/DE> backplane; lock on / off), whose
 spectrum was judged bland by <Generic or preset> (limits: <list; note any
 changes>), with boxes chosen on <browse image> linked by <pixel / map
 location>." Cite Viviano-Beck et al. (2014) when a preset is used. The session
-keeps the link, box size, lock and chosen check; the saved ROIs and points
-record where each pair was.
+keeps the link, box size, lock, chosen check and edited limits; the saved ROIs
+and points record where each pair was and, in their description, the verdict
+with its values and limits. Points are not yet kept by the session: export
+them from the Points Manager before closing.
 
 ## References
 

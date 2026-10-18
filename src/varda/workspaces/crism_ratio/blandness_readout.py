@@ -32,6 +32,7 @@ from varda.analysis.blandness import (
 GENERIC = "Generic"
 _VALUE, _LIMIT, _MARK = 1, 2, 3
 _MARKS = {True: "✓", False: "✗"}
+_UNITS = {"Slope": " /µm"}  # the other checks are dimensionless
 
 
 class BlandnessReadout(QWidget):
@@ -89,6 +90,39 @@ class BlandnessReadout(QWidget):
 
     def currentCheckName(self) -> str:
         return self.checkCombo.currentText()
+
+    def limitOverrides(self) -> dict[str, float]:
+        """The limits the user edited, by check name (cleared when the check
+        changes)."""
+        return dict(self._overrides)
+
+    def setLimitOverrides(self, overrides: dict[str, float]) -> None:
+        """Edited limits for the current check (e.g. from a session); entries
+        that are not a number of at least 0 are ignored."""
+        self._overrides = {
+            str(name): float(value)
+            for name, value in overrides.items()
+            if isinstance(value, (int, float)) and np.isfinite(value) and value >= 0
+        }
+        self._evaluate()
+
+    def describe(self) -> str:
+        """The verdict with every check's value and limit, for the description
+        of what is saved ("" with no verdict)."""
+        result = self.lastResult
+        if not result.checks:
+            return ""
+        rows = "; ".join(
+            f"{c.name} {c.value:.4g}{_UNITS.get(c.name, '')} (limit ≤ "
+            f"{c.limit:.4g}{_UNITS.get(c.name, '')}"
+            f"{' (edited)' if c.name in self._overrides else ''}) {_MARKS[c.passed]}"
+            for c in result.checks
+        )
+        verdict = "bland" if result.passed else "not bland"
+        return (
+            f"Denominator blandness, {self.currentCheckName()} check: "
+            f"{_MARKS[result.passed]} {verdict}. {rows}."
+        )
 
     def setSpectrum(
         self, wavelengthsNm: np.ndarray, spectrum: np.ndarray

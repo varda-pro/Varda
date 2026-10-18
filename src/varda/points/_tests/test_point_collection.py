@@ -69,7 +69,7 @@ def test_points_are_named_automatically_and_can_be_removed():
 def test_export_writes_a_gis_file_with_the_pixel_and_image_as_attributes(tmp_path):
     image = _georeferenced()
     points = PointCollection()
-    points.addPixel(image, 3, 4, name="rock", color=RED)
+    points.addPixel(image, 3, 4, name="rock", color=RED, description="bland ✓")
     points.addPixel(image, 5, 6, name="soil", color=Color(0.0, 1.0, 0.0, 1.0))
 
     target = points.toFile(tmp_path / "points.geojson")
@@ -79,6 +79,7 @@ def test_export_writes_a_gis_file_with_the_pixel_and_image_as_attributes(tmp_pat
     assert list(frame["pixel_x"]) == [3, 5]
     assert list(frame["pixel_y"]) == [4, 6]
     assert list(frame["image"]) == ["geo", "geo"]
+    assert list(frame["description"]) == ["bland ✓", ""]
     assert frame["color"][0] == RED.toHexString()
     assert frame.crs is not None and frame.crs.to_epsg() == 32612
     assert frame.geometry[0].x == image.pixelToGeo(3, 4)[0]

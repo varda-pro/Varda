@@ -107,12 +107,14 @@ class RatioExplorerController(QObject):
         labelWithImageName: bool = False,
         showComponents: bool = False,
         nameSuffix: Callable[[], str] = lambda: "",
+        describe: Callable[[], str] = lambda: "",
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
         images uses it to apply its Spectrum Source setting. ``showComponents``
         also plots the numerator and denominator spectra next to the ratio.
-        ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict)."""
+        ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict),
+        and ``describe()`` goes in their ``description`` column when not empty."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -122,6 +124,7 @@ class RatioExplorerController(QObject):
         self._labelWithImageName = labelWithImageName
         self._showComponents = showComponents
         self._nameSuffix = nameSuffix
+        self._describe = describe
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -214,17 +217,23 @@ class RatioExplorerController(QObject):
         self._saveCount += 1
         n = self._saveCount
         suffix = self._nameSuffix()
+        description = self._describe()
+        properties = {"description": description} if description else {}
+        if description and "description" not in self._collection.userColumns:
+            self._collection.addColumn("description")
         self._collection.addROI(
             self._geometryFor(image, selection.numerator),
             f"Ratio {n} numerator{suffix}",
             NUMERATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
+            **properties,
         )
         denominatorFid = self._collection.addROI(
             self._geometryFor(image, selection.denominator),
             f"Ratio {n} denominator{suffix}",
             DENOMINATOR_ROI_COLOR,
             ROIMode.RECTANGLE,
+            **properties,
         )
         self._roiManager.setDenominator(denominatorFid)
 
