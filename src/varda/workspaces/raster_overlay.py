@@ -298,19 +298,31 @@ class OverlayBar(QWidget):
             self._onImageChosen()
 
     def _onImageEdited(self) -> None:
-        """The overlay shown was edited (its no-data value, band names): show
-        it again."""
-        if Signal.sender() is self.currentOverlay():
-            self._onImageChosen()
+        """An image was edited: list it under its new name and, when it's the
+        overlay shown, show it again (its no-data value, band names), on the
+        same layer if it still has it."""
+        edited = Signal.sender()
+        self._refreshImages()
+        if edited is not self.currentOverlay():
+            return
+        layer = self.layerBox.currentText()
+        self._fillLayers()
+        with QSignalBlocker(self.layerBox):
+            index = self.layerBox.findText(layer)
+            if index >= 0:
+                self.layerBox.setCurrentIndex(index)
+        self._apply()
 
     def _onImageChosen(self, *_args) -> None:
-        overlay = self.currentOverlay()
-        self.layerBox.blockSignals(True)
-        self.layerBox.clear()
-        if overlay is not None:
-            self.layerBox.addItems(overlayLayers(overlay))
-        self.layerBox.blockSignals(False)
+        self._fillLayers()
         self._apply()
+
+    def _fillLayers(self) -> None:
+        overlay = self.currentOverlay()
+        with QSignalBlocker(self.layerBox):
+            self.layerBox.clear()
+            if overlay is not None:
+                self.layerBox.addItems(overlayLayers(overlay))
 
     def _updateControls(self) -> None:
         """Show the controls (and legend) the chosen overlay and layer need."""

@@ -333,4 +333,14 @@ def test_editing_the_shown_overlay_shows_it_again(projectBar):
     result.setMetadataOverrides({"nodata": 0.0})
 
     assert widget.renderer is not before
+    assert widget.layerBox.currentText() == "P(dark)"  # the layer chosen stays
     assert redraws
+
+
+def test_a_rename_shows_at_once(projectBar):
+    widget, _viewports, images, redraws = projectBar
+    result = _classification(images[0])
+    images.append(result)
+    result.setMetadataOverrides({}, name="renamed")  # no list refresh
+    assert widget.imageBox.itemText(1) == "renamed"
+    assert redraws == []

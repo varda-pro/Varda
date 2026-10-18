@@ -1,4 +1,5 @@
 # standard library
+import logging
 import weakref
 
 # third party imports
@@ -21,6 +22,8 @@ from varda.common.entities import VardaRaster
 from varda.common.parameter_widgets import connectWhileAlive
 
 ICON_SIZE = THUMBNAIL_SIZE
+
+logger = logging.getLogger(__name__)
 
 
 def _pixmap(rgba: np.ndarray) -> QPixmap:
@@ -101,7 +104,14 @@ class ImageListWidget(QListWidget):
         """The image's thumbnail, made once and kept until the image changes."""
         pixmap = self._thumbnails.get(image)
         if pixmap is None:
-            pixmap = self._thumbnails[image] = _pixmap(thumbnailRgba(image))
+            ratio = self.devicePixelRatioF()  # sharp on high-DPI screens
+            try:
+                pixmap = _pixmap(thumbnailRgba(image, round(ICON_SIZE * ratio)))
+            except Exception:
+                logger.exception("Couldn't make a thumbnail of %s", image.name)
+                pixmap = self._placeholderIcon.pixmap(ICON_SIZE, ICON_SIZE)
+            pixmap.setDevicePixelRatio(ratio)
+            self._thumbnails[image] = pixmap
         return pixmap
 
     def _onImageEdited(self) -> None:

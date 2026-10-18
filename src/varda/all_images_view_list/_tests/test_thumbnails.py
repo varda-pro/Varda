@@ -41,7 +41,7 @@ def _shownList(qtbot, monkeypatch, *images):
     monkeypatch.setattr(
         imageview_list,
         "thumbnailRgba",
-        lambda image: builds.append(image) or thumbnailRgba(image),
+        lambda image, size: builds.append(image) or thumbnailRgba(image, size),
     )
     widget = ImageListWidget(ObservableList(images))
     qtbot.addWidget(widget)
@@ -80,3 +80,23 @@ def test_an_edited_image_gets_a_new_thumbnail_and_name(qtbot, monkeypatch):
     assert len(builds) == 2
     assert widget.thumbnail(image).toImage() != before
     assert widget.item(0).text() == "edited"
+
+
+def test_an_unreadable_image_gets_a_placeholder_made_once(qtbot, monkeypatch):
+    image = generate_random_image((20, 20, 10))
+    calls = []
+
+    def failing(image, size):
+        calls.append(image)
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(imageview_list, "thumbnailRgba", failing)
+    widget = ImageListWidget(ObservableList([image]))
+    qtbot.addWidget(widget)
+    widget.show()
+    qtbot.waitExposed(widget)
+    for _ in range(3):
+        widget.viewport().grab()
+
+    assert len(calls) == 1
+    assert not widget.thumbnail(image).isNull()
