@@ -8,6 +8,8 @@ from PyQt6.QtWidgets import QDialogButtonBox
 from shapely.geometry import box
 
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.common.layout_audit import assertNothingClipped
+from varda.geo._tests.fixtures import LRO_WAC_PROJ, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.rois.add_column_dialog import AddColumnDialog
 from varda.rois.roi_calculations import CalculatedColumns, ZonalStatistic
@@ -102,3 +104,53 @@ def test_calculated_columns_are_read_only_and_explained_in_the_table(setup, qtbo
         meanColumn, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole
     )
     assert "mean of col" in tip
+
+
+def _georeferencedDialog(qtbot) -> AddColumnDialog:
+    # equirectangular, standard parallel 0, at 60°N: about 100% east–west
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 60.0), pixelSize=100.0)
+    rois = ROICollection.fromImage(image)
+    dialog = AddColumnDialog(CalculatedColumns(rois), [image])
+    qtbot.addWidget(dialog)
+    dialog.setKind(dialog.GEOMETRY)
+    return dialog
+
+
+def _measureItems(dialog) -> dict:
+    model = dialog.measureBox.model()
+    return {
+        dialog.measureBox.itemData(i): model.item(i)
+        for i in range(dialog.measureBox.count())
+    }
+
+
+def test_planar_measures_say_how_distorted_the_projection_is(qtbot):
+    dialog = _georeferencedDialog(qtbot)
+    items = _measureItems(dialog)
+    for kind in ("area_map", "perimeter_map"):
+        tip = items[kind].toolTip()
+        assert "scale error" in tip and "on the body" in tip
+    assert items["area_body"].isEnabled() and not items["area_body"].toolTip() == ""
+    assert items["area_map"].text() == "Area (metre², planar)"
+
+
+def test_body_measures_suggest_km_names_and_preview(qtbot):
+    dialog = _georeferencedDialog(qtbot)
+    dialog.measureBox.setCurrentIndex(dialog.measureBox.findData("area_body"))
+    assert dialog.nameEdit.text() == "area_km2"
+
+
+def test_body_measures_need_a_georeferenced_image(setup):
+    dialog, *_ = setup
+    dialog.setKind(dialog.GEOMETRY)
+    items = _measureItems(dialog)
+    assert not items["area_body"].isEnabled()
+    assert not items["perimeter_body"].isEnabled()
+
+
+def test_the_geometry_page_fits_at_laptop_size(qtbot):
+    dialog = _georeferencedDialog(qtbot)
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)

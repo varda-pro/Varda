@@ -273,14 +273,53 @@ column (below) with the **count** statistic.
   - **Area (pixels)** and **Perimeter (pixels)**: of the shape in pixel
     units. The area is the shape's area, not the number of pixels whose
     centers fall inside it.
-  - **Area (map units²)**, **Perimeter (map units)**, **Centroid x (map
-    units)** and **Centroid y (map units)**: in the image's coordinate
-    system, measured on the flat map (planar, not geodesic). They're
-    available only for georeferenced images. In a projected system they're
-    in its unit (usually meters), and carry the projection's scale
-    distortion away from its true-scale latitude or center. In a geographic
-    system (longitude and latitude) they're in degrees and degrees², which
-    aren't areas on the ground: reproject the image first if you need them.
+  - **Area on the body (km²)** and **Perimeter on the body (km)**: the
+    ROI's area and perimeter on the ground, measured geodesically, whatever
+    the image's projection (projected or geographic), so the projection's
+    scale distortion never enters them. Available only for georeferenced
+    images. The method is Varda's (see [How Varda
+    measures](coordinate-systems.md#how-varda-measures)):
+    - **Densification:** the ROI's edges are densified to one pixel (the
+      smaller side of a pixel, in the CRS's units) in map coordinates, so
+      they follow the straight edges you see on the image.
+    - **Surface:** every vertex is converted to longitude and planetocentric
+      latitude on the CRS's own sphere or ellipsoid (the surface the data
+      were projected on), and the area and perimeter are Karney's (2013)
+      geodesic polygon area and perimeter on that surface (PROJ's `geod`;
+      its error is negligible). Holes are subtracted from the area and their
+      edges added to the perimeter; a multi-part ROI's parts are summed.
+    - **Body-model term:** when the CRS's surface differs from the body's
+      IAU 2015 reference ellipsoid (Archinal et al., 2018) by more than 1 m,
+      the same points are measured on the ellipsoid too, and the column's
+      header tooltip gives the largest relative difference,
+      |value − reference| / reference, over its ROIs. On a Mars 2000 sphere
+      (R = 3396.19 km) at 85°N it's about 0.59% for a perimeter and 1.2%
+      for an area (both directions of the area scale); on the HiRISE polar
+      sphere there, about 0.009% for an area. Without one (the
+      Moon, or a CRS already on the reference ellipsoid) nothing is shown.
+    - **The tooltip** also names the method and surface, e.g. "Geodesic
+      (Karney 2013) on sphere R = 3376.20 km, edges densified to 1 pixel".
+    - **Blank values:** a value is blank when it can't be measured, and the
+      tooltip says for which ROIs and why: the image has no map
+      coordinates, or some of the ROI's points are outside where the
+      projection can be converted (e.g. off the visible disk of an
+      orthographic image).
+    - **Limits:** areas are horizontal, on the reference surface, not along
+      the terrain (topography isn't included); they're only as good as the
+      image's georeferencing, which Varda can't know; and the edges follow
+      the map's straight lines, not geodesics, as drawn on the image.
+  - **Area (map units², planar)**, **Perimeter (map units, planar)**,
+    **Centroid x (map units)** and **Centroid y (map units)**: in the
+    image's coordinate system, measured on the flat map (planar, not
+    geodesic). They're available only for georeferenced images. In a
+    projected system they're in its unit (usually meters), and carry the
+    projection's scale distortion away from its true-scale latitude or
+    center; the Measure list's tooltip on the planar area and perimeter
+    gives the worst distortion over the image (see [Projection
+    distortion](coordinate-systems.md#the-distortion-check)). In a geographic system (longitude
+    and latitude) they're in degrees and degrees², which aren't areas on
+    the ground. For areas and perimeters on the ground use **Area on the
+    body** and **Perimeter on the body**.
 - **Zonal statistic of a raster**: **mean**, **median**, **std**
   (population), **min**, **max**, **sum** or **count** of one band inside
   each ROI, on the ROIs' image or any image on the same pixel grid (never
@@ -381,8 +420,13 @@ for what applies to every process.
 - For ratios: the numerator and denominator areas, their sizes and pixel
   counts, whether the denominator was locked to the same detector column,
   and that the ratio is of the two means.
-- For ROI measures: whether areas are in pixels or map units, the coordinate
-  system, and that they're planar.
+- For ROI measures: whether areas are in pixels, map units (planar) or on
+  the body, and the coordinate system. For areas and perimeters on the
+  body: "measured geodesically (Karney, 2013) on [the surface in the
+  column's tooltip, e.g. the 3376.2 km sphere of the HiRISE polar
+  products], ROI edges densified to one pixel", the body-model difference
+  from the tooltip when there is one (e.g. "within 0.009% of the IAU 2015
+  reference ellipsoid"), and that the areas are horizontal (no topography).
 
 ### Uncertainty and quality
 
@@ -392,6 +436,11 @@ for what applies to every process.
 - **Map areas** are only as good as the image's georeferencing and carry the
   projection's distortion. Areas in pixels are in pixel units, whatever
   the pixels' size on the ground.
+- **Areas and perimeters on the body** carry no projection distortion. Their
+  uncertainty is the image's georeferencing error (a shifted or scaled
+  image shifts or scales the ROI), the choice of body model (the
+  body-model difference in the tooltip bounds it), and the ROI as drawn;
+  topography isn't included.
 - **Library comparisons** are qualitative while the library curve is scaled:
   the match of shapes says nothing about absolute reflectance. Library
   spectra are also at their own spectral resolution, often finer than your
@@ -400,6 +449,12 @@ for what applies to every process.
 
 ### References
 
+- Archinal, B. A., et al. (2018). Report of the IAU Working Group on
+  Cartographic Coordinates and Rotational Elements: 2015. *Celestial
+  Mechanics and Dynamical Astronomy*, 130, 22.
+  https://doi.org/10.1007/s10569-017-9805-5
+- Karney, C. F. F. (2013). Algorithms for geodesics. *Journal of Geodesy*,
+  87, 43–55. https://doi.org/10.1007/s00190-012-0578-z
 - USGS spectral library: Kokaly, R. F., Clark, R. N., Swayze, G. A., Livo,
   K. E., Hoefen, T. M., Pearson, N. C., Wise, R. A., Benzel, W. M., Lowers,
   H. A., Driscoll, R. L., & Klein, A. J. (2017). USGS Spectral Library
