@@ -12,7 +12,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
 from varda.image_loading import ImageLoadingService
-from varda.image_loading.crism_geometry import GEOMETRY_FILE_KEY, setGeometryOverride
+from varda.image_loading.crism_geometry import GEOMETRY_KEYS, setGeometryOverride
 from varda.rois.roi_json import roisFromJson
 from varda.session import SessionState
 from varda.workspaces.workspace_kinds import buildWorkspace
@@ -86,8 +86,9 @@ class SessionRestorer(QObject):
                 image.setMetadataOverrides(
                     entry.get("overrides", {}), entry.get("name")
                 )
-                if entry.get(GEOMETRY_FILE_KEY):
-                    setGeometryOverride(image, entry[GEOMETRY_FILE_KEY])
+                for need, key in GEOMETRY_KEYS.items():
+                    if entry.get(key):
+                        setGeometryOverride(image, need, entry[key])
         count = 0
         for workspace in self._state.workspaces:
             images = [self._byPath(path) for path in workspace.images]

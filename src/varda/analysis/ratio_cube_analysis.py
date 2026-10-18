@@ -61,7 +61,7 @@ from varda.image_loading.crism_geometry import (
     geometryDataFile,
     geometryOverride,
     geometryStartFolder,
-    setGeometryOverride,
+    keepChosenFile,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.raster_writer import SIDECAR_WRITERS
@@ -319,7 +319,7 @@ class RatioCubeAnalysis(Analysis):
         self._image = image
         self.geometryFile.startFolder = geometryStartFolder(image)
         with self.geometryFile.sigParameterChanged.blocked():
-            self.geometryFile.set(geometryOverride(image))
+            self.geometryFile.set(geometryOverride(image, COLUMNS))
 
     def _chosenFile(self) -> str:
         path = self.geometryFile.get().strip()
@@ -328,16 +328,8 @@ class RatioCubeAnalysis(Analysis):
     def _useGeometryFile(self, _path: str) -> None:
         """A usable file chosen here becomes the image's override (every
         feature then uses it); clearing the field goes back to automatic."""
-        image, path = self._image, self._chosenFile()
-        if image is None:
-            return
-        if not path:
-            if geometryOverride(image):
-                setGeometryOverride(image, None)
-        elif path != geometryOverride(image) and not checkGeometryFile(
-            path, image, COLUMNS
-        ):
-            setGeometryOverride(image, path)
+        if self._image is not None:
+            keepChosenFile(self._image, COLUMNS, self.geometryFile.get().strip())
 
     def _check(self):
         return CHECKS[self.blandness.get().value]

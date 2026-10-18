@@ -13,7 +13,7 @@ from pyproj import CRS
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.image_loading import crism_geometry, crism_geometry_chooser
-from varda.image_loading.crism_geometry import geometryOverride
+from varda.image_loading.crism_geometry import COLUMNS, geometryOverride
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.plotting.plot import VardaPlotWidget
 from varda.rois.roi_collection import ROICollection
@@ -109,7 +109,7 @@ def test_choosing_the_in_file_enables_column_lock(qtbot, tmp_path, dialogs):
     workspace.chooseGeometryButton.click()
 
     assert dialogs["starts"] == [str(tmp_path)]  # the image's folder
-    assert geometryOverride(data) == dialogs["path"]
+    assert geometryOverride(data, COLUMNS) == dialogs["path"]
     assert workspace.lockCheck.isEnabled() and workspace.lockCheck.isChecked()
     assert workspace.lockStatus.text() == "Column lock on"
     assert "(override)" in workspace.lockCheck.toolTip()
@@ -123,7 +123,7 @@ def test_a_ddr_chosen_for_column_lock_is_refused(qtbot, tmp_path, dialogs):
     dialogs["path"] = str(_deFile(tmp_path))
     workspace.chooseGeometryButton.click()
     assert len(dialogs["warnings"]) == 1 and "DDR/DE" in dialogs["warnings"][0]
-    assert geometryOverride(data) == ""
+    assert geometryOverride(data, COLUMNS) == ""
     assert not workspace.lockCheck.isEnabled()
 
 
@@ -131,7 +131,7 @@ def test_canceling_the_dialog_changes_nothing(qtbot, tmp_path, dialogs):
     data = _cube("iovf", str(tmp_path / IOVF_NAME))
     workspace = _workspace(qtbot, data)
     workspace.chooseGeometryButton.click()
-    assert geometryOverride(data) == "" and dialogs["warnings"] == []
+    assert geometryOverride(data, COLUMNS) == "" and dialogs["warnings"] == []
 
 
 def test_the_roi_manager_offers_the_choice_and_follows_the_image(
@@ -175,3 +175,19 @@ def test_the_workspace_with_the_button_fits_a_laptop(qtbot, tmp_path):
     qtbot.wait(50)
     assert workspace.chooseGeometryButton.isVisible()
     assertNothingClipped(workspace)
+
+
+def test_a_non_crism_image_gets_no_button_in_the_roi_manager(qtbot, tmp_path):
+    landsat = _cube("landsat", str(tmp_path / "LC08_L2SP_038037_20230101.tif"))
+    manager = ROIManagerWidget(ROICollection(), landsat, VardaPlotWidget())
+    qtbot.addWidget(manager)
+    assert not manager._lockColumnCheck.isEnabled()
+    assert manager.chooseGeometryButton.isHidden()
+    assert "No CRISM detector columns" not in manager._lockColumnCheck.toolTip()
+
+
+def test_the_button_never_invites_a_ddr(qtbot, tmp_path):
+    data = _cube("iovf", str(tmp_path / IOVF_NAME))
+    workspace = _workspace(qtbot, data)
+    tip = workspace.chooseGeometryButton.toolTip()
+    assert "IN file" in tip and "DDR" not in tip and "_de" not in tip

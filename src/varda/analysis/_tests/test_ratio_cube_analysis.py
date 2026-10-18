@@ -586,7 +586,7 @@ def test_a_chosen_geometry_file_is_used_and_recorded(tmp_path):
     assert "with Geometry File" in analysis.unavailableReason(image)
     analysis.geometryFile.set(str(chosen))
     # the image now carries it, so every other feature uses it too
-    assert image.extraMetadata["crismGeometryFile"] == str(chosen)
+    assert image.extraMetadata["crismColumnsFile"] == str(chosen)
     analysis.method.set(WHOLE)
     ratio, _ = analysis.runAll(image, QUIET)
     record = ratio.extraMetadata["ratioCube"]
@@ -602,7 +602,7 @@ def test_a_chosen_geometry_file_is_used_and_recorded(tmp_path):
     again.prepareFor(image)
     assert again.geometryFile.get() == str(chosen)
     again.geometryFile.set("")
-    assert "crismGeometryFile" not in image.extraMetadata
+    assert "crismColumnsFile" not in image.extraMetadata
 
 
 def test_a_wrong_geometry_file_is_refused_with_the_reason(tmp_path):
@@ -616,7 +616,7 @@ def test_a_wrong_geometry_file_is_refused_with_the_reason(tmp_path):
     analysis.geometryFile.set(str(ddr))
     reason = analysis.unavailableReason(image)
     assert reason.startswith("Geometry File: ") and "DDR/DE" in reason
-    assert "crismGeometryFile" not in image.extraMetadata  # not taken
+    assert "crismColumnsFile" not in image.extraMetadata  # not taken
     analysis.geometryFile.set(str(_inFile(tmp_path / "small_in.img", ROWS - 1)))
     assert "pixels but" in analysis.unavailableReason(image)
     with pytest.raises(ValueError, match="Geometry File"):

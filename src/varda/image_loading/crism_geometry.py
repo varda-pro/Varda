@@ -7,11 +7,13 @@ that companion file, computes the horizontal shift needed to place a copied ROI
 on the same detector column as its template, and reads the scene's incidence.
 
 The file is looked for in order (``geometryCandidates``): the image's own
-override (``crismGeometryFile`` in its metadata, chosen by hand), the
-companions named like the image's file beside it, then those of the files its
-Varda provenance names, following crops back to their source. A file serves
-only if it has the needed band and covers the image's pixels. It is deliberately CRISM-specific and self-contained: no
-general multi-instrument abstraction until a second instrument needs one.
+override for the need, chosen by hand (``crismColumnsFile`` for the IN file,
+``crismIncidenceFile`` for the DDR/DE file, in its metadata), the companions
+named like the image's file beside it, then those of the files its Varda
+provenance names, following crops back to their source. A file serves only if
+it has the needed band and covers the image's pixels. It is deliberately
+CRISM-specific and self-contained: no general multi-instrument abstraction
+until a second instrument needs one.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ import logging
 import math
 import os
 import re
-
 from typing import TYPE_CHECKING
 
 import attrs
@@ -30,9 +31,9 @@ from affine import Affine
 from pyproj import CRS
 from rasterio.errors import RasterioError
 
-from varda.common.provenance import CRISM_GEOMETRY_FILE_KEY, PROVENANCE_KEY
+from varda.common.provenance import CRISM_GEOMETRY_KEYS, PROVENANCE_KEY
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # entities imports image loading: only the type is needed
     from varda.common.entities import VardaRaster
 
 logger = logging.getLogger(__name__)
@@ -223,8 +224,6 @@ def findBandIndex(descriptions: tuple[str, ...], kind: str) -> int | None:
 
 # --- which geometry file, and how it was found -----------------------------------
 
-# An image's hand-chosen geometry file (a path), in its metadata
-GEOMETRY_FILE_KEY = CRISM_GEOMETRY_FILE_KEY
 # How a geometry file was found (``route``)
 ROUTE_OVERRIDE = "override"
 ROUTE_BESIDE = "beside the file"
@@ -235,6 +234,9 @@ PROVENANCE_DEPTH = 8
 # What a feature needs from the geometry file: a band kind of ``_BAND_ALIASES``
 COLUMNS = "ir_sample"
 INCIDENCE = "incidence"
+# Where an image's hand-chosen geometry file for each need is kept, in its
+# metadata: the IN file for detector columns, the DDR/DE file for incidence
+GEOMETRY_KEYS = dict(zip((COLUMNS, INCIDENCE), CRISM_GEOMETRY_KEYS))
 # Processes whose output is a window of their input: the parameters giving the
 # first row and column, and whether those are 1-based
 _CROPS = {"crop": ("row", "column", 0), "subset": ("First Row", "First Column", 1)}
@@ -293,54 +295,81 @@ def _header(path: str) -> _Header:
 
 def geometryDataFile(path: str) -> str:
     """The file to open for a chosen geometry file: an ENVI header's data
-    file (``.img`` beside the ``.hdr``), else ``path`` itself."""
-    stem, suffix = os.path.splitext(path)
+    file (``.img`` beside the ``.hdr``), else ``path`` itself; absolute."""
+    stem, suffix = os.path.splitext(os.path.abspath(path))
     if suffix.lower() == ".hdr":
         for data in (stem + ".img", stem + ".IMG"):
             if os.path.isfile(data):
                 return data
-    return path
+    return stem + suffix
 
 
 def geometryStartFolder(image: VardaRaster) -> str:
     """Where to start looking for ``image``'s geometry file: its own file's
     folder, else that of the first file its provenance names ("" if none)."""
-    path = image.filePath or ""
+    chain = _sourceChain(image)
+    path = image.filePath or next(
+        (str(entry.get("path")) for _, entry in chain if entry.get("path")), ""
+    )
+    return os.path.dirname(path)
+
+
+def _sourceChain(image: VardaRaster) -> list[tuple[dict, dict]]:
+    """The image's provenance back to its first source, following each step's
+    primary input (the image the process ran on, listed first; others, such
+    as Band Math's second image, may be another observation's): (record, its
+    primary input's entry), newest first, up to :data:`PROVENANCE_DEPTH`."""
+    chain: list[tuple[dict, dict]] = []
     record = image.extraMetadata.get(PROVENANCE_KEY)
     for _ in range(PROVENANCE_DEPTH):
-        if path or not isinstance(record, dict):
+        if not isinstance(record, dict):
             break
         inputs = [i for i in record.get("inputs") or [] if isinstance(i, dict)]
         if not inputs:
             break
-        path = str(inputs[0].get("path") or "")
+        chain.append((record, inputs[0]))
         record = inputs[0].get(PROVENANCE_KEY)
-    return os.path.dirname(path)
+    return chain
 
 
-def geometryOverride(image: VardaRaster) -> str:
-    """The geometry file chosen by hand for ``image`` ("" when none)."""
-    return str(image.extraMetadata.get(GEOMETRY_FILE_KEY) or "")
+def geometryOverride(image: VardaRaster, need: str) -> str:
+    """The geometry file chosen by hand for ``image``'s ``need``
+    (:data:`COLUMNS` or :data:`INCIDENCE`; "" when none)."""
+    return str(image.extraMetadata.get(GEOMETRY_KEYS[need]) or "")
 
 
-def setGeometryOverride(image: VardaRaster, path: str | None) -> None:
-    """Use ``path`` as ``image``'s geometry file before any found by name
-    (None or "" goes back to automatic lookup); everything showing the image
-    is told."""
+def setGeometryOverride(image: VardaRaster, need: str, path: str | None) -> None:
+    """Use ``path`` as ``image``'s geometry file for ``need`` before any found
+    by name (None or "" goes back to automatic lookup); everything showing the
+    image is told. Kept in the data source's metadata, so a plugin source whose
+    ``extraMetadata`` is a new dict on each access would lose it."""
     metadata = image.dataSource.extraMetadata
     if path:
-        metadata[GEOMETRY_FILE_KEY] = str(path)
+        metadata[GEOMETRY_KEYS[need]] = str(path)
     else:
-        metadata.pop(GEOMETRY_FILE_KEY, None)
+        metadata.pop(GEOMETRY_KEYS[need], None)
     image.sigMetadataChanged.emit()
 
 
-def geometryCandidates(image: VardaRaster) -> list[GeometryCandidate]:
-    """Every geometry file that may serve ``image``, in the order they are
-    tried: its override, the companions beside its file, then those of the
-    files its provenance names (up to :data:`PROVENANCE_DEPTH` steps back)."""
+def keepChosenFile(image: VardaRaster, need: str, path: str) -> None:
+    """A geometry file typed or picked in a dialog: kept as ``image``'s
+    override for ``need`` if it serves (so every feature uses it); "" goes back
+    to automatic lookup; a file that doesn't serve leaves the image as it was
+    (the dialog says why)."""
+    path = geometryDataFile(path) if path else ""
+    if path == geometryOverride(image, need):
+        return
+    if not path or not checkGeometryFile(path, image, need):
+        setGeometryOverride(image, need, path)
+
+
+def geometryCandidates(image: VardaRaster, need: str) -> list[GeometryCandidate]:
+    """Every geometry file that may serve ``image``'s ``need``, in the order
+    they are tried: its override for that need, the companions beside its
+    file, then those of the files its provenance names (the primary input of
+    each step, up to :data:`PROVENANCE_DEPTH` steps back)."""
     found: list[GeometryCandidate] = []
-    override = geometryOverride(image)
+    override = geometryOverride(image, need)
     if override:
         found.append(GeometryCandidate(override, ROUTE_OVERRIDE))
     if image.filePath:
@@ -348,40 +377,36 @@ def geometryCandidates(image: VardaRaster) -> list[GeometryCandidate]:
             GeometryCandidate(path, ROUTE_BESIDE)
             for path in geometryFileCandidates(image.filePath)
         ]
-    found += _provenanceCandidates(image.extraMetadata.get(PROVENANCE_KEY), (0, 0), 1)
+    found += _provenanceCandidates(image, need)
     unique: dict[tuple[str, tuple[int, int]], GeometryCandidate] = {}
     for candidate in found:
         unique.setdefault((candidate.path, candidate.offset), candidate)
     return list(unique.values())
 
 
-def _provenanceCandidates(
-    record: dict | None, offset: tuple[int, int], depth: int
-) -> list[GeometryCandidate]:
-    """The geometry files of the inputs a provenance record names (their
-    override, then their companions), then of their own inputs."""
-    if not isinstance(record, dict) or depth > PROVENANCE_DEPTH:
-        return []
-    process = record.get("processId", "")
-    if process in _REGRIDS:
-        return []
-    if process in _CROPS:
-        rowKey, columnKey, base = _CROPS[process]
-        parameters = record.get("parameters") or {}
-        try:
-            offset = (
-                offset[0] + int(parameters[rowKey]) - base,
-                offset[1] + int(parameters[columnKey]) - base,
-            )
-        except (KeyError, TypeError, ValueError):
-            return []
+def _provenanceCandidates(image: VardaRaster, need: str) -> list[GeometryCandidate]:
+    """The geometry files of the sources the image's provenance names (each
+    one's override for ``need``, then its companions), crops shifting the
+    window; the chain stops at a step that moves pixels."""
     found: list[GeometryCandidate] = []
-    for entry in record.get("inputs") or []:
-        if not isinstance(entry, dict):
-            continue
+    offset = (0, 0)
+    for record, entry in _sourceChain(image):
+        process = record.get("processId", "")
+        if process in _REGRIDS:
+            break
+        if process in _CROPS:
+            rowKey, columnKey, base = _CROPS[process]
+            parameters = record.get("parameters") or {}
+            try:
+                offset = (
+                    offset[0] + int(parameters[rowKey]) - base,
+                    offset[1] + int(parameters[columnKey]) - base,
+                )
+            except (KeyError, TypeError, ValueError):
+                break
         path = str(entry.get("path") or "")
         route = sourceRoute(path or str(entry.get("name", "?")))
-        chosen = entry.get(GEOMETRY_FILE_KEY)
+        chosen = entry.get(GEOMETRY_KEYS[need])
         if chosen:
             found.append(GeometryCandidate(str(chosen), route, offset))
         if path:
@@ -389,8 +414,52 @@ def _provenanceCandidates(
                 GeometryCandidate(companion, route, offset)
                 for companion in geometryFileCandidates(path)
             ]
-        found += _provenanceCandidates(entry.get(PROVENANCE_KEY), offset, depth + 1)
     return found
+
+
+# CRISM product IDs (observation class, 8 hex digits) and map tiles (MRDR)
+_CRISM_NAME = re.compile(
+    r"(?:^|[^a-z0-9])(?:frt|hrl|hrs|frs|ats|afs|fff|msp|hsp|msw|msv|hsv|epf|tod|lis|cal|bin)"
+    r"[0-9a-f]{8}_|_[mv]rr(?:al|if|ir|sr|su|ra|de)_"
+)
+# metadata keys that may name the instrument or product
+_CRISM_KEYS = ("instrument", "product_id", "productid", "mission", "spacecraft")
+# a CRISM-like spectral axis: at least this many bands, all in this range (nm)
+_CRISM_MIN_BANDS = 50
+_CRISM_RANGE_NM = (360.0, 3920.0)
+
+
+def looksLikeCrism(image: VardaRaster) -> bool:
+    """Whether ``image`` is plausibly a CRISM product, so a missing geometry
+    file is worth offering to choose: a geometry file chosen for it, a CRISM
+    product name on it or on a source its provenance names, CRISM metadata
+    (an IOVF record, "CRISM" in its description or an instrument or product
+    key), or an unprojected cube of a CRISM width (640, 320, 128 or 64
+    columns) with a CRISM-like spectral axis (at least 50 bands within
+    0.36-3.92 µm). Width alone isn't enough: 640 columns is common."""
+    if any(geometryOverride(image, need) for need in GEOMETRY_KEYS):
+        return True
+    names = [image.filePath or "", image.name]
+    names += [
+        str(entry.get("path") or entry.get("name") or "")
+        for _, entry in _sourceChain(image)
+    ]
+    if any(_CRISM_NAME.search(os.path.basename(n).lower()) for n in names):
+        return True
+    metadata = image.extraMetadata
+    if "iovf" in metadata or "crism" in str(image.description).lower():
+        return True
+    for key, value in metadata.items():
+        if any(k in str(key).lower().replace(" ", "_") for k in _CRISM_KEYS):
+            if "crism" in str(value).lower():
+                return True
+    if image.crs is not None or image.width not in CRISM_SENSOR_WIDTHS:
+        return False
+    centers = image.bandModel.centers
+    if centers is None or len(centers) < _CRISM_MIN_BANDS:
+        return False
+    low, high = _CRISM_RANGE_NM
+    return bool(np.nanmin(centers) >= low and np.nanmax(centers) <= high)
 
 
 def _georeferencedOffset(header: _Header, image: VardaRaster) -> tuple[int, int] | None:
@@ -466,7 +535,7 @@ def findGeometryFile(image: VardaRaster, need: str) -> GeometryMatch | None:
     """The first of :func:`geometryCandidates` that has the band ``need``
     (:data:`COLUMNS` or :data:`INCIDENCE`) and covers the image's pixels, or
     None. Reads only the files' headers."""
-    return _firstMatch(geometryCandidates(image), image, need)
+    return _firstMatch(geometryCandidates(image, need), image, need)
 
 
 _NEEDED_BY = {
@@ -509,8 +578,10 @@ def checkGeometryFile(path: str, image: VardaRaster, need: str) -> str:
             f"{name} is {header.width} × {header.height} pixels but {image.name} "
             f"is {image.width} × {image.height}, and they aren't on one map grid "
             "(the same projection and pixel size) that covers the image, so its "
-            "pixels can't be matched to the image's. Choose the companion of the "
-            "product this image was made from."
+            "pixels can't be matched to the image's. A chosen file must have the "
+            "image's rows × columns or share its map grid; for a crop without "
+            "georeferencing, leave it to the automatic lookup, which follows the "
+            "crop back to its source."
         )
     return ""
 
@@ -652,7 +723,7 @@ def geometryFileCandidates(sourceFilename: str) -> list[str]:
 
 
 def resolveGeometryFile(sourceFilename: str) -> str | None:
-    """The first geometry companion of a CRISM ``.img``/``.hdr`` path found on
+    """(Kept for tests and plugins.) The first geometry companion of a CRISM ``.img``/``.hdr`` path found on
     disk (see :func:`geometryFileCandidates`), or None."""
     found = geometryFileCandidates(sourceFilename)
     return found[0] if found else None

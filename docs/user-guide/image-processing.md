@@ -279,9 +279,12 @@ with Apply Mask, or anywhere a 0/1 mask goes. **Method** chooses how:
     finds its I/F cube's DDR; see [CRISM ratio cubes: the geometry
     file](crism-ratio.md#the-geometry-file)), or chosen in **CRISM
     Geometry File** (empty means automatic). A chosen file comes before the
-    metadata; it must have an "INA at areoid" band and the image's rows ×
+    metadata and is kept with the image (`crismIncidenceFile`) and the
+    session; it must have an "INA at areoid" band and the image's rows ×
     columns (or the same map grid, covering the image), or the dialog says
-    why it can't be used. The elevation's source, recorded as
+    why it can't be used. A DDR found automatically that doesn't cover the
+    image's pixels is skipped (the incidence is averaged over the image's
+    own pixels, not the whole DDR). The elevation's source, recorded as
     `sunElevationSource`, names the DDR, the incidence range across the
     image and how the file was found (`override`, `beside the file`, `from
     source <path>`). Otherwise you must enter them, from the product's

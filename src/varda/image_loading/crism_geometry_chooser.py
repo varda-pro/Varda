@@ -22,9 +22,8 @@ GEOMETRY_FILE_FILTER = (
 )
 CHOOSE_TEXT = "Choose Geometry File…"
 CHOOSE_TOOLTIP = (
-    "Point Varda to this image's CRISM geometry file when it isn't found "
-    "beside the image or its source: the IN file (…_in…) for detector "
-    "columns, the DDR/DE file (…_de…) for the incidence angle"
+    "Point Varda to this image's CRISM IN file (…_in…, with the detector "
+    "columns) when it isn't found beside the image or the file it was made from"
 )
 
 
@@ -34,7 +33,7 @@ def chooseGeometryFile(
     """Ask for ``image``'s geometry file (the dialog opens in its folder),
     check it for ``need`` and set it as the image's override. False when
     canceled or refused (the refusal says why)."""
-    current = geometryOverride(image)
+    current = geometryOverride(image, need)
     path, _ = QFileDialog.getOpenFileName(
         parent,
         f"CRISM geometry file for {image.name}",
@@ -54,7 +53,7 @@ def useGeometryFile(
     if problem:
         QMessageBox.warning(parent, "Geometry file not used", problem)
         return False
-    setGeometryOverride(image, path)
+    setGeometryOverride(image, need, path)
     return True
 
 

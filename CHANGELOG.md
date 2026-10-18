@@ -18,7 +18,9 @@ can alter results.
   **CRISM Geometry File** (Shadow Mask) point it to one; the file is checked
   (it must open, have the needed band and cover the image's pixels) and
   refused with the reason otherwise. A chosen IN file enables column lock at
-  once, is used by every feature and is kept by the session. The automatic
+  once; the chosen IN and DDR/DE files are kept with the image (one key each,
+  `crismColumnsFile` and `crismIncidenceFile`), used by every feature and
+  kept by the session. The automatic
   lookup now also follows provenance, so an IOVF-filtered (or cropped) cube
   finds the companions of the I/F cube it was made from. The Ratio Cube
   records the file and how it was found (`geometryRoute`) in its record,

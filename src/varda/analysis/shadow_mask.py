@@ -62,7 +62,9 @@ from varda.image_loading.crism_geometry import (
     Incidence,
     checkGeometryFile,
     geometryDataFile,
+    geometryOverride,
     geometryStartFolder,
+    keepChosenFile,
     sceneIncidenceFor,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -268,7 +270,8 @@ def _ddrElevation(ddr: Incidence) -> tuple[float, str]:
     return (
         90.0 - ddr.mean,
         f"90° − the mean incidence at the areoid in the CRISM DDR "
-        f"{ddr.path} ({ddr.low:.2f}–{ddr.high:.2f}° across the scene; "
+        f"{ddr.path}, averaged over the image's own pixels ({ddr.low:.2f}–"
+        f"{ddr.high:.2f}° across the image's pixels; "
         f"found: {ddr.route})",
     )
 
@@ -440,7 +443,14 @@ class ShadowMaskAnalysis(Analysis):
             lambda _: self._entered("elevation")
         )
         self._image: VardaRaster | None = None
-        self.geometryFile.sigParameterChanged.connect(lambda _: self._readSun())
+        self.geometryFile.sigParameterChanged.connect(self._useGeometryFile)
+
+    def _useGeometryFile(self, _path: str) -> None:
+        """A usable DDR chosen here is kept with the image (as the Ratio
+        Cube keeps its IN file), then the sun is read again."""
+        if self._image is not None:
+            keepChosenFile(self._image, INCIDENCE, self.geometryFile.get().strip())
+        self._readSun()
 
     def _chosenFile(self) -> str:
         path = self.geometryFile.get().strip()
@@ -465,6 +475,8 @@ class ShadowMaskAnalysis(Analysis):
         self.dem.setOrClear(current if current in candidates else None)
         self._image = image
         self.geometryFile.startFolder = geometryStartFolder(image)
+        with self.geometryFile.sigParameterChanged.blocked():
+            self.geometryFile.set(geometryOverride(image, INCIDENCE))
         self._readSun()
 
     def _readSun(self) -> None:

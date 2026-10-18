@@ -42,6 +42,7 @@ def make_split_image() -> Callable[[int, int, int, float, float], SimpleNamespac
             filePath=None,
             crs=None,
             extraMetadata={},
+            description="",
             sigMetadataChanged=SignalInstance(),
             wavelengths=np.arange(bands, dtype=np.float64),
             wavelengthsType=float,

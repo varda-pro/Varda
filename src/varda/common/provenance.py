@@ -7,7 +7,8 @@ A provenance record is plain JSON-friendly data in an image's
       "schema": 1,
       "process": "Band Math", "processId": "band_math",
       "parameters": {...},                       # every setting
-      "inputs": [{"name", "path", "provenance"?, "crismGeometryFile"?}],
+      "inputs": [{"name", "path", "provenance"?, "crismColumnsFile"?,
+                  "crismIncidenceFile"?}],
       "vardaVersion": "0.9.0", "created": "2026-10-17T12:00:00+00:00",
       "plugin": "name version",                  # when a plugin made it
       "software": {"spectral": "0.24"},          # libraries/tools that did the work
@@ -51,9 +52,10 @@ METADATA_TAG = "metadata"
 # Figures a process measured on its result (accuracy, hold-out validation, the
 # training data used): kept in files, and copied into the provenance record
 RESULT_KEYS = ("accuracy", "validation", "trainingData")
-# A CRISM image's hand-chosen geometry (IN/DDR) file (``crism_geometry``):
-# kept in files and named in the records of what is made from the image
-CRISM_GEOMETRY_FILE_KEY = "crismGeometryFile"
+# A CRISM image's hand-chosen geometry files (``crism_geometry``): the IN
+# file (detector columns) and the DDR/DE file (incidence). Kept in files and
+# named in the records of what is made from the image
+CRISM_GEOMETRY_KEYS = ("crismColumnsFile", "crismIncidenceFile")
 # Scientific metadata kept in files: class names and colors (class maps), what
 # Eigenvalue Plot and Inverse Transform need, classifier training figures,
 # the mosaic recipe, displacement and FATT settings, and analyses' quality
@@ -81,7 +83,7 @@ KEPT_METADATA_KEYS = (
     "componentSelection",
     "unmixing",
     "iovf",
-    CRISM_GEOMETRY_FILE_KEY,
+    *CRISM_GEOMETRY_KEYS,
     *RESULT_KEYS,
 )
 # Beside a downloaded file: where it came from (catalogs/downloads.py)
@@ -127,14 +129,14 @@ def softwareVersions(names: Iterable[str]) -> dict[str, str]:
 
 def inputRecord(image: VardaRaster) -> dict:
     """An input as a record names it, with its own record and its
-    hand-chosen CRISM geometry file when it has them."""
+    hand-chosen CRISM geometry files when it has them."""
     entry: dict = {"name": image.name, "path": image.filePath}
     record = image.extraMetadata.get(PROVENANCE_KEY)
     if record:
         entry[PROVENANCE_KEY] = record
-    geometry = image.extraMetadata.get(CRISM_GEOMETRY_FILE_KEY)
-    if geometry:
-        entry[CRISM_GEOMETRY_FILE_KEY] = geometry
+    for key in CRISM_GEOMETRY_KEYS:
+        if image.extraMetadata.get(key):
+            entry[key] = image.extraMetadata[key]
     return entry
 
 

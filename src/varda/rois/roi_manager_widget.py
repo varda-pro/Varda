@@ -26,8 +26,10 @@ from shapely.geometry import Polygon
 from varda.image_loading.crism_geometry import (
     ColumnGeometry,
     columnGeometryFor,
+    COLUMNS,
     computeColumnLockedTranslation,
     geometryOverride,
+    looksLikeCrism,
     wholePixels,
 )
 from varda.image_loading.crism_geometry_chooser import chooseGeometryButton
@@ -234,6 +236,7 @@ class ROIManagerWidget(QWidget):
         if sip.isdeleted(self):  # the image outlived this widget
             return
         geometry = self._columnGeometry()
+        crism = looksLikeCrism(self._image)
         self._lockColumnCheck.setEnabled(geometry is not None)
         if geometry is None:
             self._lockColumnCheck.setChecked(False)
@@ -241,13 +244,18 @@ class ROIManagerWidget(QWidget):
                 "No CRISM detector columns for this image: no geometry file "
                 "with an IR Sample band beside it or its source, and it is "
                 "not an unprojected CRISM cube. Choose the IN file by hand."
+                if crism
+                else "No sensor detector columns for this image (column lock "
+                "is for CRISM cubes)"
             )
         else:
             self._lockColumnCheck.setToolTip(
                 f"Detector columns from {geometry.source} ({geometry.route})"
             )
+        # offered only where it can help: a CRISM image without columns, or
+        # one whose file was chosen by hand (to change it)
         self.chooseGeometryButton.setVisible(
-            geometry is None or bool(geometryOverride(self._image))
+            (geometry is None and crism) or bool(geometryOverride(self._image, COLUMNS))
         )
 
     @property

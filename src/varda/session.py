@@ -16,7 +16,7 @@ from pathlib import Path
 import attrs
 
 from varda.common.entities import VardaRaster
-from varda.image_loading.crism_geometry import GEOMETRY_FILE_KEY, geometryOverride
+from varda.common.provenance import CRISM_GEOMETRY_KEYS
 from varda.rois.roi_json import roisToJson
 from varda.workspaces.workspace_kinds import describeWorkspace
 
@@ -43,8 +43,9 @@ class WorkspaceState:
 class SessionState:
     images: tuple[str, ...] = attrs.field(converter=tuple)  # file paths in list order
     workspaces: tuple[WorkspaceState, ...] = attrs.field(converter=tuple)
-    # path -> {"name": ..., "overrides": {...}, "crismGeometryFile"?: path}:
-    # metadata edited in Varda, and a geometry file chosen by hand
+    # path -> {"name": ..., "overrides": {...}, "crismColumnsFile"?: path,
+    # "crismIncidenceFile"?: path}: metadata edited in Varda, and the CRISM
+    # geometry files chosen by hand
     metadata: dict = attrs.field(factory=dict)
 
 
@@ -93,7 +94,7 @@ def captureSession(
     edited = {
         pathOf[id(image)]: _imageMetadata(image)
         for image in images
-        if id(image) in pathOf and (image.metadataOverrides or geometryOverride(image))
+        if id(image) in pathOf and (image.metadataOverrides or _geometryFiles(image))
     }
     return SessionCapture(
         SessionState(tuple(pathOf.values()), tuple(states), edited), tuple(unsaved)
@@ -102,9 +103,16 @@ def captureSession(
 
 def _imageMetadata(image: VardaRaster) -> dict:
     entry = {"name": image.name, "overrides": image.metadataOverrides}
-    if geometryOverride(image):
-        entry[GEOMETRY_FILE_KEY] = geometryOverride(image)
-    return entry
+    return {**entry, **_geometryFiles(image)}
+
+
+def _geometryFiles(image: VardaRaster) -> dict[str, str]:
+    """The CRISM geometry files chosen by hand for the image, by key."""
+    return {
+        key: str(image.extraMetadata[key])
+        for key in CRISM_GEOMETRY_KEYS
+        if image.extraMetadata.get(key)
+    }
 
 
 def writeSession(
@@ -199,11 +207,12 @@ def readSession(path: str | Path) -> SessionState:
 
 
 def _withPath(entry: dict, convert: Callable[[str], str]) -> dict:
-    """An image's metadata entry with its geometry file's path converted like
-    the images' (relative to the session file when stored)."""
-    if not entry.get(GEOMETRY_FILE_KEY):
-        return entry
-    return {**entry, GEOMETRY_FILE_KEY: convert(entry[GEOMETRY_FILE_KEY])}
+    """An image's metadata entry with its geometry files' paths converted
+    like the images' (relative to the session file when stored)."""
+    return {
+        **entry,
+        **{key: convert(entry[key]) for key in CRISM_GEOMETRY_KEYS if entry.get(key)},
+    }
 
 
 def _upgrade(document: dict, path: str | Path) -> dict:

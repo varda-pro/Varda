@@ -63,7 +63,7 @@ Which one a feature needs:
 **Automatic lookup.** For each need Varda tries, in order, and uses the first
 file that has the needed band and covers the image's pixels:
 
-1. **override**: the file chosen by hand for this image (below);
+1. **override**: the file chosen by hand for this image and need (below);
 2. **beside the file**: the companions named like the image's own file, in its
    folder (the table above);
 3. **from source *path***: the companions beside a file the image was made
@@ -73,7 +73,9 @@ file that has the needed band and covers the image's pixels:
    by hand for a source image is used too (its record names it). Crops
    (the Crop tool, Subset) shift the window read from the source's backplane;
    the chain stops at a step that moves pixels (Resample, Rotate/Flip, Crop to
-   ROI);
+   ROI). Only each step's primary input (the image it ran on) is followed, not
+   a second image such as Band Math's. A plugin process is assumed to keep the
+   pixel grid: check the recorded route if one warps or flips;
 4. for column lock and the Ratio Cube only, **image columns**: the cube's own
    columns, for an unprojected CRISM cube (above).
 
@@ -100,16 +102,19 @@ reason when:
   image's window is read. Varda never resamples a backplane: detector
   columns can't be interpolated meaningfully.
 
-A file accepted for column lock or the Ratio Cube becomes the image's
-**override** (`crismGeometryFile` in its metadata): every feature uses it,
-column lock turns on at once in every workspace showing the image, it is
-saved and restored with the session (by path; a packaged project doesn't
-copy the geometry file, so keep it beside the data) and kept in files Varda
-writes, and the records of images made from it name it. Clearing Geometry
-File goes back to automatic. The Shadow Mask's CRISM Geometry File is used
-for that run only. A file
-that lacks one need's band doesn't block the others: an override without
-"IR Sample" lets column lock fall back to the automatic lookup.
+An accepted file becomes the image's **override** for that need, one key
+each in its metadata: `crismColumnsFile` (the IN file, from Choose Geometry
+File… or the Ratio Cube's Geometry File) and `crismIncidenceFile` (the
+DDR/DE file, from the Shadow Mask's CRISM Geometry File). Every feature uses
+it; column lock becomes available in every workspace showing the image (and
+turns on in the CRISM Ratio workspace); both are saved and restored with the
+session (by path; a packaged project doesn't copy the geometry files, so
+keep them beside the data), kept in files Varda writes, and named in the
+records of images made from it. Clearing the field goes back to automatic.
+Choose Geometry File… asks for the IN file only. In the ROI Manager it is
+offered only for an image that looks like CRISM (a CRISM product name on it
+or a source, CRISM metadata, or an unprojected 640/320/128/64-column cube
+with a CRISM-like spectral axis), or one whose file was chosen by hand.
 
 **What's recorded.** The Ratio Cube's `ratioCube` record has `geometryFile`
 (the file read, "" for image columns) and `geometryRoute` (`override`,
