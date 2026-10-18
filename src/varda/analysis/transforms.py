@@ -35,7 +35,7 @@ from varda.analysis.linear_algebra import (
 )
 from varda.analysis.rasters import goodBands, readCube
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import ImageChoices, sameGridChoices
 from varda.common.parameter import (
     EnumParameter,
     ImageParameter,
@@ -164,9 +164,9 @@ class _ComponentAnalysis(Analysis):
         self.wavelengths.range = (Vec2(lo, hi), Vec2(lo, hi))
         self.wavelengths.set(Vec2(lo, hi))
         current = self.weights.get()
-        self.weights.setProvider(lambda: self._weightCandidates(image))
+        self.weights.setChoices(lambda: self._weightChoices(image))
         self.weights.setOrClear(
-            current if current in self._weightCandidates(image) else None
+            current if current in self._weightChoices(image).images else None
         )
 
     @staticmethod
@@ -177,12 +177,11 @@ class _ComponentAnalysis(Analysis):
             return np.arange(1, image.bandCount + 1, dtype=np.float64)
         return model.native(model.centers)
 
-    def _weightCandidates(self, image: VardaRaster) -> list[VardaRaster]:
-        return [
-            other
-            for other in compatibleImages(list(self.context.images), image)
-            if other.bandCount in (1, image.bandCount)
-        ]
+    def _weightChoices(self, image: VardaRaster) -> ImageChoices:
+        """Images on ``image``'s grid with one band or its bands."""
+        return sameGridChoices(
+            list(self.context.images), image, bandCounts=(1, image.bandCount)
+        )
 
     def keptBands(self, image: VardaRaster) -> np.ndarray:
         """The bands that go in: inside the wavelength range, not bad."""
@@ -199,8 +198,9 @@ class _ComponentAnalysis(Analysis):
                 "Fewer than two usable bands fall in the wavelength range."
             )
         weightsImage = self.weights.get()
-        if weightsImage is not None and weightsImage not in self._weightCandidates(
-            image
+        if (
+            weightsImage is not None
+            and weightsImage not in self._weightChoices(image).images
         ):
             raise ValueError(
                 f"{weightsImage.name} can't weight {image.name}: it must be on the "

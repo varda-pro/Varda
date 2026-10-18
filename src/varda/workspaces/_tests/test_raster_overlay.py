@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor
 
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
+from varda.common.grid import compatibleImages
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -15,7 +16,6 @@ from varda.workspaces.raster_overlay import (
     CLASSES,
     NO_OVERLAY,
     OverlayBar,
-    compatibleImages,
     overlayLayers,
     overlayRaster,
 )
@@ -146,6 +146,16 @@ def test_new_results_appear_in_the_list(qtbot):
     assert widget.imageBox.count() == 1
     images.append(_classification(base))
     assert widget.imageBox.count() == 2
+
+
+def test_the_bar_says_which_images_arent_on_this_grid(qtbot):
+    base = _base()
+    smaller = _raster(np.zeros((3, 8)), "smaller")
+    widget = OverlayBar(ProjectImages([base, smaller]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.imageBox.count() == 1
+    assert widget.notListed.text() == "(1 not on this grid)"
+    assert "smaller (different pixel grid" in widget.notListed.toolTip()
 
 
 def test_the_overlay_sits_between_the_image_and_what_is_drawn_on_it(bar):

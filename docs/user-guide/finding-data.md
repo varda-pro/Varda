@@ -1,6 +1,6 @@
 # Finding data
 
-**Workspace → Find and Fetch Data…** opens the **Find Data** workspace:
+**Data → Find Data…** opens the **Find Data** workspace:
 search a catalog for observations of a place, see their footprints on a
 map, and download them. It has five panels: **Search** (left), **Map**
 (center), **Preview** (right), **Results** (below the map) and **Downloads**

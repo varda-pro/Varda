@@ -8,7 +8,7 @@ the widget's tooltip holds the full text."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QRect
+from PyQt6.QtCore import QEvent, QPoint, QRect
 from PyQt6.QtGui import QTextDocument
 from PyQt6.QtWidgets import (
     QAbstractButton,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QStyle,
     QStyleOptionComboBox,
     QWidget,
+    QApplication,
 )
 import PyQt6Ads as ads
 
@@ -126,9 +127,19 @@ def _skipped(widget: QWidget, root: QWidget) -> bool:
     return False
 
 
+def settleLayouts() -> None:
+    """Run the layout passes Qt has queued. Showing a window can add a scroll
+    bar, which narrows the panel and re-wraps its text; the layouts only catch
+    up on a queued LayoutRequest, so a size read right after ``show`` can be
+    one pass stale (and the audit flakes with the length of the text)."""
+    for _ in range(5):  # a pass can queue another
+        QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+
+
 def clippedWidgets(root: QWidget) -> list[str]:
     """The visible text widgets under ``root`` that are cut off, each with
     the reason."""
+    settleLayouts()
     problems = []
     for widget in root.findChildren(QWidget):
         if (

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
+from rasterio.enums import Resampling
 
 from varda.analysis.analysis import Analysis, ProgressCallback
 from varda.analysis.fatt import (
@@ -20,11 +21,11 @@ from varda.analysis.fatt import (
     WINDOW_MEMORY_BUDGET,
     windowedNrmse,
 )
-from varda.analysis.image_math import readWithGaps
+from varda.analysis.image_math import maskChoices
 from varda.analysis.rasters import readCube
 from varda.analysis.spectral_library import LibrarySpectrum, resampleTo
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import onGridOf, resamplingRecord
 from varda.common.parameter import FloatParameter, ImageParameter, IntParameter
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
@@ -99,8 +100,9 @@ class FattMapAnalysis(Analysis):
     )
     exclude = ImageParameter(
         "Exclude",
-        "A mask on the image's grid (its first band): where it's set (nonzero) "
-        "is left out, with every window touching it, e.g. a Shadow Mask",
+        "A mask (its first band): where it's set (nonzero) is left out, with "
+        "every window touching it, e.g. a Shadow Mask; on another grid it's "
+        "resampled by nearest neighbor",
         optional=True,
     )
     minimumSignal = FloatParameter(
@@ -121,10 +123,8 @@ class FattMapAnalysis(Analysis):
 
     def prepareFor(self, image: VardaRaster) -> None:
         current = self.exclude.get()
-        self.exclude.setProvider(
-            lambda: compatibleImages(list(self.context.images), image)
-        )
-        candidates = compatibleImages(list(self.context.images), image)
+        self.exclude.setChoices(lambda: maskChoices(self.context.images, image))
+        candidates = maskChoices(self.context.images, image).images
         self.exclude.setOrClear(current if current in candidates else None)
 
     def unavailableReason(self, image: VardaRaster) -> str:
@@ -222,12 +222,15 @@ class FattMapAnalysis(Analysis):
         counts: dict = {"exclude": None, "excludedByMask": 0}
         mask = self.exclude.get()
         if mask is not None:
-            if mask not in compatibleImages(list(self.context.images), image):
-                raise ValueError(f"{mask.name} isn't on {image.name}'s grid.")
-            values = readWithGaps(mask, [0])[:, :, 0]
+            if mask not in maskChoices(self.context.images, image).images:
+                raise ValueError(f"{mask.name} can't be placed on {image.name}.")
+            values = onGridOf(mask, image, Resampling.nearest, [0])[:, :, 0]
             isSet = np.isfinite(values) & (values != 0)  # no data has no say
             excluded |= isSet
             counts["exclude"] = mask.name
+            counts["excludeResampling"] = resamplingRecord(
+                mask, image, Resampling.nearest
+            )
             counts["excludedByMask"] = int((isSet & valid).sum())
         minimum = float(self.minimumSignal.get())
         counts["minimumSignal"] = minimum
@@ -241,7 +244,11 @@ class FattMapAnalysis(Analysis):
     def _exclusionText(counts: dict) -> str:
         parts = []
         if counts["exclude"] is not None:
-            parts.append(f"{counts['excludedByMask']} px set in {counts['exclude']}")
+            resampled = counts.get("excludeResampling")
+            parts.append(
+                f"{counts['excludedByMask']} px set in {counts['exclude']}"
+                + (f" ({resampled['description']})" if resampled else "")
+            )
         if counts["minimumSignal"] > 0:
             parts.append(
                 f"{counts['excludedBySignal']} px with a mean signal below "

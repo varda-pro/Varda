@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import (
+    QApplication,
     QDoubleSpinBox,
     QFileDialog,
     QGraphicsItem,
@@ -71,6 +72,8 @@ from varda.common.parameter import (
 from varda.common.parameter_widgets import groupWidget
 
 CURVE_MIME_TYPE = "application/x-varda-curve"
+# Remove the selected curve while the plot has the keyboard focus
+DELETE_KEYS = (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
 
 
 class CurveConfig(ParameterGroup):
@@ -343,6 +346,19 @@ class _PlotGraphicsView(pg.GraphicsView):
         self._dragStartPos = None
         super().mouseReleaseEvent(event)
 
+    def keyPressEvent(self, ev) -> None:
+        # Before the scene: pyqtgraph's view box takes Backspace (zoom history)
+        parent = self.parent()
+        if (
+            ev is not None
+            and ev.key() in DELETE_KEYS
+            and isinstance(parent, VardaPlotWidget)
+            and parent.removeSelectedCurve()
+        ):
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
     def _initiateDrag(self, curve: Curve) -> None:
         data = curve.serialize()
         data["source_id"] = id(self.parent())
@@ -428,13 +444,18 @@ class VardaPlotWidget(QWidget):
         # zoom, pan, wheel), not on programmatic setRange calls.
         self.viewBox.sigRangeChangedManually.connect(self._onUserViewChange)
         self.viewBox.sigAxisGesture.connect(self._onAxisGesture)
+        # A sideways drag off the Y axis pulls out a marker (see Markers below)
+        self.viewBox.pullGuides = True
+        self.viewBox.sigGuideMoved.connect(self._onGuideMoved)
+        self.viewBox.sigGuideReleased.connect(self._onGuideReleased)
 
         self.curveSettingsBox = SectionBox("Selected Curve", self._curvePlaceholder())
 
         hint = MutedLabel(
             "Drag to pan · Shift-drag to zoom to a box · Scroll to zoom · "
             "Scroll over an axis to zoom only it (over Y: stretch the spectra) · "
-            "Right-drag to stretch axes · Drag on an axis to move only it"
+            "Right-drag to stretch axes · Drag along an axis to move only it · "
+            "Drag sideways off the Y axis to pull out a marker"
         )
         hint.setWordWrap(True)
 
@@ -461,6 +482,7 @@ class VardaPlotWidget(QWidget):
         # Markers: draggable vertical wavelength lines spanning every spectrum,
         # for reading off where features sit and comparing them across curves.
         self.markers: list[pg.InfiniteLine] = []
+        self._pulledMarker: pg.InfiniteLine | None = None  # being pulled out
         self.markerWavelength = QDoubleSpinBox()
         self.markerWavelength.setRange(0.0, 1_000_000.0)
         self.markerWavelength.setDecimals(1)
@@ -683,6 +705,27 @@ class VardaPlotWidget(QWidget):
         self._refreshMarkerList()
         self._layoutMarkerLabels()
 
+    def _onGuideMoved(self, x: float | None) -> None:
+        """A marker being pulled off the Y axis follows the cursor; hidden
+        while the cursor is outside the plot area."""
+        marker = self._pulledMarker
+        if x is None:
+            if marker is not None:
+                marker.hide()
+        elif marker is None:
+            self._pulledMarker = self.addMarker(x)
+        else:
+            marker.setValue(x)
+            marker.show()
+
+    def _onGuideReleased(self, x: float | None) -> None:
+        """Drop the pulled marker where released; outside the plot area,
+        cancel it."""
+        self._onGuideMoved(x)
+        marker, self._pulledMarker = self._pulledMarker, None
+        if x is None and marker is not None:
+            self.removeMarker(marker)
+
     def _onMarkerMoved(self) -> None:
         self._refreshMarkerList()
         self._layoutMarkerLabels()
@@ -817,13 +860,27 @@ class VardaPlotWidget(QWidget):
         return int(self.viewConfig.dataPointSize.value)
 
     def keyPressEvent(self, a0) -> None:
-        # Backspace / Delete remove the selected curve
-        if a0 is not None and a0.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
-            if self.selectedCurve is not None:
-                self.removePlot(self.selectedCurve)
-                a0.accept()
-                return
+        # Keys the sidebar's fields and lists pass on (e.g. Backspace in the
+        # marker list) are theirs, not a request to remove the curve
+        focus = QApplication.focusWidget()
+        fromSidebar = focus is not None and self.sidebarArea.isAncestorOf(focus)
+        if (
+            a0 is not None
+            and a0.key() in DELETE_KEYS
+            and not fromSidebar
+            and self.removeSelectedCurve()
+        ):
+            a0.accept()
+            return
         super().keyPressEvent(a0)
+
+    def removeSelectedCurve(self) -> bool:
+        """Remove the selected curve as its Remove Curve button does; False
+        when nothing is selected."""
+        if self.selectedCurve is None:
+            return False
+        self.removePlot(self.selectedCurve)
+        return True
 
     def selectPlot(self, curve: Curve) -> None:
         if self.selectedCurve is not None:

@@ -97,8 +97,17 @@ Hourglass):
 - **Scroll over an axis** zooms only that axis, about the cursor. Over the
   Y axis this stretches the spectra vertically, so shallow absorption
   features look deeper; over the X axis it narrows the wavelength range.
-- **Drag on an axis** moves only that axis; **right-drag on an axis**
+- **Drag along an axis** moves only that axis; **right-drag on an axis**
   stretches only that axis.
+- **Drag sideways off the Y axis** pulls out a marker (below), like a guide
+  off a ruler: it follows the cursor and drops at the wavelength where you
+  release. Varda decides after the first few pixels: mostly sideways pulls a
+  marker, mostly up or down moves Y. Releasing back over the axis or outside
+  the plot area cancels it.
+- **Click a curve** to select it, then press **Backspace** or **Delete** to
+  remove it (the same as **Remove Curve** under **Selected Curve**). The
+  keys act only while the plot has the keyboard focus (clicking the plot
+  gives it the focus), never while you are typing in a field of the sidebar.
 
 A Y stretch stays as new spectra arrive until you reset it with **Fit to
 Data** under **View** (or by setting **Range** back to **Auto**). Under
@@ -108,8 +117,21 @@ window, but scrolling or dragging on the Y axis switches to **Manual**,
 keeping the view you made. **X View Range** and **Y View Range** show the range on
 screen, so you can note them for a figure.
 
+**Markers** are vertical reference lines across every curve, for reading
+off where a feature sits and comparing it between curves. Add one by
+pulling it off the Y axis, or under **Markers** in the sidebar (type a
+wavelength and press **Add**; leave it at "view center" to place it in the
+middle of the view). Drag a marker to move it; its label and the list under
+**Markers** show its position in the X axis's units, to 0.1. **Remove
+Selected** and **Clear** remove markers. A marker's position is only as
+precise as where you drop it: one screen pixel spans the visible wavelength
+range divided by the plot's width in pixels, so zoom in on X (or type the
+wavelength) when the exact value matters, and report a feature's position
+from the data (the band centers) rather than from a marker.
+
 The Linked Images spectra and the FATT window's fit plot work the same
-way when you scroll or drag (without the Shift-drag box zoom). They have no
+way when you scroll or drag (without the Shift-drag box zoom, markers or
+removing curves with the keyboard). They have no
 **View** controls: the small **A** button in a plot's lower-left corner
 fits it to the data again.
 
@@ -204,8 +226,9 @@ column (below) with the **count** statistic.
     aren't areas on the ground: reproject the image first if you need them.
 - **Zonal statistic of a raster**: **mean**, **median**, **std**
   (population), **min**, **max**, **sum** or **count** of one band inside
-  each ROI, on the ROIs' image or any image on the same pixel grid. Same pixel
-  rule as above; **count** is the number of valid (non-no-data) pixels in
+  each ROI, on the ROIs' image or any image on the same pixel grid (never
+  resampled; images on other grids are named under the **Raster** dropdown,
+  with why). Same pixel rule as above; **count** is the number of valid (non-no-data) pixels in
   that band.
 - **Expression**: arithmetic on other columns, with `sqrt`, `log`, `log10`,
   `exp`, `abs`, `min`, `max`, `round`, `pi` and `e`. A value that can't be

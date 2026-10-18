@@ -51,6 +51,7 @@ from varda.common.ui import (
     SliderBuilder,
     SpinBoxBuilder,
     VBoxBuilder,
+    notListedLabel,
 )
 from varda.common.vec2 import Vec2
 
@@ -488,7 +489,13 @@ class ImageParameterWidget(QWidget):
         # the widget existed) before wiring user changes back to it.
         self._showValue(param.get())
         self.comboBox.currentIndexChanged.connect(self.imageSelectionChanged)
-        self.setLayout(paramLayoutDefault().withWidget(self.comboBox))
+        # the images left out of the dropdown, and why
+        self.notListed = notListedLabel(param.explain(), self)
+        self.setLayout(
+            VBoxBuilder(margins=0)
+            .withLayout(paramLayoutDefault().withWidget(self.comboBox))
+            .withWidget(self.notListed)
+        )
         connectWhileAlive(param.sigParameterChanged, self.onParamChanged, self)
 
     def imageSelectionChanged(self, index: int) -> None:

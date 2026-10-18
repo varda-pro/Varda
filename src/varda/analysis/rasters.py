@@ -214,10 +214,11 @@ def sameBandsRaster(
     name: str,
     description: str,
     transform: Affine | None = None,
+    extraMetadata: dict | None = None,
 ) -> VardaRaster:
     """A cube with ``image``'s bands, wavelengths (and their FWHM and bad
     bands), display bands and footprint, or another grid (``transform``)
-    when it was resampled, rotated or cropped."""
+    when it was resampled, rotated or cropped; plus ``extraMetadata``."""
     source = ArrayDataSource(
         np.asarray(values, dtype=np.float32),
         wavelengths=np.asarray(image.wavelengths),
@@ -226,7 +227,7 @@ def sameBandsRaster(
         transform=image.transform if transform is None else transform,
         crs=image.crs,
         defaultBands=np.asarray(image.defaultBands),
-        extraMetadata=bandMetadata(image),
+        extraMetadata={**bandMetadata(image), **(extraMetadata or {})},
         description=description,
     )
     return VardaRaster(source, name=name)

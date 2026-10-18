@@ -33,6 +33,13 @@ can alter results.
   neighboring columns or the whole column. It adds a second image of the
   pixels used and counts, and records each column's spectrum and standard
   deviation. See the new CRISM ratio cubes guide.
+- **Spectral plots: pull a marker off the Y axis, and remove curves with
+  the keyboard.** Dragging sideways off the Y axis pulls out a vertical
+  marker that drops at the wavelength where you release it (released over
+  the axis or outside the plot, it's canceled); a drag along the axis still
+  moves Y. Backspace or Delete removes the curve you clicked (not while
+  you're typing in the plot's sidebar); before, after a click on the plot,
+  Backspace undid the last zoom instead.
 - **Shadow Mask** (Processing → Image Math): a 0/1 mask of shadow from the
   image's brightness (the mean over a wavelength range, 1280–1380 nm by
   default, below a percentile of the scene or a value), from the terrain
@@ -198,6 +205,9 @@ can alter results.
 
 ### Changed
 
+- **Find Data has its own top-level Data menu** (Data → Find Data…), no
+  longer under Workspace: it searches for and downloads data rather than
+  opening a view of your images. It opens the same Find Data workspace.
 - **Spectral plots remember which libraries you chose.** The libraries you
   turn off under **Libraries (n of m)** are saved with each plot in
   sessions (General Image Analysis, Dual Image and Spectral Hourglass), and
@@ -222,6 +232,29 @@ can alter results.
 - **Ratio Explorer, column lock:** placing a new numerator now moves the
   existing denominator into the new numerator's detector column (keeping its
   row and box size), where before only a denominator click was snapped.
+- **A Shadow Mask can be applied, and a co-registered DEM chosen.** Apply
+  Mask didn't offer a Shadow Mask made from the same image (it has 2 or 3
+  bands), and the Shadow Mask's DEM dropdown didn't offer a DEM that was
+  co-registered but on another grid (a 6 m CTX DEM under an 18 m CRISM
+  image), while it did offer the 2-band Shadow Mask itself. Now Apply Mask,
+  a FATT map's Exclude and the ROI Manager's From Threshold or Mask… take a
+  mask with any number of bands (its first band; Apply Mask still applies
+  one with the image's bands band by band), and the Shadow Mask's DEM is any
+  single-band image. These inputs may be on another grid, in any map
+  projection, if they are georeferenced and overlap the image: they are
+  resampled onto the image's grid (masks by nearest neighbor; a DEM averaged
+  when finer than the image, bilinear when coarser), and the result's
+  description and metadata record it (e.g. "ctx_dem resampled from 6.0 m to
+  18.0 m pixels (average)"). An input on the image's grid is used exactly as
+  before. Inputs that combine values pixel for pixel (Image Arithmetic,
+  Band Math's other images, PCA/MNF weights, ROI zonal columns, overlays and
+  Terrain drapes) still need the same grid.
+- **Image dropdowns say which images they leave out, and why**, in a note
+  under the dropdown ("Not listed: ctx_dem (different pixel grid: 6.0 m vs
+  18.0 m pixels; this needs the same grid)", "doesn't overlap this image",
+  "3 bands; this needs 1 or 30"); images used to be left out silently. The
+  overlay bar shows a count, with the details in its tooltip, and Band Math
+  lists the images it can't use.
 - **The FATT window's plot fits each mineral you pick**, also after you've
   zoomed or panned it; a zoom used to turn the fitting off, so the next
   mineral could be drawn off the plot.

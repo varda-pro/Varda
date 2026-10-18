@@ -31,10 +31,10 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
-from varda.common.ui import ElidingComboBox
+from varda.common.ui import ElidingComboBox, MutedLabel
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.image_rendering.render_parameters import StretchParameter
@@ -152,6 +152,9 @@ class OverlayBar(QWidget):
         )
         # long names are elided, with the full name in the tooltip
         self.layerBox = ElidingComboBox()
+        # the images left out (overlays need this image's grid): a count in
+        # the bar, each image and why in its tooltip
+        self.notListed = MutedLabel()
         self.opacityLabel = QLabel("Opacity:")
         self.opacitySlider = QSlider(Qt.Orientation.Horizontal)
         self.opacitySlider.setRange(0, 100)
@@ -184,6 +187,7 @@ class OverlayBar(QWidget):
         layout.setContentsMargins(4, 0, 4, 0)
         layout.addWidget(QLabel("Overlay:"))
         layout.addWidget(self.imageBox)
+        layout.addWidget(self.notListed)
         layout.addWidget(self.layerBox)
         layout.addWidget(self.colorsButton)
         layout.addWidget(self.opacityLabel)
@@ -254,7 +258,12 @@ class OverlayBar(QWidget):
 
     def _refreshImages(self) -> None:
         current = self.currentOverlay()
-        self._candidates = compatibleImages(list(self.images), self.base)
+        choices = sameGridChoices(list(self.images), self.base)
+        self._candidates = choices.images
+        left = len(choices.excluded)
+        self.notListed.setText(f"({left} not on this grid)" if left else "")
+        self.notListed.setToolTip(choices.note)
+        self.notListed.setVisible(bool(left))
         self.imageBox.blockSignals(True)
         self.imageBox.clear()
         self.imageBox.addItem(NO_OVERLAY)

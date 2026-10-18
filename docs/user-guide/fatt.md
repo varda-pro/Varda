@@ -119,10 +119,16 @@ Two settings leave such pixels out. Both make the pixels no data before the
 windows are cut, so every window touching one is skipped, and the pixels
 themselves have no value in the map:
 
-- **Exclude**: any 0/1 mask on the image's grid (its first band), such as a
+- **Exclude**: any 0/1 mask (its first band, so a Shadow Mask's other
+  bands don't matter), such as a
   [Shadow Mask](image-processing.md#shadow-mask), Threshold to Mask or ROI
   to Mask. Pixels where it's set (nonzero) are left out; where it has no
-  data, it has no say. None by default.
+  data, it has no say. None by default. A mask on another grid is offered
+  when it is georeferenced and overlaps the image, and is resampled onto
+  the image's grid by nearest neighbor (see
+  [Images on other grids](image-processing.md#images-on-other-grids)); the
+  map's description and its `fatt` metadata (`excludeResampling`) record
+  that. Images that can't be used are named under the dropdown, with why.
 - **Minimum Signal**: pixels whose mean over the fitted bands (the good
   bands in the wavelength range) is below it are left out. In the image's
   data units (e.g. I/F); 0, the default, is off.

@@ -207,8 +207,21 @@ def _drag(
     offset: QPointF,
     button: Qt.MouseButton = Qt.MouseButton.LeftButton,
 ) -> None:
-    """A real mouse drag on the view from ``start`` by ``offset`` (scene px),
-    its moves spaced out as pyqtgraph drops ones that come too fast."""
+    """A real mouse drag on the view from ``start`` by ``offset`` (scene px)."""
+    _dragThrough(
+        qtbot, view, [start + offset * (step / 5) for step in range(6)], button
+    )
+
+
+def _dragThrough(
+    qtbot,
+    view: pg.GraphicsView,
+    points: list[QPointF],
+    button: Qt.MouseButton = Qt.MouseButton.LeftButton,
+) -> None:
+    """A real mouse drag on the view pressed at the first of ``points`` (scene
+    px), moving through the rest and released at the last, its moves spaced
+    out as pyqtgraph drops ones that come too fast."""
     viewport = view.viewport()
     assert viewport is not None
 
@@ -226,11 +239,11 @@ def _drag(
             ),
         )
 
-    send(QEvent.Type.MouseButtonPress, start, button)
-    for step in range(1, 6):
+    send(QEvent.Type.MouseButtonPress, points[0], button)
+    for point in points[1:]:
         qtbot.wait(25)
-        send(QEvent.Type.MouseMove, start + offset * (step / 5), button)
-    send(QEvent.Type.MouseButtonRelease, start + offset, Qt.MouseButton.NoButton)
+        send(QEvent.Type.MouseMove, point, button)
+    send(QEvent.Type.MouseButtonRelease, points[-1], Qt.MouseButton.NoButton)
 
 
 def _fitYInsideTheData(qtbot, widget: VardaPlotWidget) -> None:

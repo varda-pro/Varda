@@ -9,7 +9,6 @@ from varda.workspaces.dual_image_workspace import NewDualImageWorkspaceDialog
 from varda.workspaces.general_image_analysis import (
     NewGeneralImageAnalysisWorkspaceDialog,
 )
-from varda.workspaces.find_data.find_data_workspace import FindDataWorkspace
 from varda.workspaces.mosaic.new_mosaic_dialog import NewMosaicDialog
 from varda.workspaces.terrain.terrain_workspace import TerrainWorkspace
 from varda.workspaces.crism_ratio.crism_ratio_workspace import (
@@ -52,10 +51,6 @@ def newMosaicWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:
     openOwnedDialog(
         NewMosaicDialog(images, parent=mainGui).connectOnAccept(mainGui.addTab)
     )
-
-
-def newFindDataWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:
-    mainGui.addTab(FindDataWorkspace(images))
 
 
 def newTerrainWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:
@@ -130,17 +125,6 @@ WORKSPACE_ACTIONS: list[Action] = [
         callback=newMosaicWorkspace,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=4)],
-    ),
-    Action(
-        id="varda.workspace.find_data",
-        title="Find and Fetch Data…",
-        tooltip=(
-            "Search catalogs (STAC, PDS ODE, footprint files, or plugins') for "
-            "observations of a place, see their footprints on a map, and "
-            "download them"
-        ),
-        callback=newFindDataWorkspace,
-        menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=5)],
     ),
     Action(
         id="varda.workspace.new_terrain",

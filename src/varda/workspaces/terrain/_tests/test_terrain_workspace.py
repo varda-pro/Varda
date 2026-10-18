@@ -72,6 +72,14 @@ def test_images_loaded_later_can_be_draped(workspace, images):
     assert workspace.drapeBox.findText("color") >= 0
 
 
+def test_images_off_the_dems_grid_are_named_under_the_drapes(workspace, images):
+    assert workspace.drapeNotListed.isHidden()
+    images.append(_image(np.zeros((20, 30, 3)), "smaller"))
+    assert workspace.drapeBox.findText("smaller") < 0
+    assert "smaller (different pixel grid" in workspace.drapeNotListed.text()
+    assert not workspace.drapeNotListed.isHidden()
+
+
 def test_the_web_page_export_has_controls_for_readers(workspace, tmp_path):
     workspace.drapeBox.setCurrentText("ortho")
     workspace.saveWebPage(str(tmp_path / "view.html"), None)
