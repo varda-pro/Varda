@@ -52,7 +52,8 @@ pixel corners at whole numbers, so a pixel's center is at .5), `map_x` and
 `map_y` (in the image's map units, for georeferenced images), and the value,
 headed with the band's name; no data is left empty. Above the columns, lines
 starting with `#` record the Varda version, the image's name and file, its
-CRS (name, EPSG code if any, and full WKT), the distance unit and how it
+CRS (described in words, as in
+[Coordinate systems](coordinate-systems.md), and its full WKT), the distance unit and how it
 was measured, and the band with its unit when Varda knows it (results of
 Varda's analyses carry one; most files don't). Spreadsheets and pandas
 (`comment="#"`) skip or read these lines.

@@ -4,6 +4,7 @@
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel
 
 from varda.all_images_view_list.image_properties_dialog import (
     GOOD,
@@ -13,6 +14,8 @@ from varda.all_images_view_list.image_properties_dialog import (
     parseNoData,
 )
 from varda.common.entities import VardaRaster
+from varda.common.layout_audit import assertNothingClipped
+from varda.geo._tests.fixtures import CRISM_MTRDR_ENVI_WKT, CRISM_MTRDR_WKT, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import openDataSource
 from varda.image_loading.raster_writer import writeRaster
@@ -78,3 +81,49 @@ def test_edits_save_into_an_envi_header(qtbot, tmp_path):
     dialog.accept()
     reopened = VardaRaster(openDataSource(str(path)))
     assert reopened.nodata == -1.0
+
+
+def test_coordinate_system_group_describes_the_crs(qtbot):
+    image = makeImage(CRISM_MTRDR_WKT, centerLonLat=(77.0, 15.0), pixelSize=18.0)
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+    assert (
+        "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px" in texts
+    )
+    assert "18 × 18 m (18 m on the ground)" in texts
+    assert "PROJCRS" in dialog.wktEdit.toPlainText()
+    assert not dialog.wktEdit.isVisibleTo(dialog)  # collapsed until asked for
+    dialog.wktToggle.setChecked(True)
+    assert dialog.wktEdit.isVisibleTo(dialog)
+
+
+def test_coordinate_system_names_a_matching_authority_code(qtbot):
+    image = makeImage(
+        "+proj=longlat +R=3396190 +no_defs", centerLonLat=(0, 0), pixelSize=0.01
+    )
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+    assert "matches IAU_2015:49900" in texts
+
+
+def test_an_image_without_a_crs_says_so(qtbot):
+    dialog = ImagePropertiesDialog(_image())
+    qtbot.addWidget(dialog)
+    texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+    assert "No coordinate system (pixel coordinates)" in texts
+
+
+def test_nothing_is_cut_off_on_a_laptop_screen(qtbot):
+    image = makeImage(CRISM_MTRDR_ENVI_WKT, centerLonLat=(77.0, 15.0), pixelSize=18.0)
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.wktToggle.setChecked(True)
+    dialog.resize(
+        min(dialog.sizeHint().width(), 1280), min(dialog.sizeHint().height(), 800)
+    )
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.width() <= 1280 and dialog.height() <= 800
+    assertNothingClipped(dialog)

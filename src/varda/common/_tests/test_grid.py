@@ -13,6 +13,7 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import (
     demResampling,
     onGridOf,
+    pixelSizeText,
     placeableChoices,
     resamplingRecord,
     resamplingText,
@@ -167,3 +168,14 @@ def test_images_that_cant_be_placed_raise():
     crism, shadow, dem, otherDem, plain, far = _scene()
     with pytest.raises(ValueError, match="doesn't overlap"):
         onGridOf(far, crism)
+
+
+def test_pixel_size_text_names_the_crs_units():
+    assert pixelSizeText(_raster(np.zeros((2, 2)), "utm")) == "18.0 m"
+    km = CRS.from_user_input("+proj=eqc +R=3396190 +units=km +no_defs")
+    image = _raster(np.zeros((2, 2)), "km", Affine(0.5, 0, 0, 0, -0.5, 0), km)
+    assert pixelSizeText(image) == "0.5 km"
+    degrees = _raster(
+        np.zeros((2, 2)), "deg", Affine(0.01, 0, 0, 0, -0.01, 0), CRS.from_epsg(4326)
+    )
+    assert pixelSizeText(degrees) == "0.01°"

@@ -90,7 +90,8 @@ def test_csv_says_where_its_numbers_come_from(qtbot, tmp_path):
     comments = [line for line in text.splitlines() if line.startswith("#")]
     header = "\n".join(comments)
     assert "Varda" in header and "image: dem" in header
-    assert "CRS:" in header and "CRS WKT:" in header
+    assert "CRS: Mars, sphere R = 3396.19 km, Equirectangular, center lat 0°" in header
+    assert "CRS WKT:" in header
     assert "Equidistant Cylindrical" in header
     assert "distance unit: m" in header and "Elevation" in header
     rows = list(csv.reader(line for line in text.splitlines() if line[:1] != "#"))

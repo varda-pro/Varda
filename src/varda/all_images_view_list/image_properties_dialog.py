@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from pyproj import CRS
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -35,9 +36,11 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
+from varda.geo.describe import describeCrs, meters
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
-from varda.common.ui import MutedLabel
+from varda.common.ui import MutedLabel, PanelScrollArea
 from varda.image_loading.envi_header import headerFor, saveToHeader
+from varda.utilities.proj_lock import PROJ_LOCK
 
 UNITS = ["nm", "µm", "cm⁻¹", "Unknown"]
 NAME, WAVELENGTH, FWHM, GOOD = 1, 2, 3, 4  # table columns (0: the band number)
@@ -65,13 +68,32 @@ def _listOf(metadata: dict, key: str, count: int) -> list[float] | None:
     return values if values is not None and len(values) == count else None
 
 
+def wrapped(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setWordWrap(True)
+    return label
+
+
+def authorityText(crs: CRS, authority: str | None) -> str:
+    """The CRS's own authority code, or "matches <code>" for one PROJ finds
+    to be the same CRS under another name, or "none"."""
+    if authority is None:
+        return "none"
+    with PROJ_LOCK:
+        own = crs.to_authority(min_confidence=100)
+    return (
+        authority
+        if own is not None and ":".join(own) == authority
+        else (f"matches {authority}")
+    )
+
+
 class ImagePropertiesDialog(QDialog):
     def __init__(self, image: VardaRaster, parent: QWidget | None = None):
         super().__init__(parent)
         self.image = image
         self.setWindowTitle(f"Properties of {image.name}")
         source = image.dataSource
-        crs = image.crs
         about = QFormLayout()
         about.addRow("File:", QLabel(image.filePath or "held in memory (not saved)"))
         about.addRow("Format:", QLabel(image.driver or "–"))
@@ -82,17 +104,11 @@ class ImagePropertiesDialog(QDialog):
                 f"{np.dtype(image.dtype).name}"
             ),
         )
-        about.addRow(
-            "Map projection:",
-            QLabel(crs.name if crs is not None and image.hasGeospatialData else "none"),
-        )
-        if image.hasGeospatialData:
-            t = image.transform
-            about.addRow("Pixel size:", QLabel(f"{abs(t.a):g} × {abs(t.e):g}"))
-        for label in self.findChildren(QLabel):
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         aboutBox = QGroupBox("Image")
         aboutBox.setLayout(about)
+        self.crsBox = self._coordinateSystem(image)
+        for label in self.findChildren(QLabel):
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self.nameEdit = QLineEdit(image.name)
         self.noDataEdit = QLineEdit("" if image.nodata is None else f"{image.nodata:g}")
@@ -193,19 +209,72 @@ class ImagePropertiesDialog(QDialog):
         buttons.addButton(reset, QDialogButtonBox.ButtonRole.ResetRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(aboutBox)
-        layout.addLayout(edits)
-        layout.addWidget(bands, 1)
-        layout.addWidget(self.saveToFile)
-        layout.addWidget(
+        panel = QWidget()
+        panelLayout = QVBoxLayout(panel)
+        panelLayout.setContentsMargins(0, 0, 0, 0)
+        panelLayout.addWidget(aboutBox)
+        panelLayout.addWidget(self.crsBox)
+        panelLayout.addLayout(edits)
+        panelLayout.addWidget(bands, 1)
+        panelLayout.addWidget(self.saveToFile)
+        panelLayout.addWidget(
             MutedLabel(
                 "Edits apply in Varda at once and are kept in sessions and packages."
             )
         )
+        layout = QVBoxLayout(self)
+        layout.addWidget(PanelScrollArea(panel), 1)  # scrolls on a short screen
         layout.addWidget(buttons)
         self.resize(640, 720)
         self._source = source
+
+    def _coordinateSystem(self, image: VardaRaster) -> QGroupBox:
+        """The image's coordinate system in words, its authority code, its
+        pixel size, and its WKT (collapsed)."""
+        box = QGroupBox("Coordinate system")
+        form = QFormLayout(box)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        crs = image.crs if image.hasGeospatialData else None
+        description = describeCrs(crs, image.transform, image.width, image.height)
+        summary = QLabel(description.text)
+        summary.setWordWrap(True)
+        form.addRow(summary)
+        self.wktToggle = QPushButton("Show WKT")
+        self.wktToggle.setCheckable(True)
+        self.wktEdit = QPlainTextEdit()
+        self.wktEdit.setReadOnly(True)
+        self.wktEdit.setMaximumHeight(120)
+        self.wktEdit.setVisible(False)
+        self.wktToggle.toggled.connect(self.wktEdit.setVisible)
+        self.wktToggle.toggled.connect(
+            lambda shown: self.wktToggle.setText("Hide WKT" if shown else "Show WKT")
+        )
+        if crs is None:
+            return box
+        form.addRow(
+            "Conventions:",
+            wrapped(
+                f"{description.latitudeType} latitude, "
+                f"{description.longitudeDirection}-positive longitude, "
+                f"{description.longitudeDomain}"
+            ),
+        )
+        form.addRow("Authority:", QLabel(authorityText(crs, description.authority)))
+        t = image.transform
+        unit = (
+            description.units if description.units == "°" else f" {description.units}"
+        )
+        ground = (
+            f" ({meters(description.pixelSizeM)} m on the ground)"
+            if description.pixelSizeM is not None
+            else ""
+        )
+        form.addRow("Pixel size:", QLabel(f"{abs(t.a):g} × {abs(t.e):g}{unit}{ground}"))
+        with PROJ_LOCK:
+            self.wktEdit.setPlainText(crs.to_wkt(pretty=True))
+        form.addRow(self.wktToggle)
+        form.addRow(self.wktEdit)
+        return box
 
     def fillWavelengths(self) -> None:
         start, step = self.fillStart.value(), self.fillStep.value()

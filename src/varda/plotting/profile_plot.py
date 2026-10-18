@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
+from varda.geo.describe import describeCrs
 from varda.common.ui import MutedLabel
 from varda.lines.line_collection import VardaLine
 from varda.lines.profile import Profile, profile
@@ -62,11 +63,8 @@ def valueUnit(image: VardaRaster, band: int) -> str:
 
 
 def crsLabel(crs: CRS | None) -> str:
-    """A CRS's name and, when it has one, its EPSG code."""
-    if crs is None:
-        return "none (pixel coordinates)"
-    epsg = crs.to_epsg()
-    return crs.name + (f" (EPSG:{epsg})" if epsg else "")
+    """A CRS in words: its body, surface and projection."""
+    return describeCrs(crs).text
 
 
 class ProfilePlotWidget(QWidget):

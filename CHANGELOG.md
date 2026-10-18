@@ -8,6 +8,15 @@ can alter results.
 
 ### Added
 
+- **Image Properties describes the coordinate system.** A new
+  **Coordinate system** group says what the image's CRS is in words, e.g.
+  "Mars, sphere R = 3394.84 km, Equirectangular, center lat 15°, 18 m/px",
+  with its latitude type (planetocentric or planetographic), longitude
+  direction and domain (0..360 or −180..180), its authority code (or the
+  `IAU_2015`/EPSG code it matches), the pixel size in the CRS's units and on
+  the ground, and the full WKT. An unknown body is reported as unknown,
+  never as Earth. Line-profile CSVs name the CRS the same way. See the new
+  [Coordinate systems](docs/user-guide/coordinate-systems.md) guide.
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference
   mineral overlaid on the Ratio plot (its metadata's mineral or class, else

@@ -12,7 +12,6 @@ from collections.abc import Collection, Sequence
 import attrs
 import numpy as np
 from affine import Affine
-from pyproj import CRS as ProjCRS
 from rasterio import CRS
 from rasterio.enums import Resampling
 from rasterio.errors import RasterioError
@@ -21,9 +20,8 @@ from rasterio.warp import reproject, transform_bounds
 from rasterio.windows import from_bounds
 
 from varda.common.entities import VardaRaster
+from varda.geo.describe import describeCrs
 
-# map units PROJ names, as short labels
-_UNITS = {"metre": "m", "meter": "m", "kilometre": "km", "foot": "ft"}
 # source pixels read beyond the target's footprint, so the resampling
 # kernels at its edge have their neighbors
 _MARGIN = 2
@@ -79,11 +77,8 @@ def pixelSizeText(image: VardaRaster) -> str:
         return "1 px"
     t = image.transform
     size = max(float(np.hypot(t.a, t.d)), float(np.hypot(t.b, t.e)))
-    crs = ProjCRS.from_user_input(image.crs)  # rasterio's or pyproj's
-    if crs.is_geographic:
-        return f"{size:.3g}°"
-    name = crs.axis_info[0].unit_name if crs.axis_info else ""
-    return f"{size:.1f} {_UNITS.get(name, name or 'map units')}"
+    units = describeCrs(image.crs).units
+    return f"{size:.3g}°" if units == "°" else f"{size:.1f} {units}"
 
 
 def gridDifference(image: VardaRaster, base: VardaRaster) -> str:
