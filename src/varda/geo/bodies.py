@@ -14,6 +14,7 @@ import re
 
 from attrs import frozen
 from pyproj import CRS, Geod
+from pyproj.crs import Ellipsoid
 from pyproj.exceptions import CRSError
 
 from varda.utilities.proj_lock import PROJ_LOCK
@@ -117,6 +118,15 @@ _ALIASES = {"luna": "Moon", "d_mars": "Mars", "mars_2000": "Mars", "moon_2000": 
 _DECORATIONS = re.compile(r"\(2015\)|\s-\s*sphere", re.IGNORECASE)
 _PREFIXES = re.compile(r"^(?:d_|gcs_)+", re.IGNORECASE)
 _WORD_SEPARATORS = re.compile(r"[\s/,()_\-]+")
+
+
+def surfaceText(ellipsoid: Ellipsoid) -> str:
+    """The surface in words: "sphere R = 3396.19 km" or
+    "ellipsoid a = 3396.19, c = 3376.20 km" (km to 10 m)."""
+    a = ellipsoid.semi_major_metre / 1000
+    if ellipsoid.inverse_flattening == 0:
+        return f"sphere R = {a:.2f} km"
+    return f"ellipsoid a = {a:.2f}, c = {ellipsoid.semi_minor_metre / 1000:.2f} km"
 
 
 def bodyNamed(name: str) -> Body | None:

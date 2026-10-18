@@ -43,6 +43,23 @@ CRISM_MTRDR_ENVI_WKT = (
     'UNIT["Meter",1],'
     'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
 )
+# GDAL's PDS3 form (as CRISM_MTRDR_WKT) for a product on the Mars 2000
+# sphere with standard parallel 0: IAU_2015:49910 under GDAL's names, which
+# PROJ's equals rejects only for the names (constructed from the CRISM form)
+MARS_EQC_PDS3_WKT = (
+    'PROJCS["EQUIRECTANGULAR MARS",'
+    'GEOGCS["GCS_MARS",'
+    'DATUM["D_MARS",SPHEROID["MARS",3396190,0]],'
+    'PRIMEM["Reference_Meridian",0],'
+    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],'
+    'PROJECTION["Equirectangular"],'
+    'PARAMETER["standard_parallel_1",0],'
+    'PARAMETER["central_meridian",0],'
+    'PARAMETER["false_easting",0],'
+    'PARAMETER["false_northing",0],'
+    'UNIT["metre",1,AUTHORITY["EPSG","9001"]],'
+    'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+)
 # The Ames Stereo Pipeline's point2dem, a CTX DEM (20 m/px)
 CTX_DEM_PROJ = (
     "+proj=eqc +lat_ts=18.4 +lat_0=0 +lon_0=77.5 +x_0=0 +y_0=0 "

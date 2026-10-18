@@ -35,11 +35,13 @@ The group also shows:
   direction longitude increases (east- or west-positive) and the longitude
   domain (−180..180 or 0..360). See [Conventions](#conventions).
 - **Authority**: the CRS's code, e.g. `IAU_2015:49910` or `EPSG:4326`.
-  When the file doesn't declare one but PROJ finds a registered CRS that is
-  the same (ignoring axis order), it shows **matches IAU_2015:…**: the
-  image's CRS is that one under another name. **none** when PROJ finds no
-  match, which is common: a GDAL-labeled CRISM MTRDR's sphere of local radius
-  has no code.
+  When the file doesn't declare one but a registered CRS is equivalent
+  (names ignored, axis order ignored; see
+  [What "the same" means](#what-the-same-means)), it shows
+  **matches IAU_2015:…**: the image's CRS is that one under another name,
+  e.g. a GDAL-written Mars 2000 sphere equirectangular matches
+  `IAU_2015:49910`. **none** when nothing matches, which is common: a
+  CRISM MTRDR's sphere of local radius has no code.
 - **Pixel size**: the transform's pixel size in the CRS's units (m, km or °),
   and its size on the ground in meters.
 - **Show WKT**: the full definition as OGC WKT2, read-only, for copying into
@@ -149,7 +151,75 @@ Ceres, Vesta, Io, Europa, Ganymede, Callisto, Enceladus and Titan.
 
 ## Combining images
 
-<!-- Filled in by a later change: how Varda compares coordinate systems and combines images on them. -->
+When Varda compares two images' coordinate systems, it puts them in one
+of five classes:
+
+| Class | Meaning | What Varda does |
+|---|---|---|
+| **Same** | PROJ says the two CRSs are equal | Uses the coordinates as they are |
+| **Equivalent** | The same projection on the same surface; only the names differ | Uses the coordinates as they are |
+| **Same body** | The same body, but a different projection, standard parallel, center or surface | Reprojects one onto the other |
+| **Different body** | Different bodies, e.g. Mars and Earth | **Never combines them** |
+| **Unknown** | A CRS is missing, unreadable, or on no body (a local CRS) | Can't place one image on the other |
+
+### What "the same" means
+
+**Names don't matter.** The same coordinate system is written many ways:
+GDAL reads a CRISM MTRDR's PDS3 label as datum `D_MARS` and its ENVI
+header as `D_Mars_2000_IAU_IAG_custom_sphere_lat15`; the Ames Stereo
+Pipeline writes `+proj=eqc +lat_ts=15 … +R=3394839.81331631`; PROJ's
+database calls the Mars 2000 sphere "Mars (2015) - Sphere". PROJ alone
+treats some of these as different because their names differ. Varda calls
+two CRSs **equivalent** when everything that places a pixel on the body
+matches, with every name ignored:
+
+| Compared | Tolerance |
+|---|---|
+| The CRS type (projected, or geographic) and the coordinate system kind | exact |
+| The projection method; on a sphere, a method's "(Spherical)" form counts as the method | exact, ignoring case |
+| Each projection parameter (standard parallel, central meridian, false easting, …), in degrees or meters whatever units the CRS writes them in; a parameter one CRS leaves out has PROJ's default (0, or 1 for a scale factor) | angles 1e-9°, lengths 1e-6 m |
+| The ellipsoid's semi-major (a) and semi-minor (b) axes | 1e-3 m |
+| The prime meridian | 1e-9° |
+| The axes' directions and units, in order | exact |
+
+So a GDAL-written WKT of the Mars 2000 sphere equirectangular and
+`IAU_2015:49910` are equivalent, and so are two readings of one CRISM
+product. These are **not** the same, and images on them are reprojected:
+
+- a different standard parallel (a CTX DEM's `lat_ts = 18.4` vs `0`), center
+  or central meridian;
+- a different surface, even on one body: the Mars 2000 sphere (3396.19 km)
+  vs the mean-radius sphere (3389.5 km), or a CRISM MTRDR's local-radius
+  sphere vs the Mars 2000 sphere. A radius rounded to the centimeter
+  (3394839.81 m instead of 3394839.8133 m) also differs: radii are compared
+  to a millimeter;
+- longitude east-positive vs west-positive (`IAU_2015:49900` vs
+  `IAU_2015:49901`), or longitude, latitude vs latitude, longitude axis
+  order (`+proj=longlat` vs `IAU_2015:49900`).
+
+Image Properties' **Authority** uses the same test, ignoring axis order:
+it shows the first `IAU_2015` or EPSG code that is equivalent, searching
+PROJ's suggestions and then every `IAU_2015` code of the image's body (e.g.
+`IAU_2015:49900` to `49992` for Mars).
+
+### Different bodies are never combined
+
+Coordinates on Mars mean nothing on the Moon, so Varda refuses to combine
+images on different bodies, naming both (e.g. "Mars and Earth are different
+bodies"). The bodies come from [How Varda identifies the
+body](#how-varda-identifies-the-body). When either body is unknown, Varda
+compares the two surfaces instead: the same a and b (to 1e-3 m) is taken as
+the same body, anything else as different bodies. An unknown body is never
+assumed to be Earth.
+
+### Limitations
+
+- Equivalence compares the projection, not the datum's realization: two
+  CRSs on the same sphere with different datum names are equivalent even if
+  their producers meant different control networks. Check the WKT (Image
+  Properties, **Show WKT**) when that matters.
+- CRSs bound to a transformation (`+towgs84`) or compound CRSs (with a
+  vertical part) are compared by PROJ alone.
 
 ## How Varda measures
 

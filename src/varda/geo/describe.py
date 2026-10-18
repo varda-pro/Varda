@@ -17,9 +17,12 @@ import numpy as np
 from affine import Affine
 from attrs import frozen
 from pyproj import CRS
+from pyproj.database import get_codes
+from pyproj.enums import PJType
 from pyproj.exceptions import CRSError
 
-from varda.geo.bodies import identifyBody
+from varda.geo.bodies import Body, identifyBody, surfaceText
+from varda.geo.equivalence import sameCrs
 from varda.utilities.proj_lock import PROJ_LOCK
 
 NO_CRS_TEXT = "No coordinate system (pixel coordinates)"
@@ -171,13 +174,6 @@ def _describe(key: str) -> CrsDescription:
         return attrs.evolve(
             _bare("local", crs.name, _units(crs)), surface="no ellipsoid"
         )
-    a = ellipsoid.semi_major_metre / 1000
-    if ellipsoid.inverse_flattening == 0:
-        surface = f"sphere R = {a:.2f} km"
-    else:
-        surface = (
-            f"ellipsoid a = {a:.2f}, c = {ellipsoid.semi_minor_metre / 1000:.2f} km"
-        )
     body = identifyBody(crs).body
     projected = not _isGeographic(crs)
     centerLatitude = _parameter(crs, _CENTER_LATITUDE) if projected else None
@@ -186,7 +182,7 @@ def _describe(key: str) -> CrsDescription:
         body=body.name if body is not None else None,
         kind="projected" if projected else "geographic",
         projection=_projection(crs) if projected else "Geographic (lon/lat)",
-        surface=surface,
+        surface=surfaceText(ellipsoid),
         latitudeType=_latitudeType(crs),
         longitudeDirection=_longitudeDirection(crs),
         longitudeDomain="0..360"
@@ -196,7 +192,7 @@ def _describe(key: str) -> CrsDescription:
         centerLongitude=centerLongitude,
         units=_units(crs),
         pixelSizeM=None,
-        authority=_authority(crs),
+        authority=_authority(crs, body),
     )
 
 
@@ -265,19 +261,39 @@ def _units(crs: CRS) -> str:
     return _UNITS.get(name, name or "map units")
 
 
-def _authority(crs: CRS) -> str | None:
-    """The CRS's authority code, else the first IAU_2015 or EPSG code PROJ
-    finds that is the same CRS (ignoring axis order)."""
-    found = crs.to_authority()
+def _authority(crs: CRS, body: Body | None) -> str | None:
+    """The CRS's own authority code, else the first ``IAU_2015`` or EPSG code
+    that is the same CRS (``sameCrs``, ignoring axis order): among those
+    PROJ suggests, then among the body's ``IAU_2015`` codes."""
+    found = crs.to_authority(min_confidence=100)
     if found is not None:
         return ":".join(found)
-    for match in crs.list_authority(min_confidence=0):
-        if match.auth_name not in _AUTHORITIES:
-            continue
-        candidate = CRS.from_authority(match.auth_name, match.code)
-        if crs.equals(candidate, ignore_axis_order=True):
-            return f"{match.auth_name}:{match.code}"
+    for candidate in _candidates(crs, body):
+        if sameCrs(crs, candidate, ignoreAxisOrder=True):
+            return candidate
     return None
+
+
+def _candidates(crs: CRS, body: Body | None) -> list[str]:
+    suggested = [
+        f"{match.auth_name}:{match.code}"
+        for match in crs.list_authority(min_confidence=0)
+        if match.auth_name in _AUTHORITIES
+    ]
+    own = list(_iauCodes(body.naifId)) if body is not None else []
+    return list(dict.fromkeys(suggested + own))
+
+
+@lru_cache(maxsize=32)
+def _iauCodes(naifId: int) -> tuple[str, ...]:
+    """The ``IAU_2015`` CRS codes PROJ lists for the body: ``naif × 100``
+    plus 0, 1, 2, 10, 11, 12, 15, … The caller holds PROJ_LOCK."""
+    codes = sorted(
+        int(code)
+        for code in get_codes("IAU_2015", PJType.CRS)
+        if int(code) // 100 == naifId
+    )
+    return tuple(f"IAU_2015:{code}" for code in codes)
 
 
 def _corners(transform: Affine, width: int, height: int) -> np.ndarray:
