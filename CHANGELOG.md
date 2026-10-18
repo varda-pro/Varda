@@ -27,6 +27,15 @@ can alter results.
   description and column table; the Shadow Mask's sun elevation now uses the
   incidence over the image's own pixels rather than the whole DDR.
 
+### Changed
+
+- **Open images use much less memory.** Loading an image now peaks at about
+  its own size, plus GDAL's shared block cache (a 1.5 GB CRISM MTRDR took
+  5.2 GB, now 2.6 GB, and loads in half the time), with the same values and
+  no-data. Images in memory aim to take at most 40 % of RAM together; beyond
+  that the least recently used are read on demand from their files, with
+  the same results (see Installing → Memory).
+
 ### Fixed
 
 - **Varda no longer slows down as more images are open.** The image list
