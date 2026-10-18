@@ -76,7 +76,9 @@ def citation() -> tuple[str, str]:
         if len(initials) == 1
         else ", ".join(initials[:-1]) + ", & " + initials[-1]
     )
-    apa = f"{names} ({_year(data)}). {data['title']} (Version {version}) [Computer software]. {data['repository-code']}"
+    doi = data.get("doi")
+    link = f"https://doi.org/{doi}" if doi else data["repository-code"]
+    apa = f"{names} ({_year(data)}). {data['title']} (Version {version}) [Computer software]. {link}"
     bibtex = (
         "@software{varda,\n"
         f"  author = {{{' and '.join(f'{a["family-names"]}, {a["given-names"]}' for a in authors)}}},\n"
@@ -84,7 +86,8 @@ def citation() -> tuple[str, str]:
         f"  version = {{{version}}},\n"
         f"  year = {{{_year(data)}}},\n"
         f"  url = {{{data['repository-code']}}},\n"
-        f"  license = {{{data['license']}}}\n"
+        + (f"  doi = {{{doi}}},\n" if doi else "")
+        + f"  license = {{{data['license']}}}\n"
         "}"
     )
     return apa, bibtex

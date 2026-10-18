@@ -6,6 +6,13 @@ can alter results.
 
 ## Unreleased
 
+### Added
+
+- **Varda has a DOI.** Releases are archived on Zenodo:
+  10.5281/zenodo.23447208 cites every version, and v0.10.0 is
+  10.5281/zenodo.23447209. Help → Cite Varda and CITATION.cff now include
+  the DOI.
+
 ## 0.10.0 (2026-10-17)
 
 ### Added

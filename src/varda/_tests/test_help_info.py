@@ -42,6 +42,8 @@ def test_citations_come_from_citation_cff():
         in bibtex
     )
     assert "license = {GPL-3.0-or-later}" in bibtex
+    assert apa.endswith("https://doi.org/10.5281/zenodo.23447208")
+    assert "doi = {10.5281/zenodo.23447208}" in bibtex
 
 
 def test_the_help_menu_offers_about_cite_system_info_and_docs():

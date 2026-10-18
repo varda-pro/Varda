@@ -22,6 +22,9 @@ authors:
     affiliation: "Lunar and Planetary Laboratory, University of Arizona"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/varda-pro/Varda"
+# Zenodo's concept DOI: every version, resolving to the latest. Each release
+# also gets its own DOI, listed on the Zenodo record.
+doi: "10.5281/zenodo.23447208"
 version: "0.10.0"
 date-released: "2026-10-17"
 keywords:
