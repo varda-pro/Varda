@@ -5,6 +5,8 @@ import dialog fits a laptop screen, and importing adds to the collection."""
 import geopandas as gpd
 import numpy as np
 import pytest
+from affine import Affine
+from pyproj import CRS
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QMessageBox
 from shapely.geometry import LineString, Point, box
@@ -76,9 +78,50 @@ def test_the_preview_counts_and_names(qtbot, mixedFile):
     dialog = VectorImportDialog(readVectorFile(mixedFile), _image(), Target.ROIS)
     qtbot.addWidget(dialog)
     text = dialog.preview.text()
-    assert "1 polygons, 1 points, 1 lines" in text
-    assert "1 polygons become ROIs" in text and "field" in text
+    assert "1 polygon, 1 point, 1 line" in text
+    assert "On the image: 1 polygon, imported as ROIs" in text and "field" in text
     assert dialog.importButton.isEnabled()
+
+
+def test_the_preview_says_to_check_coordinates_when_none_are_on_the_image(
+    qtbot, tmp_path
+):
+    path = tmp_path / "far.gpkg"
+    gpd.GeoDataFrame({"name": ["far"]}, geometry=[Point(500, 500)]).to_file(path)
+    dialog = VectorImportDialog(readVectorFile(path), _image(), Target.POINTS)
+    qtbot.addWidget(dialog)
+    assert "check the Coordinates setting" in dialog.preview.text()
+    assert not dialog.importButton.isEnabled()
+
+
+def test_degrees_on_the_images_body_are_offered_by_name(qtbot, tmp_path):
+    mars = VardaRaster(
+        ArrayDataSource(
+            np.zeros((10, 10, 1)),
+            transform=Affine(100.0, 0, -500.0, 0, -100.0, 500.0),
+            crs=CRS.from_user_input("+proj=eqc +R=3396190 +units=m +no_defs"),
+        )
+    )
+    path = tmp_path / "site.geojson"
+    gpd.GeoDataFrame({"name": ["a"]}, geometry=[Point(0, 0)], crs=4326).to_file(path)
+    dialog = VectorImportDialog(readVectorFile(path), mars, Target.POINTS)
+    qtbot.addWidget(dialog)
+    assert dialog.coordinatesCombo.currentText() == "Degrees on Mars"
+    assert dialog.importButton.isEnabled()
+
+
+@pytest.mark.parametrize("make", ["points", "lines"])
+def test_the_managers_button_rows_wrap_in_a_narrow_dock(qtbot, make):
+    manager = (
+        PointManagerWidget(PointCollection(), image=_image())
+        if make == "points"
+        else LineManagerWidget(LineCollection(), _image())
+    )
+    qtbot.addWidget(manager)
+    manager.resize(manager.minimumSizeHint().width(), 500)
+    manager.show()
+    qtbot.waitExposed(manager)
+    assertNothingClipped(manager)
 
 
 def test_choosing_another_layer_reads_it_in_the_background(qtbot, mixedFile):

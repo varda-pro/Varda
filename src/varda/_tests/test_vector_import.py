@@ -2,6 +2,10 @@
 image (reprojection, pixels, other bodies), routing by geometry type,
 attributes, and round trips of Varda's own exports."""
 
+import threading
+import time
+
+import attrs
 import geopandas as gpd
 import numpy as np
 import pytest
@@ -22,6 +26,8 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.lines.line_collection import LineCollection, LineKind
 from varda.points.point_collection import PointCollection
 from varda.rois.roi_collection import ROICollection
+from varda import vector_import
+from varda.utilities.proj_lock import PROJ_LOCK
 from varda.vector_import import (
     Coordinates,
     ImportOptions,
@@ -68,9 +74,7 @@ def _plainImage() -> VardaRaster:
 
 def _plan(path, image, target, **options):
     source = readVectorFile(path)
-    chosen = defaultOptions(source, image, target)
-    for key, value in options.items():
-        chosen = chosen.__class__(**{**chosen.__dict__, key: value})
+    chosen = attrs.evolve(defaultOptions(source, image, target), **options)
     return planImport(source, image, chosen, target)
 
 
@@ -422,3 +426,263 @@ def test_an_unreadable_file_is_reported(tmp_path):
     path.write_text("not json")
     with pytest.raises(VectorImportError, match="couldn't read broken.geojson"):
         readVectorFile(path)
+
+
+# --- Layers without attributes ----------------------------------------------------
+
+
+def test_a_csv_of_only_longitude_and_latitude_imports(tmp_path):
+    image = _utmImage()
+    toLonLat = Transformer.from_crs(UTM, "EPSG:4326", always_xy=True)
+    lon, lat = toLonLat.transform(*image.pixelToGeo(7, 3))
+    path = tmp_path / "bare.csv"
+    path.write_text(f"lon,lat\n{lon},{lat}\n")
+    plan = _plan(path, image, Target.POINTS)
+    assert len(plan.features) == 1 and plan.features[0].attributes == {}
+    assert plan.summary().startswith("Imported 1 point.")
+
+
+def test_a_geojson_with_empty_properties_imports(tmp_path):
+    path = tmp_path / "bare.geojson"
+    path.write_text(
+        '{"type": "FeatureCollection", "features": ['
+        '{"type": "Feature", "properties": {}, '
+        '"geometry": {"type": "Point", "coordinates": [3.5, 4.5]}},'
+        '{"type": "Feature", "properties": {}, '
+        '"geometry": {"type": "Point", "coordinates": [10, 20]}}]}'
+    )
+    plan = _plan(path, _plainImage(), Target.POINTS)
+    assert [(f.geometry.x, f.geometry.y) for f in plan.features] == [
+        (3.5, 4.5),
+        (10, 20),
+    ]
+
+
+def test_a_geometry_only_geopackage_imports(tmp_path):
+    path = tmp_path / "bare.gpkg"
+    gpd.GeoDataFrame(geometry=[box(1, 1, 3, 3), box(5, 5, 6, 6)]).to_file(path)
+    rois = ROICollection()
+    addToROIs(rois, _plan(path, _plainImage(), Target.ROIS))
+    assert len(rois) == 2 and list(rois.classes()) == ["bare"]
+
+
+# --- Longitude conventions ----------------------------------------------------------
+
+MARS_DEGREES = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+
+
+def _degreesImage(west: float) -> VardaRaster:
+    """20° × 20° of Mars in 0.1° pixels, from ``west`` east and 10° N south."""
+    source = ArrayDataSource(
+        np.zeros((200, 200, 1)),
+        transform=Affine(0.1, 0.0, west, 0.0, -0.1, 10.0),
+        crs=MARS_DEGREES,
+    )
+    return VardaRaster(source, name="degrees")
+
+
+def _lonLatFile(tmp_path, longitudes: list[float]):
+    path = tmp_path / "sites.geojson"
+    gpd.GeoDataFrame(
+        {"name": [str(lon) for lon in longitudes]},
+        geometry=[Point(lon, 5.0) for lon in longitudes],
+        crs=4326,
+    ).to_file(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    "west, longitude, expected",
+    [(260.0, -90.0, 100.0), (-100.0, 270.0, 100.0)],
+    ids=["0-360 image, -180..180 file", "-180..180 image, 0-360 file"],
+)
+def test_longitudes_take_a_geographic_images_convention(
+    tmp_path, west, longitude, expected
+):
+    image = _degreesImage(west)
+    plan = _plan(_lonLatFile(tmp_path, [longitude]), image, Target.POINTS)
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx((expected, 50.0))
+    assert any("shifted by a multiple of 360°" in note for note in plan.notes)
+
+
+def test_a_projected_image_across_180_degrees_from_its_meridian(tmp_path):
+    """175° E to 185° E in a projection centered on 0°: 182° E and -178° are
+    the same place, east of 180°."""
+    radius = 3396190.0
+    west = radius * np.radians(175.0)
+    pixel = radius * np.radians(0.1)
+    source = ArrayDataSource(
+        np.zeros((100, 100, 1)),
+        transform=Affine(pixel, 0.0, west, 0.0, -pixel, radius * np.radians(5.0)),
+        crs=MARS_EQC,
+    )
+    image = VardaRaster(source, name="across")
+    plan = _plan(_lonLatFile(tmp_path, [182.0, -178.0]), image, Target.POINTS)
+    assert len(plan.features) == 2 and plan.outside == 0
+    for feature in plan.features:
+        assert (feature.geometry.x, feature.geometry.y) == pytest.approx((70, 0))
+
+
+# --- Reading in the background --------------------------------------------------------
+
+
+def test_reading_holds_the_proj_lock(tmp_path, monkeypatch):
+    path = tmp_path / "a.gpkg"
+    gpd.GeoDataFrame(geometry=[Point(1, 1)], crs=UTM).to_file(path)
+    held = []
+    readFile = gpd.read_file
+
+    def reading(*args, **kwargs):
+        # another thread can't take the lock while the file is read
+        other = threading.Thread(
+            target=lambda: held.append(not PROJ_LOCK.acquire(blocking=False))
+        )
+        other.start()
+        other.join()
+        return readFile(*args, **kwargs)
+
+    monkeypatch.setattr(vector_import.gpd, "read_file", reading)
+    readVectorFile(path)
+    assert held == [True]
+
+
+# --- ISIS sample and line --------------------------------------------------------------
+
+
+def test_isis_sample_and_line_are_one_based_pixel_centers(tmp_path):
+    image = _plainImage()
+    path = tmp_path / "campt.csv"
+    path.write_text("Sample,Line,name\n1,1,first\n3,2,third\n")
+    source = readVectorFile(path)
+    assert "ISIS" in source.crsNote
+    options = defaultOptions(source, image, Target.POINTS)
+    assert options.coordinates is Coordinates.PIXELS
+    points = PointCollection()
+    addToPoints(points, image, planImport(source, image, options, Target.POINTS))
+    assert [(p.x, p.y) for p in points.getAllPoints()] == [(0, 0), (2, 1)]
+    # the first pixel's center, as Varda saves a clicked pixel
+    assert points.getAllPoints()[0].geometry.equals(Point(0.5, 0.5))
+
+
+# --- Large imports ---------------------------------------------------------------------
+
+
+def test_five_thousand_features_add_at_once(tmp_path):
+    image = _plainImage()
+    count = 5000
+    path = tmp_path / "many.gpkg"
+    corners = np.random.default_rng(0).uniform(0, 29, (count, 2))
+    gpd.GeoDataFrame(
+        {"name": [f"f{i}" for i in range(3 * count)]},
+        geometry=[box(x, y, x + 1, y + 1) for x, y in corners]
+        + [Point(x, y) for x, y in corners]
+        + [LineString([(x, y), (x + 1, y + 1)]) for x, y in corners],
+    ).to_file(path)
+    rois, points, lines = ROICollection(), PointCollection(), LineCollection()
+    changes = {"rois": 0, "added": 0, "each": 0, "points": 0, "lines": 0}
+
+    def counter(key):
+        def count(*_):
+            changes[key] += 1
+
+        return count
+
+    rois.sigCollectionChanged.connect(counter("rois"))
+    rois.sigROIsAdded.connect(counter("added"))
+    rois.sigROIAdded.connect(counter("each"))
+    points.sigCollectionChanged.connect(counter("points"))
+    lines.sigCollectionChanged.connect(counter("lines"))
+
+    started = time.perf_counter()
+    addToROIs(rois, _plan(path, image, Target.ROIS))
+    addToPoints(points, image, _plan(path, image, Target.POINTS))
+    addToLines(lines, _plan(path, image, Target.LINES))
+    elapsed = time.perf_counter() - started
+
+    assert (len(rois), len(points), len(lines)) == (count, count, count)
+    assert changes == {"rois": 1, "added": 1, "each": 0, "points": 1, "lines": 1}
+    assert elapsed < 10  # seconds; adding ROIs one by one is quadratic
+    assert rois.fids == list(range(count))
+
+
+# --- Planetary round trips and the body choice ------------------------------------------
+
+MARS_POLAR = CRS.from_user_input(
+    "+proj=stere +lat_0=90 +lon_0=0 +k=1 +R=3396190 +units=m +no_defs"
+)
+
+
+def _polarImage() -> VardaRaster:
+    """100 × 100 pixels of 1 m around Mars's north pole: map coordinates that
+    look like degrees."""
+    source = ArrayDataSource(
+        np.zeros((100, 100, 1)),
+        transform=Affine(1.0, 0.0, -50.0, 0.0, -1.0, 50.0),
+        crs=MARS_POLAR,
+    )
+    return VardaRaster(source, name="pole")
+
+
+@pytest.mark.parametrize("suffix", FORMATS)
+def test_points_and_lines_round_trip_near_the_pole(tmp_path, suffix):
+    image = _polarImage()
+    points = PointCollection()
+    points.addPixel(image, 10, 20, name="a")
+    points.addPixel(image, 70, 90, name="b")
+    lines = LineCollection()
+    lines.addLine([[1, 2], [50.5, 60], [99, 3]], name="rim")
+    points.toFile(tmp_path / f"points.{suffix}")
+    lines.toFile(tmp_path / f"lines.{suffix}", image)
+
+    importedPoints, importedLines = PointCollection(), LineCollection()
+    addToPoints(
+        importedPoints,
+        image,
+        _plan(tmp_path / f"points.{suffix}", image, Target.POINTS),
+    )
+    addToLines(importedLines, _plan(tmp_path / f"lines.{suffix}", image, Target.LINES))
+
+    assert [(p.x, p.y) for p in importedPoints.getAllPoints()] == [(10, 20), (70, 90)]
+    # a shapefile can't hold the crs column's WKT (254 characters), and GDAL
+    # rewrites this projection in its .prj (k=1 as lat_ts=90): micrometers
+    tolerance = 1e-4 if suffix == "shp" else 1e-6
+    np.testing.assert_allclose(
+        importedLines.lines()[0].vertices, lines.lines()[0].vertices, atol=tolerance
+    )
+
+
+def test_earth_degrees_on_mars_are_an_explicit_choice(tmp_path):
+    image = _marsImage()
+    source = readVectorFile(_lonLatFile(tmp_path, [0.01]))
+    options = defaultOptions(source, image, Target.POINTS)
+    assert options.coordinates is Coordinates.BODY
+    with pytest.raises(VectorImportError, match="Degrees on Mars"):
+        planImport(source, image, ImportOptions(Coordinates.FILE), Target.POINTS)
+    with pytest.raises(VectorImportError, match="on Earth and the image is of Mars"):
+        planImport(
+            source,
+            image,
+            ImportOptions(Coordinates.OTHER, otherCrs=CRS.from_epsg(4326)),
+            Target.POINTS,
+        )
+
+
+# --- Smaller things ------------------------------------------------------------------------
+
+
+def test_coordinates_proj_cant_convert_are_counted_apart(tmp_path):
+    path = tmp_path / "bad.csv"
+    path.write_text("lon,lat\n-111,95\n")
+    plan = _plan(path, _utmImage(), Target.POINTS)
+    assert (plan.unplaced, plan.outside) == (1, 0)
+    assert "couldn't be converted" in plan.summary()
+
+
+def test_invalid_polygons_are_reported(tmp_path):
+    path = tmp_path / "bowtie.gpkg"
+    bowtie = Polygon([(1, 1), (5, 5), (5, 1), (1, 5)])
+    gpd.GeoDataFrame({"name": ["bow"]}, geometry=[bowtie]).to_file(path)
+    plan = _plan(path, _plainImage(), Target.ROIS)
+    assert len(plan.features) == 1
+    assert any("1 polygon invalid" in note for note in plan.notes)

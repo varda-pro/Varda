@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import attrs
@@ -109,6 +110,11 @@ class LineCollection:
     def lines(self) -> list[VardaLine]:
         return list(self._lines.values())
 
+    def batch(self) -> AbstractContextManager:
+        """Adds and removes made inside report one ``sigCollectionChanged``
+        at the end (an import), so views refresh once."""
+        return self.sigCollectionChanged.paused(lambda first, _: first)
+
     def __len__(self) -> int:
         return len(self._lines)
 
@@ -178,12 +184,17 @@ class LineCollection:
         )
 
     def toFile(self, path: str | Path, image: VardaRaster) -> None:
-        """The lines as a GIS file (see ``toFrame``)."""
+        """The lines as a GIS file (see ``toFrame``), with the CRS as WKT in a
+        crs column (GeoJSON can record only WGS 84)."""
         path = Path(path)
         driver = _DRIVERS.get(path.suffix.lower())
         if driver is None:
             raise ValueError(f"Unsupported file type: {path.suffix}")
-        self.toFrame(image).to_file(path, driver=driver)
+        frame = self.toFrame(image)
+        if frame.crs is not None:
+            # GeoJSON can only record WGS 84: Varda's import reads this
+            frame["crs"] = frame.crs.to_wkt()
+        frame.to_file(path, driver=driver)
 
 
 # Lines that workspaces offer to others, with the image they're drawn on

@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.catalogs.bodies import bodyOf
 from varda.common.entities import VardaRaster
 from varda.common.ui import (
     ElidingComboBox,
@@ -40,6 +41,7 @@ from varda.vector_import import (
     ImportPlan,
     Target,
     VectorImportError,
+    counted,
     VectorSource,
     defaultOptions,
     planImport,
@@ -100,8 +102,13 @@ class VectorImportDialog(QDialog):
                 combo.currentTextChanged.connect(self._reread)
 
         self.coordinatesCombo = ElidingComboBox()
+        body = "the image's body"
+        if image.hasGeospatialData:
+            with PROJ_LOCK:
+                body = bodyOf(image.crs)
         for mode in Coordinates:
-            self.coordinatesCombo.addItem(mode.value, mode)
+            label = f"Degrees on {body}" if mode is Coordinates.BODY else mode.value
+            self.coordinatesCombo.addItem(label, mode)
         self.coordinatesCombo.setCurrentIndex(
             self.coordinatesCombo.findData(defaults.coordinates)
         )
@@ -199,15 +206,22 @@ class VectorImportDialog(QDialog):
 
     def _previewText(self, plan: ImportPlan) -> str:
         counts = ", ".join(
-            f"{count} {kind}" for kind, count in self.source.countsByType().items()
+            counted(count, kind) for kind, count in self.source.countsByType().items()
         )
+        inside = len(plan.features)
         lines = [
             f"In the file: {counts or 'no features'}.",
-            f"On the image: {len(plan.features)} {FAMILIES[self.target]} "
-            f"become {self.target.value}.",
+            f"On the image: {counted(inside, FAMILIES[self.target])}, imported "
+            f"as {self.target.value}.",
         ]
         if plan.outside:
             lines.append(f"Outside the image (skipped): {plan.outside}.")
+            if not inside:
+                lines.append(
+                    "<b>None are on the image: check the Coordinates setting.</b>"
+                )
+        if plan.unplaced:
+            lines.append(f"Couldn't be converted (skipped): {plan.unplaced}.")
         names = [f.name or plan.defaultName for f in plan.features[:PREVIEW_NAMES]]
         if names:
             more = ", …" if len(plan.features) > PREVIEW_NAMES else ""

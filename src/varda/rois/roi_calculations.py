@@ -155,6 +155,7 @@ class CalculatedColumns:
         self._columns: dict[str, Calculation] = {}
         self._updating = False
         collection.sigROIAdded.connect(self._onROIChanged)
+        collection.sigROIsAdded.connect(self._onROIsAdded)
         collection.sigROIUpdated.connect(self._onROIChanged)
         collection.sigColumnsChanged.connect(self._onColumnsChanged)
 
@@ -242,6 +243,10 @@ class CalculatedColumns:
     def _onROIChanged(self, fid: int) -> None:
         if not self._updating and self._columns:
             self.recalculate(fids=[fid])
+
+    def _onROIsAdded(self, fids: list[int]) -> None:
+        if not self._updating and self._columns:
+            self.recalculate(fids=fids)
 
     def _onColumnsChanged(self) -> None:
         present = set(self.collection.userColumns)

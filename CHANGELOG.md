@@ -25,10 +25,14 @@ can alter results.
   the layer), GeoJSON, KML, FlatGeobuf, GPX and CSV tables of points,
   reprojects them onto the image (or reads them as pixel coordinates), and
   says what it imported and skipped: other geometry types, features outside
-  the image. GeoJSON's WGS 84 degrees are read as degrees on the image's body
-  for planetary images. Name and class columns are chosen in the dialog; the
-  other columns become ROI table columns or point and line properties (now
-  exported with them too). Varda's own exports round-trip. See
+  the image. On a planetary image, GeoJSON's WGS 84 degrees are read as
+  **Degrees on Mars** (the image's body), a choice the dialog shows;
+  longitudes take the image's convention (0–360 or −180–180); ISIS `sample`
+  and `line` columns (1-based pixel centers) are converted. Name and class
+  columns are chosen in the dialog; the other columns become ROI table
+  columns or point and line properties (now exported with them too). Point
+  and line exports now carry a `crs` column (WKT), as ROI exports do, so
+  Varda's own exports round-trip, planetary ones included. See
   [Importing vector data](docs/user-guide/importing-vector-data.md).
 - **Varda has a DOI.** Releases are archived on Zenodo:
   10.5281/zenodo.23447208 cites every version, and v0.10.0 is

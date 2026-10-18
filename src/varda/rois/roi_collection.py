@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
+import attrs
 import geopandas as gpd
 import numpy as np
 import numpy.typing as npt
@@ -27,6 +29,17 @@ _CORE_COLUMNS = ("name", "color", "roi_type")
 _RESERVED_COLUMNS = frozenset({*_CORE_COLUMNS, "geometry"})
 
 
+@attrs.frozen
+class NewROI:
+    """An ROI to add with ``ROICollection.addROIs``."""
+
+    geometry: BaseGeometry
+    name: str
+    color: Color
+    roiType: ROIMode
+    properties: dict = attrs.field(factory=dict)
+
+
 class ROICollection:
     """A collection of ROIs backed by a GeoDataFrame.
 
@@ -35,6 +48,7 @@ class ROICollection:
 
     Signals:
         sigROIAdded(int): emitted with fid after an ROI is added.
+        sigROIsAdded(list): emitted with the fids after ``addROIs``.
         sigROIRemoved(int): emitted with fid after an ROI is removed.
         sigROIUpdated(int): emitted with fid after an ROI is updated.
         sigColumnsChanged(): emitted after a user column is added/removed/renamed.
@@ -43,6 +57,7 @@ class ROICollection:
     """
 
     sigROIAdded = Signal(int)
+    sigROIsAdded = Signal(list)
     sigROIRemoved = Signal(int)
     sigROIUpdated = Signal(int)
     sigColumnsChanged = Signal()
@@ -105,6 +120,36 @@ class ROICollection:
         self.sigROIAdded.emit(fid)
         self.sigCollectionChanged.emit()
         return fid
+
+    def addROIs(self, rois: Sequence[NewROI]) -> list[int]:
+        """Add many ROIs at once (an import): one concat, then one
+        ``sigROIsAdded`` with their fids and one ``sigCollectionChanged``
+        (no ``sigROIAdded`` for each). Returns their fids."""
+        if not rois:
+            return []
+        fids = list(range(self._nextFid, self._nextFid + len(rois)))
+        self._nextFid += len(rois)
+        rows = []
+        for roi in rois:
+            row = {
+                **{column: "" for column in self.userColumns},
+                **roi.properties,
+                "name": roi.name,
+                "color": roi.color,
+                "roi_type": roi.roiType,
+                "geometry": roi.geometry,
+            }
+            rows.append(row)
+        added = gpd.GeoDataFrame(
+            rows,
+            index=pd.Index(fids, name="fid"),
+            geometry="geometry",
+            crs=self._crs,
+        )
+        self._gdf = pd.concat([self._gdf, added])
+        self.sigROIsAdded.emit(fids)
+        self.sigCollectionChanged.emit()
+        return fids
 
     def removeROI(self, fid: int) -> None:
         """Remove an ROI by fid."""

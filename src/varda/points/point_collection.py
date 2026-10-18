@@ -3,6 +3,7 @@ ground, exportable to GIS files."""
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import attrs
@@ -106,13 +107,19 @@ class PointCollection:
     def fids(self) -> list[int]:
         return list(self._points)
 
+    def batch(self) -> AbstractContextManager:
+        """Adds and removes made inside report one ``sigCollectionChanged``
+        at the end (an import), so views refresh once."""
+        return self.sigCollectionChanged.paused(lambda first, _: first)
+
     def __len__(self) -> int:
         return len(self._points)
 
     def toFile(self, path: str | Path, driver: str | None = None) -> Path:
         """Write the points as a GIS file (GeoJSON, GeoPackage or Shapefile by
         suffix) with name, image, pixel column/row, color and description as
-        attributes, then any other properties the points carry."""
+        attributes, then any other properties the points carry, and the CRS as
+        WKT in a crs column (GeoJSON can record only WGS 84)."""
         if not self._points:
             raise ValueError("No points to export.")
         target = Path(path)
@@ -139,5 +146,8 @@ class PointCollection:
             geometry=[p.geometry for p in points],
             crs=self.crs,
         )
+        if self.crs is not None:
+            # GeoJSON can only record WGS 84: Varda's import reads this
+            frame["crs"] = self.crs.to_wkt()
         frame.to_file(target, driver=driver)
         return target
