@@ -8,8 +8,12 @@ import pytest
 from varda import session
 from shapely.geometry import box
 
+from varda.common.di_types import ProjectImages
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.geo._tests.fixtures import writeWgs84
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.image_loading_service import loadRaster
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_json import roisFromJson, roisToJson
 from varda.session import (
@@ -19,6 +23,7 @@ from varda.session import (
     readSession,
     writeSession,
 )
+from varda.session_restore import SessionRestorer
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
     DualImageWorkspace,
     DualImageWorkspaceConfig,
@@ -154,3 +159,78 @@ def test_a_session_without_a_version_is_read_as_the_first_format(tmp_path):
         json.dumps({"format": "varda-session", "images": ["/a"], "workspaces": []})
     )
     assert readSession(legacy).images == ("/a",)
+
+
+# --- a corrected coordinate system ---
+
+
+class _NoTabs:
+    def addTab(self, widget, title=None) -> None:
+        raise AssertionError("no workspaces in this session")
+
+
+def _restore(qtbot, state: SessionState, image: VardaRaster) -> None:
+    """Restore ``state`` with ``image`` freshly loaded for its one path."""
+
+    def load(path, onSuccess, onFailure):
+        onSuccess(image)
+
+    restorer = SessionRestorer(ProjectImages(), _NoTabs(), loadImage=load)
+    with qtbot.waitSignal(restorer.sigFinished, timeout=10_000):
+        restorer.restore(state)
+
+
+def _saveAndRead(image: VardaRaster, tmp_path) -> SessionState:
+    capture = captureSession([image], [])
+    return readSession(writeSession(capture.state, tmp_path / "work"))
+
+
+def test_the_automatic_crs_fix_survives_a_session(qtbot, tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    state = _saveAndRead(fixed, tmp_path)
+    saved = state.metadata[fixed.filePath]["overrides"]["crs"]
+    assert sameCrs(saved, "IAU_2015:49900")
+
+    again = loadRaster(str(fixed.filePath))
+    _restore(qtbot, state, again)
+
+    assert again.crs is not None and sameCrs(again.crs, "IAU_2015:49900")
+    assert again.extraMetadata["crsFix"]["automatic"] is True
+    assert again.crsHealth is not None
+    assert again.crsHealth.issues[0].code == "earth-crs-on-body"
+
+
+def test_a_crs_chosen_in_the_session_wins(qtbot, tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    fixed.setMetadataOverrides({"crs": "IAU_2015:30100"})  # the Moon, by hand
+    state = _saveAndRead(fixed, tmp_path)
+
+    again = loadRaster(str(fixed.filePath))  # the automatic fix applies again
+    _restore(qtbot, state, again)
+
+    assert again.metadataOverrides == {"crs": "IAU_2015:30100"}
+    assert again.crsHealth is not None and again.crsHealth.body.body is not None
+    assert again.crsHealth.body.body.name == "Moon"  # checked again
+    assert "crsFix" not in again.extraMetadata
+
+
+def test_the_files_own_crs_chosen_in_the_session_wins(qtbot, tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    fixed.setMetadataOverrides({"crs": None})
+    state = _saveAndRead(fixed, tmp_path)
+
+    again = loadRaster(str(fixed.filePath))
+    _restore(qtbot, state, again)
+
+    assert again.crs is not None and again.crs.to_epsg() == 4326
+    assert "crsFix" not in again.extraMetadata
+
+
+def test_a_session_without_a_crs_keeps_the_automatic_fix(qtbot, tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    state = SessionState(
+        (fixed.filePath,), (), {fixed.filePath: {"name": "x", "overrides": {}}}
+    )  # e.g. saved before Varda checked CRSs
+    _restore(qtbot, state, fixed)
+    assert fixed.crs is not None and sameCrs(fixed.crs, "IAU_2015:49900")
+    assert fixed.name == "x"

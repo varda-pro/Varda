@@ -22,6 +22,20 @@ can alter results.
   the ground, and the full WKT. An unknown body is reported as unknown,
   never as Earth. Line-profile CSVs name the CRS the same way. See the new
   [Coordinate systems](docs/user-guide/coordinate-systems.md) guide.
+- **Planetary images tagged WGS 84 are read on their own body.** When an
+  image opens, Varda checks its coordinate system against its label. A
+  geographic Earth CRS (e.g. `EPSG:4326`) on an image whose label names
+  another body Varda knows (PDS3 `TARGET_NAME = MARS`, say) is read as
+  degrees on that body's IAU 2015 sphere (`IAU_2015:49900` for Mars); the
+  degrees don't change. This is the only CRS Varda changes on its own: the
+  file is left as it is, the corrected CRS is kept with the image (and in
+  sessions), files Varda exports are written with it, and the provenance of
+  every result made from the image records it as `crsFix` (`from`, `to`,
+  `reason`, `automatic`). Targets that aren't bodies Varda knows (`SKY`,
+  `CALIBRATION`, `N/A`) are ignored. Editing an image's metadata in Image
+  Properties keeps the corrected CRS; **Reset to the File's** returns the
+  image to how it opened. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#the-one-automatic-fix-and-why-only-that-one).
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference
   mineral overlaid on the Ratio plot (its metadata's mineral or class, else

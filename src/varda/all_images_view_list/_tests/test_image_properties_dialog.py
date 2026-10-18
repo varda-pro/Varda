@@ -17,9 +17,15 @@ from varda.all_images_view_list.image_properties_dialog import (
 )
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
-from varda.geo._tests.fixtures import CRISM_MTRDR_ENVI_WKT, CRISM_MTRDR_WKT, makeImage
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_ENVI_WKT,
+    CRISM_MTRDR_WKT,
+    makeImage,
+    writeWgs84,
+)
+from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.image_loading.image_loading_service import openDataSource
+from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
 
 
@@ -83,6 +89,30 @@ def test_edits_save_into_an_envi_header(qtbot, tmp_path):
     dialog.accept()
     reopened = VardaRaster(openDataSource(str(path)))
     assert reopened.nodata == -1.0
+
+
+def test_editing_keeps_a_corrected_crs(qtbot, tmp_path):
+    path = writeRaster(_image(), tmp_path / "cube.img")
+    image = VardaRaster(openDataSource(str(path)))
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.noDataEdit.setText("-1")
+    dialog.saveToFile.setChecked(True)  # the header takes only what it can hold
+    dialog.accept()
+    assert image.metadataOverrides == {"nodata": -1.0, "crs": "IAU_2015:49900"}
+    assert VardaRaster(openDataSource(str(path))).nodata == -1.0
+
+
+def test_reset_to_file_is_the_image_as_it_opened(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    image.setMetadataOverrides({"crs": None, "nodata": -1.0})
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.resetToFile()
+    assert sameCrs(image.metadataOverrides["crs"], "IAU_2015:49900")
+    assert "nodata" not in image.metadataOverrides
+    assert image.extraMetadata["crsFix"]["automatic"] is True
 
 
 def test_coordinate_system_group_describes_the_crs(qtbot):

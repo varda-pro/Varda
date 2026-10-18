@@ -39,6 +39,7 @@ from varda.common.entities import VardaRaster
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
 from varda.common.ui import MutedLabel, PanelScrollArea
 from varda.geo.describe import describeCrs, formatMeters
+from varda.image_loading.crs_check import checkImageCrs
 from varda.image_loading.envi_header import headerFor, saveToHeader
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -279,7 +280,10 @@ class ImagePropertiesDialog(QDialog):
             self._item(row, WAVELENGTH).setText(f"{start + row * step:g}")
 
     def resetToFile(self) -> None:
+        """Back to the image as it opened: the file's metadata, and the CRS
+        check (with its automatic fix) as at load."""
         self.image.setMetadataOverrides({})
+        checkImageCrs(self.image)
         self.reject()
 
     def _item(self, row: int, column: int) -> QTableWidgetItem:
@@ -349,7 +353,9 @@ class ImagePropertiesDialog(QDialog):
         except ValueError as error:
             QMessageBox.warning(self, self.windowTitle(), str(error))
             return
-        self.image.setMetadataOverrides(overrides, name or None)
+        # a corrected CRS isn't edited here: keep it
+        kept = {k: v for k, v in self.image.metadataOverrides.items() if k == "crs"}
+        self.image.setMetadataOverrides({**overrides, **kept}, name or None)
         if self.saveToFile.isChecked() and self.image.filePath and overrides:
             try:
                 saveToHeader(self.image.filePath, overrides)

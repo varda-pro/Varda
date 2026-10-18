@@ -30,6 +30,8 @@ from varda.common.deprecation import warnDeprecated
 from psygnal import Signal
 
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, BandModel, bandModelFor
+from varda.geo.health import CrsHealth
+from varda.geo.labels import LabelHints
 from varda.utilities.proj_lock import PROJ_LOCK
 from shapely.geometry.base import BaseGeometry
 
@@ -41,7 +43,9 @@ if TYPE_CHECKING:
 
 # Metadata the user can edit in Varda (Image Properties), per band or single
 EDITABLE_PER_BAND = ("wavelengths", "bandNames", "fwhm", "bbl")
-EDITABLE_SINGLE = ("nodata", "wavelengthUnits", "description")
+# "crs": a coordinate system (WKT, or any text PROJ reads) used instead of the
+# file's; None is the file's own, kept so a session remembers the choice
+EDITABLE_SINGLE = ("nodata", "wavelengthUnits", "description", "crs")
 
 
 class VardaRaster:
@@ -58,6 +62,11 @@ class VardaRaster:
         self._dataSource = dataSource
         self._name = name
         self._overrides: dict = {}
+        self._overrideCrs: CRS | None = None  # the "crs" override, parsed once
+        # Set by loading (image_loading.crs_check): the coordinate-system
+        # health check, and the facts the image's own label states
+        self.crsHealth: CrsHealth | None = None
+        self.labelHints: LabelHints | None = None
 
     # --- Edited metadata ---
 
@@ -78,12 +87,30 @@ class VardaRaster:
                     f"{key} needs a value for each of the {self.bandCount} bands, "
                     f"not {len(value)}."
                 )
+        overrideCrs = self._parsedCrs(overrides.get("crs"))
         self._overrides = dict(overrides)
+        self._overrideCrs = overrideCrs
         if name:
             self._name = name
-        for cached in ("bandModel", "raster"):
+        for cached in ("bandModel", "raster", "_geodeticTransformer"):
             self.__dict__.pop(cached, None)
         self.sigMetadataChanged.emit()
+
+    def _parsedCrs(self, text: object) -> CRS | None:
+        """The ``crs`` override ``text`` as a CRS (the one already built when
+        it hasn't changed); ``None`` for none. Raises ValueError when PROJ
+        can't read it."""
+        if text is None:
+            return None
+        if not isinstance(text, str):
+            raise ValueError(f"A coordinate system is text (WKT), not {text!r}.")
+        if self._overrideCrs is not None and self._overrides.get("crs") == text:
+            return self._overrideCrs
+        with PROJ_LOCK:
+            try:
+                return CRS.from_user_input(text)
+            except CRSError as error:
+                raise ValueError(f"That isn't a coordinate system: {error}") from error
 
     def _readEdited(
         self, bandIndices: npt.ArrayLike | None, window: tuple | None
@@ -292,6 +319,10 @@ class VardaRaster:
 
     @property
     def crs(self) -> CRS | None:
+        """The coordinate system: the ``crs`` override when set, else the
+        file's (``dataSource.crs``)."""
+        if self._overrideCrs is not None:
+            return self._overrideCrs
         return self._dataSource.crs
 
     @property

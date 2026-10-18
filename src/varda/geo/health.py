@@ -115,6 +115,7 @@ def _check(
         if earth.fix is not None and earth.fix.automatic:
             effective = earth.fix.wkt
             used = describeCrs(effective, transform, width, height)
+            body = identifyBody(effective, hints.target)
     if used.kind in ("geographic", "projected") and body.body is None:
         issues.append(_unknownBody(body))
     issues.extend(_conventions(used, hints))
@@ -170,19 +171,23 @@ def _earthOnBody(
     own: BodyMatch,
     hints: LabelHints,
 ) -> CrsIssue | None:
-    """An Earth CRS on an image whose label names another body: fixed
-    automatically when the CRS is just degrees and Varda knows the body."""
-    target = hints.target
-    if own.body is None or own.body.name != "Earth" or not target:
+    """An Earth CRS on an image whose label names another body Varda knows:
+    fixed automatically when the CRS is just degrees. A target Varda doesn't
+    know (SKY, CALIBRATION, N/A, or a body it has no sizes for) is no
+    evidence, so it's ignored."""
+    body = bodyNamed(hints.target) if hints.target else None
+    if own.body is None or own.body.name != "Earth" or body is None:
         return None
-    if target.lower() == "earth":
+    if body.name == "Earth":
         return None
-    message = f"Its CRS says Earth, but its label says {target}."
-    body = bodyNamed(target)
-    if description.kind != "geographic" or body is None:
+    message = f"Its CRS says Earth, but its label says {body.name}."
+    if description.kind != "geographic":
         return CrsIssue("earth-crs-on-body", Severity.PROBLEM, message, SET_CRS)
     with PROJ_LOCK:
-        name = CRS.from_user_input(crs).name
+        parsed = CRS.from_user_input(crs)
+        name = parsed.name
+        if not name or name.lower() == "unknown":  # e.g. a PROJ string
+            name = parsed.datum.name if parsed.datum is not None else "no name"
         wkt = body.sphereCrs().to_wkt()
     fix = CrsFix(
         wkt=wkt,
@@ -197,6 +202,28 @@ def _earthOnBody(
         f"{SET_CRS} to use another"
     )
     return CrsIssue("earth-crs-on-body", Severity.PROBLEM, message, suggestion, fix)
+
+
+def fixRecord(health: CrsHealth, declared: CRS | str) -> dict[str, str | bool] | None:
+    """The automatic fix in ``health`` (of the ``declared`` CRS) as
+    provenance records it (``crsFix``): the CRS declared and the CRS used,
+    each as an authority code when it has one (else its WKT), the reason,
+    and ``automatic``. ``None`` when there's no automatic fix."""
+    fix = next(
+        (i.fix for i in health.issues if i.fix is not None and i.fix.automatic), None
+    )
+    if fix is None:
+        return None
+    declaredText = health.description.authority
+    if declaredText is None:
+        with PROJ_LOCK:
+            declaredText = CRS.from_user_input(declared).to_wkt()
+    return {
+        "from": declaredText,
+        "to": describeCrs(fix.wkt).authority or fix.wkt,
+        "reason": fix.reason,
+        "automatic": True,
+    }
 
 
 def _unknownBody(body: BodyMatch) -> CrsIssue:

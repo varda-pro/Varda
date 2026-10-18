@@ -48,6 +48,24 @@ record holds:
 - **The inputs:** each by name and file path, **with the input's own record**
   when it has one. A chain of results (a ratio of a filtered image of a
   crop, say) keeps every step, in Varda and in files.
+- **A corrected coordinate system:** when Varda read an input in a CRS
+  other than the one its file declares (the one automatic case: Earth's
+  degrees on a planetary image whose label names another body), the input
+  carries a `crsFix` record:
+
+  | Key | Meaning |
+  |---|---|
+  | `from` | The CRS the file declared: its authority code (e.g. `EPSG:4326`), or its WKT when it has none |
+  | `to` | The CRS Varda used: its authority code (e.g. `IAU_2015:49900`), or its WKT |
+  | `reason` | One sentence, e.g. "Its CRS says Earth (WGS 84) but its label's target is Mars; read as degrees on the IAU 2015 Mars sphere" |
+  | `automatic` | `true`: Varda applied it when the image opened |
+
+  The image keeps the record in its own metadata too, so an exported copy
+  of the image (whose file now declares the corrected CRS) still says it
+  was corrected. Report it as
+  [Coordinate systems](coordinate-systems.md#reporting-a-corrected-crs)
+  shows. Inputs also keep the facts their labels state (`labelHints`:
+  target, latitude type, longitude direction and domain, and which label).
 - **The software:** the Varda version, the plugin and its version if a
   plugin made it, and the versions of the libraries or tools that did the
   work where they matter: Spectral Python for the detectors, the

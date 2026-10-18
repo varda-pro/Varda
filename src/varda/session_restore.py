@@ -13,6 +13,7 @@ from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
 from varda.image_loading import ImageLoadingService
 from varda.image_loading.crism_geometry import GEOMETRY_KEYS, setGeometryOverride
+from varda.image_loading.crs_check import checkImageCrs
 from varda.rois.roi_json import roisFromJson
 from varda.session import SessionState
 from varda.workspaces.workspace_kinds import buildWorkspace
@@ -84,8 +85,10 @@ class SessionRestorer(QObject):
             image = self._byPath(path)
             if image is not None:
                 image.setMetadataOverrides(
-                    entry.get("overrides", {}), entry.get("name")
+                    _restoredOverrides(image, entry.get("overrides", {})),
+                    entry.get("name"),
                 )
+                checkImageCrs(image)  # of the CRS the session chose
                 for need, key in GEOMETRY_KEYS.items():
                     if entry.get(key):
                         setGeometryOverride(image, need, entry[key])
@@ -110,3 +113,14 @@ class SessionRestorer(QObject):
         self.sigFinished.emit(
             RestoreReport(tuple(self._loaded), tuple(self._failed), count)
         )
+
+
+def _restoredOverrides(image: VardaRaster, saved: dict) -> dict:
+    """The session's edits in place of the image's. A session that doesn't
+    say which CRS (one saved before Varda checked CRSs) keeps the CRS chosen
+    at load (the automatic fix); one that does wins, None (the file's own)
+    included."""
+    current = image.metadataOverrides
+    if "crs" in saved or "crs" not in current:
+        return dict(saved)
+    return {**saved, "crs": current["crs"]}

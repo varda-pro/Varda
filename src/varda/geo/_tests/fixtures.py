@@ -3,7 +3,10 @@ writes them (spec §6), and small synthetic images on them (no data files)."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import rasterio
 from affine import Affine
 from pyproj import CRS
 
@@ -79,6 +82,9 @@ LRO_WAC_SOUTH_POLAR_PROJ = (
 WGS84 = "EPSG:4326"
 # MOLA MEGDR, lon 0–360 (1/128°)
 MOLA_MEGDR_PROJ = "+proj=longlat +R=3396000 +no_defs"
+# A PDS3 label naming Mars, and a 1/256° GeoTIFF transform near Gale crater
+MARS_LABEL = 'PDS_VERSION_ID = PDS3\nTARGET_NAME = "MARS"\nEND\n'
+GALE_TRANSFORM = Affine(1 / 256, 0, 137.3, 0, -1 / 256, -4.5)
 # Vesta's IAU 2015 sphere: the regression for "Earth"
 VESTA_IAU = "IAU_2015:200000400"
 
@@ -121,3 +127,25 @@ def makeImage(
         extraMetadata={"pds3Label": label} if label is not None else None,
     )
     return VardaRaster(source, name=name)
+
+
+def writeWgs84(folder: Path, label: str | None = MARS_LABEL, crs="EPSG:4326") -> Path:
+    """A small GeoTIFF in Earth's degrees near Gale crater, with ``label`` as
+    its PDS3 label beside it."""
+    path = folder / "scene.tif"
+    data = np.random.default_rng(0).random((2, 16, 16)).astype(np.float32)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=16,
+        height=16,
+        count=2,
+        dtype="float32",
+        crs=crs,
+        transform=GALE_TRANSFORM,
+    ) as file:
+        file.write(data)
+    if label is not None:
+        path.with_suffix(".lbl").write_text(label)
+    return path

@@ -3,6 +3,8 @@ the real-style fixtures (spec §4.2, §6)."""
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from affine import Affine
 from pyproj import CRS
@@ -22,7 +24,7 @@ from varda.geo._tests.fixtures import (
     makeImage,
 )
 from varda.geo.equivalence import sameCrs
-from varda.geo.health import CrsHealth, Severity, checkCrs
+from varda.geo.health import CrsHealth, Severity, checkCrs, fixRecord
 from varda.geo.labels import LabelHints
 
 GALE = (137.4, -4.6)
@@ -137,11 +139,59 @@ def test_an_earth_crs_with_an_earth_label_is_fine():
     assert check(image, hints(target="Earth")).issues == ()
 
 
-def test_an_earth_crs_on_a_body_varda_does_not_know_is_flagged_not_fixed():
+@pytest.mark.parametrize("target", ["BENNU", "SKY", "N/A", "CALIBRATION"])
+def test_a_target_varda_does_not_know_is_ignored(target: str):
     image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
-    health = check(image, hints(target="BENNU"))
-    assert codes(health) == ["earth-crs-on-body"]
-    assert health.issues[0].fix is None
+    health = check(image, hints(target=target))
+    assert health.issues == ()
+    assert health.body.body is not None and health.body.body.name == "Earth"
+
+
+def test_the_message_names_the_body_properly():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
+    health = check(image, hints(target="MARS"))
+    assert health.issues[0].message == "Its CRS says Earth, but its label says Mars."
+    fix = health.issues[0].fix
+    assert fix is not None and "its label's target is Mars;" in fix.reason
+
+
+def test_the_reason_names_a_proj_string_crs_by_its_datum():
+    crs = "+proj=longlat +datum=WGS84 +no_defs"
+    image = makeImage(crs, centerLonLat=GALE, pixelSize=1 / 256)
+    fix = check(image, MARS).issues[0].fix
+    assert fix is not None
+    assert fix.reason.startswith("Its CRS says Earth (World Geodetic System 1984) but")
+    assert "unknown" not in fix.reason
+
+
+def test_after_the_automatic_fix_the_body_is_the_labels():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
+    health = check(image, MARS)
+    assert health.body.body is not None and health.body.body.name == "Mars"
+    # the description stays the CRS as given
+    assert health.description.body == "Earth"
+
+
+def test_without_the_fix_the_body_is_the_crss():
+    image = makeImage("EPSG:4087", centerLonLat=GALE, pixelSize=100)
+    health = check(image, MARS)
+    assert health.body.body is not None and health.body.body.name == "Earth"
+
+
+def test_fix_record():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
+    health = check(image, MARS)
+    record = fixRecord(health, WGS84)
+    assert record is not None
+    assert record["from"] == "EPSG:4326" and record["to"] == "IAU_2015:49900"
+    assert record["automatic"] is True
+    proj = "+proj=longlat +ellps=WGS84 +pm=10 +no_defs"
+    unnamed = makeImage(proj, centerLonLat=GALE, pixelSize=1 / 256)
+    other = fixRecord(check(unnamed, MARS), proj)
+    assert other is not None and str(other["from"]).startswith("GEOGCRS[")
+    fix = health.issues[0].fix
+    assert fix is not None and record["reason"] == fix.reason
+    assert fixRecord(check(image), WGS84) is None
 
 
 def test_unknown_body():
@@ -272,7 +322,12 @@ ALL_FIXTURES = [
 @pytest.mark.parametrize("crs", ALL_FIXTURES)
 @pytest.mark.parametrize(
     "transform",
-    [Affine.identity(), Affine(20, 0, 0, 0, -20, 0), Affine(0, 0, 0, 0, 0, 0)],
+    [
+        Affine.identity(),
+        Affine(20, 0, 0, 0, -20, 0),
+        Affine(0, 0, 0, 0, 0, 0),
+        Affine(math.nan, 0, math.nan, 0, math.nan, math.nan),
+    ],
 )
 def test_never_raises(crs: str | None, transform: Affine):
     for label in (LabelHints.empty(), MARS, hints(longitudeDirection="west")):
