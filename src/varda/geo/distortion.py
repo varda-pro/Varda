@@ -15,7 +15,14 @@ sphere; Snyder, 1987, eqs. 4-18, 4-20). For square-degree pixels on a sphere
 this is Snyder's equirectangular k = cos φ1 / cos φ with φ1 = 0 (p. 91), and
 for pixels of Δλ = Δφ / cos φ1 it is the same with standard parallel φ1. The
 meridians and parallels stay perpendicular, so the areal scale is h·k and
-sin(ω/2) = |h − k| / (h + k) (Snyder, 1987, eq. 4-9 with a', b' = h, k)."""
+sin(ω/2) = |h − k| / (h + k) (Snyder, 1987, eq. 4-9 with a', b' = h, k).
+
+φ above is geodetic (planetographic) latitude. A planetocentric latitude φc
+on a flattened ellipsoid (e.g. ``IAU_2015:49902``) is converted with
+tan φg = (a/b)² tan φc, and a degree of φc spans dφg/dφc degrees of φg, so
+M is multiplied by dφg/dφc = (a/b)² / (cos² φc + (a/b)⁴ sin² φc). Projected
+CRSs take and report latitude in their geodetic CRS's own convention too;
+PROJ's factors are evaluated at the converted planetographic latitude."""
 
 from __future__ import annotations
 
@@ -35,7 +42,7 @@ ANGLE_TIP_DEG: float = 1.0
 SCALE_STRONG: float = 0.10
 ANGLE_STRONG_DEG: float = 10.0
 # samples per side of the grid over an image (spec §4.5)
-GRID = 9
+_GRID = 9
 
 
 @frozen
@@ -85,8 +92,11 @@ class _Model:
 
     proj: Proj | None  # projected; None for geographic
     degreesPerUnit: float  # geographic: the angle unit in degrees
-    eccentricitySquared: float  # geographic: the ellipsoid's e²
+    eccentricitySquared: float  # the ellipsoid's e²
     west: bool  # the geodetic CRS's longitude is positive west
+    # the geodetic CRS's latitude is planetocentric (on a flattened
+    # ellipsoid; PROJ's own latitude is always geodetic, i.e. planetographic)
+    planetocentric: bool
 
 
 def distortionAt(crs: CRS | str, lon: float, lat: float) -> Distortion:
@@ -130,6 +140,8 @@ def distortionOver(
     if crs is None:
         return None
     rowOff, colOff, rowCount, colCount = window or (0, 0, height, width)
+    if rowCount <= 0 or colCount <= 0:
+        return None
     cols, rows = np.meshgrid(
         colOff + _centers(colCount), rowOff + _centers(rowCount), indexing="xy"
     )
@@ -152,8 +164,8 @@ def distortionOver(
 
 
 def _centers(count: int) -> np.ndarray:
-    """GRID pixel centers spread from the first pixel to the last."""
-    return np.unique(np.linspace(0, max(count - 1, 0), GRID).round()) + 0.5
+    """_GRID pixel centers spread from the first pixel to the last."""
+    return np.unique(np.linspace(0, count - 1, _GRID).round()) + 0.5
 
 
 def _text(worst: Distortion, lat: float) -> str:
@@ -191,19 +203,44 @@ def _model(key: str) -> _Model | None:
         for axis in geodetic.axis_info
         if "longitude" in axis.name.lower() or axis.abbrev.lower() == "lon"
     )
-    if crs.is_projected:
-        return _Model(Proj(crs), 1.0, 0.0, west)
-    unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
     inverse = crs.ellipsoid.inverse_flattening
     flattening = 1 / inverse if inverse else 0.0
-    return _Model(None, math.degrees(unit), flattening * (2 - flattening), west)
+    e2 = flattening * (2 - flattening)
+    centric = e2 > 0 and _planetocentric(geodetic)
+    if crs.is_projected:
+        return _Model(Proj(crs), 1.0, e2, west, centric)
+    unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
+    return _Model(None, math.degrees(unit), e2, west, centric)
+
+
+def _planetocentric(geodetic: CRS) -> bool:
+    """A planetocentric latitude axis, read as ``describeCrs`` reads its
+    latitude type (axis name, or a spherical coordinate system)."""
+    names = " ".join(axis.name.lower() for axis in geodetic.axis_info)
+    system = geodetic.coordinate_system
+    subtype = system.to_json_dict().get("subtype") if system is not None else None
+    return "planetocentric" in names or "geocentric" in names or subtype == "spherical"
+
+
+def _toGraphic(lats: np.ndarray, e2: float) -> np.ndarray:
+    """Planetocentric to planetographic latitude, degrees:
+    tan φg = tan φc / (1 − e²) = (a/b)² tan φc."""
+    phi = np.radians(lats)
+    return np.degrees(np.arctan2(np.sin(phi), (1 - e2) * np.cos(phi)))
+
+
+def _toCentric(lats: np.ndarray, e2: float) -> np.ndarray:
+    """Planetographic to planetocentric latitude, degrees."""
+    phi = np.radians(lats)
+    return np.degrees(np.arctan2((1 - e2) * np.sin(phi), np.cos(phi)))
 
 
 def _lonLat(
     model: _Model, transform: Affine, cols: np.ndarray, rows: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pixel positions as lon/lat in degrees, east-positive (PROJ's own
-    convention); NaN where PROJ can't invert. The caller holds PROJ_LOCK."""
+    """Pixel positions as lon/lat in degrees, lon east-positive (PROJ's
+    convention) and lat in the CRS's own (planetocentric or not); NaN where
+    PROJ can't invert. The caller holds PROJ_LOCK."""
     xs, ys = transform * (np.asarray(cols, float), np.asarray(rows, float))
     xs, ys = np.asarray(xs, float), np.asarray(ys, float)
     if model.proj is None:
@@ -213,7 +250,10 @@ def _lonLat(
     lons, lats = model.proj(xs.tolist(), ys.tolist(), inverse=True, errcheck=False)
     lons, lats = np.asarray(lons, float), np.asarray(lats, float)
     invalid = ~(np.isfinite(lons) & np.isfinite(lats) & (np.abs(lats) <= 90))
-    return np.where(invalid, np.nan, lons), np.where(invalid, np.nan, lats)
+    lons, lats = np.where(invalid, np.nan, lons), np.where(invalid, np.nan, lats)
+    if model.planetocentric:
+        lats = _toCentric(lats, model.eccentricitySquared)
+    return lons, lats
 
 
 def _aspect(transform: Affine) -> float:
@@ -226,10 +266,13 @@ def _aspect(transform: Affine) -> float:
 def _factors(
     model: _Model, lons: np.ndarray, lats: np.ndarray, aspect: float
 ) -> list[Distortion]:
-    """Distortion at east-positive ``lons``, ``lats`` (degrees); NaN where
-    the factors aren't finite. The caller holds PROJ_LOCK."""
+    """Distortion at east-positive ``lons`` and ``lats`` in the CRS's own
+    latitude (degrees); NaN where the factors aren't finite. The caller
+    holds PROJ_LOCK."""
+    e2 = model.eccentricitySquared
+    graphic = _toGraphic(lats, e2) if model.planetocentric else lats
     if model.proj is not None:
-        factors = model.proj.get_factors(lons, lats, errcheck=False)
+        factors = model.proj.get_factors(lons, graphic, errcheck=False)
         columns = (
             factors.meridional_scale,
             factors.parallel_scale,
@@ -238,12 +281,20 @@ def _factors(
         )
         h, k, areal, omega = (np.atleast_1d(np.asarray(c, float)) for c in columns)
     else:
-        phi = np.radians(lats)
+        phi = np.radians(graphic)
         with np.errstate(divide="ignore", invalid="ignore"):
-            # M / N = (1 − e²) / (1 − e² sin² φ)
-            curvature = (1 - model.eccentricitySquared) / (
-                1 - model.eccentricitySquared * np.sin(phi) ** 2
-            )
+            # M / N = (1 − e²) / (1 − e² sin² φg)
+            curvature = (1 - e2) / (1 - e2 * np.sin(phi) ** 2)
+            if model.planetocentric:
+                # a degree of φc is dφg/dφc degrees of φg:
+                # dφg/dφc = (a/b)² / (cos² φc + (a/b)⁴ sin² φc)
+                ratio = 1 / (1 - e2)
+                centric = np.radians(lats)
+                curvature = (
+                    curvature
+                    * ratio
+                    / (np.cos(centric) ** 2 + ratio**2 * np.sin(centric) ** 2)
+                )
             k = aspect * curvature / np.cos(phi)
             k = np.where(np.abs(lats) < 90, k, np.inf)
         h = np.ones_like(k)

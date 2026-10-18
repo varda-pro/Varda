@@ -8,7 +8,7 @@ import math
 import numpy as np
 import pytest
 from affine import Affine
-from pyproj import Transformer
+from pyproj import Proj, Transformer
 
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_WKT,
@@ -131,6 +131,52 @@ def test_geographic_on_an_ellipsoid_uses_its_radii_of_curvature():
     e2 = 1 - (3376200 / 3396190) ** 2
     found = distortionAt("IAU_2015:49901", 0.0, 0.0)
     assert found.parallelScale == pytest.approx(1 - e2, abs=1e-9)
+
+
+def _ocentricGroundK(lat: float) -> float:
+    """Square-degree k on Mars's IAU ellipsoid at planetocentric ``lat``,
+    from the ground lengths themselves: east–west r cos φc, north–south
+    √(r² + (dr/dφc)²), with r(φc) = ab / √((b cos φc)² + (a sin φc)²)."""
+    a, b = 3396190.0, 3376200.0
+    phi = math.radians(lat)
+    root = (b * math.cos(phi)) ** 2 + (a * math.sin(phi)) ** 2
+    r = a * b / math.sqrt(root)
+    dr = -a * b * (a**2 - b**2) * math.sin(phi) * math.cos(phi) / root**1.5
+    return math.hypot(r, dr) / (r * math.cos(phi))
+
+
+@pytest.mark.parametrize("lat", [0.0, 45.0, -70.0])
+def test_geographic_planetocentric_ellipsoid(lat: float):
+    found = distortionAt("IAU_2015:49902", 0.0, lat)
+    assert found.parallelScale == pytest.approx(_ocentricGroundK(lat), abs=1e-9)
+    if lat == 0:
+        assert found.parallelScale == pytest.approx(1.0, abs=1e-12)
+        assert found.level == "ok"
+    if lat == 45:
+        assert found.parallelScale == pytest.approx(1.41424, abs=1e-5)
+
+
+def test_projected_planetocentric_ellipsoid_takes_and_reports_ocentric_lat():
+    e2 = 1 - (3376200 / 3396190) ** 2
+    graphic = math.degrees(math.atan(math.tan(math.radians(45)) / (1 - e2)))
+    centric = distortionAt("IAU_2015:49912", 0.0, 45.0)
+    found = distortionAt("IAU_2015:49911", 0.0, graphic)
+    assert centric.parallelScale == pytest.approx(found.parallelScale, abs=1e-12)
+    assert centric.meridionalScale == pytest.approx(found.meridionalScale, abs=1e-12)
+    # the map position from PROJ's own (ographic) eqc: pyproj's always_xy
+    # doesn't put the IAU ellipsoidal CRSs' lon first, so makeImage can't
+    x, y = Proj("+proj=eqc +a=3396190 +b=3376200")(0.0, graphic)
+    transform = Affine(100, 0, x - 3200, 0, -100, y + 3200)
+    summary = distortionOver("IAU_2015:49912", transform, 64, 64)
+    assert summary is not None
+    # the north edge, 3.2 km up; planetographic would read 45.24°
+    assert summary.where[1] == pytest.approx(45.05, abs=0.01)
+
+
+def test_empty_window_gives_none():
+    image = makeImage(CTX_DEM_PROJ, centerLonLat=(77.5, 18.4), pixelSize=20)
+    args = (image.crs, image.transform, image.width, image.height)
+    assert distortionOver(*args, window=(0, 0, 0, 64)) is None
 
 
 def test_at_pixels_matches_at_points():
