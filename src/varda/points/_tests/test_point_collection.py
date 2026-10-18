@@ -168,3 +168,64 @@ def test_removing_the_last_point_forgets_the_crs():
     with pytest.raises(ValueError, match="geo is georeferenced; the points are in"):
         points.addPixel(_georeferenced(), 3, 4)
     assert (len(points), points.crs) == (1, None)
+
+
+MARS_GEOGRAPHIC = "IAU_2015:49900"
+
+
+def test_points_follow_a_crs_set_on_their_image():
+    """Set coordinate system… on a WGS 84 image of Mars: its points are read
+    on Mars, and new points from it are accepted."""
+    image = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    points = PointCollection()
+    fid = points.addPixel(image, 3, 4)
+    before = points.getPoint(fid).geometry
+    image.setMetadataOverrides({"crs": MARS_GEOGRAPHIC})
+    assert sameCrs(points.crs, image.crs)
+    assert points.getPoint(fid).geometry.equals(before)  # the same map numbers
+    points.addPixel(image, 5, 6)  # no longer "different bodies"
+    assert len(points) == 2
+
+
+def test_points_of_a_changed_image_are_converted_to_the_collections_crs():
+    """Two Mars images; one's CRS is changed to another Mars CRS: its points
+    are moved to where that CRS puts their pixels, in the points' CRS."""
+    first = makeImage(MARS_GEOGRAPHIC, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    second = makeImage(MARS_GEOGRAPHIC, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    points = PointCollection()
+    points.addPixel(first, 3, 4)
+    fid = points.addPixel(second, 3, 4)
+    shifted = "+proj=longlat +R=3396190 +lon_0=0 +pm=1 +no_defs"  # 1° east
+    second.setMetadataOverrides({"crs": shifted})
+    assert sameCrs(points.crs, first.crs)
+    moved = points.getPoint(fid).geometry
+    assert moved.x == pytest.approx(first.pixelToGeo(3, 4)[0] + 1.0, abs=1e-9)
+    assert moved.y == pytest.approx(first.pixelToGeo(3, 4)[1], abs=1e-9)
+
+
+def test_points_of_an_image_changed_to_another_body_are_kept_with_a_message():
+    first = makeImage(MARS_GEOGRAPHIC, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    second = makeImage(MARS_GEOGRAPHIC, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    points = PointCollection()
+    points.addPixel(first, 3, 4)
+    fid = points.addPixel(second, 3, 4)
+    before = points.getPoint(fid).geometry
+    problems = []
+    points.sigProblem.connect(problems.append)
+    second.setMetadataOverrides({"crs": WGS84})
+    assert points.getPoint(fid).geometry.equals(before)
+    assert sameCrs(points.crs, first.crs)
+    (problem,) = problems
+    assert "Earth and Mars are different bodies" in problem
+    assert "1 point" in problem and "kept" in problem
+
+
+def test_other_metadata_edits_leave_the_points_alone():
+    image = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    points = PointCollection()
+    points.addPixel(image, 3, 4)
+    crs = points.crs
+    changed = []
+    points.sigCollectionChanged.connect(lambda: changed.append(True))
+    image.setMetadataOverrides({"description": "edited"})
+    assert points.crs is crs and not changed

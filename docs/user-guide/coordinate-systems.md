@@ -490,6 +490,20 @@ are, checks the image again, and is kept in sessions (`"crs"` in the
 image's `overrides`; see
 [Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
 
+The change reaches workspaces already open on the image:
+
+- the cursor readout and Image Properties;
+- its ROIs: they stay on the same pixels, their calculated columns
+  (**Area on the body** and the rest) are recalculated, and exports and
+  sessions write the new CRS;
+- the Lines table's lengths, measured again;
+- points saved from the image, read on the new CRS. When the Points
+  Manager also holds points from other images, the image's points are
+  converted to the Points Manager's CRS (that of the first image a point was
+  saved from). If they can't be (the new CRS is on another body, or only one
+  of the two has a CRS), they keep their old positions and the Points
+  Manager says so: delete them and save them again.
+
 - **Undo** (on the automatic fix): use the file's own CRS. The finding
   stays, now saying "…; you chose to keep the file's CRS.", and offers the
   fix again with **Apply**; the dot stays too. The `crsFix` record is kept

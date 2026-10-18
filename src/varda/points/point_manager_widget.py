@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import Color, VardaRaster
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.ui import ButtonBuilder, FlowLayout, VBoxBuilder
 from varda.points.point_collection import EXPORT_FILE_FILTER, PointCollection
 from varda.vector_import import ImportPlan, Target, addToPoints
@@ -107,10 +108,12 @@ class PointManagerWidget(QWidget):
             if image is not None
             else "Open an image to import points onto"
         )
-        # Why the last point wasn't saved (another body); hidden otherwise
+        # Why the last point wasn't saved (another body), or why points kept
+        # their positions when their image's CRS changed; hidden otherwise
         self.status = QLabel(self)
         self.status.setWordWrap(True)
         self.status.hide()
+        connectWhileAlive(collection.sigProblem, self._showStatus, self)
         self.setLayout(
             VBoxBuilder()
             .withLayout(

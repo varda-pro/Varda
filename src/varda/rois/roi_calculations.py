@@ -235,6 +235,7 @@ class CalculatedColumns:
         collection.sigROIsAdded.connect(self._onROIsAdded)
         collection.sigROIUpdated.connect(self._onROIChanged)
         collection.sigColumnsChanged.connect(self._onColumnsChanged)
+        collection.sigGeoreferenceChanged.connect(self._onGeoreferenceChanged)
 
     def add(self, name: str, calculation: Calculation) -> str:
         """Add a calculated column; returns its name as stored."""
@@ -340,6 +341,12 @@ class CalculatedColumns:
     def _onROIsAdded(self, fids: list[int]) -> None:
         if not self._updating and self._columns:
             self.recalculate(fids=fids)
+
+    def _onGeoreferenceChanged(self) -> None:
+        """A new CRS: every map and body measure is read anew."""
+        if self._columns:
+            self._onBody.clear()
+            self.recalculate()
 
     def _onColumnsChanged(self) -> None:
         present = set(self.collection.userColumns)

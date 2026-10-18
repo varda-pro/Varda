@@ -77,3 +77,16 @@ def test_a_point_from_another_body_is_refused_in_the_status_line(qtbot):
     assert len(points) == 1
     assert "Earth and Mars are different bodies" in widget.status.text()
     assert not widget.status.isHidden()
+
+
+def test_points_kept_after_their_image_changes_body_say_so(qtbot):
+    points = PointCollection()
+    widget = PointManagerWidget(points)
+    qtbot.addWidget(widget)
+    first = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    second = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    widget.addPixel(first, 3, 4)
+    widget.addPixel(second, 3, 4)
+    second.setMetadataOverrides({"crs": WGS84})
+    assert "Earth and Mars are different bodies" in widget.status.text()
+    assert not widget.status.isHidden()

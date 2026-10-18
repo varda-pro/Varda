@@ -55,8 +55,10 @@ can alter results.
   automatic fix, **Apply** for a fix offered, and **Set coordinate
   system…**: any EPSG or IAU_2015 code, WKT or PROJ string, or the same CRS
   as another open image, described in words as you type, with a warning
-  (not a refusal) for a CRS on another body. Changes apply at once and are
-  recorded as `crsFix` (`automatic: false`, or `undone: true`). See
+  (not a refusal) for a CRS on another body. Changes apply at once, also
+  to workspaces already open (the image's ROIs and their calculated
+  columns, line lengths and saved points follow), and are recorded as
+  `crsFix` (`automatic: false`, or `undone: true`). See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#setting-or-correcting-a-coordinate-system).
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference

@@ -60,3 +60,22 @@ def test_a_line_on_an_engineering_crs_is_planar(qtbot):
     assert model.data(index) == "100 m"
     tip = model.data(index, Qt.ItemDataRole.ToolTipRole)
     assert "planar, in the coordinate system's units (no body ellipsoid)" in tip
+
+
+def test_a_crs_set_on_the_image_remeasures_the_lengths(qtbot):
+    lines = LineCollection()
+    lines.addLine([[0.0, 0.0], [200.0, 0.0]])
+    image = _image()
+    model = LineTableModel(lines, image)
+    index = model.index(0, 2)
+    assert model.data(index) == "10 km"
+    changed = []
+    model.dataChanged.connect(lambda *args: changed.append(args))
+    # the same map numbers on a sphere of Earth's size: 32°N, not 60°N
+    image.setMetadataOverrides(
+        {"crs": "+proj=eqc +lat_ts=0 +lon_0=0 +R=6371000 +units=m +no_defs"}
+    )
+    assert changed
+    assert model.data(index) == "17 km"
+    image.setMetadataOverrides({})
+    assert model.data(index) == "10 km"

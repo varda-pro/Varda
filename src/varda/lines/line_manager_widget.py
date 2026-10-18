@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
+from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.ui import FlowLayout, MutedLabel
 from varda.geo.measure import Measurement
 from varda.lines.line_collection import EXPORT_FILE_FILTER, LineCollection, LineKind
@@ -91,6 +92,13 @@ class LineTableModel(QAbstractTableModel):
         # fid -> its formatted length: measuring a long line takes ~10 ms
         self._lengths: dict[int, str] = {}
         collection.sigCollectionChanged.connect(self._reload)
+        if image is not None:  # a CRS set, fixed or undone: measure anew
+            connectWhileAlive(image.sigMetadataChanged, self._remeasure, self)
+
+    def _remeasure(self) -> None:
+        self._lengths = {}
+        if self._rows:
+            self.dataChanged.emit(self.index(0, 2), self.index(len(self._rows) - 1, 2))
 
     def _reload(self) -> None:
         self.beginResetModel()

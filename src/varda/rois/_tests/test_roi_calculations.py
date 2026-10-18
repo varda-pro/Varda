@@ -282,3 +282,55 @@ def test_body_measure_names_and_planar_labels():
     assert GEOMETRY_MEASURES["area_map"][0] == "Area (map units², planar)"
     assert GEOMETRY_MEASURES["perimeter_map"][0] == "Perimeter (map units, planar)"
     assert {"area_body", "perimeter_body"} <= MAP_MEASURES
+
+
+def _earthBoxOnWgs84():
+    image = makeImage("EPSG:4326", centerLonLat=(10.0, 0.0), pixelSize=0.01)
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(box(9.9, -0.1, 10.1, 0.1), "box", RED, ROIMode.RECTANGLE)
+    calc = CalculatedColumns(rois)
+    calc.add("area_km2", GeometryMeasure("area_body"))
+    return image, rois, fid, calc
+
+
+def test_a_crs_set_on_the_image_reaches_its_rois_and_their_body_areas():
+    image, rois, fid, calc = _earthBoxOnWgs84()
+    onEarth = rois.getProperty(fid, "area_km2")
+    before = rois.getROI(fid).geometry
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})  # Mars, geographic
+    assert rois.crs == image.crs
+    assert rois.gdf.crs == image.crs
+    assert rois.getROI(fid).geometry.equals(before)  # the same pixels
+    onMars = rois.getProperty(fid, "area_km2")
+    assert onMars < onEarth * 0.3
+    assert "sphere R = 3396.19 km" in (calc.describe("area_km2") or "")
+    # Undo: back to the file's CRS
+    image.setMetadataOverrides({})
+    assert rois.crs == image.crs
+    assert rois.getProperty(fid, "area_km2") == pytest.approx(onEarth)
+
+
+def test_other_metadata_edits_leave_the_rois_alone():
+    image, rois, fid, _ = _earthBoxOnWgs84()
+    crs = rois.crs
+    changed = []
+    rois.sigCollectionChanged.connect(lambda: changed.append(True))
+    image.setMetadataOverrides({"description": "edited"})
+    assert rois.crs is crs
+    assert not changed
+
+
+def test_rois_in_pixels_move_to_map_coordinates_when_the_image_gains_a_crs():
+    transform = Affine(10, 0, 1000, 0, -10, 5000)
+    data = np.zeros((20, 30, 1), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data, transform=transform), name="plain")
+    rois = ROICollection.fromImage(image)
+    fid = rois.addROI(box(2, 2, 6, 4), "r", RED, ROIMode.RECTANGLE)
+    image.setMetadataOverrides({"crs": "EPSG:32633"})
+    assert rois.crs is not None
+    assert rois.getPixelCoordinates(fid) == pytest.approx(
+        np.asarray(box(2, 2, 6, 4).exterior.coords)
+    )
+    image.setMetadataOverrides({})
+    assert rois.crs is None
+    assert rois.getROI(fid).geometry.equals(box(2, 2, 6, 4))

@@ -57,6 +57,8 @@ class ROICollection:
         sigColumnsChanged(): emitted after a user column is added/removed/renamed.
         sigVisibilityChanged(int): emitted with fid after an ROI is hidden or shown.
         sigCollectionChanged(): emitted on any structural change.
+        sigGeoreferenceChanged(): emitted after ``setGeoreference`` changed
+            the CRS or transform (the ROIs stay on the same pixels).
     """
 
     sigROIAdded = Signal(int)
@@ -66,6 +68,7 @@ class ROICollection:
     sigColumnsChanged = Signal()
     sigVisibilityChanged = Signal(int)
     sigCollectionChanged = Signal()
+    sigGeoreferenceChanged = Signal()
 
     def __init__(
         self,
@@ -74,6 +77,8 @@ class ROICollection:
     ) -> None:
         self._crs = crs
         self._transform = transform
+        # the image whose CRS and transform this follows (``followImage``)
+        self._image: VardaRaster | None = None
         self._nextFid: int = 0
         self._gdf = gpd.GeoDataFrame(
             columns=["name", "color", "roi_type", "geometry"],
@@ -580,8 +585,46 @@ class ROICollection:
 
     @classmethod
     def fromImage(cls, image: VardaRaster) -> ROICollection:
-        """Create an empty collection with CRS/transform from a VardaRaster."""
-        return cls(crs=image.crs, transform=image.transform)
+        """Create an empty collection with CRS/transform from a VardaRaster,
+        following later changes to them (``followImage``)."""
+        collection = cls(crs=image.crs, transform=image.transform)
+        collection.followImage(image)
+        return collection
+
+    def followImage(self, image: VardaRaster) -> None:
+        """Keep this collection's CRS and transform those of ``image``: a
+        coordinate system set, fixed or undone on the image later (Image
+        Properties) reaches the ROIs, their exports and their measures. The
+        image's signal holds this collection weakly."""
+        self._image = image
+        image.sigMetadataChanged.connect(self._onImageMetadataChanged)
+
+    def _onImageMetadataChanged(self) -> None:
+        if self._image is not None:
+            self.setGeoreference(self._image.crs, self._image.transform)
+
+    def setGeoreference(self, crs: CRS | None, transform: Affine) -> None:
+        """Read the ROIs' map coordinates with ``crs`` and ``transform``,
+        keeping every ROI on the same pixels: a changed CRS changes only how
+        the same map numbers are read, while gaining or losing a CRS (or a
+        new transform) re-expresses the geometry between pixel and map
+        coordinates. Emits ``sigGeoreferenceChanged`` and
+        ``sigCollectionChanged`` when anything changed."""
+        if crs is self._crs and transform == self._transform:
+            return
+        toPixels = ~self._transform if self._crs is not None else Affine.identity()
+        toStored = transform if crs is not None else Affine.identity()
+        change = toStored * toPixels
+        if not change.is_identity and len(self._gdf):
+            self._gdf["geometry"] = shapely.transform(
+                self._gdf.geometry.values,
+                lambda xy: np.column_stack(change * (xy[:, 0], xy[:, 1])),
+            )
+        self._crs = crs
+        self._transform = transform
+        self._gdf = self._gdf.set_crs(crs, allow_override=True)
+        self.sigGeoreferenceChanged.emit()
+        self.sigCollectionChanged.emit()
 
     # --- Internal helpers ---
 
