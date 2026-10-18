@@ -6,6 +6,8 @@ can alter results.
 
 ## Unreleased
 
+## 0.10.0 (2026-10-17)
+
 ### Added
 
 - **Collapsing panels documented:** the pin button on any panel's title bar
