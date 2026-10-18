@@ -9,12 +9,12 @@ from pathlib import Path
 import attrs
 import geopandas as gpd
 from psygnal import Signal
-from pyproj import CRS, Transformer
+from pyproj import CRS
 from shapely.geometry import Point
 
 from varda.common.entities import Color, VardaRaster
-from varda.geo.equivalence import canTransform, sameCrs
-from varda.utilities.proj_lock import PROJ_LOCK
+from varda.geo.describe import describeCrs
+from varda.geo.transform import transformPoints
 
 EXPORT_FILE_FILTER = "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)"
 _DRIVERS = {
@@ -23,18 +23,6 @@ _DRIVERS = {
     ".gpkg": "GPKG",
     ".shp": "ESRI Shapefile",
 }
-
-
-def _converted(geometry: Point, crs: CRS, target: CRS) -> Point:
-    """``geometry`` on ``crs`` as a point on ``target``: the same longitude
-    and latitude on each CRS's own body model. ValueError, naming both
-    bodies, when they aren't one body."""
-    reason = canTransform(crs, target)
-    if reason is not None:
-        raise ValueError(reason)
-    with PROJ_LOCK:
-        transformer = Transformer.from_crs(crs, target, always_xy=True)
-        return Point(transformer.transform(geometry.x, geometry.y))
 
 
 @attrs.frozen
@@ -56,7 +44,8 @@ class VardaPoint:
 class PointCollection:
     """Points in insertion order; the CRS is that of the first georeferenced
     image a point was saved from, and points from images on other CRSs (of
-    the same body) are converted to it."""
+    the same body) are converted to it. Points of images without
+    georeferencing (pixel coordinates) can't join them, nor the reverse."""
 
     sigPointAdded = Signal(int)
     sigPointRemoved = Signal(int)
@@ -85,15 +74,23 @@ class PointCollection:
         precisely than its pixel, such as an imported one.
 
         A point from an image on another CRS is converted to the
-        collection's; from another body (or one Varda can't tell is the
-        same) it raises ValueError naming both bodies, and isn't saved."""
+        collection's (``transformPoints``: the same planetocentric longitude
+        and latitude). It raises ValueError, and the point isn't saved, for
+        an image of another body (or one Varda can't tell is the same; the
+        message names both), and for an image without georeferencing among
+        points with a CRS, or the reverse."""
+        self._checkGeoreferencing(image)
         if image.hasGeospatialData:
             if geometry is None:
                 geometry = Point(*image.pixelToGeo(x, y))
             if self.crs is None:
                 self.crs = image.crs
-            elif image.crs is not None and not sameCrs(image.crs, self.crs):
-                geometry = _converted(geometry, image.crs, self.crs)
+            else:
+                # the same planetocentric place; raises for another body
+                (geoX,), (geoY,) = transformPoints(
+                    image.crs, self.crs, [geometry.x], [geometry.y]
+                )
+                geometry = Point(geoX, geoY)
         elif geometry is None:
             geometry = Point(x + 0.5, y + 0.5)
         fid = self._nextFid
@@ -112,6 +109,20 @@ class PointCollection:
         self.sigPointAdded.emit(fid)
         self.sigCollectionChanged.emit()
         return fid
+
+    def _checkGeoreferencing(self, image: VardaRaster) -> None:
+        """Pixel coordinates and map coordinates never share a collection."""
+        if image.hasGeospatialData == (self.crs is not None) or not self._points:
+            return
+        if self.crs is not None:
+            raise ValueError(
+                f"{image.name} has no georeferencing; the points are in "
+                f"{describeCrs(self.crs).text}"
+            )
+        raise ValueError(
+            f"{image.name} is georeferenced; the points are in pixel "
+            "coordinates (saved from images without georeferencing)"
+        )
 
     def removePoint(self, fid: int) -> None:
         del self._points[fid]

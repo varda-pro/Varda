@@ -2,19 +2,23 @@
 
 from types import SimpleNamespace
 
-import geopandas as gpd
+import math
+
 import numpy as np
 import pytest
+from pyproj import Transformer
 from shapely.geometry import Polygon, box
 
 from varda.common.entities import ROIMode, VardaROI, Color
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_ENVI_WKT,
     CRISM_MTRDR_WKT,
+    CTX_DEM_PROJ,
     WGS84,
     makeImage,
 )
 from varda.rois.roi_collection import ROICollection
+from varda.utilities.proj_lock import PROJ_LOCK
 
 RED = Color(1.0, 0.0, 0.0, 0.5)
 GREEN = Color(0.0, 1.0, 0.0, 0.5)
@@ -497,8 +501,31 @@ class TestApplyToImage:
         def refuse(*args, **kwargs):
             raise AssertionError("an equivalent CRS needs no reprojection")
 
-        monkeypatch.setattr(gpd.GeoDataFrame, "to_crs", refuse)
+        monkeypatch.setattr(Transformer, "from_crs", refuse)
         assert source.applyToImage(envi).getROI(0).geometry.equals(poly)
+
+    def test_apply_rois_from_a_sphere_to_an_ellipsoid_keeps_planetocentric_places(
+        self,
+    ) -> None:
+        """Each vertex keeps its planetocentric latitude (Snyder, 1987, eq.
+        3-28) on the planetographic, west-positive Mars ellipsoid."""
+        ctx = makeImage(CTX_DEM_PROJ, centerLonLat=(77.5, 45.0), pixelSize=20.0)
+        ographic = makeImage(
+            "IAU_2015:49901", centerLonLat=(-77.5, 45.3), pixelSize=0.01
+        )
+        source = ROICollection.fromImage(ctx)
+        x, y = ctx.pixelToGeo(32, 32)
+        source.addROI(box(x, y, x + 100, y + 100), "A", RED, ROIMode.RECTANGLE)
+        moved = source.applyToImage(ographic).getROI(0).geometry
+        lonW, latG = moved.exterior.coords[0]
+        a, c = 3396190.0, 3376200.0
+        latC = math.degrees(math.atan((c / a) ** 2 * math.tan(math.radians(latG))))
+        with PROJ_LOCK:
+            lonC, expected = Transformer.from_crs(
+                CTX_DEM_PROJ, "+proj=longlat +R=3396190 +no_defs", always_xy=True
+            ).transform(*box(x, y, x + 100, y + 100).exterior.coords[0])
+        assert latC == pytest.approx(expected, abs=1e-9)
+        assert (-lonW) % 360 == pytest.approx(lonC % 360, abs=1e-9)
 
 
 class TestRatioSpectrum:

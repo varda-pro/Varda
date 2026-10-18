@@ -202,6 +202,40 @@ it shows the first `IAU_2015` or EPSG code that is equivalent, searching
 PROJ's suggestions and then every `IAU_2015` code of the image's body (e.g.
 `IAU_2015:49900` to `49992` for Mars).
 
+### Moving points between surfaces of one body
+
+"Reprojects" in the **Same body** row means each point keeps its
+**planetocentric longitude and latitude**: the same direction from the
+body's center (Archinal et al., 2018). Linked Images, applying ROIs to
+another image and saving points from several images all move points this
+way. When both CRSs share one surface, or PROJ knows a real transformation
+between them (Earth's datum shifts), Varda uses PROJ's own operation.
+Between two surfaces of one body PROJ has none: its "ballpark geographic
+offset" keeps the number of the geodetic latitude. Between a sphere and a
+flattened ellipsoid that misplaces a point: a planetocentric 45° on the
+Mars sphere would become 44.66° planetocentric in `IAU_2015:49902` (about
+20 km off), or stay 45° in the planetographic `IAU_2015:49901`, where it is
+45.34°. Varda instead:
+
+1. converts the point to longitude (east) and geodetic latitude on its
+   own CRS's datum, with PROJ (exact: the projection, the axes, a
+   west-positive longitude);
+2. converts geodetic to planetocentric latitude on that ellipsoid,
+   tan φc = (c/a)² tan φg (Snyder, 1987, eq. 3-28; the same number on a
+   sphere);
+3. converts planetocentric to geodetic latitude on the target's ellipsoid,
+   tan φg = (a/c)² tan φc;
+4. converts that to the target CRS with PROJ.
+
+Here a and c are the ellipsoid's equatorial and polar radii. The latitude
+type is read from each CRS as described under [Conventions](#conventions).
+Round trips are exact to 1e-9°. A west-positive longitude stays
+west-positive in its CRS, and x is always the east–west coordinate.
+Between two spheres of different radii (a CRISM product's 3394.84 km and
+the 3396.19 km Mars 2000 sphere) the longitude and latitude are the same
+numbers, though the distances from the center differ, so ground distances
+measured on each differ by the ratio of the radii (0.04% there).
+
 ### Different bodies are never combined
 
 Coordinates on Mars mean nothing on the Moon, so Varda refuses to combine

@@ -108,21 +108,20 @@ coordinates (see [Importing vector data](importing-vector-data.md)).
 
 The points share one coordinate system: that of the first georeferenced image
 a point was saved from, which **Export…** writes with them. A point saved
-from an image on another projection of the same body is converted to it with
-PROJ (through pyproj). Between two models of one body (e.g. a CRISM product's
-3394.84 km sphere and a CTX DEM's 3396.19 km sphere) PROJ has no datum
-shift, so it keeps the numbers of longitude and latitude ("ballpark
-geographic offset"): a point is at the same longitude and latitude, in
-degrees, on each image's own model. Between a sphere and a flattened
-ellipsoid that means a planetocentric latitude becomes the same number of
-planetographic degrees (up to about 0.3° apart on Mars at mid-latitudes), so
-check that the images' latitude types match (Image Properties, **Coordinate
-system**) before combining their points. Report the exported CRS with the
-points. Images whose coordinate systems differ only in
-names need no conversion. A point from an image of another body (or one whose
-body can't be told and whose radii differ) isn't saved: the line under the
-Points Manager's table names both bodies. Points from an image without
-georeferencing are kept in pixel coordinates (pixel centers), unconverted.
+from an image on another projection of the same body is converted to it at
+the same planetocentric longitude and latitude, with the latitude type of
+each CRS respected (a sphere's planetocentric latitude becomes the
+planetographic one on a flattened ellipsoid); see [Moving points between
+surfaces of one body](coordinate-systems.md#moving-points-between-surfaces-of-one-body).
+Report the exported CRS with the points. Images whose coordinate systems
+differ only in names need no conversion.
+
+A point isn't saved, and the line under the Points Manager's table says why,
+when it comes from an image of another body (or one whose body can't be told
+and whose radii differ; the message names both), or when it would mix pixel
+and map coordinates: a point from an image without georeferencing among
+points with a coordinate system, or the reverse. Points from images without
+georeferencing are kept in pixel coordinates (pixel centers).
 
 ### Moving around a spectral plot
 

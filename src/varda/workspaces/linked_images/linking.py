@@ -17,13 +17,12 @@ from collections.abc import Sequence
 import numpy as np
 import numpy.typing as npt
 from attrs import frozen
-from pyproj import Transformer
 
 from varda.common.entities import VardaRaster
 from varda.common.grid import sameGrid
-from varda.geo.equivalence import bodyLabel, canTransform, sameCrs
+from varda.geo.equivalence import bodyLabel, canTransform
+from varda.geo.transform import transformPoints
 from varda.common.parameter import LabeledEnum
-from varda.utilities.proj_lock import PROJ_LOCK
 
 
 class Link(LabeledEnum):
@@ -52,18 +51,10 @@ def linkedPoints(
         elif canTransform(origin.crs, image.crs) is not None:
             # another body: no place there is this one
             out.append(np.full_like(xy, np.nan))
-        elif sameCrs(origin.crs, image.crs):
-            out.append(image.geoToImage(mapped))
         else:
-            with PROJ_LOCK:
-                transformer = Transformer.from_crs(
-                    origin.crs, image.crs, always_xy=True
-                )
-                # lists, not arrays: pyproj takes a one-element array for a
-                # scalar, which NumPy deprecates
-                there = np.column_stack(
-                    transformer.transform(mapped[:, 0].tolist(), mapped[:, 1].tolist())
-                )
+            there = np.column_stack(
+                transformPoints(origin.crs, image.crs, mapped[:, 0], mapped[:, 1])
+            )
             out.append(image.geoToImage(there))
     return out
 
@@ -76,8 +67,8 @@ def linkWarnings(images: Sequence[VardaRaster], link: Link) -> list[str]:
     """What isn't linked the way ``link`` says: images without
     georeferencing (linked by pixel, even by map location), images on
     another body than the first georeferenced image (not linked by map
-    location), or images not on the first image's grid (linked by pixel, so the same pixel is a
-    different place)."""
+    location), or images not on the first image's grid (linked by pixel,
+    so the same pixel is a different place)."""
     if link is Link.MAP:
         return _plainWarnings(images) + _bodyWarnings(images)
     first = images[0]

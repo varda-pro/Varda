@@ -1,5 +1,7 @@
 """Saved pixel points: where they are on the image and on the ground, and export."""
 
+import math
+
 import geopandas as gpd
 import numpy as np
 import pytest
@@ -127,3 +129,32 @@ def test_point_from_other_body_refused():
     with pytest.raises(ValueError, match="Earth and Mars are different bodies"):
         points.addPixel(earth, 3, 4)
     assert len(points) == 1
+
+
+def test_pixel_and_map_points_never_share_a_collection():
+    mapped = PointCollection()
+    mapped.addPixel(_georeferenced(), 3, 4)
+    with pytest.raises(ValueError, match="plain has no georeferencing; the points"):
+        mapped.addPixel(_plain(), 3, 4)
+    pixels = PointCollection()
+    pixels.addPixel(_plain(), 3, 4)
+    with pytest.raises(ValueError, match="geo is georeferenced; the points are in"):
+        pixels.addPixel(_georeferenced(), 3, 4)
+    assert (len(mapped), len(pixels), pixels.crs) == (1, 1, None)
+
+
+def test_a_point_from_a_sphere_keeps_its_planetocentric_place_on_an_ellipsoid():
+    """Saved from CTX's sphere into points on the planetographic Mars
+    ellipsoid: the same planetocentric latitude (Snyder, 1987, eq. 3-28)."""
+    ographic = makeImage("IAU_2015:49901", centerLonLat=(-77.5, 45.3), pixelSize=0.01)
+    ctx = makeImage(
+        CTX_DEM_PROJ, centerLonLat=(77.5, 45.0), pixelSize=20.0, width=65, height=65
+    )
+    points = PointCollection()
+    points.addPixel(ographic, 0, 0)
+    fid = points.addPixel(ctx, 32, 32)
+    geometry = points.getPoint(fid).geometry
+    a, c = 3396190.0, 3376200.0
+    latC = math.degrees(math.atan((c / a) ** 2 * math.tan(math.radians(geometry.y))))
+    assert latC == pytest.approx(45.0, abs=1e-9)
+    assert (-geometry.x) % 360 == pytest.approx(77.5, abs=1e-9)

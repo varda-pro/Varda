@@ -164,6 +164,7 @@ class PointManagerWidget(QWidget):
         fid = self.selectedFid()
         if fid is not None:
             self._collection.removePoint(fid)
+            self._showStatus("")
 
     def _addImported(self, plan: ImportPlan) -> None:
         if self._image is None:
@@ -186,4 +187,5 @@ class PointManagerWidget(QWidget):
         except (ValueError, OSError) as error:
             QMessageBox.critical(self, "Export failed", str(error))
             return
+        self._showStatus("")
         logger.info("Points exported to %s", written)

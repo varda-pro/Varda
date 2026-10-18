@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from varda.common.entities import VardaRaster
 from varda.common.grid import compatibleImages
 from varda.common.ui import ElidingComboBox, PanelScrollArea, VardaDockWidget
+from varda.geo.equivalence import canTransform
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -283,11 +284,12 @@ class LinkedImagesWorkspace(QMainWindow):
             [self.images[source], self.images[0]], 0, vertices, self.link
         )[1]
         if not np.isfinite(onFirst).all():
+            reason = canTransform(self.images[source].crs, self.images[0].crs)
             bar = self.statusBar()
             if bar is not None:
                 bar.showMessage(
                     f"Line not added: {self.images[source].name} isn't linked "
-                    f"to {self.images[0].name} (another body)."
+                    f"to {self.images[0].name} ({reason or 'off its map'})."
                 )
             return None
         fid = self.lines.addLine(onFirst, kind)

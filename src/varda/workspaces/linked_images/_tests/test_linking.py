@@ -2,21 +2,24 @@
 or the same place on the map (across map projections too); spectra read
 there with no-data and bad bands left out."""
 
+import math
 import warnings
 
 import numpy as np
+import pytest
 from affine import Affine
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from varda.common.entities import VardaRaster
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_ENVI_WKT,
     CRISM_MTRDR_WKT,
+    CTX_DEM_PROJ,
     WGS84,
     makeImage,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.workspaces.linked_images import linking
+from varda.utilities.proj_lock import PROJ_LOCK
 from varda.workspaces.linked_images.linking import (
     Link,
     bitPlanes,
@@ -168,7 +171,25 @@ def test_equivalent_crs_links_without_transform(monkeypatch):
     def refuse(*args, **kwargs):
         raise AssertionError("an equivalent CRS needs no transform")
 
-    monkeypatch.setattr(linking.Transformer, "from_crs", refuse)
+    monkeypatch.setattr(Transformer, "from_crs", refuse)
     _, there = linkedPoints([pds3, envi], 0, [[48, 48]], Link.MAP)
     np.testing.assert_allclose(there, [[64, 64]], atol=1e-6)
     assert linkWarnings([pds3, envi], Link.MAP) == []
+
+
+def test_a_sphere_and_an_ellipsoid_link_at_the_same_planetocentric_place():
+    """CTX's sphere and the planetographic, west-positive Mars ellipsoid: the
+    linked point is the same planetocentric longitude and latitude (Snyder,
+    1987, eq. 3-28), not the same latitude number."""
+    ctx = makeImage(CTX_DEM_PROJ, centerLonLat=(77.5, 45.0), pixelSize=20.0)
+    ographic = makeImage("IAU_2015:49911", centerLonLat=(-77.5, 45.3), pixelSize=20.0)
+    _, there = linkedPoints([ctx, ographic], 0, [[32, 32]], Link.MAP)
+    with PROJ_LOCK:
+        # 49901 lists latitude first
+        latG, lonW = Transformer.from_crs("IAU_2015:49911", "IAU_2015:49901").transform(
+            *ographic.imageToGeo(there)[0]
+        )
+    a, c = 3396190.0, 3376200.0
+    latC = math.degrees(math.atan((c / a) ** 2 * math.tan(math.radians(latG))))
+    assert latC == pytest.approx(45.0, abs=1e-9)
+    assert (-lonW) % 360 == pytest.approx(77.5, abs=1e-9)

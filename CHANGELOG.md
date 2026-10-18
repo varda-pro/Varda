@@ -122,7 +122,12 @@ can alter results.
   Points saved from images on other projections of the same body are now
   converted to the Points Manager's coordinate system (that of the first
   image a point was saved from); before, their coordinates were stored
-  unconverted and exported under the wrong CRS. Images whose coordinate
+  unconverted and exported under the wrong CRS. Points from an image
+  without georeferencing are no longer mixed with map points (or the
+  reverse). Linking, ROI transfer and points between a sphere and a
+  flattened ellipsoid of one body keep each point's planetocentric
+  latitude; PROJ alone kept the latitude number, up to 0.34° (about 20 km)
+  off on Mars. Images whose coordinate
   systems differ only in names are linked and given ROIs without
   reprojection.
 - **A box zoom no longer leaves its yellow box on a plot.** In every

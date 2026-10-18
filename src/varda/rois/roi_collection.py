@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import rasterio.features
+import shapely
 from affine import Affine
 from psygnal import Signal
 from pyproj import CRS
@@ -18,10 +19,10 @@ from shapely.geometry import mapping as shapely_mapping
 from shapely.geometry.base import BaseGeometry
 
 from varda.common.entities import ROIMode, Spectrum, VardaROI, VardaRaster, Color
-from varda.geo.equivalence import canTransform, sameCrs
+from varda.geo.equivalence import canTransform
+from varda.geo.transform import transformPoints
 from varda.rois.ratio import computeRatioSpectrum
 from varda.rois.region_statistics import computeRegionStatistics
-from varda.utilities.proj_lock import PROJ_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -518,9 +519,10 @@ class ROICollection:
     def applyToImage(self, targetImage: VardaRaster) -> ROICollection:
         """Create a new collection with ROIs mapped to the target image.
 
-        If both source and target have a CRS on one body, geometries are
-        reprojected; if the CRSs are the same (``sameCrs``: names may
-        differ), geometries transfer directly.
+        If both source and target have a CRS on one body, each vertex is
+        moved to the same planetocentric place (``transformPoints``); if the
+        CRSs are the same (``sameCrs``: names may differ), geometries
+        transfer directly.
 
         Args:
             targetImage: A VardaRaster with crs and transform properties.
@@ -550,19 +552,22 @@ class ROICollection:
             crs=target_crs, transform=targetImage.transform
         )
 
-        # Reproject unless the CRSs are the same (names may differ)
-        if sameCrs(self._crs, target_crs):
-            reprojected_gdf = self._gdf
-        else:
-            with PROJ_LOCK:
-                reprojected_gdf = self._gdf.to_crs(target_crs)
+        # Each vertex at the same planetocentric place (``transformPoints``;
+        # unchanged when the CRSs are the same, names aside)
+        source_crs = self._crs
+        geometries = shapely.transform(
+            self._gdf.geometry.to_numpy(),
+            lambda xy: np.column_stack(
+                transformPoints(source_crs, target_crs, xy[:, 0], xy[:, 1])
+            ),
+        )
 
-        for fid, row in reprojected_gdf.iterrows():
+        for (fid, row), geometry in zip(self._gdf.iterrows(), geometries):
             extra = {
                 k: row[k] for k in row.index if k not in (*_CORE_COLUMNS, "geometry")
             }
             target_collection.addROI(
-                geometry=row["geometry"],
+                geometry=geometry,
                 name=row["name"],
                 color=row["color"],
                 roiType=row["roi_type"],
