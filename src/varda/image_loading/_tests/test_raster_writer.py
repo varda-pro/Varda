@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import rasterio
 from affine import Affine
 from pyproj import CRS
 
@@ -136,3 +137,15 @@ def test_a_product_that_is_not_a_spectrum_gets_no_wavelength(tmp_path):
     header = (tmp_path / "slope.hdr").read_text().lower()
     assert "wavelength =" not in header and "wavelength units" not in header
     assert "slope 1000-2000 nm" in header  # still named, as its band
+
+
+@pytest.mark.parametrize("name", ["scene.tif", "scene.hdr"])
+def test_export_writes_the_corrected_transform(tmp_path, name):
+    image = _spectralImage()
+    corrected = (5.0, 0.0, 300.0, 0.0, -5.0, 400.0)
+    image.setMetadataOverrides({"transform": corrected})
+
+    written = writeRaster(image, tmp_path / name)
+
+    with rasterio.open(written) as dataset:
+        assert dataset.transform == Affine(*corrected)

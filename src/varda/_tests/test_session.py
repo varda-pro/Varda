@@ -3,6 +3,7 @@
 import json
 
 import numpy as np
+from affine import Affine
 import pytest
 
 from varda import session
@@ -302,3 +303,17 @@ def test_a_session_without_records_still_loads(qtbot, tmp_path):
     _restore(qtbot, state, image)
     assert sameCrs(image.crs, "IAU_2015:49910") and image.name == "x"
     assert "crsFix" not in image.extraMetadata  # the load-time fix's no longer applies
+
+
+def test_a_corrected_transform_survives_a_session(qtbot, tmp_path):
+    image = loadRaster(str(writeWgs84(tmp_path)))
+    corrected = [0.25, 0.0, 100.0, 0.0, -0.25, 10.0]
+    image.setMetadataOverrides({**image.metadataOverrides, "transform": corrected})
+    state = _saveAndRead(image, tmp_path)
+    assert state.metadata[image.filePath]["overrides"]["transform"] == corrected
+
+    again = loadRaster(str(image.filePath))
+    _restore(qtbot, state, again)
+
+    assert again.metadataOverrides["transform"] == corrected
+    assert again.transform == Affine(*corrected)
