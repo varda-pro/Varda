@@ -10,11 +10,12 @@ complete. ``cleanExtractions`` removes the folders nothing refers to.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import shutil
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from varda.project_package import MANIFEST_NAME, formatBytes
@@ -27,7 +28,7 @@ COMPLETE_MARKER = ".varda-extracted"
 MARGIN_BYTES = 256 << 20  # kept free on top of the package's size
 MARGIN_FRACTION = 0.05
 # Folders Varda made: <name>-<key>, or the old <name>-<YYYYmmdd-HHMMSS>
-_OURS = re.compile(r".+-(?:[0-9a-f]{16}|\d{8}-\d{6})$")
+_OURS = re.compile(r"(.+)-(?:[0-9a-f]{16}|\d{8}-\d{6})$")
 
 
 def packageKey(bundle: Path) -> str:
@@ -84,42 +85,62 @@ def extractPackage(bundle: str | Path, root: str | Path) -> Path:
     return session
 
 
+def _strings(value: object) -> Iterator[str]:
+    """Every string in parsed JSON, however deep."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+
+
+def _isInside(path: Path, folder: Path) -> bool:
+    return path.is_relative_to(folder) or path.resolve().is_relative_to(folder)
+
+
 def cleanExtractions(
     root: str | Path, autosave: str | Path | None, keep: Iterable[str | Path] = ()
 ) -> list[Path]:
-    """Remove the extracted packages under ``root/sessions`` that the
-    ``autosave`` file doesn't mention and none of the ``keep`` paths (the
-    folder just opened, the open images' files) is inside. Returns what was
-    removed. When in doubt (an unreadable autosave) nothing is removed."""
+    """Remove superseded copies of the same package under ``root/sessions``:
+    for each package name, the newest folder stays, as does any folder the
+    ``autosave`` file or one of the ``keep`` paths (the folder just opened, the
+    open images' files) is inside. A package's only extraction is never
+    removed (a session saved elsewhere may point into it). When the autosave
+    can't be read, nothing is removed. Returns what was removed."""
     sessions = Path(root) / SESSIONS_FOLDER
     if not sessions.is_dir() or sessions.is_symlink():
         return []
-    referred = ""
+    used = [Path(p) for p in keep]
     if autosave is not None and Path(autosave).exists():
         try:
-            referred = Path(autosave).read_text()
-        except (OSError, UnicodeDecodeError):
+            document = json.loads(Path(autosave).read_text())
+        except (OSError, ValueError):  # includes bad UTF-8 and bad JSON
             logger.warning("Autosave unreadable; keeping all extracted packages")
             return []
-    kept = [Path(p).resolve() for p in keep]
+        used += [Path(text) for text in _strings(document) if text]
+    byName: dict[str, list[Path]] = {}
+    for folder in sessions.iterdir():
+        match = _OURS.match(folder.name)
+        if match and folder.is_dir() and not folder.is_symlink():
+            if folder.resolve().parent == sessions.resolve():
+                byName.setdefault(match.group(1), []).append(folder)
     removed = []
-    for folder in sorted(sessions.iterdir()):
-        if folder.is_symlink() or not folder.is_dir():
-            continue
-        if not (_OURS.match(folder.name) or (folder / COMPLETE_MARKER).is_file()):
-            continue
-        resolved = folder.resolve()
-        if resolved.parent != sessions.resolve():
-            continue
-        if any(resolved == k or resolved in k.parents for k in kept):
-            continue
-        if str(folder) in referred or str(resolved) in referred:
-            continue
-        try:
-            shutil.rmtree(folder)
-        except OSError as error:
-            logger.warning("Could not remove %s: %s", folder, error)
-            continue
-        logger.info("Removed the old extracted package %s", folder)
-        removed.append(folder)
+    for copies in byName.values():
+        copies.sort(key=lambda f: (f.stat().st_mtime_ns, f.name))
+        for folder in copies[:-1]:  # the newest stays
+            resolved = folder.resolve()
+            if any(
+                _isInside(path, resolved) or _isInside(path, folder) for path in used
+            ):
+                continue
+            try:
+                shutil.rmtree(folder)
+            except OSError as error:
+                logger.warning("Could not remove %s: %s", folder, error)
+                continue
+            logger.info("Removed the superseded extracted package %s", folder)
+            removed.append(folder)
     return removed

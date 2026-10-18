@@ -90,11 +90,13 @@ none.
   only once; a marker file written after the last file says the unpacking
   finished, and an interrupted one is redone. A changed package gets a new
   folder.
-- **Old copies are removed.** At startup and after opening a package, Varda
-  deletes the unpacked packages that the autosave, the open images and the
-  package just opened don't use (the removals are in the log). If Varda
-  can't tell whether a folder is in use, it keeps it. It only touches
-  folders it made inside `sessions/`.
+- **Superseded copies are removed.** At startup and after opening a
+  package, Varda deletes older unpacked copies of the same package name. The
+  newest copy is always kept, as is any copy that the autosave or an open
+  image uses (the removals are in the log). A package's only copy is never
+  removed, since a session you saved elsewhere may point into it. If Varda
+  can't read the autosave, it removes nothing. It only touches folders it
+  made inside `sessions/`.
 - **It checks the disk first.** If the package's unpacked size (plus a
   margin) won't fit, Varda says so and doesn't start. Unpacked data is a full
   copy, so a 5 GB package takes about 5 GB while it's in use.

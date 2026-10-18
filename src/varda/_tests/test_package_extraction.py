@@ -1,5 +1,7 @@
 """Opened packages are extracted once, and old extractions are cleaned up."""
 
+import json
+import os
 import shutil
 import zipfile
 from collections import namedtuple
@@ -48,33 +50,85 @@ def test_package_without_manifest_is_keyed_on_path_size_and_mtime(tmp_path):
     assert len(_sessions(root)) == 2
 
 
+def _age(folder, seconds):
+    os.utime(folder, (seconds, seconds))
+
+
 def test_changed_package_gets_a_new_folder_and_the_old_one_is_cleaned(tmp_path):
     root = tmp_path / "appdata"
     package = _package(tmp_path / "p.varda.zip", "a")
     old = extractPackage(package, root).parent
     _package(package, "b")
     new = extractPackage(package, root).parent
+    _age(old, 1000)
     assert old != new
-    removed = cleanExtractions(root, None, keep=[new])
-    assert removed == [old]
+    assert cleanExtractions(root, None, keep=[new]) == [old]
     assert _sessions(root) == [new.name]
+
+
+def test_only_extraction_of_a_package_is_kept(tmp_path):
+    root = tmp_path / "appdata"
+    folder = extractPackage(_package(tmp_path / "a.varda.zip"), root).parent
+    elsewhere = tmp_path / "mine.varda"  # saved by the user, points into it
+    elsewhere.write_text(json.dumps({"images": [str(folder / "data" / "image.img")]}))
+    assert cleanExtractions(root, tmp_path / "autosave.varda") == []
+    assert folder.exists()
+
+
+def test_duplicates_go_oldest_first_keeping_newest_and_referenced(tmp_path):
+    root = tmp_path / "appdata"
+    sessions = root / "sessions"
+    names = [
+        "p-20250101-000000",  # legacy
+        "p-0000000000000001",
+        "p-0000000000000002",
+        "p-0000000000000003",
+        "q-0000000000000004",  # another package's only copy
+    ]
+    for age, name in enumerate(names):
+        (sessions / name).mkdir(parents=True)
+        _age(sessions / name, 1000 + age)
+    autosave = tmp_path / "autosave.varda"
+    autosave.write_text(json.dumps({"images": [str(sessions / names[1] / "x.img")]}))
+    removed = cleanExtractions(root, autosave)
+    assert [f.name for f in removed] == [names[0], names[2]]
+    assert _sessions(root) == [names[1], names[3], names[4]]
+
+
+def test_escaped_paths_in_the_autosave_keep_their_folder(tmp_path):
+    root = tmp_path / "appdata"
+    sessions = root / "sessions"
+    old = sessions / "p\u00e9-0000000000000001"
+    new = sessions / "p\u00e9-0000000000000002"
+    for folder in (old, new):
+        folder.mkdir(parents=True)
+    _age(old, 1000)
+    # json.dumps escapes backslashes and non-ASCII characters, as on Windows
+    autosave = tmp_path / "autosave.varda"
+    autosave.write_text(json.dumps({"images": [str(old / "data" / "a.img")]}))
+    assert "\\u00e9" in autosave.read_text()
+    assert cleanExtractions(root, autosave) == []
+    assert old.exists()
 
 
 def test_folder_referenced_by_the_autosave_is_kept(tmp_path):
     root = tmp_path / "appdata"
-    old = extractPackage(_package(tmp_path / "a.varda.zip", "a"), root).parent
-    other = extractPackage(_package(tmp_path / "b.varda.zip", "b"), root).parent
+    package = _package(tmp_path / "a.varda.zip", "a")
+    old = extractPackage(package, root).parent
+    _package(package, "b")
+    new = extractPackage(package, root).parent
+    _age(old, 1000)
     autosave = tmp_path / "autosave.varda"
-    autosave.write_text(f'{{"images": ["{old / "data" / "image.img"}"]}}')
-    assert cleanExtractions(root, autosave) == [other]
-    assert old.exists()
+    autosave.write_text(json.dumps({"images": [str(old / "data" / "image.img")]}))
+    assert cleanExtractions(root, autosave) == []
+    assert old.exists() and new.exists()
 
 
 def test_unreadable_autosave_keeps_everything(tmp_path):
     root = tmp_path / "appdata"
     folder = extractPackage(_package(tmp_path / "a.varda.zip"), root).parent
     autosave = tmp_path / "autosave.varda"
-    autosave.write_bytes(b"\xff\xfe\x00")
+    autosave.write_text("{not json")
     assert cleanExtractions(root, autosave) == []
     assert folder.exists()
 
@@ -82,7 +136,11 @@ def test_unreadable_autosave_keeps_everything(tmp_path):
 def test_open_images_keep_their_folder(tmp_path):
     root = tmp_path / "appdata"
     folder = extractPackage(_package(tmp_path / "a.varda.zip"), root).parent
+    package = _package(tmp_path / "a.varda.zip", "b")
+    new = extractPackage(package, root).parent
+    _age(folder, 1000)
     assert cleanExtractions(root, None, keep=[folder / "data" / "image.img"]) == []
+    assert new.exists()
 
 
 def test_incomplete_extraction_is_redone(tmp_path):
