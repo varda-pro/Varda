@@ -296,20 +296,22 @@ class RasterioDataSource(DataSource):
     def crs(self) -> CRS | None:
         # Built once: every access used to create a new pyproj CRS, i.e. PROJ
         # calls from whichever thread asked (see utilities/proj_lock.py)
-        with PROJ_LOCK:
-            if not hasattr(self, "_crs"):
-                self._crs, self._rawCrsText, self._crsError = self._readCrs()
-            return self._crs
+        return self._crsState()[0]
 
     @property
     def rawCrsText(self) -> str | None:
-        self.crs
-        return self._rawCrsText
+        return self._crsState()[1]
 
     @property
     def crsError(self) -> str | None:
-        self.crs
-        return self._crsError
+        return self._crsState()[2]
+
+    def _crsState(self) -> tuple[CRS | None, str | None, str | None]:
+        """The CRS, its raw text and its parse error, read once."""
+        with PROJ_LOCK:
+            if not hasattr(self, "_crsRead"):
+                self._crsRead = self._readCrs()
+            return self._crsRead
 
     def _readCrs(self) -> tuple[CRS | None, str | None, str | None]:
         """The CRS, the file's WKT for it, and why PROJ couldn't parse it."""

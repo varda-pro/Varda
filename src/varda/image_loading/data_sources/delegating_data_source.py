@@ -74,16 +74,19 @@ class DelegatingDataSource(DataSource):
     def crs(self) -> CRS | None:
         return self._source.crs
 
+    # Plugin sources implement DataSource without subclassing it, so they may
+    # lack these newer members: fall back to the protocol's defaults
     @property
     def rawCrsText(self) -> str | None:
-        return self._source.rawCrsText
+        return getattr(self._source, "rawCrsText", None)
 
     @property
     def crsError(self) -> str | None:
-        return self._source.crsError
+        return getattr(self._source, "crsError", None)
 
     def gdalMetadata(self) -> dict[str, dict[str, str]]:
-        return self._source.gdalMetadata()
+        method = getattr(self._source, "gdalMetadata", None)
+        return method() if method is not None else {}
 
     @property
     def driver(self) -> str:

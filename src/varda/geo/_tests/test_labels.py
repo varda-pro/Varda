@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -11,6 +12,10 @@ import rasterio as rio
 from affine import Affine
 
 from varda.geo.labels import LabelHints, labelHints
+from varda.image_loading.data_sources.data_source import DataSource
+from varda.image_loading.data_sources.delegating_data_source import (
+    DelegatingDataSource,
+)
 from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 
 CRISM_MTRDR_LABEL = """PDS_VERSION_ID                = PDS3
@@ -165,7 +170,7 @@ def test_garbage_is_empty(tmp_path: Path) -> None:
         {"json:ISIS3": {"json:ISIS3": "[1, 2]"}},
     ],
 )
-def test_broken_metadata_never_raises(metadata) -> None:
+def test_broken_metadata_never_raises(metadata: dict[str, dict[str, str]]) -> None:
     hints = labelHints(None, metadata)
     assert hints.target is None
     assert hints.source
@@ -233,3 +238,73 @@ def test_rasterio_source_good_crs(tmp_path: Path) -> None:
     assert source.rawCrsText and "WGS 84" in source.rawCrsText
     assert source.gdalMetadata() == {}
     source.close()
+
+
+def test_odl_value_on_next_line_and_units_after_quotes(tmp_path: Path) -> None:
+    label = tmp_path / "x.lbl"
+    label.write_text(
+        "PDS_VERSION_ID = PDS3\nTARGET_NAME =\n  MARS\n"
+        "OBJECT = MAP_PROJECTION\n"
+        '  A_AXIS_RADIUS = "3396.19" <KM>\n'
+        "  POSITIVE_LONGITUDE_DIRECTION =\n    WEST\n"
+        "END_OBJECT = MAP_PROJECTION\nEND\n"
+    )
+    hints = labelHints(str(label))
+    assert hints.target == "Mars"
+    assert hints.longitudeDirection == "west"
+    assert hints.projectionGroup["A_AXIS_RADIUS"] == "3396.19"
+
+
+def test_sfdu_attached_label(tmp_path: Path) -> None:
+    image = tmp_path / "old.img"
+    image.write_bytes(
+        b"NJPL1I00PDS10000000 = SFDU_LABEL\r\nTARGET_NAME = MOON\r\nEND\r\n"
+        + b"\xff" * 128
+    )
+    assert labelHints(str(image)).target == "Moon"
+
+
+def test_attached_label_read_only_within_64_kib(tmp_path: Path) -> None:
+    image = tmp_path / "long.img"
+    padding = "".join(f"KEY_{i} = {i}\n" for i in range(8000))  # > 64 KiB
+    image.write_text(f"PDS_VERSION_ID = PDS3\n{padding}TARGET_NAME = MARS\nEND\n")
+    hints = labelHints(str(image))
+    assert hints.target is None
+    assert "attached" in hints.source
+
+
+def test_non_ascii_bytes_in_attached_label(tmp_path: Path) -> None:
+    image = tmp_path / "accents.img"
+    image.write_bytes(
+        b"PDS_VERSION_ID = PDS3\n"
+        b'PRODUCER_FULL_NAME = "Jos\xc3\xa9 \x80\xfe"\n'
+        b"TARGET_NAME = MARS\nEND\n" + bytes(range(256))
+    )
+    assert labelHints(str(image)).target == "Mars"
+
+
+def test_unlistable_folder_still_reads_attached_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = tmp_path / "ESP_0001.IMG"
+    image.write_bytes(HIRISE_LABEL.encode())
+
+    def refuse(self: Path) -> bool:
+        raise PermissionError("no listing")
+
+    monkeypatch.setattr(Path, "is_file", refuse)
+    assert labelHints(str(image)).longitudeDomain == "0..360"
+
+
+class _PluginSource:
+    """A plugin's data source: DataSource implemented without subclassing it,
+    and without the newer CRS members."""
+
+    filePath = None
+
+
+def test_delegating_source_defaults_for_plugin_sources() -> None:
+    wrapped = DelegatingDataSource(cast(DataSource, _PluginSource()))
+    assert wrapped.rawCrsText is None
+    assert wrapped.crsError is None
+    assert wrapped.gdalMetadata() == {}

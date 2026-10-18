@@ -31,7 +31,7 @@ DETACHED_LABEL_BYTES = 4 * 1024 * 1024
 PDS3_PROJECTION_GROUPS = ("IMAGE_MAP_PROJECTION", "MAP_PROJECTION")
 
 _ATTACHED_START = re.compile(
-    r"^\s*(?:PDS_VERSION_ID|ODL_VERSION_ID|CCSD3Z|Object\s*=\s*IsisCube)",
+    r"^\s*(?:PDS_VERSION_ID|ODL_VERSION_ID|CCSD3Z|NJPL1I00PDS|Object\s*=\s*IsisCube)",
     re.IGNORECASE,
 )
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -88,7 +88,11 @@ class _NoLabel(Exception):
 
 
 def _fileHints(path: Path) -> LabelHints:
-    for label in _detachedLabels(path):
+    try:
+        label = _detachedLabel(path)
+    except OSError:
+        label = None  # an unreadable folder: try an attached label
+    if label is not None:
         if label.stat().st_size > DETACHED_LABEL_BYTES:
             raise _NoLabel(f"{label.name} is larger than a label")
         text = label.read_bytes().decode("latin-1")
@@ -100,15 +104,28 @@ def _fileHints(path: Path) -> LabelHints:
     return _odlHints(parseOdl(head), f"PDS3 label attached to {path.name}")
 
 
-def _detachedLabels(path: Path) -> Iterator[Path]:
+def _detachedLabel(path: Path) -> Path | None:
+    """``path`` when it is a ``.lbl``, else the ``.lbl``/``.LBL`` beside it."""
     if path.suffix.lower() == ".lbl":
-        yield path
-        return
-    # listed rather than guessed, for its real name on case-insensitive disks
-    wanted = path.with_suffix(".lbl").name.lower()
-    for label in sorted(path.parent.iterdir()):
-        if label.name.lower() == wanted and label.is_file():
-            yield label
+        return path
+    for suffix in (".lbl", ".LBL"):
+        label = path.with_suffix(suffix)
+        if label.is_file():
+            return _realName(label)
+    return None
+
+
+def _realName(path: Path) -> Path:
+    """``path`` as its folder spells it (case-insensitive disks answer to any
+    case), or as given when the folder can't be listed."""
+    try:
+        names = [entry.name for entry in path.parent.iterdir()]
+    except OSError:
+        return path
+    if path.name in names:
+        return path
+    wanted = path.name.lower()
+    return next((path.with_name(n) for n in names if n.lower() == wanted), path)
 
 
 def _statements(text: str) -> Iterator[tuple[str, str]]:
@@ -122,8 +139,18 @@ def _statements(text: str) -> Iterator[tuple[str, str]]:
         index += 1
         if line.upper() == "END":
             return
-        key, _, value = line.partition("=")
+        key, equals, value = line.partition("=")
         value = value.strip()
+        # "KEY =" with its value alone on the next line
+        if (
+            equals
+            and not value
+            and index < len(lines)
+            and "=" not in lines[index]
+            and lines[index].strip().upper() != "END"
+        ):
+            value = lines[index].strip()
+            index += 1
         while index < len(lines) and (value.count('"') % 2 or _open(value)):
             value = f"{value} {lines[index].strip()}"
             index += 1
@@ -138,7 +165,8 @@ def _open(value: str) -> bool:
 def _clean(value: str) -> str:
     """A value's text: quotes removed, units stripped, whitespace collapsed."""
     if value.startswith('"'):
-        return " ".join(value.strip('"').split())
+        # the text between the quotes, without any units after them
+        return " ".join(value[1:].partition('"')[0].split())
     return " ".join(_UNITS.sub("", value).split()).strip("'")
 
 
@@ -309,8 +337,12 @@ def _direction(text: str | None) -> str | None:
 
 
 def _domain(*longitudes: str | None) -> str | None:
-    """ "0..360" when a longitude is past 180°, "-180..180" when one is
-    negative, else ``None`` (the range fits either)."""
+    """The longitude domain the PDS3 or PDS4 bounding longitudes imply:
+    "0..360" when one is past 180°; "-180..180" when one is negative (a
+    negative longitude, e.g. west -10.5, or 179 to -179 across the
+    antimeridian, only exists in that domain); else ``None``, since a range
+    within 0..180 fits either. ISIS states its domain (``LongitudeDomain``)
+    and doesn't use this."""
     values: list[float] = []
     for text in longitudes:
         try:
