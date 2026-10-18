@@ -21,7 +21,12 @@ uv run ruff format             # format
 uv run ruff check              # lint
 uv run ty check                # type check
 uv run varda --self-test       # what release builds check before publishing
+uv run pytest -m qa qa/        # release QA: five first-time users drive the app
 ```
+
+`uv run pytest` leaves out the release-QA personas in `qa/`; see
+[docs/developer/release-qa.md](docs/developer/release-qa.md) for running them
+locally and on all three operating systems in CI.
 
 Before opening a pull request:
 

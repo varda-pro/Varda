@@ -33,8 +33,9 @@ Varda is developed across several machines and Claude Code sessions. **Before ma
 - **Format:** `uv run ruff format` — **Lint:** `uv run ruff check` (add `--fix` to autofix)
 - **Type check:** `uv run ty check`
 - **Import contracts:** `uv run lint-imports` (a required CI check, with pytest, the app self-test and the citation file): the Qt-free modules listed in `pyproject.toml`'s import-linter contract (e.g. all of `varda.analysis`) must not reach PyQt6. Put GUI elsewhere; never grow the contract's `ignore_imports`.
-- **Releasing:** a release PR bumps `pyproject.toml`, `CITATION.cff` (`version`, `date-released`), `uv.lock` and dates the CHANGELOG's Unreleased section; tag `vX.Y.Z` on the merged main and the build workflow publishes it. Every published release mints a Zenodo DOI, so publish exactly one release per version and no test releases. **After every release, run `/release-qa`** (`.claude/skills/release-qa`): five first-time-user personas use the released app, their problems are ranked, fixed in one pass, and rechecked.
+- **Releasing:** a release PR bumps `pyproject.toml`, `CITATION.cff` (`version`, `date-released`), `uv.lock` and dates the CHANGELOG's Unreleased section; tag `vX.Y.Z` on the merged main and the build workflow publishes it. Every published release mints a Zenodo DOI, so publish exactly one release per version and no test releases. **After every release, run `/release-qa`** (`.claude/skills/release-qa`): five first-time-user personas use the released app on macOS, Windows and Linux, their problems are ranked, fixed in one pass, and rechecked.
 - **Build standalone bundle:** `uv run pyinstaller Varda.spec`; check it with `dist/Varda/Varda --self-test` (`self_test.py`; release builds run it on every platform)
+- **Release QA:** `uv run pytest -m qa qa/` drives the whole app as five first-time-user personas (screenshots + `findings.json` in `$VARDA_QA_OUT`); left out of plain `uv run pytest`. CI runs it on all three OSes (`release-qa.yml`). Guide: `docs/developer/release-qa.md`.
 
 Requires Python 3.13. GUI tests use `pytest-qt`.
 ## Architecture
