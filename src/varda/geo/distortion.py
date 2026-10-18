@@ -127,6 +127,31 @@ def distortionAtPixels(
         return _factors(model, lons, lats, _aspect(transform))
 
 
+def arealScaleAtPixels(
+    crs: CRS | str, transform: Affine, cols: np.ndarray, rows: np.ndarray
+) -> np.ndarray:
+    """The areal scale (map area over ground area; PROJ's ``areal_scale``)
+    at the pixel positions ``cols``, ``rows`` (fractional; pixel centers are
+    at .5; broadcast together), in their shape; NaN where it isn't finite
+    (PROJ can't invert). For a geographic CRS, that of the square-pixel
+    display (h·k, see the module). Raises ValueError for a CRS on no body or
+    one PROJ can't read."""
+    cols, rows = np.broadcast_arrays(
+        np.asarray(cols, dtype=np.float64), np.asarray(rows, dtype=np.float64)
+    )
+    with PROJ_LOCK:
+        model = _model(_key(crs))
+        if model is None:
+            raise ValueError(f"No distortion for this coordinate system: {crs}")
+        if cols.size == 0:
+            return np.zeros(cols.shape)
+        lons, lats = _lonLat(model, transform, cols.ravel(), rows.ravel())
+        areal = _columns(model, lons, lats, _aspect(transform))[2]
+    with np.errstate(invalid="ignore"):
+        areal = np.where(np.isfinite(areal) & (areal > 0), areal, np.nan)
+    return areal.reshape(cols.shape)
+
+
 def distortionOver(
     crs: CRS | str | None,
     transform: Affine,
@@ -273,6 +298,21 @@ def _factors(
     """Distortion at east-positive ``lons`` and ``lats`` in the CRS's own
     latitude (degrees); NaN where the factors aren't finite. The caller
     holds PROJ_LOCK."""
+    distortions = []
+    for values in zip(*_columns(model, lons, lats, aspect), strict=True):
+        finite = all(math.isfinite(value) for value in values)
+        distortions.append(
+            Distortion(*(float(value) if finite else math.nan for value in values))
+        )
+    return distortions
+
+
+def _columns(
+    model: _Model, lons: np.ndarray, lats: np.ndarray, aspect: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """h, k, the areal scale and ω (degrees) as arrays, at ``lons``,
+    ``lats`` as in ``_factors``; not necessarily finite. The caller holds
+    PROJ_LOCK."""
     e2 = model.eccentricitySquared
     graphic = _toGraphic(lats, e2) if model.planetocentric else lats
     if model.proj is not None:
@@ -304,10 +344,4 @@ def _factors(
             h = np.ones_like(k)
             areal = h * k
             omega = np.degrees(2 * np.arcsin(np.abs(h - k) / (h + k)))
-    distortions = []
-    for values in zip(h, k, areal, omega, strict=True):
-        finite = all(math.isfinite(value) for value in values)
-        distortions.append(
-            Distortion(*(float(value) if finite else math.nan for value in values))
-        )
-    return distortions
+    return h, k, areal, omega

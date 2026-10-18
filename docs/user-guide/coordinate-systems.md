@@ -382,6 +382,66 @@ are 9,955.75 m apart, so the body-model difference is 0.44%. Report it as
 0.44% shorter on the IAU 2015 ellipsoid; plus the image's georeferencing
 error".
 
+### Pixel areas
+
+Sums over pixels (an ROI's or a class's area, area-weighted means and
+sums) use each pixel's ground area, in m² on the CRS's **own** surface, by
+one of two methods. The method and surface are reported with the result,
+e.g. "exact per row (geodesic polygon, edges densified to 16 points) on
+sphere R = 3394.84 km".
+
+- **Exact per row** ("exact per row (geodesic polygon, edges densified to
+  16 points)"). When the image is north-up (no rotation in its transform)
+  and the CRS is geographic, Equidistant Cylindrical, Mercator (variants A
+  and B, and Pseudo Mercator) or Lambert Cylindrical Equal Area, every
+  pixel in a row has the same area. Varda computes it once per row: the
+  pixel's four edges, each densified to 16 points, are converted to
+  longitude and planetocentric latitude, then to the surface's geodetic
+  latitude (as for every measurement, above), and the area is Karney's
+  (2013) geodesic polygon area. The densified top and bottom edges follow
+  their parallels; the geodesic chords between the 16 points cut slightly
+  inside them, which leaves a relative error of at most about
+  2.1 × 10⁻⁷ × (Δλ / 1°)², with Δλ the pixel's width in longitude:
+  2 × 10⁻⁹ for 0.1° pixels, 2 × 10⁻⁷ for 1° pixels, negligible for map
+  pixels of a few km or less.
+- **Areal scale** ("map pixel area over the projection's areal scale at
+  the pixel center"). Otherwise (polar stereographic, transverse Mercator,
+  any rotated image), a pixel's area is
+
+  *area* = |det(transform)| × u² / *s*
+
+  with u the map unit in meters and *s* PROJ's areal scale (map area over
+  ground area) at the pixel's center (PROJ docs, *Factors*; Snyder, 1987,
+  ch. 4). Because the scale varies across the pixel, the relative error is
+  of order (pixel size / R)²: about 10⁻¹³ for a 1 m pixel on Mars, and
+  10⁻⁷ for a 1 km pixel. For a rotated geographic image the "map area" is
+  the pixel's angular area and the scale is the ellipsoid's area per square
+  radian, M·N·cos φ (M, N the radii of curvature, Snyder, 1987, eqs. 4-18
+  and 4-20), times dφg/dφc for planetocentric latitudes.
+- **Whole images.** Outside the exact-per-row case, an image of more than
+  4,000,000 pixels has its pixel areas evaluated on a grid of every n-th
+  pixel (n = ⌈√(pixels / 4,000,000)⌉, plus the last row and column) and
+  interpolated bilinearly between them; scale factors vary smoothly. On a
+  4000 × 4000 polar stereographic image at 85°N the interpolated areas are
+  within 10⁻⁶ (relative) of the evaluated ones (Varda's tests check this).
+  Near the edge of a projection's valid area, a pixel PROJ can't invert
+  has no area (blank), and the pixels interpolated from it are blank too.
+
+**Pixels, not polygons.** An ROI's or a class's area is the sum of the
+areas of the pixels it selects (those whose centers are inside). That's the
+area of the **pixels**, not of the drawn polygon, so it differs from
+**Area on the body** by up to half a pixel along the perimeter. Report
+whichever you used, and its method.
+
+As with every measurement, the body-model term (above) and the image's
+georeferencing error are not included.
+
+**Worked example.** On the Mars 2000 sphere in equirectangular with
+standard parallel 0° (`IAU_2015:49910`), a 1 km × 1 km map pixel at 60°N
+covers 0.5 km² of ground: the projection stretches parallels by
+1/cos 60° = 2 and keeps meridians true (h = 1, k = 2; Snyder, 1987, p. 91).
+Varda reports 0.500 km², exact per row on sphere R = 3396.19 km.
+
 ## What Varda checks when an image opens
 
 When an image opens, Varda checks its coordinate system against what its

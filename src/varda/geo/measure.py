@@ -13,6 +13,14 @@ The body-model term: when the body's IAU 2015 reference ellipsoid
 measured on it too, with tan φg = (a/c)² tan φc (Snyder, 1987, eq. 3-28),
 and the relative difference is reported.
 
+Pixel areas (``pixelAreas``): where a pixel's area depends on its row only
+(no rotation, and a geographic CRS or an equidistant cylindrical, Mercator
+or cylindrical equal-area projection), each row's area is the geodesic
+polygon area of one pixel's corners, each edge densified to 16 points, so
+it's exact up to the geodesic algorithm. Otherwise it's the map pixel area
+over PROJ's areal scale at the pixel center (relative error of order
+(pixel / R)²).
+
 Not included: topography (measurements are horizontal, on the reference
 surface) and the image's georeferencing error."""
 
@@ -28,13 +36,40 @@ from affine import Affine
 from attrs import frozen
 from pyproj import CRS, Geod
 
-from varda.geo.bodies import identifyBody, surfaceText
-from varda.geo.distortion import DistortionSummary, distortionOver
+from varda.geo.bodies import identifyBody, latitudeType, surfaceText
+from varda.geo.distortion import (
+    DistortionSummary,
+    arealScaleAtPixels,
+    distortionOver,
+)
 from varda.geo.transform import ographicLatitude, planetocentricLonLat, transformPoints
 from varda.utilities.proj_lock import PROJ_LOCK
 
 # radii closer than this to the reference ellipsoid's are the same surface
 SAME_SURFACE_M = 1.0
+
+AREA_METHOD_ROWS = "exact per row (geodesic polygon, edges densified to 16 points)"
+AREA_METHOD_SCALE = (
+    "map pixel area over the projection's areal scale at the pixel center"
+)
+# points per pixel edge for the exact row areas
+_EDGE_POINTS = 16
+# imagePixelAreas evaluates the areas of larger images outside the row-only
+# case on a grid of every n-th pixel and interpolates (spec §4.5)
+_MAX_EVALUATED_PIXELS = 4_000_000
+# projections whose scale depends on latitude only: north-up, a pixel's
+# area depends on its row only
+_ROW_ONLY_METHODS = frozenset(
+    {
+        "Equidistant Cylindrical",
+        "Equidistant Cylindrical (Spherical)",
+        "Mercator (variant A)",
+        "Mercator (variant B)",
+        "Popular Visualisation Pseudo Mercator",
+        "Lambert Cylindrical Equal Area",
+        "Lambert Cylindrical Equal Area (Spherical)",
+    }
+)
 
 
 @frozen
@@ -72,6 +107,18 @@ class _Surfaces:
     own: _Surface
     reference: _Surface | None
     method: str
+    surface: str  # "sphere R = 3396.19 km"
+
+
+@frozen
+class _Layout:
+    """What pixel areas need to know about a CRS."""
+
+    rowOnly: bool  # geographic, or a projection in _ROW_ONLY_METHODS
+    geographic: bool
+    unit: float  # the map unit in meters, or radians when geographic
+    # geographic, with planetocentric latitude numbers
+    centricNumbers: bool
 
 
 def toLonLat(crs: CRS | str, xy: npt.ArrayLike) -> np.ndarray:
@@ -215,6 +262,160 @@ def groundSpacing(
     return acrossColumns, acrossRows
 
 
+def pixelAreas(
+    crs: CRS | str, transform: Affine, rows: npt.ArrayLike, cols: npt.ArrayLike
+) -> np.ndarray:
+    """The ground areas, in m² on the CRS's own surface, of the pixels at
+    (``rows``, ``cols``) (integer indices; broadcast together), in their
+    shape: exact per row for row-only layouts (``AREA_METHOD_ROWS``),
+    otherwise the map pixel area over the areal scale at the pixel center
+    (``AREA_METHOD_SCALE``). NaN where PROJ can't invert. Raises ValueError
+    only for a CRS on no body or one PROJ can't read."""
+    rows, cols = np.broadcast_arrays(
+        np.asarray(rows, dtype=np.float64), np.asarray(cols, dtype=np.float64)
+    )
+    surface = _surfacesFor(crs).own
+    layout = _layoutFor(crs)
+    if not _isRowOnly(layout, transform):
+        return _scaledAreas(crs, layout, surface, transform, rows, cols)
+    unique, first, inverse = np.unique(
+        rows.ravel(), return_index=True, return_inverse=True
+    )
+    areas = _rowAreas(crs, surface, transform, unique, cols.ravel()[first])
+    return areas[inverse].reshape(rows.shape)
+
+
+def imagePixelAreas(
+    crs: CRS | str, transform: Affine, width: int, height: int
+) -> np.ndarray:
+    """The (``height``, ``width``) ground areas (m²) of every pixel of an
+    image, as ``pixelAreas``. Outside the row-only case, images of more than
+    4,000,000 pixels evaluate the areas on a grid of every n-th pixel
+    (n = ⌈√(pixels / 4,000,000)⌉, plus the last row and column) and
+    interpolate bilinearly between them (scale factors vary smoothly); a
+    NaN grid value spreads to the pixels next to it. Raises as
+    ``pixelAreas``."""
+    surface = _surfacesFor(crs).own
+    layout = _layoutFor(crs)
+    if width <= 0 or height <= 0:
+        return np.zeros((max(height, 0), max(width, 0)))
+    if _isRowOnly(layout, transform):
+        rows = np.arange(height, dtype=np.float64)
+        areas = _rowAreas(crs, surface, transform, rows, np.full(height, width // 2))
+        return np.repeat(areas[:, None], width, axis=1)
+    pixels = width * height
+    step = max(1, math.ceil(math.sqrt(pixels / _MAX_EVALUATED_PIXELS)))
+    gridRows, gridCols = _gridIndices(height, step), _gridIndices(width, step)
+    values = _scaledAreas(
+        crs, layout, surface, transform, gridRows[:, None], gridCols[None, :]
+    )
+    if step == 1:
+        return values
+    lowerC, upperC, tC = _weights(gridCols, width)
+    acrossColumns = values[:, lowerC] * (1 - tC) + values[:, upperC] * tC
+    lowerR, upperR, tR = _weights(gridRows, height)
+    return (
+        acrossColumns[lowerR] * (1 - tR)[:, None] + acrossColumns[upperR] * tR[:, None]
+    )
+
+
+def pixelAreaMethod(crs: CRS | str, transform: Affine) -> str:
+    """How ``pixelAreas`` measures this image's pixels, and on what:
+    "{AREA_METHOD_ROWS or AREA_METHOD_SCALE} on sphere R = 3394.84 km".
+    Raises as ``pixelAreas``."""
+    surfaces = _surfacesFor(crs)
+    rowOnly = _isRowOnly(_layoutFor(crs), transform)
+    method = AREA_METHOD_ROWS if rowOnly else AREA_METHOD_SCALE
+    return f"{method} on {surfaces.surface}"
+
+
+def _isRowOnly(layout: _Layout, transform: Affine) -> bool:
+    return layout.rowOnly and transform.b == 0 and transform.d == 0
+
+
+def _rowAreas(
+    crs: CRS | str,
+    surface: _Surface,
+    transform: Affine,
+    rows: np.ndarray,
+    cols: np.ndarray,
+) -> np.ndarray:
+    """The geodesic polygon area (m²) of the pixel at each of ``rows``,
+    ``cols`` (1-D), its edges densified to _EDGE_POINTS points so the top
+    and bottom follow their parallels; NaN where a corner doesn't invert."""
+    t = np.arange(_EDGE_POINTS) / _EDGE_POINTS
+    zeros, ones = np.zeros_like(t), np.ones_like(t)
+    # clockwise on the image from the top left: top, right, bottom, left
+    ringCols = np.concatenate([t, ones, 1 - t, zeros])
+    ringRows = np.concatenate([zeros, t, ones, 1 - t])
+    pixelCols = np.asarray(cols, dtype=np.float64)[:, None] + ringCols
+    pixelRows = np.asarray(rows, dtype=np.float64)[:, None] + ringRows
+    xs, ys = transform * (pixelCols, pixelRows)
+    lon, centric = planetocentricLonLat(crs, xs, ys)
+    lat = surface.latitudes(centric)
+    finite = np.isfinite(lon).all(axis=1) & np.isfinite(lat).all(axis=1)
+    areas = np.full(len(rows), np.nan)
+    with PROJ_LOCK:
+        for index in np.flatnonzero(finite):
+            area, _ = surface.geod.polygon_area_perimeter(
+                lon[index].tolist(), lat[index].tolist()
+            )
+            areas[index] = abs(area)
+    return areas
+
+
+def _scaledAreas(
+    crs: CRS | str,
+    layout: _Layout,
+    surface: _Surface,
+    transform: Affine,
+    rows: np.ndarray,
+    cols: np.ndarray,
+) -> np.ndarray:
+    """The map pixel area over the areal scale at each pixel center (rows
+    and cols broadcast together). For a geographic CRS (rotated: otherwise
+    it's row-only), the ground area of the pixel's angular area at its
+    center: M·N·cos φg per square radian of φg and λ (Snyder, 1987,
+    eqs. 4-18, 4-20), times dφg/dφc for planetocentric latitudes."""
+    rows, cols = np.broadcast_arrays(rows, cols)
+    mapArea = abs(transform.determinant) * layout.unit**2
+    if not layout.geographic:
+        scale = arealScaleAtPixels(crs, transform, cols + 0.5, rows + 0.5)
+        return mapArea / scale
+    xs, ys = transform * (cols + 0.5, rows + 0.5)
+    _, centric = planetocentricLonLat(crs, xs, ys)
+    graphic = np.radians(surface.latitudes(centric))
+    a, c = surface.a, surface.c
+    e2 = 1 - (c / a) ** 2
+    w = 1 - e2 * np.sin(graphic) ** 2
+    meridional = a * (1 - e2) / w**1.5
+    primeVertical = a / np.sqrt(w)
+    perRadian = meridional * primeVertical * np.cos(graphic)
+    if layout.centricNumbers:
+        ratio = (a / c) ** 2
+        phi = np.radians(centric)
+        perRadian = perRadian * ratio / (np.cos(phi) ** 2 + ratio**2 * np.sin(phi) ** 2)
+    return mapArea * perRadian
+
+
+def _gridIndices(count: int, step: int) -> np.ndarray:
+    """Every ``step``-th index from 0, and the last."""
+    return np.unique(np.append(np.arange(0, count, step), count - 1)).astype(np.float64)
+
+
+def _weights(grid: np.ndarray, count: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """For each index below ``count``, its grid neighbors (positions in
+    ``grid``) and the linear weight of the upper one."""
+    positions = np.arange(count, dtype=np.float64)
+    if len(grid) == 1:
+        zeros = np.zeros(count, dtype=np.intp)
+        return zeros, zeros, np.zeros(count)
+    upper = np.clip(np.searchsorted(grid, positions, side="right"), 1, len(grid) - 1)
+    lower = upper - 1
+    weight = (positions - grid[lower]) / (grid[upper] - grid[lower])
+    return lower, upper, weight
+
+
 def _measurement(
     value: float,
     reference: float | None,
@@ -291,6 +492,23 @@ def _surfaces(key: str) -> _Surfaces:
         refC = referenceEllipsoid.semi_minor_metre
         if abs(refA - a) > SAME_SURFACE_M or abs(refC - c) > SAME_SURFACE_M:
             reference = _Surface(Geod(a=refA, b=refC), refA, refC)
-    return _Surfaces(
-        own, reference, f"geodesic (Karney 2013) on {surfaceText(ellipsoid)}"
-    )
+    surface = surfaceText(ellipsoid)
+    return _Surfaces(own, reference, f"geodesic (Karney 2013) on {surface}", surface)
+
+
+def _layoutFor(crs: CRS | str) -> _Layout:
+    with PROJ_LOCK:
+        return _layout(crs if isinstance(crs, str) else CRS.from_user_input(crs).srs)
+
+
+@lru_cache(maxsize=64)
+def _layout(key: str) -> _Layout:
+    """The caller holds PROJ_LOCK."""
+    crs = CRS.from_user_input(key)
+    unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
+    if crs.is_geographic:
+        centric = latitudeType(crs) == "planetocentric"
+        return _Layout(True, True, unit, centric)
+    operation = crs.coordinate_operation
+    method = operation.method_name if operation is not None else ""
+    return _Layout(method in _ROW_ONLY_METHODS, False, unit, False)
