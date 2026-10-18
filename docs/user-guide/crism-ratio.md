@@ -36,8 +36,8 @@ The detector column of each pixel comes from one of two places, recorded as
   source strips are kept apart. A TRR3's DDR is in the DDR volume, not next
   to the cube; it gives the incidence angle but no detector column.
 - **The image columns of an unprojected cube.** A cube with no backplane
-  that is confidently unprojected (no map projection, and 640, 320 or 160
-  columns, a CRISM detector at 1×, 2× or 4× binning) is in sensor space, so
+  that is confidently unprojected (no map projection, and 640, 320, 128 or 64
+  columns, a CRISM detector at 1×, 2×, 5× or 10× binning) is in sensor space, so
   image column *c* is binned detector column *c*. This is how a TRR3 (or
   TER3 without its IN file) is ratioed. The output records
   `geometry: image columns (unprojected)` and the `binning` (detector

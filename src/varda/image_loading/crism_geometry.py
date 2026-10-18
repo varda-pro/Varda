@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 IMAGE_COLUMNS = "image columns (unprojected)"
 # Image widths of unprojected CRISM cubes and their pixel binning (640
 # detector columns at full resolution)
-CRISM_SENSOR_WIDTHS = {640: 1, 320: 2, 160: 4}
+CRISM_SENSOR_WIDTHS = {640: 1, 320: 2, 128: 5, 64: 10}
 
 
 @attrs.define
@@ -278,7 +278,7 @@ def columnGeometryFor(
 ) -> ColumnGeometry | None:
     """The detector columns of a CRISM cube of ``shape`` (rows, cols): from
     its backplane when one is found, else, for a cube that is confidently
-    unprojected (no map projection and a CRISM width, 640, 320 or 160
+    unprojected (no map projection and a CRISM width, 640, 320, 128 or 64
     columns), its own image columns. None otherwise."""
     geometry = loadColumnGeometry(sourceFilename) if sourceFilename else None
     if geometry is not None:
