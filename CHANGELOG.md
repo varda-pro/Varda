@@ -31,8 +31,9 @@ can alter results.
   file is left as it is, the corrected CRS is kept with the image (and in
   sessions), files Varda exports are written with it, and the provenance of
   every result made from the image records it as `crsFix` (`from`, `to`,
-  `reason`, `automatic`). Targets that aren't bodies Varda knows (`SKY`,
-  `CALIBRATION`, `N/A`) are ignored. Editing an image's metadata in Image
+  `reason`, `automatic`). A body Varda doesn't know (e.g. Bennu) is flagged
+  but not fixed; targets that name no body (`SKY`, `CALIBRATION`, `N/A`) are
+  ignored. Editing an image's metadata in Image
   Properties keeps the corrected CRS; **Reset to the File's** returns the
   image to how it opened. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#the-one-automatic-fix-and-why-only-that-one).

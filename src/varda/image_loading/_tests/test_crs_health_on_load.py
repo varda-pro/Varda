@@ -12,6 +12,7 @@ from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.crs_check import checkImageCrs
 from varda.image_loading.image_loading_service import loadRaster
+from varda.image_loading.raster_writer import writeRaster
 
 REASON = (
     "Its CRS says Earth (WGS 84) but its label's target is Mars; read as "
@@ -90,6 +91,32 @@ def test_the_files_own_crs_chosen_explicitly_stays(tmp_path):
     assert image.crs is not None and image.crs.to_epsg() == 4326
     assert health.issues[0].code == "earth-crs-on-body"
     assert "crsFix" not in image.extraMetadata
+    # the health is of the CRS in use: Earth, with the fix offered again
+    assert health.body.body is not None and health.body.body.name == "Earth"
+    assert health.description.authority == "EPSG:4326"
+    assert "you chose to keep the file's CRS" in health.issues[0].message
+    fix = health.issues[0].fix
+    assert fix is not None and not fix.automatic
+
+
+def test_a_named_body_varda_does_not_know_is_flagged_not_fixed(tmp_path):
+    label = 'PDS_VERSION_ID = PDS3\nTARGET_NAME = "BENNU"\nEND\n'
+    image = loadRaster(str(writeWgs84(tmp_path, label=label)))
+    assert image.crsHealth is not None
+    (issue,) = image.crsHealth.issues
+    assert issue.code == "earth-crs-on-body" and issue.fix is None
+    assert issue.message == "Its CRS says Earth, but its label says Bennu."
+    assert image.metadataOverrides == {}
+    assert image.crs is not None and image.crs.to_epsg() == 4326
+
+
+def test_choosing_a_crs_on_a_reopened_export_drops_its_old_record(tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    reopened = loadRaster(str(writeRaster(fixed, tmp_path / "copy.tif")))
+    assert "crsFix" in reopened.extraMetadata
+    reopened.setMetadataOverrides({"crs": "IAU_2015:30100"})
+    checkImageCrs(reopened)
+    assert "crsFix" not in reopened.extraMetadata
 
 
 def test_an_input_record_uses_the_label_facts_read_at_load(tmp_path, monkeypatch):

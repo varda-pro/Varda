@@ -139,12 +139,44 @@ def test_an_earth_crs_with_an_earth_label_is_fine():
     assert check(image, hints(target="Earth")).issues == ()
 
 
-@pytest.mark.parametrize("target", ["BENNU", "SKY", "N/A", "CALIBRATION"])
-def test_a_target_varda_does_not_know_is_ignored(target: str):
+@pytest.mark.parametrize(
+    "target", ["SKY", "N/A", "CALIBRATION", "cal", "Dark", "NONE", "UNKNOWN"]
+)
+def test_a_target_that_isnt_a_body_is_ignored(target: str):
     image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
     health = check(image, hints(target=target))
     assert health.issues == ()
     assert health.body.body is not None and health.body.body.name == "Earth"
+
+
+def test_an_earth_crs_on_a_body_varda_does_not_know_is_flagged_not_fixed():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
+    health = check(image, hints(target="BENNU"))
+    assert codes(health) == ["earth-crs-on-body"]
+    (issue,) = health.issues
+    assert issue.severity is Severity.PROBLEM
+    assert issue.message == "Its CRS says Earth, but its label says Bennu."
+    assert issue.suggestion == "Set coordinate system…"
+    assert issue.fix is None
+
+
+def test_a_declined_fix_is_checked_on_the_files_crs():
+    image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
+    health = checkCrs(
+        image.crs, image.transform, image.width, image.height, MARS, applyFix=False
+    )
+    (issue,) = health.issues
+    assert issue.code == "earth-crs-on-body" and issue.severity is Severity.PROBLEM
+    assert issue.message == (
+        "Its CRS says Earth, but its label says Mars; you chose to keep the file's CRS."
+    )
+    assert issue.suggestion == (
+        "Apply to read it as degrees on the IAU 2015 Mars sphere, or "
+        "Set coordinate system…"
+    )
+    assert issue.fix is not None and not issue.fix.automatic  # offered again
+    assert health.body.body is not None and health.body.body.name == "Earth"
+    assert fixRecord(health, WGS84) is None
 
 
 def test_the_message_names_the_body_properly():

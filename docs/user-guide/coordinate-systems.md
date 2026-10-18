@@ -390,7 +390,7 @@ dialogs. Each finding has a severity:
 |---|---|---|---|---|
 | `no-crs` | Problem | The image has map coordinates (a transform that isn't the identity), or its label describes a map projection, but there is no CRS | "Its map coordinates have no coordinate system, so Varda treats it as unreferenced." | Nothing is changed. Use **Set coordinate system…** |
 | `unreadable-crs` | Problem | The file has CRS text that PROJ can't read | "Its coordinate system can't be read, so Varda treats it as unreferenced." | Nothing is changed. Image Properties shows the text; use **Set coordinate system…** |
-| `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees): fixed automatically**, see below. A projected CRS: nothing is changed; use **Set coordinate system…**. A target that isn't a body Varda knows (`SKY`, `CALIBRATION`, `N/A`, or a body not in its list) is no evidence, and gives no finding |
+| `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know (e.g. "Its CRS says Earth, but its label says Bennu."): nothing is changed; use **Set coordinate system…**. A target that names no body is no evidence and gives no finding: `SKY`, `N/A`, `NA`, `NONE`, `NULL`, `UNK`, `UNKNOWN`, `CALIBRATION`, `CALIBRATION TARGET`, `CAL`, `DARK`, `DARK CURRENT`, `FLAT`, `FLAT FIELD`, `BIAS`, `STAR`, `STARS`, `SPACE`, `DEEP SPACE` and `TEST`, in any case |
 | `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
 | `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
@@ -439,7 +439,10 @@ metadata as `crsFix` (`from` and `to`, each an authority code such as
 `EPSG:4326` and `IAU_2015:49900`, or the WKT when a CRS has none; `reason`;
 `automatic`), so every result made from the image carries it in its
 provenance (see [Reporting results](reporting-results.md)), and files Varda
-exports are written with the corrected CRS. Sessions keep the corrected CRS
+exports are written with the corrected CRS. If you keep the file's CRS
+instead, the finding stays, says "…; you chose to keep the file's CRS.", and
+offers the fix again; the other checks are then of the file's CRS, the one
+in use. Sessions keep the corrected CRS
 (see
 [Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
 

@@ -2,7 +2,7 @@
 its label once, check its CRS, and apply the one automatic fix as the
 image's ``crs`` override, recorded as ``extraMetadata["crsFix"]``.
 
-Qt-free; loading runs it on its worker thread (``varda.geo`` locks PROJ
+No GUI: loading runs it on its worker thread (``varda.geo`` locks PROJ
 itself), and a restored session runs it again once the session's overrides
 are back."""
 
@@ -31,7 +31,8 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
     ``image.labelHints``) and its Varda provenance. Without a ``crs``
     override, an automatic fix becomes one, with its ``crsFix`` record. An
     override that is the fix keeps the record; any other (a CRS chosen by
-    hand, or None for the file's own) drops it and is checked itself."""
+    hand, or None for the file's own) drops it, and the health is of the
+    CRS the image uses (with a declined fix offered again)."""
     if image.labelHints is None:
         image.labelHints = imageLabelHints(image)
     hints = provenanceHints(image.extraMetadata.get(PROVENANCE_KEY), image.labelHints)
@@ -46,6 +47,11 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
         chosen = overrides.get("crs")
         if chosen is not None:
             health = checkCrs(chosen, *size, hints)
+            # a record from the file (an exported corrected image) no longer
+            # applies to a CRS chosen since
+            kept = metadata.get(CRS_FIX_KEY)
+            if isinstance(kept, dict) and not sameCrs(chosen, str(kept.get("to"))):
+                metadata.pop(CRS_FIX_KEY)
     elif "crs" not in overrides or _isFix(overrides["crs"], health):
         if "crs" not in overrides:
             fixed = next(i.fix for i in health.issues if i.fix and i.fix.automatic)
@@ -53,8 +59,11 @@ def checkImageCrs(image: VardaRaster) -> CrsHealth:
         metadata[CRS_FIX_KEY] = record
     else:  # the user's choice: the fix's record no longer applies
         metadata.pop(CRS_FIX_KEY, None)
-        if overrides["crs"] is not None:
-            health = checkCrs(overrides["crs"], *size, hints)
+        chosen = overrides["crs"]
+        if chosen is None:  # the file's own, the fix declined: offered again
+            health = checkCrs(declared, *size, hints, applyFix=False)
+        else:
+            health = checkCrs(chosen, *size, hints)
     image.crsHealth = health
     return health
 

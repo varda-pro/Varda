@@ -234,3 +234,15 @@ def test_a_session_without_a_crs_keeps_the_automatic_fix(qtbot, tmp_path):
     _restore(qtbot, state, fixed)
     assert fixed.crs is not None and sameCrs(fixed.crs, "IAU_2015:49900")
     assert fixed.name == "x"
+
+
+def test_a_session_crs_proj_cant_read_falls_back_to_the_loaded_one(qtbot, tmp_path):
+    fixed = loadRaster(str(writeWgs84(tmp_path)))
+    state = SessionState(
+        (fixed.filePath,),
+        (),
+        {fixed.filePath: {"name": "x", "overrides": {"crs": "NOT A CRS"}}},
+    )
+    _restore(qtbot, state, fixed)  # finishes
+    assert fixed.crs is not None and sameCrs(fixed.crs, "IAU_2015:49900")
+    assert fixed.name == "x"

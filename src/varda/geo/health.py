@@ -16,7 +16,7 @@ from affine import Affine
 from attrs import frozen
 from pyproj import CRS
 
-from varda.geo.bodies import BodyMatch, bodyNamed, identifyBody
+from varda.geo.bodies import BodyMatch, bodyNamed, identifyBody, isNonBodyTarget
 from varda.geo.describe import CrsDescription, describeCrs
 from varda.geo.distortion import DistortionSummary, distortionOver
 from varda.geo.labels import LabelHints
@@ -71,15 +71,18 @@ def checkCrs(
     height: int,
     hints: LabelHints = _NO_LABEL,
     rawCrsText: str | None = None,
+    applyFix: bool = True,
 ) -> CrsHealth:
     """What is wrong or worth knowing about an image's ``crs`` (with its
     ``transform`` and size), given what its label says (``hints``) and the
     CRS text its file had when Varda couldn't read it (``rawCrsText``).
 
-    When the automatic fix applies, the convention and distortion checks
-    are of the fixed CRS, the one Varda uses. Never raises."""
+    When the automatic fix applies, the body, convention and distortion
+    checks are of the fixed CRS, the one Varda uses. With ``applyFix``
+    False (the user kept the file's CRS) they are of ``crs``, and the fix
+    is offered instead (not automatic). Never raises."""
     try:
-        return _check(crs, transform, width, height, hints, rawCrsText)
+        return _check(crs, transform, width, height, hints, rawCrsText, applyFix)
     except Exception as error:  # a CRS PROJ chokes on in an unexpected way
         description = attrs.evolve(
             describeCrs(None), kind="unreadable", projection=str(error)
@@ -100,6 +103,7 @@ def _check(
     height: int,
     hints: LabelHints,
     rawCrsText: str | None,
+    applyFix: bool,
 ) -> CrsHealth:
     description = describeCrs(crs, transform, width, height)
     own = identifyBody(crs)
@@ -109,7 +113,7 @@ def _check(
         return CrsHealth(description, body, (issue,) if issue else (), None)
     issues: list[CrsIssue] = []
     effective, used = crs, description
-    earth = _earthOnBody(crs, description, own, hints)
+    earth = _earthOnBody(crs, description, own, hints, applyFix)
     if earth is not None:
         issues.append(earth)
         if earth.fix is not None and earth.fix.automatic:
@@ -170,18 +174,24 @@ def _earthOnBody(
     description: CrsDescription,
     own: BodyMatch,
     hints: LabelHints,
+    applyFix: bool,
 ) -> CrsIssue | None:
-    """An Earth CRS on an image whose label names another body Varda knows:
-    fixed automatically when the CRS is just degrees. A target Varda doesn't
-    know (SKY, CALIBRATION, N/A, or a body it has no sizes for) is no
-    evidence, so it's ignored."""
-    body = bodyNamed(hints.target) if hints.target else None
-    if own.body is None or own.body.name != "Earth" or body is None:
+    """An Earth CRS on an image whose label names another body: fixed
+    automatically when the CRS is just degrees and Varda knows the body
+    (offered instead when ``applyFix`` is False: the user kept it). A
+    target that names no body (SKY, CALIBRATION, N/A; ``NON_BODY_TARGETS``)
+    is no evidence, so it's ignored."""
+    target = hints.target
+    if own.body is None or own.body.name != "Earth" or not target:
         return None
-    if body.name == "Earth":
+    if isNonBodyTarget(target):
         return None
-    message = f"Its CRS says Earth, but its label says {body.name}."
-    if description.kind != "geographic":
+    body = bodyNamed(target)
+    if body is not None and body.name == "Earth":
+        return None
+    name = body.name if body is not None else target.title()
+    message = f"Its CRS says Earth, but its label says {name}."
+    if description.kind != "geographic" or body is None:
         return CrsIssue("earth-crs-on-body", Severity.PROBLEM, message, SET_CRS)
     with PROJ_LOCK:
         parsed = CRS.from_user_input(crs)
@@ -195,12 +205,14 @@ def _earthOnBody(
             f"Its CRS says Earth ({name}) but its label's target is {body.name}; "
             f"read as degrees on the IAU 2015 {body.name} sphere"
         ),
-        automatic=True,
+        automatic=applyFix,
     )
-    suggestion = (
-        f"Varda reads it as degrees on the IAU 2015 {body.name} sphere; "
-        f"{SET_CRS} to use another"
-    )
+    sphere = f"degrees on the IAU 2015 {body.name} sphere"
+    if applyFix:
+        suggestion = f"Varda reads it as {sphere}; {SET_CRS} to use another"
+    else:
+        message = f"{message.removesuffix('.')}; you chose to keep the file's CRS."
+        suggestion = f"Apply to read it as {sphere}, or {SET_CRS}"
     return CrsIssue("earth-crs-on-body", Severity.PROBLEM, message, suggestion, fix)
 
 

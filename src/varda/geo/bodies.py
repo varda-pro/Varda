@@ -147,6 +147,23 @@ def latitudeType(crs: CRS) -> str:
     return "planetographic"
 
 
+# Label targets that name no body: calibration and sky observations, and
+# placeholders. Compared ignoring case, spaces and underscores
+NON_BODY_TARGETS = frozenset(
+    {
+        "SKY", "N/A", "NA", "NONE", "NULL", "UNK", "UNKNOWN", "CALIBRATION",
+        "CAL", "CALIBRATION TARGET", "DARK", "DARK CURRENT", "FLAT", "FLAT FIELD",
+        "STAR", "STARS", "SPACE", "DEEP SPACE", "BIAS", "TEST",
+    }
+)  # fmt: skip
+
+
+def isNonBodyTarget(name: str) -> bool:
+    """Whether a label's target ``name`` names no body (``NON_BODY_TARGETS``),
+    e.g. "SKY", "n/a" or "Calibration"."""
+    return " ".join(name.replace("_", " ").split()).upper() in NON_BODY_TARGETS
+
+
 def bodyNamed(name: str) -> Body | None:
     """The body called ``name``, ignoring case, IAU and ESRI decorations
     ("Mars (2015) - Sphere", "D_MARS", "GCS_Mars_2000") and aliases ("Luna")."""
