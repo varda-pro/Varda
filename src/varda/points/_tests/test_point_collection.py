@@ -158,3 +158,13 @@ def test_a_point_from_a_sphere_keeps_its_planetocentric_place_on_an_ellipsoid():
     latC = math.degrees(math.atan((c / a) ** 2 * math.tan(math.radians(geometry.y))))
     assert latC == pytest.approx(45.0, abs=1e-9)
     assert (-geometry.x) % 360 == pytest.approx(77.5, abs=1e-9)
+
+
+def test_removing_the_last_point_forgets_the_crs():
+    points = PointCollection()
+    points.removePoint(points.addPixel(_georeferenced(), 3, 4))
+    assert points.crs is None
+    points.addPixel(_plain(), 3, 4)
+    with pytest.raises(ValueError, match="geo is georeferenced; the points are in"):
+        points.addPixel(_georeferenced(), 3, 4)
+    assert (len(points), points.crs) == (1, None)

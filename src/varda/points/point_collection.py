@@ -43,9 +43,10 @@ class VardaPoint:
 
 class PointCollection:
     """Points in insertion order; the CRS is that of the first georeferenced
-    image a point was saved from, and points from images on other CRSs (of
-    the same body) are converted to it. Points of images without
-    georeferencing (pixel coordinates) can't join them, nor the reverse."""
+    image a point was saved from (forgotten when the last point is removed),
+    and points from images on other CRSs (of the same body) are converted
+    to it. Points of images without georeferencing (pixel coordinates)
+    can't join them, nor the reverse."""
 
     sigPointAdded = Signal(int)
     sigPointRemoved = Signal(int)
@@ -126,6 +127,8 @@ class PointCollection:
 
     def removePoint(self, fid: int) -> None:
         del self._points[fid]
+        if not self._points:
+            self.crs = None  # the next point sets it again
         self.sigPointRemoved.emit(fid)
         self.sigCollectionChanged.emit()
 
