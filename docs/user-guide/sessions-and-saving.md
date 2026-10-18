@@ -14,8 +14,9 @@ Every workspace's panels can be collapsed out of the way. Click the pin
 button on a panel's title bar to collapse it to a tab on the edge of the
 workspace; click that tab to slide the panel back out, and click the pin again
 to put it back where it was. Collapsing the panels you aren't using leaves more
-room for the images and plots. The CRISM Ratio workspace starts with its ROI
-and Points managers collapsed.
+room for the images and plots. The CRISM Ratio workspace starts with most of
+its panels collapsed (the ROI and Points managers, ROI Plots, and each view's
+render settings and histogram), leaving the two images and the ratio plots.
 
 ## Sessions
 
