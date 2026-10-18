@@ -10,8 +10,8 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 
-from varda.geo.bodies import BODIES
 from varda.common.entities import VardaRaster
+from varda.geo.bodies import BODIES
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.terrain.scene import (
     FILL_METHOD,

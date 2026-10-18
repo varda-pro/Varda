@@ -278,6 +278,12 @@ def test_vesta_footprints_are_on_vesta_not_earth(tmp_path, monkeypatch):
     assert collection.body == "Vesta"
 
 
+def test_geographic_footprints_on_an_unknown_body_have_no_body(tmp_path, monkeypatch):
+    unknown = "+proj=longlat +R=100000 +no_defs"
+    (collection,) = _footprints(tmp_path, monkeypatch, unknown, "x").collections()
+    assert collection.body == ""
+
+
 def test_footprints_on_an_unknown_body_say_so(tmp_path, monkeypatch):
     catalog = _footprints(
         tmp_path, monkeypatch, "+proj=eqc +R=100000 +units=m +no_defs", "unknown"

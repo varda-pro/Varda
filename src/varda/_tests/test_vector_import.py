@@ -29,6 +29,7 @@ from varda.rois.roi_collection import ROICollection
 from varda import vector_import
 from varda.utilities.proj_lock import PROJ_LOCK
 from varda.vector_import import (
+    bodyLabel,
     Coordinates,
     ImportOptions,
     Target,
@@ -666,6 +667,53 @@ def test_earth_degrees_on_mars_are_an_explicit_choice(tmp_path):
             ImportOptions(Coordinates.OTHER, otherCrs=CRS.from_epsg(4326)),
             Target.POINTS,
         )
+
+
+# A sphere of 3000 km: within 1 % of no known body's radii
+UNKNOWN_EQC = CRS.from_user_input("+proj=eqc +R=3000000 +units=m +no_defs")
+
+
+def _unknownBodyImage() -> VardaRaster:
+    """100 × 100 pixels of 100 m, centered on 0° N 0° E of an unknown body."""
+    source = ArrayDataSource(
+        np.zeros((100, 100, 1)),
+        transform=Affine(100.0, 0.0, -5000.0, 0.0, -100.0, 5000.0),
+        crs=UNKNOWN_EQC,
+    )
+    return VardaRaster(source, name="unknown")
+
+
+def test_wgs84_geojson_on_an_unknown_body_is_degrees_on_that_body(tmp_path):
+    # an unknown body is not Earth: GeoJSON's WGS 84 means the image's degrees
+    image = _unknownBodyImage()
+    radius = 3000000.0
+    x, y = radius * np.radians(0.02), radius * np.radians(-0.01)
+    path = tmp_path / "unknown.geojson"
+    gpd.GeoDataFrame(
+        {"name": ["site"]}, geometry=[Point(0.02, -0.01)], crs=4326
+    ).to_file(path)
+    source = readVectorFile(path)
+    options = defaultOptions(source, image, Target.POINTS)
+    assert options.coordinates is Coordinates.BODY
+
+    plan = planImport(source, image, options, Target.POINTS)
+
+    expected = image.geoToImage([[x, y]])[0]
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx(tuple(expected), abs=1e-6)
+    assert any("on the image's body" in n for n in plan.notes)
+    assert bodyLabel(image.crs) == "the image's body"
+
+
+def test_earth_degrees_on_an_unknown_body_are_refused_with_the_hint(tmp_path):
+    image = _unknownBodyImage()
+    source = readVectorFile(_lonLatFile(tmp_path, [0.01]))
+    with pytest.raises(
+        VectorImportError, match="on Earth and the image is of an unknown body"
+    ):
+        planImport(source, image, ImportOptions(Coordinates.FILE), Target.POINTS)
+    with pytest.raises(VectorImportError, match="Degrees on the image's body"):
+        planImport(source, image, ImportOptions(Coordinates.FILE), Target.POINTS)
 
 
 # --- Smaller things ------------------------------------------------------------------------

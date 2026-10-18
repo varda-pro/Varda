@@ -26,9 +26,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from varda.geo.bodies import bodyNamed
 from varda.catalogs.catalog import CatalogError
 from varda.catalogs.http import fetchBytes
+from varda.geo.bodies import bodyNamed
 from varda.utilities.resources import resource_path
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north (degrees)

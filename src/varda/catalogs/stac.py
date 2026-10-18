@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import shapely
 from attrs import frozen
 
-from varda.geo.bodies import bodyNamed
 from varda.catalogs.catalog import (
     Catalog,
     CatalogProgress,
@@ -28,6 +27,7 @@ from varda.catalogs.catalog import (
 )
 from varda.catalogs.http import fetchJson
 from varda.common.parameter import FloatParameter
+from varda.geo.bodies import bodyNamed
 
 BROWSE_ROLES = {"thumbnail", "overview", "visual"}
 MAX_PROPERTY_LENGTH = 80  # longer text (WKT, JSON) isn't shown in the table

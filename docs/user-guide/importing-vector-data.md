@@ -47,8 +47,10 @@ coordinate system Varda **detected** and how.
   image's own geographic coordinate system, whatever the file says. The body
   is identified from the image's coordinate system (its `IAU_2015` code, the
   names in it, else its radius within 1 % of one body's IAU 2015 radii); an
-  image on no known body is offered **Degrees on the image's body**, and its
-  bodies are then not compared with the file's.
+  image on no known body is offered **Degrees on the image's body**. Such an
+  image is never taken as Earth: WGS 84 degrees default to degrees on the
+  image's body, read in its own geographic coordinate system (its sphere or
+  ellipsoid), and **The file's coordinate system** is refused for them.
 - **The image's map coordinates**: the coordinates are already in the image's
   coordinate system; no reprojection, only the geotransform.
 - **Image pixels (column, row)**: x is the column and y the row, 0-based, with

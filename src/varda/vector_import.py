@@ -453,12 +453,8 @@ def _defaultCoordinates(source: VectorSource, image: VardaRaster) -> Coordinates
         return Coordinates.PIXELS if crs is None or geojsonDegrees else Coordinates.FILE
     if crs is not None:
         with PROJ_LOCK:
-            imageBody = _body(image.crs)
-            otherBody = (
-                _isEarthDegrees(crs)
-                and imageBody is not None
-                and not _isEarth(imageBody)
-            )
+            # an unknown body is not Earth: identifyBody always knows Earth
+            otherBody = _isEarthDegrees(crs) and not _isEarth(_body(image.crs))
         return Coordinates.BODY if otherBody else Coordinates.FILE
     west, south, east, north = source.frame.total_bounds
     fits = (
@@ -639,17 +635,23 @@ def _pixelMapping(
         else:
             sourceCrs = source.crs
         sourceBody = _body(sourceCrs)
-        # bodies are compared only when both are known
-        if sourceBody is not None and imageBody is not None and sourceBody != imageBody:
+        # two unknown bodies can't be told apart; Earth is never unknown
+        if sourceBody != imageBody and (
+            None not in (sourceBody, imageBody)
+            or _isEarth(sourceBody)
+            or _isEarth(imageBody)
+        ):
             hint = (
                 f"GeoJSON always says WGS 84: choose “Degrees on {body}” if they "
                 f"are degrees on {body}."
                 if _isEarthDegrees(sourceCrs)
                 else "Choose the coordinate system the file is in."
             )
+            fileOn = sourceBody.name if sourceBody else "an unknown body"
+            imageOf = imageBody.name if imageBody else "an unknown body"
             raise VectorImportError(
-                f"The file's coordinates are on {sourceBody.name} and the image is of "
-                f"{body}. {hint}"
+                f"The file's coordinates are on {fileOn} and the image is of "
+                f"{imageOf}. {hint}"
             )
         center, projector = None, None
         target = imageCrs

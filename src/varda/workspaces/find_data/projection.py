@@ -12,8 +12,8 @@ import numpy as np
 import shapely
 from pyproj import Transformer
 
-from varda.geo.bodies import BODIES, bodyNamed
 from varda.common.parameter import LabeledEnum
+from varda.geo.bodies import BODIES, bodyNamed
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north (or x, y)
 WHOLE: Bounds = (-180.0, -90.0, 180.0, 90.0)
