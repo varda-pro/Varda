@@ -530,16 +530,25 @@ def test_a_bad_dock_layout_in_a_session_is_ignored(qtbot, pixelPair):
     assert copy.plots.spectraPlot.height() > copy.plots.spectraPlot.width()
 
 
-def test_the_tool_hint_fits_its_view_on_a_laptop(qtbot, mapPair):
-    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)  # hints shown
+def test_no_hint_covers_the_images_and_messages_fit_their_view(qtbot, mapPair):
+    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
     workspace.showNormal()
-    workspace.resize(1280, 800)  # and the views narrowed after
+    workspace.resize(1280, 800)  # the views narrowed after the tools started
     qtbot.waitExposed(workspace)
     qtbot.wait(50)
-    for index, view in enumerate((workspace.browseView, workspace.dataView)):
-        overlay = tool(workspace, index)._textOverlay
-        assert isinstance(overlay, PyqtgraphTextOverlay)
-        assert overlay._item.textItem.boundingRect().width() <= view.width()
+    # the clicks and keys are behind "?", not over the images
+    for index in (0, 1):
+        assert tool(workspace, index)._textOverlay is None
+    # a message (here a denominator without a numerator) is in the view's
+    # corner, whole
+    tool(workspace).onPointerEvent(press(RIGHT, 9.5, 8.5))
+    overlay = tool(workspace)._textOverlay
+    assert isinstance(overlay, PyqtgraphTextOverlay)
+    item, viewBox = overlay._item, workspace.browseView._vb
+    text = item.mapRectToScene(
+        item.textItem.mapRectToParent(item.textItem.boundingRect())
+    )
+    assert viewBox.sceneBoundingRect().contains(text)
 
 
 def _pair_on_map(workspace):

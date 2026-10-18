@@ -511,6 +511,9 @@ class CrismRatioWorkspace(QMainWindow):
     def _onToolActivated(self, index: int, tool: object) -> None:
         if not isinstance(tool, RatioExplorerTool):
             return
+        # the clicks and keys are behind "?": no hint over the images (the
+        # tool's later messages, such as a refused click, still show)
+        tool.hideText()
         self.controller.bindTool(tool, self.data)
         if index == 0:  # the browse view: its clicks and boxes go through the link
             tool.setClickMapper(self._browseToData)
