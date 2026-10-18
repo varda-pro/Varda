@@ -325,6 +325,56 @@ def test_a_new_numerator_leaves_the_denominator_when_the_lock_is_off(
     )
 
 
+def test_an_unreachable_row_keeps_the_denominator_and_says_so(setup, monkeypatch):
+    tool, _ctrl = _lockedColumns(setup, monkeypatch)
+    # the numerator's observation segment (0) covers rows 0-19 only
+    segment = np.repeat(np.array([0.0, 1.0]), 20)[:, None] * np.ones((1, 40))
+    geometry = ColumnGeometry(
+        ir_sample=np.tile(np.arange(40.0) // 10, (40, 1)), segment_id=segment
+    )
+    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: geometry)
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 31.0, 5.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 30.0))
+    before = tool.selection.denominator.copy()
+    shown = []
+    monkeypatch.setattr(tool, "showText", lambda text, timeout=None: shown.append(text))
+
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 3.0, 5.0))
+
+    np.testing.assert_array_equal(tool.selection.denominator, before)
+    assert len(shown) == 1 and "left in place" in shown[0]
+
+
+def test_without_a_geometry_file_the_denominator_stays_and_it_says_so(
+    setup, monkeypatch
+):
+    tool, _ctrl = _lockedColumns(setup, monkeypatch)
+    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", lambda _path: None)
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
+    before = tool.selection.denominator.copy()
+    shown = []
+    monkeypatch.setattr(tool, "showText", lambda text, timeout=None: shown.append(text))
+
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 3.0, 21.0))
+
+    np.testing.assert_array_equal(tool.selection.denominator, before)
+    assert len(shown) == 1
+
+
+def test_following_with_an_even_box_does_not_drift(setup, monkeypatch):
+    tool, ctrl = _lockedColumns(setup, monkeypatch)
+    ctrl.config.boxWidth.set(4)
+    ctrl.config.boxHeight.set(4)
+    tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+    tool.onPointerEvent(_press(Qt.MouseButton.RightButton, 31.0, 5.0))
+    first = None
+    for _ in range(4):
+        tool.onPointerEvent(_press(Qt.MouseButton.LeftButton, 11.0, 21.0))
+        first = tool.selection.denominator if first is None else first
+        np.testing.assert_array_equal(tool.selection.denominator, first)
+
+
 def _center(polygon):
     return ratio_explorer._centerPixel(polygon)
 

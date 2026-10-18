@@ -150,7 +150,9 @@ class RatioExplorerController(QObject):
             lambda: (int(self.config.boxWidth.value), int(self.config.boxHeight.value))
         )
         tool.setDenominatorPlacer(functools.partial(self._placeDenominator, image))
-        tool.setDenominatorFollower(functools.partial(self._followNumerator, image))
+        tool.setDenominatorFollower(
+            functools.partial(self._followNumerator, tool, image)
+        )
         tool.sigSelectionChanged.connect(functools.partial(self._onSelection, image))
         tool.sigSelectionChanged.connect(
             functools.partial(self._mirrorSelection, tool.viewport)
@@ -218,30 +220,52 @@ class RatioExplorerController(QObject):
         )
         self._roiManager.setDenominator(denominatorFid)
 
+    def _lockedBox(
+        self, image: VardaRaster, numerator: np.ndarray, row: int, col: int
+    ) -> np.ndarray | None:
+        """The numerator's box moved onto the clicked row in its own sensor
+        column, or None when the lock is off or can't be satisfied (no geometry
+        file, or the column's strip doesn't reach that row)."""
+        if not self._roiManager.lockColumn or not image.filePath:
+            return None
+        geometry = loadColumnGeometry(image.filePath)
+        if geometry is None:
+            return None
+        shift = computeColumnLockedTranslation(
+            numerator, clickRow=row, clickCol=col, geometry=geometry
+        )
+        return None if shift is None else numerator + np.array(shift)
+
     def _placeDenominator(
         self, image: VardaRaster, numerator: np.ndarray, row: int, col: int
     ) -> np.ndarray:
         """Same-size box at the click; on the numerator's sensor column if locked."""
-        fallback = boxPolygonPixels(col, row, *boxSize(numerator))
-        if not self._roiManager.lockColumn or not image.filePath:
-            return fallback
-        geometry = loadColumnGeometry(image.filePath)
-        if geometry is None:
-            return fallback
-        shift = computeColumnLockedTranslation(
-            numerator, clickRow=row, clickCol=col, geometry=geometry
-        )
-        return fallback if shift is None else numerator + np.array(shift)
+        locked = self._lockedBox(image, numerator, row, col)
+        if locked is not None:
+            return locked
+        return boxPolygonPixels(col, row, *boxSize(numerator))
 
     def _followNumerator(
-        self, image: VardaRaster, numerator: np.ndarray, denominator: np.ndarray
+        self,
+        tool: RatioExplorerTool,
+        image: VardaRaster,
+        numerator: np.ndarray,
+        denominator: np.ndarray,
     ) -> np.ndarray | None:
         """With column lock on, the denominator moves into the new numerator's
-        column, keeping its row (and the numerator's size)."""
+        column, keeping its row. Where the lock can't be satisfied it stays put,
+        and the status text says so."""
         if not self._roiManager.lockColumn:
             return None
         col, row = _centerPixel(denominator)
-        return self._placeDenominator(image, numerator, row, col)
+        locked = self._lockedBox(image, numerator, row, col)
+        if locked is None:
+            tool.showText(
+                "Denominator left in place: its row has no pixels in the "
+                "numerator's sensor column (or there is no geometry file)",
+                timeout=4000,
+            )
+        return locked
 
     def _onSelection(self, image: VardaRaster, selection: RatioSelection) -> None:
         self._current = (image, selection)
