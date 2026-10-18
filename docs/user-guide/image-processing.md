@@ -193,9 +193,9 @@ muted note names each image left out and why, for example
 needs the same grid)", "(not georeferenced, can't be placed on this
 image)", "(doesn't overlap this image)" or "(3 bands; this needs 1 or 30)".
 
-**Resampled automatically** (any georeferenced image that overlaps the
-image in map space, in any map projection; an image on the same grid is
-used exactly as it is, with no resampling):
+**Resampled automatically** (any georeferenced image on the same body
+that overlaps the image in map space, in any map projection; an image on
+the same grid is used exactly as it is, with no resampling):
 
 | Input | Resampling onto the image's grid |
 | --- | --- |
@@ -213,6 +213,17 @@ the method, both pixel sizes and both coordinate systems. If you need
 another method (cubic, a mode filter, a different target grid), resample
 the input yourself first (e.g. GDAL's `gdalwarp`, or Varda's Resample) and
 choose that image: an image on the same grid is never resampled again.
+
+Two coordinate systems are the same when their geometry matches (the
+projection and its parameters, the body's radii, the prime meridian and the
+axes), whatever they're named, so the same grid written by GDAL and by the
+Ames Stereo Pipeline is one grid. An image on a different body (a mask in
+Earth's degrees over a Mars image, say) is never placed: the list says
+"Earth and Mars are different bodies". When a body is unknown and the radii
+differ, Varda can't tell and doesn't place it either. In degrees,
+longitudes 0–360 and −180–180 name the same ground: an image at 257°E
+overlaps one at −103°E, and is placed there by shifting its longitudes by
+360°, with no resampling beyond what the grids need.
 
 **Same grid only** (the same size, map projection and pixel positions):
 Image Arithmetic's second image, Band Math's other images (`i3_b1`), PCA/

@@ -15,10 +15,13 @@ from varda.common.grid import (
     onGridOf,
     pixelSizeText,
     placeableChoices,
+    placementProblem,
     resamplingRecord,
     resamplingText,
+    sameGrid,
     sameGridChoices,
 )
+from varda.geo._tests.fixtures import MARS_EQC_PDS3_WKT, WGS84
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 UTM = CRS.from_epsg(32612)
@@ -187,3 +190,45 @@ def test_pixel_size_text_of_a_local_crs():
     )
     image = _raster(np.zeros((2, 2)), "local", Affine(2.0, 0, 0, 0, -2.0, 0), local)
     assert pixelSizeText(image) == "2.0 m"
+
+
+# GDAL's PDS3 form and the IAU code of one projection: names differ, geometry not
+PDS3_EQC = CRS.from_wkt(MARS_EQC_PDS3_WKT)
+IAU_EQC = CRS.from_user_input("IAU_2015:49910")
+MARS_DEGREES = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+
+
+def test_equivalent_projections_are_one_grid():
+    data = np.zeros((4, 4))
+    assert sameGrid(
+        _raster(data, "gdal", crs=PDS3_EQC), _raster(data, "asp", crs=IAU_EQC)
+    )
+
+
+def test_images_on_different_bodies_are_never_placed():
+    earth = _raster(
+        np.zeros((4, 4)),
+        "earth",
+        Affine(0.01, 0, 10, 0, -0.01, 5),
+        CRS.from_user_input(WGS84),
+    )
+    mars = _raster(
+        np.zeros((8, 8)), "mars", Affine(0.005, 0, 10, 0, -0.005, 5), MARS_DEGREES
+    )
+    assert placementProblem(earth, mars) == "Earth and Mars are different bodies"
+
+
+def test_longitudes_0_to_360_and_minus_180_to_180_overlap():
+    values = np.arange(100, dtype=np.float32).reshape(10, 10)
+    east = _raster(values, "0-360", Affine(0.1, 0, 257.0, 0, -0.1, 5.0), MARS_DEGREES)
+    west = _raster(
+        np.zeros((10, 10)),
+        "-180-180",
+        Affine(0.1, 0, -103.0, 0, -0.1, 5.0),
+        MARS_DEGREES,
+    )
+    assert placementProblem(east, west) is None
+    assert placementProblem(west, east) is None
+    placed = onGridOf(east, west)[..., 0]
+    assert np.nansum(placed) == pytest.approx(values.sum())
+    np.testing.assert_array_equal(placed, values)

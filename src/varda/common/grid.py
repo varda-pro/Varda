@@ -21,6 +21,7 @@ from rasterio.windows import from_bounds
 
 from varda.common.entities import VardaRaster
 from varda.geo.describe import describeCrs
+from varda.geo.equivalence import Compatibility, canTransform, compatibility, sameCrs
 
 # source pixels read beyond the target's footprint, so the resampling
 # kernels at its edge have their neighbors
@@ -29,11 +30,20 @@ _MARGIN = 2
 SAME_GRID = "this needs the same grid"
 
 
+def _wkt(crs: CRS | None) -> str | None:
+    return None if crs is None else crs.to_wkt()
+
+
+def _sameCrs(a: VardaRaster, b: VardaRaster) -> bool:
+    """The same map projection, however it's written (names may differ)."""
+    return sameCrs(_wkt(a.crs), _wkt(b.crs))
+
+
 def sameGrid(a: VardaRaster, b: VardaRaster) -> bool:
     if (a.height, a.width) != (b.height, b.width):
         return False
     if a.hasGeospatialData and b.hasGeospatialData:
-        return a.crs == b.crs and a.transform.almost_equals(b.transform)
+        return _sameCrs(a, b) and a.transform.almost_equals(b.transform)
     return a.hasGeospatialData == b.hasGeospatialData
 
 
@@ -89,7 +99,10 @@ def gridDifference(image: VardaRaster, base: VardaRaster) -> str:
             if base.hasGeospatialData
             else "georeferenced, and this image isn't"
         )
-    if image.hasGeospatialData and image.crs != base.crs:
+    if image.hasGeospatialData and not _sameCrs(image, base):
+        match = compatibility(_wkt(image.crs), _wkt(base.crs))
+        if match == Compatibility.DIFFERENT_BODY:
+            return "a different body"
         return "a different map projection"
     ours, theirs = pixelSizeText(image), pixelSizeText(base)
     if ours != theirs:
@@ -133,8 +146,8 @@ def sameGridChoices(
 
 def placementProblem(image: VardaRaster, base: VardaRaster) -> str | None:
     """Why ``image`` can't be resampled onto ``base``'s grid by map location,
-    or None: on the same grid, or georeferenced (like ``base``) and
-    overlapping it."""
+    or None: on the same grid, or georeferenced (like ``base``), on the same
+    body and overlapping it (longitudes 0–360 and −180–180 overlap)."""
     if sameGrid(image, base):
         return None
     if not base.hasGeospatialData:
@@ -144,12 +157,14 @@ def placementProblem(image: VardaRaster, base: VardaRaster) -> str | None:
         )
     if not image.hasGeospatialData:
         return "not georeferenced, can't be placed on this image"
+    reason = canTransform(_wkt(image.crs), _wkt(base.crs))
+    if reason is not None:
+        return reason
     try:
-        west, south, east, north = _footprintIn(base, image.crs)
+        shift = _longitudeShift(image, base)
     except (RasterioError, ValueError):
         return "can't be reprojected to this image's map projection"
-    left, bottom, right, top = _bounds(image)
-    if west >= right or east <= left or south >= top or north <= bottom:
+    if shift is None:
         return "doesn't overlap this image"
     return None
 
@@ -190,9 +205,25 @@ def _footprintIn(
 ) -> tuple[float, float, float, float]:
     """``image``'s bounds (west, south, east, north) in ``crs``."""
     bounds = _bounds(image)
-    if crs is None or crs == image.crs:
+    if crs is None or sameCrs(_wkt(crs), _wkt(image.crs)):
         return bounds
     return transform_bounds(image.crs, crs, *bounds, densify_pts=21)
+
+
+def _longitudeShift(source: VardaRaster, target: VardaRaster) -> float | None:
+    """The degrees (0, 360 or −360) that put ``target``'s footprint, in
+    ``source``'s map projection, over ``source``: longitudes 0–360 and
+    −180–180 name the same ground. 0 for a projected ``source``; None when
+    they don't overlap."""
+    west, south, east, north = _footprintIn(target, source.crs)
+    left, bottom, right, top = _bounds(source)
+    if south >= top or north <= bottom:
+        return None
+    geographic = describeCrs(_wkt(source.crs)).units == "°"
+    for shift in (0.0, 360.0, -360.0) if geographic else (0.0,):
+        if west + shift < right and east + shift > left:
+            return shift
+    return None
 
 
 def sourcePixelSize(source: VardaRaster, target: VardaRaster) -> float:
@@ -236,11 +267,13 @@ def _readFloat(
     return data
 
 
-def _sourceWindow(source: VardaRaster, target: VardaRaster) -> PixelWindow | None:
+def _sourceWindow(
+    source: VardaRaster, target: VardaRaster, shift: float
+) -> PixelWindow | None:
     """The part of ``source`` under ``target`` (plus a margin), or None when
-    they don't overlap."""
+    they don't overlap; ``shift`` is ``_longitudeShift``'s."""
     west, south, east, north = _footprintIn(target, source.crs)
-    window = from_bounds(west, south, east, north, source.transform)
+    window = from_bounds(west + shift, south, east + shift, north, source.transform)
     col0 = max(int(np.floor(min(window.col_off, window.col_off + window.width))), 0)
     row0 = max(int(np.floor(min(window.row_off, window.row_off + window.height))), 0)
     col1 = int(np.ceil(max(window.col_off, window.col_off + window.width)))
@@ -259,7 +292,7 @@ def readPixels(source: VardaRaster, target: VardaRaster) -> int:
     grid or when it can't be placed."""
     if sameGrid(source, target) or placementProblem(source, target) is not None:
         return 0
-    window = _sourceWindow(source, target)
+    window = _sourceWindow(source, target, _longitudeShift(source, target) or 0.0)
     return 0 if window is None else window[2] * window[3]
 
 
@@ -284,14 +317,17 @@ def onGridOf(
         )
     count = source.bandCount if bands is None else len(bands)
     out = np.full((count, target.height, target.width), np.nan)
-    window = _sourceWindow(source, target)
+    shift = _longitudeShift(source, target) or 0.0
+    window = _sourceWindow(source, target, shift)
     if window is None:
         return out.transpose(1, 2, 0)
     data = _readFloat(source, bands, window).transpose(2, 0, 1)
+    # the source's longitudes, written in the target's convention
+    sourceTransform = Affine.translation(-shift, 0.0) * source.transform
     reproject(
         source=np.ascontiguousarray(data),
         destination=out,
-        src_transform=source.transform * Affine.translation(window[1], window[0]),
+        src_transform=sourceTransform * Affine.translation(window[1], window[0]),
         src_crs=source.crs,
         src_nodata=np.nan,
         dst_transform=target.transform,
@@ -310,7 +346,7 @@ def resamplingText(
     the same grid."""
     if sameGrid(source, target):
         return ""
-    how = "reprojected and resampled" if source.crs != target.crs else "resampled"
+    how = "resampled" if _sameCrs(source, target) else "reprojected and resampled"
     return (
         f"{source.name} {how} from {pixelSizeText(source)} to "
         f"{pixelSizeText(target)} pixels ({resampling.name})"

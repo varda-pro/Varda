@@ -104,6 +104,15 @@ can alter results.
   and longitude on a sphere don't depend on its radius, so footprints don't
   move. Degrees placed on a Terrain DEM are read in the DEM's own geographic
   coordinate system.
+- **Mosaic refused images in the same projection written differently (e.g.
+  by GDAL and ASP).** Mosaics, masks, DEMs and 3D Terrain overlays now
+  treat two coordinate systems as one when their geometry matches (the
+  projection, its parameters, the body's radii, the prime meridian and the
+  axes), whatever they're named, so such images share a grid and aren't
+  resampled. An image on a different body (a mask in Earth's degrees over a
+  Mars image, say) is never placed on another, and degree images with
+  longitudes 0–360 and −180–180 now overlap where they cover the same
+  ground. A mosaic's projection error names both projections.
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never

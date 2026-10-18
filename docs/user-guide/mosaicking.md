@@ -6,6 +6,15 @@ two or more images with the same bands and map projection: spectral cubes
 resampled until you export, so you can reorder and realign the images as
 often as you like.
 
+"The same map projection" means the same geometry, not the same text: the
+projection and its parameters, the body's radii, the prime meridian and the
+axes match (angles to 1e-9°, lengths to 1e-6 m, radii to 1e-3 m), whatever
+the coordinate systems are named. A Mars equirectangular written by GDAL
+(`D_MARS`) and the same projection written by the Ames Stereo Pipeline
+(`IAU_2015:49910`) are one projection, and their pixels are used as they
+are. Images in different projections are refused with a message that names
+both; reproject one to the other first.
+
 The workspace has three panels:
 
 - **Images** lists the inputs in priority order. Where images overlap, the
