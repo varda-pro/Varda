@@ -261,6 +261,11 @@ def test_the_session_keeps_the_link_box_size_lock_and_check(
     }
 
 
+def test_a_session_with_an_unknown_link_is_skipped_not_raised(qtbot, pixelPair):
+    images = list(pixelPair)
+    assert buildWorkspace("crism_ratio", images, images, {"link": "BOGUS"}) is None
+
+
 def test_a_link_problem_is_shown_across_the_top(qtbot):
     browse = raster("browse", (15, 20), georeferenced=False)
     data = raster("data", (30, 40))

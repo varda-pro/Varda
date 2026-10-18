@@ -2,6 +2,8 @@
 or the same place on the map (across map projections too); spectra read
 there with no-data and bad bands left out."""
 
+import warnings
+
 import numpy as np
 from affine import Affine
 from pyproj import CRS
@@ -54,6 +56,16 @@ def test_by_map_location_across_map_projections():
     _, there = linkedPoints([projected, lonlat], 0, [[10, 10]], Link.MAP)
     # 1000 m east and south of (0, 0) is 1000 / degree degrees
     np.testing.assert_allclose(there, [[1000 / degree / 0.01] * 2], rtol=1e-6)
+
+
+def test_one_point_across_map_projections_raises_no_numpy_deprecation():
+    geographic = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+    projected = _image(Affine(100, 0, 0, 0, -100, 0))
+    lonlat = _image(Affine(0.01, 0, 0, 0, -0.01, 0), crs=geographic, name="ll")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        _, there = linkedPoints([projected, lonlat], 0, [[10, 10]], Link.MAP)
+    assert there.shape == (1, 2)
 
 
 def test_images_without_georeferencing_fall_back_to_the_pixel():

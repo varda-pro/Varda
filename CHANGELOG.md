@@ -229,6 +229,12 @@ can alter results.
 
 ### Fixed
 
+- **Map links no longer trip a NumPy deprecation** when one point is mapped
+  across map projections (every Map-link click in the CRISM Ratio and Linked
+  Images workspaces), which a future NumPy would turn into an error.
+- **A session with an unknown link mode** in a Linked Images or CRISM Ratio
+  workspace now skips that workspace with a warning instead of failing to
+  open.
 - **Ratio Explorer, column lock:** placing a new numerator now moves the
   existing denominator into the new numerator's detector column (keeping its
   row and box size), where before only a denominator click was snapped.
