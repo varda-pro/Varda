@@ -16,7 +16,11 @@ can alter results.
   linked by pixel or map location. Ctrl/⌘-click a numerator and a
   denominator box to plot the numerator, denominator and ratio spectra
   (always measured on the I/F cube), with a blandness readout for the
-  denominator (Generic or a target preset, limits editable). The
+  denominator: for Generic or a target preset, every wavelength window's
+  deepest continuum-removed dip (how deep, and where), its noise-aware
+  limit and its slope, with failing windows shaded and their dips marked
+  on the Denominator plot (floor, k, slope and the CO₂ exclusion
+  editable). The
   denominator follows the numerator along its sensor column, and says so
   when it can't. S saves the pair as ROIs and P the numerator pixel as a
   point, named with the verdict and described with every check's value and
@@ -33,8 +37,12 @@ can alter results.
   an unprojected cube such as a TRR3, from its own image columns (recorded),
   so the result can replace the
   I/F cube in other software. The denominator is the mean of the whole
-  column or of its bland pixels (a Generic check or a target preset), tested
-  on runs of neighbors within the column, with recorded fallbacks to
+  column or of its bland pixels, tested on runs of neighbors within the
+  column: no window of the chosen check (Generic or a target preset, after
+  Viviano-Beck et al. 2014) may have a continuum-removed dip deeper than
+  both a floor and k × the spectrum's own noise, or too steep a slope, with
+  the CO₂ residual, the detector join and everything past 2650 nm left out
+  (defaults calibrated on a real MTRDR scene and recorded with the cube), with recorded fallbacks to
   neighboring columns or the whole column. It adds a second image of the
   pixels used and counts, and records each column's spectrum and standard
   deviation, per-band valid counts, the distinct sensor pixels and an
