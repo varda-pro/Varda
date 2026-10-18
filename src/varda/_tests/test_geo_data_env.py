@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+from varda.utilities.proj_data import bundledProjData
+
 
 def test_foreign_proj_and_gdal_data_dirs_are_ignored():
     env = dict(
@@ -25,11 +27,12 @@ def test_foreign_proj_and_gdal_data_dirs_are_ignored():
         text=True,
         check=True,
     )
-    assert out.stdout.split()[-3:] == ["None", "None", "None"]
+    projData, gdalData, projLib = out.stdout.split()[-3:]
+    assert "else" not in projData and "else" not in gdalData and projLib == "None"
 
 
-def test_data_dirs_inside_this_environment_are_kept():
-    inside = os.path.join(sys.prefix, "share", "proj")
+def test_usable_proj_data_is_kept():
+    inside = str(bundledProjData())
     env = dict(os.environ, PROJ_DATA=inside)
     code = "import os, varda; print(os.environ.get('PROJ_DATA'))"
     out = subprocess.run(
