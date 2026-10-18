@@ -7,6 +7,8 @@ Qt.
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Mapping
 
 import numpy as np
@@ -16,11 +18,14 @@ from varda.analysis.blandness import (
     DEFAULT_MAX_DEPTH,
     DEFAULT_MAX_SLOPE,
     PRESETS,
+    ParameterLimit,
+    Preset,
     genericBlandMask,
     presetBlandMask,
 )
 from varda.analysis.hypyrameter_adapter import (
     HYPYRAMETER_AVAILABLE,
+    computeParameterCube,
     validParameterNames,
 )
 from varda.analysis.rasters import bandMetadata, goodBands, readGoodBands
@@ -37,6 +42,7 @@ from varda.common.parameter import (
     FloatParameter,
     IntParameter,
     LabeledEnum,
+    StringParameter,
 )
 from varda.image_loading.crism_geometry import loadColumnGeometry, resolveGeometryFile
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -67,6 +73,70 @@ Blandness: type[LabeledEnum] = LabeledEnum(  # ty: ignore[invalid-assignment]
         **{f"PRESET{i}": name for i, name in enumerate(PRESETS)},
     },
 )
+
+
+# What a preset's parameter cube comes from; a test can replace it (HyPyRameter
+# is an optional extra), as presetBlandMask's own parameterCube argument.
+parameterCube = computeParameterCube
+
+_NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+_LIMIT = re.compile(rf"^\s*(\w+)\s*(?:≤|<=)\s*({_NUMBER})\s*$")
+_SLOPE = re.compile(
+    rf"^\s*slope\s*(?:≤|<=)\s*({_NUMBER})\s*(?:/\s*µm|per\s*µm)?\s*over\s*"
+    rf"({_NUMBER})\s*(?:–|-|to)\s*({_NUMBER})\s*nm\s*$",
+    re.IGNORECASE,
+)
+
+
+def formatPresetLimits(preset: Preset) -> str:
+    """A preset's limits as the editable text, e.g.
+    ``LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; slope ≤ 0.1 /µm over 1000–1700 nm``."""
+    limits = ", ".join(f"{p.name} ≤ {p.maximum:g}" for p in preset.limits)
+    low, high = preset.slopeWindowNm
+    return f"{limits}; slope ≤ {preset.maxSlope:g} /µm over {low:g}–{high:g} nm"
+
+
+def parsePresetLimits(text: str, preset: Preset) -> Preset:
+    """``preset`` with the limits written in ``text`` (the format of
+    :func:`formatPresetLimits`); ValueError says what is wrong. Every one of the
+    preset's parameters must appear once: only the numbers are edited."""
+    limitsText, separator, slopeText = text.partition(";")
+    slope = _SLOPE.match(slopeText) if separator else None
+    if slope is None:
+        raise ValueError(
+            f"Preset limits need a slope part after ';', like "
+            f"'slope ≤ 0.10 /µm over 1000–1700 nm'; got '{text.strip()}'."
+        )
+    maximum, low, high = (float(g) for g in slope.groups())
+    if not (math.isfinite(maximum) and maximum >= 0 and 0 <= low < high):
+        raise ValueError(
+            "The slope limit must be 0 or more over a window with start < end."
+        )
+    found: dict[str, float] = {}
+    for part in limitsText.split(","):
+        match = _LIMIT.match(part)
+        if match is None:
+            raise ValueError(
+                f"Preset limits: '{part.strip()}' is not like 'NAME ≤ 0.02'."
+            )
+        name, value = match.group(1), float(match.group(2))
+        if name in found or name not in {p.name for p in preset.limits}:
+            raise ValueError(
+                f"Preset limits: {name} is repeated or not a parameter of the "
+                f"{preset.name} preset ({', '.join(p.name for p in preset.limits)})."
+            )
+        if not (math.isfinite(value) and value >= 0):
+            raise ValueError(f"Preset limits: {name} must be 0 or more.")
+        found[name] = value
+    missing = [p.name for p in preset.limits if p.name not in found]
+    if missing:
+        raise ValueError(f"Preset limits are missing {', '.join(missing)}.")
+    return Preset(
+        preset.name,
+        tuple(ParameterLimit(p.name, found[p.name]) for p in preset.limits),
+        (low, high),
+        maximum,
+    )
 
 
 def _numbers(values: np.ndarray) -> list[float | None]:
@@ -172,9 +242,32 @@ class RatioCubeAnalysis(Analysis):
         "borrow bland pixels from; 0 never borrows",
     )
 
-    def _preset(self):
+    presetLimits = StringParameter(
+        "Preset Limits",
+        "",
+        "The chosen preset's maxima and slope limit, editable (refilled when "
+        "the preset changes). Maxima are the largest parameter values a bland "
+        "pixel may have",
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blandness.sigParameterChanged.connect(self._fillPresetLimits)
+
+    def _fillPresetLimits(self, _=None) -> None:
         name = self.blandness.get().value
-        return None if name == BLANDNESS_GENERIC else PRESETS[name]
+        self.presetLimits.set(
+            "" if name == BLANDNESS_GENERIC else formatPresetLimits(PRESETS[name])
+        )
+
+    def _preset(self) -> Preset | None:
+        """The chosen preset with the limits as edited (None for Generic);
+        ValueError when the text is malformed."""
+        name = self.blandness.get().value
+        if name == BLANDNESS_GENERIC:
+            return None
+        text = self.presetLimits.get().strip()
+        return parsePresetLimits(text, PRESETS[name]) if text else PRESETS[name]
 
     def _problem(self, image: VardaRaster) -> str:
         """Why this cannot run on ``image`` ("" when it can)."""
@@ -215,7 +308,10 @@ class RatioCubeAnalysis(Analysis):
         wavelengths = centers[goodBands(image)]
         if self.method.get() is RatioCubeMethod.WHOLE_COLUMN:
             return ""
-        preset = self._preset()
+        try:
+            preset = self._preset()
+        except ValueError as error:
+            return str(error)
         if preset is None:
             if wavelengths.size < MIN_BANDS:
                 return "The blandness check needs at least three good bands."
@@ -315,7 +411,7 @@ class RatioCubeAnalysis(Analysis):
             extraMetadata={**bandMetadata(image), "ratioCube": record},
             description=description,
         )
-        used = np.where(strip >= 0, use, np.nan).astype(np.float32)
+        used = np.where(strip >= 0, denominators.pooled, np.nan).astype(np.float32)
         companion = ArrayDataSource(
             np.stack([used, _perPixel(strip, column, counts)], axis=2),
             wavelengths=np.array(["Used as denominator", "Column denominator count"]),
@@ -351,7 +447,7 @@ class RatioCubeAnalysis(Analysis):
             return genericBlandMask(
                 cube, wavelengths, self.maxDepth.get(), self.maxSlope.get()
             )
-        return presetBlandMask(cube, wavelengths, preset)
+        return presetBlandMask(cube, wavelengths, preset, parameterCube)
 
     @staticmethod
     def _flagMissing(

@@ -95,6 +95,7 @@ def test_bland_only_uses_flagged_pixels():
         np.testing.assert_allclose(den.spectra[(0, c)], cube[:10, c].mean(axis=0))
         assert den.counts[(0, c)] == 10
     assert den.fallback == {}
+    np.testing.assert_array_equal(den.pooled, use)
 
 
 def test_short_columns_borrow_from_neighbors_then_whole_column():
@@ -106,10 +107,15 @@ def test_short_columns_borrow_from_neighbors_then_whole_column():
     den = columnDenominators(cube, strip, column, use, minCount=5, radius=1)
     assert den.fallback[(0, 2)] == "neighbors"
     assert den.counts[(0, 2)] >= 5
+    # column 2 pools its own 2 used pixels and the nearest borrowed ones
+    assert den.pooled[:2, 2].all() and not den.pooled[2:, 2].any()
+    assert den.pooled[:10, 1].sum() >= 3 or den.pooled[:10, 3].sum() >= 3
     den0 = columnDenominators(cube, strip, column, use, minCount=5, radius=0)
     assert den0.fallback[(0, 2)] == "whole column"
     np.testing.assert_allclose(den0.spectra[(0, 2)], cube[:, 2].mean(axis=0))
     assert den0.counts[(0, 2)] == ROWS
+    assert den0.pooled[:, 2].all()  # every pixel of the column, used or not
+    assert not den0.pooled[10:, 1].any() and den0.pooled[:10, 1].all()
 
 
 def test_no_bland_pixels_anywhere_still_completes():

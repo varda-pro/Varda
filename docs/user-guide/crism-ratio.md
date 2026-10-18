@@ -87,10 +87,18 @@ The parameters are band-depth-like indices near 0 for a featureless spectrum,
 so 1 to 2 percent is below what typically marks a detection, and a denominator
 under it adds little false structure to a ratio. The mafic presets use the
 1000–1700 nm window (the 1 µm region, before hydration features); the hydrated
-ones use 1000–2600 nm, the range the 1.9, 2.3 and 2.5 µm parameters span. Edit
-them to suit your scene: the Generic limits in the dialog, and the preset
-table in `src/varda/analysis/blandness.py`. Report any value you change. The
-dialog's Generic limits do not affect a preset.
+ones use 1000–2600 nm, the range the 1.9, 2.3 and 2.5 µm parameters span.
+
+**Edit them to suit your scene.** Choosing a preset fills **Preset Limits**
+with its maxima and slope limit as text, for example
+`OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; slope ≤ 0.1 /µm over
+1000–1700 nm`. Change the numbers (`≤` or `<=`; the slope window may be
+changed too) and the run uses what is written; the text is filled again when
+you choose another preset. Every parameter of the preset must appear once and
+no others; a malformed entry is refused with a message saying what is wrong.
+The limits actually used are recorded in the ratio cube's `thresholds`.
+Report any value you change. **Generic Maximum Depth and Slope** do not affect
+a preset, and Preset Limits does not affect Generic.
 
 ### VNIR bands
 
@@ -110,11 +118,15 @@ when the cube has such bands, and the description says so.
   the good bands used, and for every column `{strip, column, count, fallback,
   spectrum, std}`.
 - **Denominators** (`… ratio denominators`): band 1 "Used as denominator" is 1
-  where the pixel was in its column's denominator (0 where not, NaN with no
-  backplane column); band 2 "Column denominator count" is the number of pixels
-  pooled for the pixel's column (0 for *no data*). In the whole-column
-  fallback the count includes pixels of the column that have missing data;
-  the mean ignores them.
+  where the pixel was pooled into at least one column's denominator, and 0
+  otherwise (NaN with no backplane column). That is the pixel's own column's
+  bland pixels; the bland pixels another column borrowed (*neighbors*, so
+  they are 1 for that column too); or every pixel of the column in the
+  *whole column* fallback, bland or not. A column that borrowed has 0 in its
+  own pixels unless they were bland. Band 2 "Column denominator count" is the
+  number of pixels pooled for the pixel's column (0 for *no data*); in the
+  whole-column fallback it includes pixels of the column that have missing
+  data, which the mean ignores.
 
 ### Assessing uncertainty and quality
 

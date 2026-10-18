@@ -96,13 +96,17 @@ class ColumnDenominators:
     """Denominator spectra per key, with their spread, support and fallbacks.
 
     ``fallback[key]`` is ``"neighbors"`` or ``"whole column"``; absent means the
-    key had enough used pixels of its own.
+    key had enough used pixels of its own. ``pooled`` is the (rows, cols) mask
+    of pixels that went into at least one key's denominator: a key's own used
+    pixels, the used pixels it borrowed from neighbors, or every pixel of the
+    column in the whole-column fallback.
     """
 
     spectra: dict[ColumnKey, np.ndarray]
     std: dict[ColumnKey, np.ndarray]
     counts: dict[ColumnKey, int]
     fallback: dict[ColumnKey, str]
+    pooled: np.ndarray
 
 
 def columnDenominators(
@@ -130,6 +134,7 @@ def columnDenominators(
     std: dict[ColumnKey, np.ndarray] = {}
     counts: dict[ColumnKey, int] = {}
     fallback: dict[ColumnKey, str] = {}
+    pooled = np.zeros(flat.shape[0], dtype=bool)
     for key, own in used.items():
         picked, how = own, None
         if own.size < minCount:
@@ -146,6 +151,7 @@ def columnDenominators(
                 picked, how = np.concatenate(parts), NEIGHBORS
             else:
                 picked, how = groups[key], WHOLE_COLUMN
+        pooled[picked] = True
         values = flat[picked].astype(np.float64)
         with np.errstate(all="ignore"):
             good = np.isfinite(values)
@@ -157,7 +163,9 @@ def columnDenominators(
         spectra[key], std[key], counts[key] = mean, np.sqrt(var), int(picked.size)
         if how:
             fallback[key] = how
-    return ColumnDenominators(spectra, std, counts, fallback)
+    return ColumnDenominators(
+        spectra, std, counts, fallback, pooled.reshape(cube.shape[:2])
+    )
 
 
 def applyRatio(

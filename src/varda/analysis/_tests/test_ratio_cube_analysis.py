@@ -4,10 +4,13 @@ import numpy as np
 import pytest
 
 from varda.analysis import ratio_cube_analysis
+from varda.analysis.blandness import PRESETS
 from varda.analysis.ratio_cube_analysis import (
     BLANDNESS_GENERIC,
     RatioCubeAnalysis,
     RatioCubeMethod,
+    formatPresetLimits,
+    parsePresetLimits,
 )
 from varda.common.entities import VardaRaster
 from varda.image_loading.crism_geometry import ColumnGeometry
@@ -80,8 +83,49 @@ def test_the_companion_counts_match_the_record(geometry):
     assert len(record["columns"]) == COLS
     for entry in record["columns"]:
         column = entry["column"]
+        assert entry["fallback"] is None
         assert np.all(data[:, column, 1] == entry["count"])
-        assert data[:, column, 0].sum() <= entry["count"] or entry["fallback"]
+        # a column with enough bland pixels pools exactly its bland pixels
+        assert data[:, column, 0].sum() == entry["count"]
+
+
+def _absorbing(column: int) -> VardaRaster:
+    """The scene with a deep absorption in one column (never bland)."""
+    image = _scene()
+    cube = image.getData().astype(np.float64)
+    wavelengths = np.asarray(image.wavelengths)
+    cube[:, column, :] *= 1 - 0.5 * np.exp(-0.5 * ((wavelengths - 2000) / 60) ** 2)
+    source = ArrayDataSource(
+        cube.astype(np.float32),
+        wavelengths=wavelengths,
+        wavelengthUnits="nm",
+        filePath=PATH,
+    )
+    return VardaRaster(source, name="absorbing")
+
+
+def test_the_companion_mask_shows_the_pixels_borrowed_from_neighbors(geometry):
+    ratio, companion = _run(_absorbing(2))
+    data = companion.getData()
+    entry = next(
+        c for c in ratio.extraMetadata["ratioCube"]["columns"] if c["column"] == 2
+    )
+    assert entry["fallback"] == "neighbors" and entry["count"] >= 20
+    assert not data[:, 2, 0].any()  # none of column 2's own pixels were pooled
+    assert data[:, 1, 0].all()  # its neighbor's were, for column 2 and itself
+    assert np.all(data[:, 2, 1] == entry["count"])
+
+
+def test_the_companion_mask_shows_the_whole_column_fallback(geometry):
+    ratio, companion = _run(_absorbing(2), neighborRadius=0)
+    data = companion.getData()
+    entry = next(
+        c for c in ratio.extraMetadata["ratioCube"]["columns"] if c["column"] == 2
+    )
+    assert entry["fallback"] == "whole column" and entry["count"] == ROWS
+    assert data[:, 2, 0].all()  # every pixel of the column was pooled
+    assert data[:, :, 0].sum() == ROWS * COLS
+    assert np.all(data[:, 2, 1] == ROWS)
 
 
 def test_small_columns_fall_back_and_are_reported(geometry):
@@ -229,7 +273,168 @@ def test_the_record_survives_a_geotiff_round_trip(geometry, tmp_path):
     assert len(record["columns"]) == COLS
 
 
-def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch):
+# --- presets, with HyPyRameter replaced by a stand-in ------------------------
+
+
+def _olivine(analysis: RatioCubeAnalysis) -> None:
+    analysis.blandness.set(
+        next(b for b in analysis.blandness.enumType if b.value == "Olivine")
+    )
+
+
+def _fakeHypyrameter(monkeypatch) -> None:
+    """Parameter values that grow with the detector column: (c + 0.5) / 100."""
+
+    def parameters(cube, wavelengthsNm, names):
+        values = (np.arange(cube.shape[1]) + 0.5) / 100
+        return np.broadcast_to(
+            values[None, :, None], (*cube.shape[:2], len(names))
+        ).copy()
+
+    monkeypatch.setattr(ratio_cube_analysis, "HYPYRAMETER_AVAILABLE", True)
+    monkeypatch.setattr(ratio_cube_analysis, "parameterCube", parameters)
+    monkeypatch.setattr(
+        ratio_cube_analysis, "validParameterNames", lambda wavelengths: list(_ALL_NAMES)
+    )
+
+
+@pytest.fixture
+def fakeHypyrameter(monkeypatch):
+    _fakeHypyrameter(monkeypatch)
+
+
+_ALL_NAMES = {limit.name for preset in PRESETS.values() for limit in preset.limits}
+
+
+def _blandColumns(ratio: VardaRaster) -> set[int]:
+    return {
+        c["column"]
+        for c in ratio.extraMetadata["ratioCube"]["columns"]
+        if c["fallback"] is None
+    }
+
+
+def test_choosing_a_preset_fills_its_editable_limits():
+    analysis = RatioCubeAnalysis()
+    assert analysis.presetLimits.get() == ""
+    _olivine(analysis)
+    assert analysis.presetLimits.get() == (
+        "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
+        "slope ≤ 0.1 /µm over 1000–1700 nm"
+    )
+    analysis.blandness.resetToDefault()
+    assert analysis.presetLimits.get() == ""
+
+
+@pytest.mark.parametrize("preset", list(PRESETS.values()), ids=lambda p: p.name)
+def test_every_presets_text_parses_back_to_itself(preset):
+    assert parsePresetLimits(formatPresetLimits(preset), preset) == preset
+
+
+def test_a_preset_runs_end_to_end_and_records_its_limits(geometry, fakeHypyrameter):
+    analysis = RatioCubeAnalysis()
+    image = _scene()
+    analysis.prepareFor(image)
+    _olivine(analysis)
+    analysis.minimumPixels.set(1)
+    analysis.neighborRadius.set(0)
+    assert analysis.unavailableReason(image) == ""
+    ratio, companion = analysis.runAll(image, QUIET)
+    record = ratio.extraMetadata["ratioCube"]
+    assert record["blandness"] == "Olivine"
+    assert record["thresholds"] == {
+        "limits": {"OLINDEX3": 0.02, "LCPINDEX2": 0.02, "HCPINDEX2": 0.02},
+        "maxSlope": 0.1,
+        "slopeWindowNm": [1000.0, 1700.0],
+    }
+    # values 0.005 and 0.015 are under 0.02; the others fall back to the whole column
+    assert _blandColumns(ratio) == {0, 1}
+    assert "Olivine" in ratio.description
+
+
+def test_edited_preset_limits_change_which_pixels_are_bland(geometry, fakeHypyrameter):
+    analysis = RatioCubeAnalysis()
+    image = _scene()
+    analysis.prepareFor(image)
+    _olivine(analysis)
+    analysis.minimumPixels.set(1)
+    analysis.neighborRadius.set(0)
+    analysis.presetLimits.set(
+        "OLINDEX3 ≤ 0.04, LCPINDEX2 ≤ 0.04, HCPINDEX2 ≤ 0.04; "
+        "slope ≤ 0.10 /µm over 1000–1700 nm"
+    )
+    ratio, _ = analysis.runAll(image, QUIET)
+    assert _blandColumns(ratio) == {0, 1, 2, 3}
+    assert ratio.extraMetadata["ratioCube"]["thresholds"]["limits"]["OLINDEX3"] == 0.04
+
+
+def test_the_edited_slope_limit_applies(geometry, fakeHypyrameter):
+    image = _scene()
+    cube = image.getData().astype(np.float64)
+    cube[:, 1, :] *= np.linspace(1.0, 2.0, BANDS)  # a steep slope in column 1
+    source = ArrayDataSource(
+        cube.astype(np.float32),
+        wavelengths=np.asarray(image.wavelengths),
+        wavelengthUnits="nm",
+        filePath=PATH,
+    )
+    tilted = VardaRaster(source, name="tilted")
+    analysis = RatioCubeAnalysis()
+    analysis.prepareFor(tilted)
+    _olivine(analysis)
+    analysis.minimumPixels.set(1)
+    analysis.neighborRadius.set(0)
+    ratio, _ = analysis.runAll(tilted, QUIET)
+    assert _blandColumns(ratio) == {0}  # column 1 is too steep
+    analysis.presetLimits.set(
+        "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
+        "slope ≤ 5 /µm over 1000–1700 nm"
+    )
+    ratio, _ = analysis.runAll(tilted, QUIET)
+    assert _blandColumns(ratio) == {0, 1}
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("garbage", "slope part"),
+        ("OLINDEX3 ≤ 0.02; slope ≤ 0.1 /µm over 1000–1700 nm", "missing"),
+        (
+            "OLINDEX3 ≤ x, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
+            "slope ≤ 0.1 /µm over 1000–1700 nm",
+            "not like",
+        ),
+        (
+            "OLINDEX3 ≤ 0.02, BD1900r2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
+            "slope ≤ 0.1 /µm over 1000–1700 nm",
+            "not a parameter",
+        ),
+        (
+            "OLINDEX3 ≤ 0.02, LCPINDEX2 ≤ 0.02, HCPINDEX2 ≤ 0.02; "
+            "slope ≤ 0.1 /µm over 1700–1000 nm",
+            "start < end",
+        ),
+    ],
+)
+def test_malformed_preset_limits_are_refused_clearly(
+    geometry, fakeHypyrameter, text, message
+):
+    analysis = RatioCubeAnalysis()
+    _olivine(analysis)
+    analysis.presetLimits.set(text)
+    assert message in analysis.unavailableReason(_scene())
+    with pytest.raises(ValueError, match=message):
+        analysis.runAll(_scene(), QUIET)
+
+
+def test_generic_ignores_the_preset_limits_text(geometry):
+    analysis = RatioCubeAnalysis()
+    analysis.presetLimits.set("garbage")
+    assert analysis.unavailableReason(_scene()) == ""
+
+
+@pytest.mark.parametrize("preset", [False, True], ids=["generic", "preset"])
+def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch, preset):
     """The registry-wide memory test has no backplane to read; this one gives
     the run a synthetic one, on a scene big enough for the per-pixel cost to
     dominate the per-column records."""
@@ -242,6 +447,9 @@ def test_the_memory_estimate_bounds_a_run_with_a_backplane(monkeypatch):
     analysis = RatioCubeAnalysis()
     image = _scene(rows, cols)
     analysis.prepareFor(image)
+    if preset:  # HyPyRameter's own working memory is not measured here
+        _fakeHypyrameter(monkeypatch)
+        _olivine(analysis)
     analysis.runAll(image, QUIET)  # warm up
     tracemalloc.start()
     try:
