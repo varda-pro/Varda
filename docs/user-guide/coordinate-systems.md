@@ -160,7 +160,7 @@ of five classes:
 | **Equivalent** | The same projection on the same surface; only the names differ | Uses the coordinates as they are |
 | **Same body** | The same body, but a different projection, standard parallel, center or surface | Reprojects one onto the other |
 | **Different body** | Different bodies, e.g. Mars and Earth | **Never combines them** |
-| **Unknown** | A CRS is missing, unreadable, or on no body (a local CRS) | Can't place one image on the other |
+| **Unknown** | A CRS is missing, unreadable, or on no body (a local CRS); or a body is unknown and the two surfaces differ | Can't place one image on the other |
 
 ### What "the same" means
 
@@ -177,7 +177,7 @@ matches, with every name ignored:
 |---|---|
 | The CRS type (projected, or geographic) and the coordinate system kind | exact |
 | The projection method; on a sphere, a method's "(Spherical)" form counts as the method | exact, ignoring case |
-| Each projection parameter (standard parallel, central meridian, false easting, …), in degrees or meters whatever units the CRS writes them in; a parameter one CRS leaves out has PROJ's default (0, or 1 for a scale factor) | angles 1e-9°, lengths 1e-6 m |
+| Each projection parameter (standard parallel, central meridian, false easting, …), in degrees or meters whatever units the CRS writes them in; a parameter one CRS leaves out has PROJ's default (0, or 1 for a scale factor) | angles 1e-9°, lengths 1e-6 m, scale factors 1e-12 |
 | The ellipsoid's semi-major (a) and semi-minor (b) axes | 1e-3 m |
 | The prime meridian | 1e-9° |
 | The axes' directions and units, in order | exact |
@@ -209,7 +209,11 @@ images on different bodies, naming both (e.g. "Mars and Earth are different
 bodies"). The bodies come from [How Varda identifies the
 body](#how-varda-identifies-the-body). When either body is unknown, Varda
 compares the two surfaces instead: the same a and b (to 1e-3 m) is taken as
-the same body, anything else as different bodies. An unknown body is never
+the same body. Different surfaces are **unknown**, not different bodies:
+two products of one small body often use different radii, so Varda can't
+tell, and doesn't combine them ("Can't tell whether … are the same body
+(unknown body, different radii)"). The same holds for an unknown body
+against a known one with a different radius. An unknown body is never
 assumed to be Earth.
 
 ### Limitations

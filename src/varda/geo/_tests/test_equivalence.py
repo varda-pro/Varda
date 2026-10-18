@@ -8,6 +8,7 @@ from varda.geo._tests.fixtures import (
     CRISM_MTRDR_ENVI_WKT,
     CRISM_MTRDR_WKT,
     CTX_DEM_PROJ,
+    HIRISE_POLAR_PROJ,
     MARS_EQC_PDS3_WKT,
     WGS84,
 )
@@ -124,18 +125,42 @@ def test_unknown_bodies_compare_radii():
     b = "+proj=eqc +R=3000000 +units=m +no_defs"
     c = "+proj=eqc +R=3000500 +units=m +no_defs"
     assert compatibility(a, b) == Compatibility.SAME_BODY
-    assert compatibility(a, c) == Compatibility.DIFFERENT_BODY
+    assert canTransform(a, b) is None
+    # different radii can't say whether an unknown body is another body
+    assert compatibility(a, c) == Compatibility.UNKNOWN
     assert canTransform(a, c) == (
-        "An unknown body (sphere R = 3000.00 km) and "
-        "an unknown body (sphere R = 3000.50 km) are different bodies"
+        "Can't tell whether an unknown body (sphere R = 3000.00 km) and "
+        "an unknown body (sphere R = 3000.50 km) are the same body "
+        "(unknown body, different radii)"
     )
 
 
 def test_an_unknown_body_never_matches_a_known_one_by_name():
     # 3000 km is no body Varda knows; Mars is 3396.19 km
     assert compatibility("+proj=longlat +R=3000000", CRISM_MTRDR_WKT) == (
-        Compatibility.DIFFERENT_BODY
+        Compatibility.UNKNOWN
     )
+    assert canTransform("+proj=longlat +R=3000000", CRISM_MTRDR_WKT) == (
+        "Can't tell whether an unknown body (sphere R = 3000.00 km) and "
+        "Mars are the same body (unknown body, different radii)"
+    )
+
+
+def test_projections_on_one_body_are_same_body():
+    # Mars equirectangular vs Mars polar stereographic
+    assert compatibility(CTX_DEM_PROJ, HIRISE_POLAR_PROJ) == Compatibility.SAME_BODY
+
+
+def test_differences_within_the_tolerances_are_equivalent():
+    base = "+proj=tmerc +lat_0=10 +lon_0=20 +k=0.9996 +x_0=500 +y_0=0 +R=3396190"
+    near = (
+        "+proj=tmerc +lat_0=10.0000000005 +lon_0=20 +k=0.9996 "
+        "+x_0=500.0000005 +y_0=0 +R=3396190.0005"
+    )
+    far = base.replace("+x_0=500", "+x_0=500.00001")
+    assert sameCrs(base, near)
+    assert not sameCrs(base, far)
+    assert not sameCrs(base, base.replace("+k=0.9996", "+k=0.9997"))
 
 
 def test_a_local_crs_has_no_body():

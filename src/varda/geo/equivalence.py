@@ -5,13 +5,15 @@ PROJ's ``equals`` compares names, so GDAL's ``D_MARS`` WKT and
 ``IAU_2015:49910`` differ to PROJ though they describe one projection on
 one sphere. Varda also calls two CRSs the same (EQUIVALENT) when their
 geometry matches with every name ignored: the conversion method and its
-parameters (angles to 1e-9°, lengths to 1e-6 m), the ellipsoid's a and b
+parameters (angles to 1e-9°, lengths to 1e-6 m, scale factors to 1e-12),
+the ellipsoid's a and b
 (to 1e-3 m), the prime meridian, and the axes' directions and units.
 
 CRSs that aren't the same are compared by body (``identifyBody``): on one
 body they can be reprojected (SAME_BODY), on different bodies never. When
-a body is unknown its radii decide: equal radii (to 1e-3 m) are SAME_BODY,
-otherwise DIFFERENT_BODY; an unknown body is never Earth."""
+a body is unknown its radii decide: equal radii (to 1e-3 m) are SAME_BODY;
+otherwise Varda can't tell whether the bodies differ (UNKNOWN). An unknown
+body is never Earth, nor a different body for its radius alone."""
 
 from __future__ import annotations
 
@@ -31,7 +33,12 @@ LENGTH_TOLERANCE_M = 1e-6
 RADIUS_TOLERANCE_M = 1e-3
 # a conversion parameter a CRS leaves out has PROJ's default for its kind
 _DEFAULTS = {"angular": 0.0, "linear": 0.0, "scale": 1.0}
-_TOLERANCES = {"angular": ANGLE_TOLERANCE_DEG, "linear": LENGTH_TOLERANCE_M}
+SCALE_TOLERANCE = 1e-12
+_TOLERANCES = {
+    "angular": ANGLE_TOLERANCE_DEG,
+    "linear": LENGTH_TOLERANCE_M,
+    "scale": SCALE_TOLERANCE,
+}
 # the CRS types compared by geometry; others (bound, compound, ...) only by PROJ
 _COMPARABLE = {
     "Projected CRS",
@@ -48,7 +55,9 @@ class Compatibility(Enum):
     EQUIVALENT = "equivalent"  # same body, surface, method and parameters; names differ
     SAME_BODY = "same body"  # same body, different projection or surface: reproject
     DIFFERENT_BODY = "different body"  # never combine
-    UNKNOWN = "unknown"  # a CRS is missing, unreadable or on no body
+    # a CRS is missing, unreadable or on no body, or a body is unknown and
+    # the radii differ
+    UNKNOWN = "unknown"
 
 
 def sameCrs(
@@ -84,7 +93,10 @@ def canTransform(a: CRS | str | None, b: CRS | str | None) -> str | None:
         problem = _problem(crs)
         if problem is not None:
             return f"The {which} image{problem}"
-    return "The coordinate systems can't be compared"
+    return (
+        f"Can't tell whether {_bodyLabel(a)} and {_bodyLabel(b)} are the same "
+        "body (unknown body, different radii)"
+    )
 
 
 def _key(crs: CRS | str) -> str:
@@ -131,7 +143,7 @@ def _compatibility(keyA: str, keyB: str) -> Compatibility:
         return Compatibility.DIFFERENT_BODY
     if _sameRadii(a.ellipsoid, b.ellipsoid):
         return Compatibility.SAME_BODY
-    return Compatibility.DIFFERENT_BODY
+    return Compatibility.UNKNOWN
 
 
 @lru_cache(maxsize=256)
@@ -269,6 +281,6 @@ def _sameParameters(
         if isinstance(valueA, str) or isinstance(valueB, str):
             if valueA != valueB:
                 return False
-        elif not _close(valueA, valueB, _TOLERANCES.get(category, 1e-12)):
+        elif not _close(valueA, valueB, _TOLERANCES.get(category, SCALE_TOLERANCE)):
             return False
     return True
