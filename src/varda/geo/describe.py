@@ -57,11 +57,13 @@ class CrsDescription:
     and longitude conventions, units and, for an image, its pixel size."""
 
     body: str | None  # "Mars"; None when unknown
-    kind: str  # "geographic" | "projected" | "none"
-    projection: str  # "Equirectangular", "Polar Stereographic (north)", ...
+    # "geographic" | "projected" | "none"; also "local" (an engineering
+    # CRS: map coordinates on no body) and "unreadable"
+    kind: str
+    projection: str  # "Equirectangular", ...; the error when unreadable
     surface: str  # "sphere R = 3396.19 km" | "ellipsoid a = 3396.19, c = 3376.20 km"
-    latitudeType: str  # "planetocentric" | "planetographic"
-    longitudeDirection: str  # "east" | "west"
+    latitudeType: str  # "planetocentric" | "planetographic" ("" without a body)
+    longitudeDirection: str  # "east" | "west" ("" without a body)
     longitudeDomain: str  # "-180..180" | "0..360"
     centerLatitude: float | None  # lat_ts or latitude of origin, degrees
     centerLongitude: float | None  # lon_0, degrees
@@ -73,17 +75,21 @@ class CrsDescription:
     def text(self) -> str:
         if self.kind == "none":
             return NO_CRS_TEXT
-        parts = [
-            self.body if self.body is not None else f"Unknown body ({self.surface})",
-            *([self.surface] if self.body is not None else []),
-            self.projection,
-        ]
+        if self.kind == "unreadable":
+            return f"Unreadable coordinate system ({self.projection})"
+        if self.kind == "local":
+            first = ["Local coordinates (no body)"]
+        elif self.body is None:
+            first = [f"Unknown body ({self.surface})"]
+        else:
+            first = [self.body, self.surface]
+        parts = [*first, self.projection]
         if self.centerLatitude is not None and not self.projection.startswith("Polar"):
             parts.append(f"center lat {_degrees(self.centerLatitude)}°")
         if self.centerLongitude:
             parts.append(f"lon_0 {_degrees(self.centerLongitude)}°")
         if self.pixelSizeM is not None:
-            parts.append(f"{meters(self.pixelSizeM)} m/px")
+            parts.append(f"{formatMeters(self.pixelSizeM)} m/px")
         return ", ".join(parts)
 
 
@@ -91,7 +97,7 @@ def _degrees(value: float) -> str:
     return f"{value + 0.0:g}"  # + 0.0: never "-0"
 
 
-def meters(value: float) -> str:
+def formatMeters(value: float) -> str:
     """A length in meters for reading: whole meters from 100 m, otherwise
     three significant figures ("463", "18", "0.25")."""
     if value >= 100:
@@ -106,26 +112,17 @@ def describeCrs(
     height: int = 0,
 ) -> CrsDescription:
     """``crs`` described; with an image's ``transform`` and size, also its
-    pixel size on the ground and the longitude domain of its extent."""
+    pixel size on the ground and the longitude domain of its extent. Never
+    raises: text that isn't a CRS is described as unreadable."""
     if crs is None:
-        return CrsDescription(
-            body=None,
-            kind="none",
-            projection="none",
-            surface="",
-            latitudeType="",
-            longitudeDirection="",
-            longitudeDomain="",
-            centerLatitude=None,
-            centerLongitude=None,
-            units="px",
-            pixelSizeM=None,
-            authority=None,
-        )
+        return _bare("none", "none", "px")
     with PROJ_LOCK:
-        # as written (a WKT round trip can lose the names PROJ identifies by)
-        key = crs if isinstance(crs, str) else CRS.from_user_input(crs).srs
-        description = _describe(key)
+        try:
+            # as written (a WKT round trip can lose the names PROJ identifies by)
+            key = crs if isinstance(crs, str) else CRS.from_user_input(crs).srs
+            description = _describe(key)
+        except CRSError as error:
+            return _bare("unreadable", str(error), "map units")
         if transform is None:
             return description
         parsed = CRS.from_user_input(key)
@@ -136,6 +133,33 @@ def describeCrs(
         )
 
 
+def _bare(kind: str, projection: str, units: str) -> CrsDescription:
+    """No CRS, or one Varda can't read: no body, surface or conventions."""
+    return CrsDescription(
+        body=None,
+        kind=kind,
+        projection=projection,
+        surface="",
+        latitudeType="",
+        longitudeDirection="",
+        longitudeDomain="",
+        centerLatitude=None,
+        centerLongitude=None,
+        units=units,
+        pixelSizeM=None,
+        authority=None,
+    )
+
+
+def _isGeographic(crs: CRS) -> bool:
+    """Angles on a body: a geographic CRS, or another geodetic one such as
+    PROJ's planetocentric ellipsoids (``IAU_2015:49902``, a spherical
+    coordinate system), but not geocentric x, y, z."""
+    return (
+        not crs.is_projected and crs.geodetic_crs is not None and not crs.is_geocentric
+    )
+
+
 @lru_cache(maxsize=256)
 def _describe(key: str) -> CrsDescription:
     """The description of the CRS ``key`` (as the user or file wrote it),
@@ -143,8 +167,10 @@ def _describe(key: str) -> CrsDescription:
     milliseconds. The caller holds PROJ_LOCK."""
     crs = CRS.from_user_input(key)
     ellipsoid = crs.ellipsoid
-    if ellipsoid is None:
-        raise CRSError(f"{crs.name} has no ellipsoid.")
+    if ellipsoid is None:  # e.g. GDAL's LOCAL_CS
+        return attrs.evolve(
+            _bare("local", crs.name, _units(crs)), surface="no ellipsoid"
+        )
     a = ellipsoid.semi_major_metre / 1000
     if ellipsoid.inverse_flattening == 0:
         surface = f"sphere R = {a:.2f} km"
@@ -153,7 +179,7 @@ def _describe(key: str) -> CrsDescription:
             f"ellipsoid a = {a:.2f}, c = {ellipsoid.semi_minor_metre / 1000:.2f} km"
         )
     body = identifyBody(crs).body
-    projected = not crs.is_geographic
+    projected = not _isGeographic(crs)
     centerLatitude = _parameter(crs, _CENTER_LATITUDE) if projected else None
     centerLongitude = _parameter(crs, _CENTER_LONGITUDE) if projected else None
     return CrsDescription(
@@ -161,9 +187,7 @@ def _describe(key: str) -> CrsDescription:
         kind="projected" if projected else "geographic",
         projection=_projection(crs) if projected else "Geographic (lon/lat)",
         surface=surface,
-        latitudeType="planetographic"
-        if ellipsoid.inverse_flattening != 0
-        else "planetocentric",
+        latitudeType=_latitudeType(crs),
         longitudeDirection=_longitudeDirection(crs),
         longitudeDomain="0..360"
         if centerLongitude is not None and centerLongitude >= 180
@@ -210,6 +234,22 @@ def _projection(crs: CRS) -> str:
     return method
 
 
+def _latitudeType(crs: CRS) -> str:
+    """Planetocentric when the geodetic CRS says so (its latitude axis, or a
+    spherical coordinate system) or its surface is a sphere; otherwise its
+    geodetic latitude is planetographic (Seidelmann et al., 2002)."""
+    geodetic = crs.geodetic_crs or crs
+    ellipsoid = geodetic.ellipsoid
+    if ellipsoid is None or ellipsoid.inverse_flattening == 0:
+        return "planetocentric"
+    names = " ".join(axis.name.lower() for axis in geodetic.axis_info)
+    system = geodetic.coordinate_system
+    subtype = system.to_json_dict().get("subtype") if system is not None else None
+    if "planetocentric" in names or "geocentric" in names or subtype == "spherical":
+        return "planetocentric"
+    return "planetographic"
+
+
 def _longitudeDirection(crs: CRS) -> str:
     geodetic = crs.geodetic_crs or crs
     for axis in geodetic.axis_info:
@@ -219,7 +259,7 @@ def _longitudeDirection(crs: CRS) -> str:
 
 
 def _units(crs: CRS) -> str:
-    if crs.is_geographic:
+    if _isGeographic(crs):
         return "°"
     name = crs.axis_info[0].unit_name if crs.axis_info else ""
     return _UNITS.get(name, name or "map units")
@@ -262,11 +302,11 @@ def _pixelSizeM(crs: CRS, transform: Affine, width: int, height: int) -> float:
     corrected), or degrees times π·a/180 (·cos φ east–west; geographic)."""
     across = math.hypot(transform.a, transform.d)
     down = math.hypot(transform.b, transform.e)
-    if not crs.is_geographic:
-        factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-        return max(across, down) * factor
+    factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
     ellipsoid = crs.ellipsoid
-    assert ellipsoid is not None  # _describe checked
+    if not _isGeographic(crs) or ellipsoid is None:
+        return max(across, down) * factor
+    across, down = (_inDegrees(size, factor) for size in (across, down))
     perDegree = math.pi * ellipsoid.semi_major_metre / 180
     _, latitude = transform * (width / 2, height / 2)
     eastWest = across * perDegree * math.cos(math.radians(latitude))

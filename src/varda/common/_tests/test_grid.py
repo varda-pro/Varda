@@ -179,3 +179,11 @@ def test_pixel_size_text_names_the_crs_units():
         np.zeros((2, 2)), "deg", Affine(0.01, 0, 0, 0, -0.01, 0), CRS.from_epsg(4326)
     )
     assert pixelSizeText(degrees) == "0.01°"
+
+
+def test_pixel_size_text_of_a_local_crs():
+    local = CRS.from_user_input(
+        'LOCAL_CS["arbitrary",UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    )
+    image = _raster(np.zeros((2, 2)), "local", Affine(2.0, 0, 0, 0, -2.0, 0), local)
+    assert pixelSizeText(image) == "2.0 m"

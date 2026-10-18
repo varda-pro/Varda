@@ -29,8 +29,8 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.geo.describe import describeCrs
 from varda.common.ui import MutedLabel
+from varda.geo.describe import describeCrs
 from varda.lines.line_collection import VardaLine
 from varda.lines.profile import Profile, profile
 from varda.plotting.plot_export import IMAGE_FILTER, exportImage

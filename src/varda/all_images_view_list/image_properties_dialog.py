@@ -36,9 +36,9 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.geo.describe import describeCrs, meters
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
 from varda.common.ui import MutedLabel, PanelScrollArea
+from varda.geo.describe import describeCrs, formatMeters
 from varda.image_loading.envi_header import headerFor, saveToHeader
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -81,11 +81,9 @@ def authorityText(crs: CRS, authority: str | None) -> str:
         return "none"
     with PROJ_LOCK:
         own = crs.to_authority(min_confidence=100)
-    return (
-        authority
-        if own is not None and ":".join(own) == authority
-        else (f"matches {authority}")
-    )
+    if own is not None and ":".join(own) == authority:
+        return authority
+    return f"matches {authority}"
 
 
 class ImagePropertiesDialog(QDialog):
@@ -236,9 +234,7 @@ class ImagePropertiesDialog(QDialog):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         crs = image.crs if image.hasGeospatialData else None
         description = describeCrs(crs, image.transform, image.width, image.height)
-        summary = QLabel(description.text)
-        summary.setWordWrap(True)
-        form.addRow(summary)
+        form.addRow(wrapped(description.text))
         self.wktToggle = QPushButton("Show WKT")
         self.wktToggle.setCheckable(True)
         self.wktEdit = QPlainTextEdit()
@@ -251,21 +247,22 @@ class ImagePropertiesDialog(QDialog):
         )
         if crs is None:
             return box
-        form.addRow(
-            "Conventions:",
-            wrapped(
-                f"{description.latitudeType} latitude, "
-                f"{description.longitudeDirection}-positive longitude, "
-                f"{description.longitudeDomain}"
-            ),
-        )
+        if description.latitudeType:  # a CRS on a body
+            form.addRow(
+                "Conventions:",
+                wrapped(
+                    f"{description.latitudeType} latitude, "
+                    f"{description.longitudeDirection}-positive longitude, "
+                    f"{description.longitudeDomain}"
+                ),
+            )
         form.addRow("Authority:", QLabel(authorityText(crs, description.authority)))
         t = image.transform
         unit = (
             description.units if description.units == "°" else f" {description.units}"
         )
         ground = (
-            f" ({meters(description.pixelSizeM)} m on the ground)"
+            f" ({formatMeters(description.pixelSizeM)} m on the ground)"
             if description.pixelSizeM is not None
             else ""
         )

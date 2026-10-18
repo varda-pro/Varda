@@ -3,6 +3,8 @@
 
 import numpy as np
 import pytest
+from affine import Affine
+from pyproj import CRS
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
@@ -115,15 +117,33 @@ def test_an_image_without_a_crs_says_so(qtbot):
     assert "No coordinate system (pixel coordinates)" in texts
 
 
-def test_nothing_is_cut_off_on_a_laptop_screen(qtbot):
+@pytest.mark.parametrize("size", [(1280, 800), (640, 500)])  # laptop; short window
+def test_nothing_is_cut_off_on_a_laptop_screen(qtbot, size):
     image = makeImage(CRISM_MTRDR_ENVI_WKT, centerLonLat=(77.0, 15.0), pixelSize=18.0)
     dialog = ImagePropertiesDialog(image)
     qtbot.addWidget(dialog)
     dialog.wktToggle.setChecked(True)
-    dialog.resize(
-        min(dialog.sizeHint().width(), 1280), min(dialog.sizeHint().height(), 800)
-    )
+    dialog.resize(*size)
     dialog.show()
     qtbot.waitExposed(dialog)
-    assert dialog.width() <= 1280 and dialog.height() <= 800
+    assert (dialog.width(), dialog.height()) == size
     assertNothingClipped(dialog)
+
+
+def test_a_local_crs_has_no_conventions_row(qtbot):
+    local = CRS.from_user_input(
+        'LOCAL_CS["arbitrary",UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    )
+    image = VardaRaster(
+        ArrayDataSource(
+            np.zeros((4, 4, 1), np.float32),
+            transform=Affine(2.0, 0, 0, 0, -2.0, 0),
+            crs=local,
+        ),
+        name="local",
+    )
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+    assert "Local coordinates (no body), arbitrary, 2 m/px" in texts
+    assert "Conventions:" not in texts and "2 × 2 m (2 m on the ground)" in texts

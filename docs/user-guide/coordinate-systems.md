@@ -47,7 +47,15 @@ The group also shows:
   the line above summarizes it.
 
 An image without a CRS shows **No coordinate system (pixel coordinates)**:
-Varda works in pixels and doesn't measure in meters.
+Varda works in pixels and doesn't measure in meters. Two other cases:
+
+- A **local** (engineering) CRS, such as GDAL's `LOCAL_CS` for a lab image
+  or an unreferenced map, has map units but no body or ellipsoid. It shows
+  **Local coordinates (no body)**, its name and the pixel size in its units
+  (e.g. "Local coordinates (no body), arbitrary, 2 m/px"), and no
+  conventions.
+- Text that PROJ can't read as a CRS shows **Unreadable coordinate system**
+  with PROJ's error.
 
 Line-profile CSV exports carry the same description in their `# CRS:`
 header line, followed by the WKT (see
@@ -88,8 +96,13 @@ authority, whose codes are those used in OGC services for planetary data
   latitude is the angle between the equator and the normal to the
   ellipsoid. They differ only on a flattened ellipsoid:
   tan φg = (a/c)² tan φc (Snyder, 1987, eq. 3-28). On a sphere they are the
-  same, and Varda calls them planetocentric. On a flattened ellipsoid, PROJ's
-  geodetic latitude is planetographic, and Varda says so.
+  same, and Varda calls them planetocentric. On a flattened ellipsoid, Varda
+  reads the latitude type from the CRS itself: PROJ's planetocentric CRSs
+  (e.g. `IAU_2015:49902`, Mars planetocentric on the IAU ellipsoid, and
+  projections on it such as `IAU_2015:49912`) name their axes "Planetocentric
+  latitude" and use a spherical coordinate system, and Varda reports them as
+  planetocentric. An ordinary geodetic latitude on a flattened ellipsoid
+  (e.g. `IAU_2015:49901`, or WGS 84 on Earth) is planetographic.
 - **East- vs west-positive longitude.** Planetocentric longitude increases
   eastward. Planetographic longitude increases in the direction opposite to
   the body's rotation: westward for Mars, so `IAU_2015:49901` (Mars

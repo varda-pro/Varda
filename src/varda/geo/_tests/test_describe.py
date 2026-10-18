@@ -147,3 +147,55 @@ def test_kilometre_units_scale_the_ground_size():
 
 def test_strings_and_crs_objects_agree():
     assert describeCrs(CRS.from_user_input(LRO_WAC_PROJ)) == describeCrs(LRO_WAC_PROJ)
+
+
+LOCAL_CS = (
+    'LOCAL_CS["arbitrary",UNIT["metre",1],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+)
+
+
+@pytest.mark.parametrize(
+    ("code", "latitudeType", "direction", "kind"),
+    [
+        ("IAU_2015:49900", "planetocentric", "east", "geographic"),  # sphere
+        ("IAU_2015:49901", "planetographic", "west", "geographic"),  # ellipsoid
+        ("IAU_2015:49902", "planetocentric", "east", "geographic"),  # ellipsoid
+        ("IAU_2015:49910", "planetocentric", "east", "projected"),  # sphere
+        ("IAU_2015:49912", "planetocentric", "east", "projected"),  # ellipsoid
+    ],
+)
+def test_latitude_type_is_the_crs_own(code, latitudeType, direction, kind):
+    description = describeCrs(code)
+    assert description.latitudeType == latitudeType
+    assert description.longitudeDirection == direction
+    assert description.kind == kind and description.body == "Mars"
+
+
+def test_a_planetocentric_ellipsoid_is_geographic_degrees():
+    transform = Affine(0.01, 0.0, 200.0, 0.0, -0.01, 0.5)
+    description = describeCrs("IAU_2015:49902", transform, 100, 100)
+    assert description.projection == "Geographic (lon/lat)"
+    assert description.units == "°"
+    assert description.longitudeDomain == "0..360"
+    assert description.pixelSizeM == pytest.approx(
+        math.pi * 3396190 / 180 * 0.01, rel=1e-4
+    )
+    assert description.text == (
+        "Mars, ellipsoid a = 3396.19, c = 3376.20 km, Geographic (lon/lat), 593 m/px"
+    )
+
+
+def test_a_local_crs_has_no_body_and_its_own_units():
+    description = describeCrs(LOCAL_CS, Affine(2.0, 0, 0, 0, -2.0, 0), 10, 10)
+    assert description.kind == "local" and description.body is None
+    assert description.surface == "no ellipsoid"
+    assert description.units == "m" and description.pixelSizeM == pytest.approx(2.0)
+    assert description.latitudeType == "" and description.longitudeDirection == ""
+    assert description.text == "Local coordinates (no body), arbitrary, 2 m/px"
+
+
+def test_unreadable_text_is_described_not_raised():
+    description = describeCrs("not a coordinate system", Affine.identity(), 4, 4)
+    assert description.kind == "unreadable" and description.body is None
+    assert description.text.startswith("Unreadable coordinate system")
+    assert description.pixelSizeM is None
