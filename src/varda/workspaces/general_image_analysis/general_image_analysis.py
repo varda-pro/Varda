@@ -177,7 +177,9 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         )
         # Saved pixel points (from the pixel-spectra plots' Save Point)
         self.pointCollection = PointCollection()
-        self.pointManagerWidget = PointManagerWidget(self.pointCollection, parent=self)
+        self.pointManagerWidget = PointManagerWidget(
+            self.pointCollection, parent=self, image=image
+        )
         # Lines (Draw Line) and their profiles
         self.lineCollection = LineCollection()
         shareLines(self.lineCollection, image)  # 3D Terrain can drape them

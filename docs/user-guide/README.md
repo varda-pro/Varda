@@ -10,6 +10,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Linked Images](linked-images.md): any number of images linked by pixel or map location, with every image's spectrum and profile at once
 - [Lines and profiles](lines-and-profiles.md): drawing lines and plotting topographic and band profiles along them
 - [Viewing and measuring](viewing-and-measuring.md): display stretches, pixel spectra and library overlays, ROI statistics, the Ratio Explorer
+- [Importing vector data](importing-vector-data.md): ROIs, points and lines from shapefiles, GeoPackages, GeoJSON, KML and CSV; coordinate systems and accuracy
 - [Finding data](finding-data.md): searching PDS ODE, STAC and footprint catalogs, and downloading products
 - [Image processing tools](image-processing.md): spatial filters, texture, color, class map tools, terrain and geometry
 - [Spectral libraries](spectral-libraries.md): the bundled libraries, building your own from image spectra, loading, exporting, and what's recorded with each spectrum

@@ -3,6 +3,7 @@ ground, exportable to GIS files."""
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import attrs
@@ -34,6 +35,8 @@ class VardaPoint:
         Point  # CRS coordinates when the image is georeferenced, else pixel center
     )
     description: str = ""
+    # Other attributes (an imported file's extra columns), exported as columns
+    properties: dict = attrs.field(factory=dict, eq=False)
 
 
 class PointCollection:
@@ -58,13 +61,19 @@ class PointCollection:
         name: str | None = None,
         color: Color = Color.white(),
         description: str = "",
+        geometry: Point | None = None,
+        properties: dict | None = None,
     ) -> int:
-        """Save pixel (x, y) of ``image``; returns the point's fid."""
+        """Save pixel (x, y) of ``image``; returns the point's fid. The point
+        is at the pixel's center, or at ``geometry`` (in the image's CRS, or
+        in pixel coordinates when it has none) for a point known more
+        precisely than its pixel, such as an imported one."""
         if image.hasGeospatialData:
-            geometry = Point(*image.pixelToGeo(x, y))
+            if geometry is None:
+                geometry = Point(*image.pixelToGeo(x, y))
             if self.crs is None:
                 self.crs = image.crs
-        else:
+        elif geometry is None:
             geometry = Point(x + 0.5, y + 0.5)
         fid = self._nextFid
         self._nextFid += 1
@@ -77,6 +86,7 @@ class PointCollection:
             int(y),
             geometry,
             description,
+            dict(properties or {}),
         )
         self.sigPointAdded.emit(fid)
         self.sigCollectionChanged.emit()
@@ -97,13 +107,19 @@ class PointCollection:
     def fids(self) -> list[int]:
         return list(self._points)
 
+    def batch(self) -> AbstractContextManager:
+        """Adds and removes made inside report one ``sigCollectionChanged``
+        at the end (an import), so views refresh once."""
+        return self.sigCollectionChanged.paused(lambda first, _: first)
+
     def __len__(self) -> int:
         return len(self._points)
 
     def toFile(self, path: str | Path, driver: str | None = None) -> Path:
         """Write the points as a GIS file (GeoJSON, GeoPackage or Shapefile by
         suffix) with name, image, pixel column/row, color and description as
-        attributes."""
+        attributes, then any other properties the points carry, and the CRS as
+        WKT in a crs column (GeoJSON can record only WGS 84)."""
         if not self._points:
             raise ValueError("No points to export.")
         target = Path(path)
@@ -122,9 +138,16 @@ class PointCollection:
                 "pixel_y": [p.y for p in points],
                 "color": [p.color.toHexString() for p in points],
                 "description": [p.description for p in points],
+                **{
+                    key: [p.properties.get(key, "") for p in points]
+                    for key in dict.fromkeys(k for p in points for k in p.properties)
+                },
             },
             geometry=[p.geometry for p in points],
             crs=self.crs,
         )
+        if self.crs is not None:
+            # GeoJSON can only record WGS 84: Varda's import reads this
+            frame["crs"] = self.crs.to_wkt()
         frame.to_file(target, driver=driver)
         return target

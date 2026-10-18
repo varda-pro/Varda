@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import weakref
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import attrs
@@ -44,6 +45,8 @@ class VardaLine:
     color: str  # "#rrggbb"
     kind: LineKind
     vertices: np.ndarray  # (n, 2) image pixel coordinates: x (column), y (row)
+    # Other attributes (an imported file's extra columns), exported as columns
+    properties: dict = attrs.field(factory=dict)
 
     def length(self, image: VardaRaster | None) -> tuple[float, str]:
         """Its length and units (meters when ``image`` is georeferenced)."""
@@ -71,6 +74,7 @@ class LineCollection:
         *,
         name: str | None = None,
         color: str | None = None,
+        properties: dict | None = None,
     ) -> int:
         vertices = np.asarray(vertices, dtype=float).reshape(-1, 2)
         if len(vertices) < 2:
@@ -78,7 +82,12 @@ class LineCollection:
         fid = self._nextFid
         self._nextFid += 1
         self._lines[fid] = VardaLine(
-            fid, name or f"Line {fid + 1}", color or classColor(fid), kind, vertices
+            fid,
+            name or f"Line {fid + 1}",
+            color or classColor(fid),
+            kind,
+            vertices,
+            dict(properties or {}),
         )
         self.sigLineAdded.emit(fid)
         self.sigCollectionChanged.emit()
@@ -101,6 +110,11 @@ class LineCollection:
     def lines(self) -> list[VardaLine]:
         return list(self._lines.values())
 
+    def batch(self) -> AbstractContextManager:
+        """Adds and removes made inside report one ``sigCollectionChanged``
+        at the end (an import), so views refresh once."""
+        return self.sigCollectionChanged.paused(lambda first, _: first)
+
     def __len__(self) -> int:
         return len(self._lines)
 
@@ -117,6 +131,7 @@ class LineCollection:
                 "color": line.color,
                 "kind": line.kind.name,
                 "vertices": line.vertices.tolist(),
+                **({"properties": line.properties} if line.properties else {}),
             }
             for line in self._lines.values()
         ]
@@ -128,13 +143,15 @@ class LineCollection:
                 LineKind[entry.get("kind", "POLYLINE")],
                 name=entry.get("name"),
                 color=entry.get("color"),
+                properties=entry.get("properties"),
             )
 
     def toFrame(
         self, image: VardaRaster, fids: Iterable[int] | None = None
     ) -> gpd.GeoDataFrame:
         """The lines (all, or ``fids``) as GIS lines: map coordinates (in the
-        image's CRS) when it is georeferenced, pixel coordinates otherwise."""
+        image's CRS) when it is georeferenced, pixel coordinates otherwise,
+        with any other properties the lines carry as columns."""
         lines = (
             list(self._lines.values())
             if fids is None
@@ -157,18 +174,27 @@ class LineCollection:
                 "color": [line.color for line in lines],
                 "length": [length for length, _ in lengths],
                 "units": [units for _, units in lengths],
+                **{
+                    key: [line.properties.get(key, "") for line in lines]
+                    for key in dict.fromkeys(k for ln in lines for k in ln.properties)
+                },
             },
             geometry=geometries,
             crs=image.crs if georeferenced else None,
         )
 
     def toFile(self, path: str | Path, image: VardaRaster) -> None:
-        """The lines as a GIS file (see ``toFrame``)."""
+        """The lines as a GIS file (see ``toFrame``), with the CRS as WKT in a
+        crs column (GeoJSON can record only WGS 84)."""
         path = Path(path)
         driver = _DRIVERS.get(path.suffix.lower())
         if driver is None:
             raise ValueError(f"Unsupported file type: {path.suffix}")
-        self.toFrame(image).to_file(path, driver=driver)
+        frame = self.toFrame(image)
+        if frame.crs is not None:
+            # GeoJSON can only record WGS 84: Varda's import reads this
+            frame["crs"] = frame.crs.to_wkt()
+        frame.to_file(path, driver=driver)
 
 
 # Lines that workspaces offer to others, with the image they're drawn on

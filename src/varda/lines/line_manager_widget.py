@@ -1,5 +1,5 @@
 """Lines manager: the kind of line Draw Line draws, and a table of the lines
-(rename, recolor, delete, export to GIS files)."""
+(rename, recolor, delete, import from and export to GIS files)."""
 
 from __future__ import annotations
 
@@ -23,8 +23,10 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.ui import MutedLabel
+from varda.common.ui import FlowLayout, MutedLabel
 from varda.lines.line_collection import EXPORT_FILE_FILTER, LineCollection, LineKind
+from varda.vector_import import ImportPlan, Target, addToLines
+from varda.vector_import_dialog import VectorImporter
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +155,19 @@ class LineManagerWidget(QWidget):
         export = QPushButton("Export…")
         export.setToolTip("Save the lines as GeoJSON, GeoPackage or a shapefile")
         export.clicked.connect(self._export)
-        buttons = QHBoxLayout()
+        self.importer = VectorImporter(Target.LINES, image, self._addImported, self)
+        self.importButton = QPushButton("Import…")
+        self.importButton.setEnabled(image is not None)
+        self.importButton.setToolTip(
+            "Add lines from a vector file (shapefile, GeoPackage, GeoJSON, KML, GPX, …)"
+            if image is not None
+            else "Open an image to import lines onto"
+        )
+        self.importButton.clicked.connect(self.importer.chooseFile)
+        buttons = FlowLayout()  # wraps in a narrow dock
         buttons.addWidget(delete)
+        buttons.addWidget(self.importButton)
         buttons.addWidget(export)
-        buttons.addStretch()
 
         hint = MutedLabel(
             "Turn on Draw Line under a view and draw; select lines to plot their "
@@ -200,6 +211,9 @@ class LineManagerWidget(QWidget):
         color = QColorDialog.getColor(QColor(line.color), self, f"Color of {line.name}")
         if color.isValid():
             self.collection.updateLine(fid, color=color.name())
+
+    def _addImported(self, plan: ImportPlan) -> None:
+        addToLines(self.collection, plan)
 
     def _export(self) -> None:
         if not len(self.collection) or self.image is None:
