@@ -22,6 +22,7 @@ from varda.common.entities import VardaRaster
 from varda.common.parameter_widgets import connectWhileAlive
 
 ICON_SIZE = THUMBNAIL_SIZE
+LEFT_MARGIN = 4  # px between the item's edge and its thumbnail and name
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,7 @@ class ImageListWidget(QListWidget):
             item = self.item(row)
             if item is not None and item.data(Qt.ItemDataRole.UserRole) is image:
                 item.setText(image.name)
+                item.setToolTip(image.name)
         viewport = self.viewport()
         if viewport is not None:
             viewport.update()
@@ -130,6 +132,7 @@ class ImageListWidget(QListWidget):
         for image in self.imageList:
             item = QListWidgetItem()
             item.setText(image.name)
+            item.setToolTip(image.name)  # the full name; the label may be cut short
             item.setData(Qt.ItemDataRole.UserRole, image)
             item.setIcon(self._placeholderIcon)
             self.addItem(item)
@@ -150,9 +153,9 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
         image = index.data(QtCore.Qt.ItemDataRole.UserRole)
         label = index.data(QtCore.Qt.ItemDataRole.DisplayRole) or ""
         rect = option.rect
-        iconRect = QRect(
-            rect.x() + (rect.width() - ICON_SIZE) // 2, rect.y(), ICON_SIZE, ICON_SIZE
-        )
+        # left-aligned with the name: names of processed images get long, and
+        # a thumbnail centered over a long name drifts away from the list's edge
+        iconRect = QRect(rect.x() + LEFT_MARGIN, rect.y(), ICON_SIZE, ICON_SIZE)
         if image is not None:
             pixmap = self._thumbnail(image)
             size = pixmap.size().scaled(
@@ -160,9 +163,12 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             )
             target = QRect(QPoint(0, 0), size)
             target.moveCenter(iconRect.center())
+            target.moveLeft(iconRect.left())
             painter.drawPixmap(target, pixmap)
 
-        textRect = QRect(rect.x(), iconRect.bottom() + 1, rect.width(), 0)
+        textRect = QRect(
+            iconRect.left(), iconRect.bottom() + 1, rect.right() - iconRect.left(), 0
+        )
         textRect.setBottom(rect.bottom())
         text = option.fontMetrics.elidedText(
             label, Qt.TextElideMode.ElideRight, textRect.width()
@@ -170,7 +176,7 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
         painter.save()
         painter.setPen(option.palette.text().color())
         painter.drawText(
-            textRect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, text
+            textRect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, text
         )
 
         # Selection: a translucent tint plus a solid frame in the palette's

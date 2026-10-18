@@ -100,3 +100,29 @@ def test_an_unreadable_image_gets_a_placeholder_made_once(qtbot, monkeypatch):
 
     assert len(calls) == 1
     assert not widget.thumbnail(image).isNull()
+
+
+def test_thumbnails_sit_at_the_left_edge_and_long_names_are_in_the_tooltip(
+    qtbot, monkeypatch
+):
+    short = generate_random_image((20, 20, 10))
+    long = generate_random_image((20, 20, 10))
+    long._name = "02_01_FRT000107A7_07_IF166J_MTR3_HDR_IOVF_replaced_subset_ratio.img"
+    widget, _ = _shownList(qtbot, monkeypatch, short, long)
+
+    lefts = []
+    for row in range(widget.count()):
+        shot = widget.viewport().grab(widget.visualItemRect(widget.item(row)))
+        pixels = shot.toImage()
+        background = pixels.pixelColor(0, 0)
+        columns = [
+            x
+            for x in range(pixels.width())
+            if any(pixels.pixelColor(x, y) != background for y in range(10, 40))
+        ]
+        lefts.append(columns[0])
+
+    # both thumbnails start at the same place near the left edge, however
+    # long the name under them
+    assert lefts[0] == lefts[1] <= imageview_list.LEFT_MARGIN + 2
+    assert widget.item(1).toolTip() == long.name
