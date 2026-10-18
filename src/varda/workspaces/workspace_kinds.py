@@ -101,7 +101,10 @@ def buildWorkspace(
         )
         workspace.restoreSessionState(state)
         return workspace
-    if kind == "crism_ratio" and len(images) == 2:
+    if kind == "crism_ratio" and len(images) != 2:
+        logger.warning("CRISM Ratio workspace needs its browse and I/F images; skipped")
+        return None
+    if kind == "crism_ratio":
         state = dict(extra or {})
         workspace = CrismRatioWorkspace(
             images[0],
@@ -124,6 +127,8 @@ def displayRenderers(workspace: object) -> list[ImageRenderer]:
         return [workspace.primaryRenderer, workspace.secondaryRenderer]
     if isinstance(workspace, LinkedImagesWorkspace):
         return list(workspace.renderers)
+    if isinstance(workspace, CrismRatioWorkspace):
+        return [workspace.browseRenderer, workspace.dataRenderer]
     return []
 
 

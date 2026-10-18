@@ -61,6 +61,13 @@ class RatioPlotsPanel(QWidget):
         return plot
 
     def showComponents(self, c: RatioComponents) -> None:
+        # the plots and the blandness checks work in nm whatever the image's unit
+        model = c.image.bandModel
+        nm = (
+            model.centers
+            if model.centers is not None and model.bandCount == len(c.ratio)
+            else np.asarray(c.wavelengths)
+        )
         for plot, y, color in (
             (self.numeratorPlot, c.numerator, _color(NUMERATOR_COLOR)),
             (self.denominatorPlot, c.denominator, _color(DENOMINATOR_COLOR)),
@@ -68,6 +75,6 @@ class RatioPlotsPanel(QWidget):
         ):
             for curve in [p for p in plot.plots if p.librarySpectrum is None]:
                 plot.removePlot(curve)
-            plot.plot(np.asarray(c.wavelengths), np.asarray(y), color)
+            plot.plot(np.asarray(nm), np.asarray(y), color)
             plot.fitToData()
-        self.readout.setSpectrum(c.wavelengths, c.denominator)
+        self.readout.setSpectrum(nm, c.denominator)

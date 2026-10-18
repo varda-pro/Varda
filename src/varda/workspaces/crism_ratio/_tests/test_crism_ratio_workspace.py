@@ -36,15 +36,17 @@ MARS = CRS.from_user_input("+proj=eqc +R=3396190 +units=m +no_defs")
 LEFT, RIGHT = Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton
 
 
-def raster(name, shape, pixel=100.0, bands=6, georeferenced=True, seed=0):
+def raster(
+    name, shape, pixel=100.0, bands=6, georeferenced=True, seed=0, micrometers=False
+):
     """A (rows, cols) image of ``bands`` bands from 1000 to 2500 nm."""
     rows, cols = shape
     values = np.random.default_rng(seed).uniform(0.2, 0.4, (rows, cols, bands))
     return VardaRaster(
         ArrayDataSource(
             values.astype(np.float32),
-            wavelengths=np.linspace(1000, 2500, bands),
-            wavelengthUnits="nanometers",
+            wavelengths=np.linspace(1000, 2500, bands) / (1000 if micrometers else 1),
+            wavelengthUnits="micrometers" if micrometers else "nanometers",
             transform=Affine(pixel, 0, 0, 0, -pixel, 0) if georeferenced else None,
             crs=MARS if georeferenced else None,
         ),
@@ -329,3 +331,77 @@ def test_the_dialog_cannot_open_when_no_link_works(qtbot, monkeypatch):
     monkeypatch.setattr(dialog, "accept", lambda: shown.append("accepted"))
     dialog._accept()
     assert shown and shown[0] != "accepted"
+
+
+# --- fix round 1 -----------------------------------------------------------------
+
+
+def test_a_micrometer_cube_gets_the_same_verdict_as_a_nanometer_cube(qtbot):
+    browse = raster("browse", (30, 40), seed=1)
+    nm = raster("data", (30, 40), seed=2)
+    um = raster("data", (30, 40), seed=2, micrometers=True)
+    verdicts = []
+    for data in (nm, um):
+        workspace = build(qtbot, browse, data, Link.PIXEL)
+        _pair(workspace)
+        verdicts.append(
+            [
+                (c.name, round(c.value, 6))
+                for c in workspace.plots.readout.lastResult.checks
+            ]
+        )
+        x = workspace.plots.numeratorPlot.plots[0].data()[0]
+        np.testing.assert_allclose(x, np.linspace(1000, 2500, 6))
+    assert verdicts[0] == verdicts[1]
+
+
+def test_p_without_a_denominator_adds_no_stale_verdict(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    _pair(workspace)
+    key(workspace, Qt.Key.Key_Escape)
+    tool(workspace).onPointerEvent(press(LEFT, 20.5, 10.5))
+
+    key(workspace, Qt.Key.Key_P)
+
+    (point,) = workspace.pointCollection.getAllPoints()
+    assert "denominator" not in point.name
+
+
+def test_clicking_the_if_view_works(qtbot, mapPair):
+    workspace = build(qtbot, mapPair[0], mapPair[1], Link.MAP)
+    tool(workspace, 1).onPointerEvent(press(LEFT, 7.5, 5.5))
+    tool(workspace, 1).onPointerEvent(press(RIGHT, 19.5, 17.5))
+    np.testing.assert_array_equal(
+        tool(workspace, 1).selection.numerator, boxPolygonPixels(7, 5, 5, 5)
+    )
+    assert len(workspace.plots.ratioPlot.plots) == 1
+    np.testing.assert_array_equal(
+        tool(workspace, 0).selection.denominator, boxPolygonPixels(19, 17, 5, 5)
+    )
+
+
+def test_the_lock_uses_the_if_geometry_under_a_map_link(qtbot, mapPair, monkeypatch):
+    geometry = ColumnGeometry(ir_sample=np.tile(np.arange(40.0), (30, 1)))
+    seen = []
+
+    def load(path):
+        seen.append(path)
+        return geometry
+
+    monkeypatch.setattr(ratio_explorer, "loadColumnGeometry", load)
+    monkeypatch.setattr(
+        crism_ratio_workspace, "resolveGeometryFile", lambda _path: "/fake/de.img"
+    )
+    browse, data = mapPair
+    monkeypatch.setattr(
+        type(data), "filePath", property(lambda s: f"/fake/{s.name}.img")
+    )
+    workspace = build(qtbot, browse, data, Link.MAP)
+
+    tool(workspace).onPointerEvent(press(LEFT, 3.5, 2.5))  # I/F pixel (7, 5)
+    tool(workspace).onPointerEvent(press(RIGHT, 9.5, 8.5))  # I/F row 17
+
+    np.testing.assert_array_equal(
+        tool(workspace).selection.denominator, boxPolygonPixels(7, 17, 5, 5)
+    )
+    assert set(seen) == {"/fake/data.img"}

@@ -303,10 +303,11 @@ class CrismRatioWorkspace(QMainWindow):
             if isinstance(other, RatioExplorerTool) and other is not source:
                 other.showSelection(selection)
 
-    def _verdictSuffix(self) -> str:
-        """The denominator's verdict, to put in the names of what is saved."""
+    def _verdictSuffix(self, denominator: object = True) -> str:
+        """The denominator's verdict, to put in the names of what is saved
+        (none when there is no denominator: the readout would be stale)."""
         readout = self.plots.readout
-        if not readout.lastResult.checks:
+        if denominator is None or not readout.lastResult.checks:
             return ""
         mark = "✓" if readout.lastResult.passed else "✗"
         return f" (denominator {mark} {readout.currentCheckName()})"
@@ -320,7 +321,7 @@ class CrismRatioWorkspace(QMainWindow):
             self.data,
             col,
             row,
-            name=f"Ratio numerator ({col}, {row}){self._verdictSuffix()}",
+            name=f"Ratio numerator ({col}, {row}){self._verdictSuffix(tool.selection.denominator)}",
         )
 
     # --- sessions --------------------------------------------------------------------
