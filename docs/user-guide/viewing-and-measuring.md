@@ -204,8 +204,9 @@ column (below) with the **count** statistic.
     aren't areas on the ground: reproject the image first if you need them.
 - **Zonal statistic of a raster**: **mean**, **median**, **std**
   (population), **min**, **max**, **sum** or **count** of one band inside
-  each ROI, on the ROIs' image or any image on the same pixel grid. Same pixel
-  rule as above; **count** is the number of valid (non-no-data) pixels in
+  each ROI, on the ROIs' image or any image on the same pixel grid (never
+  resampled; images on other grids are named under the **Raster** dropdown,
+  with why). Same pixel rule as above; **count** is the number of valid (non-no-data) pixels in
   that band.
 - **Expression**: arithmetic on other columns, with `sqrt`, `log`, `log10`,
   `exp`, `abs`, `min`, `max`, `round`, `pi` and `e`. A value that can't be

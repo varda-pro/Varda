@@ -115,3 +115,41 @@ def test_the_dialog_makes_a_class_from_a_threshold_or_a_mask(qtbot):
     dialog.minPixels.setValue(1)
     dialog.accept()
     np.testing.assert_array_equal(rois.classMask("bright", image), _mask())
+
+
+def test_the_dialog_takes_a_two_band_mask_or_one_on_another_grid(qtbot):
+    from varda.rois.mask_roi_dialog import NewClassFromMaskDialog
+
+    image = _image()
+    # a Shadow Mask's output: the mask, then a diagnostic band (never 0)
+    twoBands = VardaRaster(
+        ArrayDataSource(
+            np.stack([_mask(), np.full((20, 30), 7.0)], axis=2).astype(np.float32),
+            transform=image.transform,
+            crs=image.crs,
+        ),
+        name="shadow mask",
+    )
+    # the same mask on a 2× finer grid over the same ground
+    t = image.transform
+    fine = VardaRaster(
+        ArrayDataSource(
+            np.repeat(np.repeat(_mask(), 2, 0), 2, 1)[..., None].astype(np.float32),
+            transform=Affine(t.a / 2, 0, t.c, 0, t.e / 2, t.f),
+            crs=image.crs,
+        ),
+        name="fine mask",
+    )
+    plain = _image(georeferenced=False)
+    rois = ROICollection.fromImage(image)
+    dialog = NewClassFromMaskDialog(rois, image, [image, twoBands, fine, plain])
+    qtbot.addWidget(dialog)
+    assert dialog.masks == [twoBands, fine]
+    assert "plain (not georeferenced" in dialog.notListed.text()
+    dialog.fromMask.setChecked(True)
+    np.testing.assert_array_equal(dialog.chosenPixels(), _mask())  # band 1
+    dialog.maskBox.setCurrentIndex(1)
+    np.testing.assert_array_equal(dialog.chosenPixels(), _mask())
+    assert "fine mask resampled from 9.0 m to 18.0 m pixels (nearest)" in (
+        dialog.resampled.text()
+    )

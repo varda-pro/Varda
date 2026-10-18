@@ -46,10 +46,10 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages
+from varda.common.grid import compatibleImages, sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
-from varda.common.ui import MutedLabel, PanelScrollArea
+from varda.common.ui import MutedLabel, PanelScrollArea, notListedLabel
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.lines.line_collection import (
     LineCollection,
@@ -462,6 +462,8 @@ class TerrainWorkspace(QMainWindow):
             "colored, or a loaded image on the DEM's grid (e.g. its orthoimage)"
         )
         self.drapeBox.currentIndexChanged.connect(lambda _: self._onDrape())
+        # the images a drape can't be (not on the DEM's grid), and why
+        self.drapeNotListed = notListedLabel()
         self.colorMapBox = QComboBox()
         self.colorMapBox.addItems(list(COLOR_MAPS))
         self.colorMapBox.currentIndexChanged.connect(lambda _: self.rebuild())
@@ -585,6 +587,7 @@ class TerrainWorkspace(QMainWindow):
         form.addRow("DEM:", self.demBox)
         form.addRow("Band:", self.bandBox)
         form.addRow("Drape:", self.drapeBox)
+        form.addRow(self.drapeNotListed)
         form.addRow("Color map:", self.colorMapBox)
         form.addRow("Detail:", self.detailBox)
         form.addRow("", self.fillGaps)
@@ -823,9 +826,14 @@ class TerrainWorkspace(QMainWindow):
         self.drapeBox.clear()
         self.drapeBox.addItem(PLAIN, PLAIN)
         self.drapeBox.addItem(ELEVATION, ELEVATION)
-        if dem is not None:
-            for image in compatibleImages(list(self.projectImages), dem):
-                self.drapeBox.addItem(image.name, image)
+        choices = (
+            sameGridChoices(list(self.projectImages), dem) if dem is not None else None
+        )
+        for image in choices.images if choices else []:
+            self.drapeBox.addItem(image.name, image)
+        note = choices.note if choices else ""
+        self.drapeNotListed.setText(note)
+        self.drapeNotListed.setVisible(bool(note))
         index = next(
             (
                 i
