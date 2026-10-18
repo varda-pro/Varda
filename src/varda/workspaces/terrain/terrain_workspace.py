@@ -446,7 +446,8 @@ class TerrainWorkspace(QMainWindow):
 
         self._refreshImages(select=dem)
         if isinstance(projectImages, ObservableList):
-            projectImages.sigDataChanged.connect(lambda _: self._refreshImages())
+            # a bound method, so Qt disconnects it when the workspace is deleted
+            projectImages.sigDataChanged.connect(self._onProjectImagesChanged)
 
     # --- the panel ------------------------------------------------------------------
 
@@ -766,6 +767,9 @@ class TerrainWorkspace(QMainWindow):
     def drapeImage(self) -> VardaRaster | None:
         data = self.drapeBox.currentData()
         return data if isinstance(data, VardaRaster) else None
+
+    def _onProjectImagesChanged(self, _images: list) -> None:
+        self._refreshImages()
 
     def _refreshImages(self, select: VardaRaster | None = None) -> None:
         current = select or self.dem()

@@ -51,7 +51,11 @@ class ImageryStreamer(QObject):
         self._timer.setSingleShot(True)
         self._timer.setInterval(DEBOUNCE_MS)
         self._timer.timeout.connect(self.refresh)
-        self.map.viewBox.sigRangeChanged.connect(lambda *_: self._timer.start())
+        # a bound method: the map is a sibling, so it can outlive the streamer
+        self.map.viewBox.sigRangeChanged.connect(self._onViewChanged)
+
+    def _onViewChanged(self) -> None:
+        self._timer.start()
 
     def setLayer(self, layer: BasemapLayer | None) -> None:
         self.layer = layer
