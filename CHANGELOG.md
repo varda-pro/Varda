@@ -29,6 +29,16 @@ can alter results.
 
 ### Fixed
 
+- **Varda no longer slows down as more images are open.** The image list
+  draws each image from a small thumbnail made once (from a sample of its
+  pixels, and again after its metadata is edited) instead of rendering every
+  image in full on every repaint and hover. Overlay bars no longer redraw
+  their views each time an image is opened, removed or renamed, unless the
+  overlay shown is the one removed. Pixel-spectra plots watch only their own
+  widgets for clicks, not every event in the application, which made tab
+  switches and new workspaces slower with every workspace open. A new
+  General Image Analysis workspace no longer flashes up as its own window
+  before it's tabbed.
 - **No more errors or crashes after closing a workspace.** Loading an image
   after closing a workspace with an overlay bar, Find Data or 3D Terrain
   tab, the Find Data map moving as its window closed, or a Spectral
