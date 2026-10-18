@@ -75,6 +75,17 @@ class DelegatingDataSource(DataSource):
         return self._source.crs
 
     @property
+    def rawCrsText(self) -> str | None:
+        return self._source.rawCrsText
+
+    @property
+    def crsError(self) -> str | None:
+        return self._source.crsError
+
+    def gdalMetadata(self) -> dict[str, dict[str, str]]:
+        return self._source.gdalMetadata()
+
+    @property
     def driver(self) -> str:
         return self._source.driver
 
