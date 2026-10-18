@@ -36,7 +36,7 @@ class QaData:
     cube: Path  # ENVI, georeferenced (UTM), 40 bands with wavelengths
     geotiff: Path  # the same scene as a GeoTIFF
     awkward: Path  # GeoTIFF under a folder with spaces and unicode
-    marsWgs84: Path  # Mars pixels tagged WGS 84 (the wrong body)
+    marsWgs84: Path  # Mars pixels tagged WGS 84, with a PDS3 label saying MARS
     marsLabel: Path  # a PDS3 label for the same pixels, saying TARGET_NAME = MARS
     noCrs: Path  # a GeoTIFF without any georeferencing
     corrupt: Path  # random bytes named .tif
@@ -131,6 +131,8 @@ def makeData(folder: Path) -> QaData:
     np.moveaxis(_spectra(), -1, 0).astype("<f4").tofile(raw)  # band sequential
     marsLabel = folder / "mars_pds3.lbl"
     marsLabel.write_text(_pds3Label(raw), encoding="ascii")
+    # The same label beside the WGS 84-tagged GeoTIFF: it says MARS
+    marsWgs84.with_suffix(".lbl").write_text(_pds3Label(raw), encoding="ascii")
     noCrs = writeRaster(_raster("no crs", None, None), folder / "no_crs.tif")
 
     corrupt = folder / "corrupt.tif"

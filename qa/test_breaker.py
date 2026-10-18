@@ -7,6 +7,7 @@ keyring, Linux's case-sensitive file names, macOS's ⌘ versus Ctrl."""
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path, PureWindowsPath
 
@@ -28,6 +29,7 @@ from qa.harness import (
     plain,
     typeText,
 )
+from varda.all_images_view_list.imageview_list import ImageItemDelegate
 from varda.analysis.dialog import RunAnalysisDialog
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -100,18 +102,7 @@ def test_broken_files(qaRun: QaRun, qaData: QaData) -> None:
                 journeys.lookAtSpectrum(run, workspace)
 
     with run.step("Mars tagged as Earth", "Open mars_wgs84.tif (WGS 84 on Mars)"):
-        before = len(run.messages)
-        image = opens(run, qaData.marsWgs84, "a Mars image tagged WGS 84")
-        if image is not None and len(run.messages) == before:
-            crs = image.crs.name if image.crs is not None else "none"
-            run.finding(
-                "confused",
-                "A Mars image whose file says Earth (WGS 84) opens without a "
-                f"word; its distances and areas would use Earth's ellipsoid "
-                f"(CRS: {crs}). A PDS3 label beside it says TARGET_NAME = MARS",
-                widget=run.mainWindow,
-                reproduce="Open a GeoTIFF tagged EPSG:4326 that is a Mars product",
-            )
+        _marsTaggedAsEarth(run, qaData)
 
     with run.step("PDS3 label", "Open mars_pds3.lbl"):
         image = opens(run, qaData.marsLabel, "a PDS3 label (Mars)")
@@ -149,6 +140,65 @@ def _openCube(run: QaRun, qaData: QaData) -> VardaRaster | None:
     if image is None:
         run.finding("blocked", "The test cube didn't open")
     return image
+
+
+def _marsTaggedAsEarth(run: QaRun, qaData: QaData) -> None:
+    """A Mars product whose GeoTIFF says WGS 84 (Earth), with a PDS3 label
+    beside it saying MARS. Varda should say so three ways: a status-bar
+    message, a dot on the thumbnail, and the thumbnail's tool tip."""
+    said = len(run.statusMessages)
+    image = opens(run, qaData.marsWgs84, "a Mars image tagged WGS 84")
+    if image is None:
+        return
+    run.settle(0.5)
+    gui = run.mainWindow
+    status = [m for m in run.statusMessages[said:] if image.name in m]
+    listWidget = gui.imageList
+    row = next(
+        (
+            r
+            for r in range(listWidget.count())
+            if (entry := listWidget.item(r)) is not None
+            and entry.data(Qt.ItemDataRole.UserRole) is image
+        ),
+        -1,
+    )
+    entry = listWidget.item(row) if row >= 0 else None
+    tip = str(entry.data(Qt.ItemDataRole.ToolTipRole)) if entry else ""
+    index = listWidget.indexFromItem(entry) if entry is not None else None
+    badge = index is not None and ImageItemDelegate.hasBadge(index)
+    crs = image.crs.name if image.crs is not None else "none"
+    run.log("CRS warning", status=status, tip=tip, badge=badge, crs=crs)
+    shot = run.qaShot(gui, "mars-wgs84", f"status: {status}; tip: {tip!r}")
+    reproduce = "File > Import Image(s) > a WGS 84 GeoTIFF of Mars with its PDS3 label"
+    if not (status or badge or "\n" in tip):
+        run.finding(
+            "confused",
+            "A Mars image whose file says Earth (WGS 84) opens without a word; "
+            f"its distances and areas would use Earth's ellipsoid (CRS: {crs})",
+            shot=shot,
+            reproduce=reproduce,
+        )
+        return
+    for missing, shown in (
+        ("a status-bar message", status),
+        ("the dot on its thumbnail", badge),
+        ("a coordinate-system line in its tool tip", "\n" in tip),
+    ):
+        if not shown:
+            run.finding(
+                "annoyed",
+                f"A WGS 84-tagged Mars image is flagged, but without {missing}",
+                shot=shot,
+                reproduce=reproduce,
+            )
+    if status and not re.search(r"Mars|body|Earth", status[0], re.I):
+        run.finding(
+            "confused",
+            f"The status bar flags the image but doesn't say what is wrong: "
+            f"{status[0]!r}",
+            shot=shot,
+        )
 
 
 def test_junk_and_escape(qaRun: QaRun, qaData: QaData) -> None:

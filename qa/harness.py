@@ -235,6 +235,7 @@ class QaRun:
         self.fileDialogs: list[str] = []  # what each file dialog asked for
         self.openedUrls: list[str] = []
         self.uncaught: list[str] = []
+        self.statusMessages: list[str] = []  # what the status bar said
         self._records = _Records()
         self._watcher = QTimer()
         self._watcher.setInterval(50)
@@ -258,6 +259,9 @@ class QaRun:
             assert isinstance(qApp, QApplication)
             self.app = createVarda(qApp, checkForUpdates=False)
             logging.getLogger().addHandler(self._records)
+            statusBar = self.app.maingui.statusBar() if self.app.maingui else None
+            if statusBar is not None:
+                statusBar.messageChanged.connect(self._onStatusMessage)
             self._watcher.start()
             self.settle()
             seconds = time.monotonic() - started
@@ -352,6 +356,11 @@ class QaRun:
             where=where,
         )
         self.log("uncaught exception", traceback=text)
+
+    def _onStatusMessage(self, message: str) -> None:
+        if message:
+            self.statusMessages.append(message)
+            self.log("status bar", message=message)
 
     def _mainOrNone(self) -> QWidget | None:
         return self.app.maingui if self.app is not None else None
