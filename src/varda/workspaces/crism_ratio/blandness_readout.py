@@ -101,7 +101,10 @@ class BlandnessReadout(QWidget):
         self.checkCombo.currentIndexChanged.connect(self._evaluate)
 
         self.editors: dict[str, QDoubleSpinBox] = {}
-        limits = FlowLayout()
+        # the limits wrap onto more rows when the panel is narrow; the row
+        # widget owns them from the start
+        self.limitsRow = QWidget(self)
+        limits = FlowLayout(self.limitsRow)
         for key, label, scale, decimals, suffix, tip in _EDITORS:
             low, high = LIMIT_RANGES[key]
             box = QDoubleSpinBox()
@@ -111,7 +114,9 @@ class BlandnessReadout(QWidget):
             box.setSuffix(suffix)
             box.setValue(getattr(READOUT_LIMITS, key) * scale)
             box.setToolTip(tip)
-            box.valueChanged.connect(lambda v, k=key, s=scale: self._onEdited(k, v / s))
+            # a bound method (not a lambda or partial), so Qt disconnects it
+            # when the readout is destroyed
+            box.valueChanged.connect(self._onEdited)
             self.editors[key] = box
             pair = QWidget()
             row = QHBoxLayout(pair)
@@ -151,7 +156,7 @@ class BlandnessReadout(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.checkCombo)
-        layout.addLayout(limits)
+        layout.addWidget(self.limitsRow)
         layout.addWidget(self.co2Check)
         layout.addWidget(self.table)
         layout.addWidget(self.verdictLabel)
@@ -210,7 +215,14 @@ class BlandnessReadout(QWidget):
             box.setValue(getattr(limits, key) * scale)
             box.blockSignals(False)
 
-    def _onEdited(self, key: str, value: float) -> None:
+    def _onEdited(self, shown: float) -> None:
+        sender = self.sender()
+        key, scale = next(
+            (k, scale)
+            for k, _, scale, *_rest in _EDITORS
+            if self.editors.get(k) is sender
+        )
+        value = shown / scale
         if np.isclose(value, getattr(READOUT_LIMITS, key)):
             self._overrides.pop(key, None)
         else:
