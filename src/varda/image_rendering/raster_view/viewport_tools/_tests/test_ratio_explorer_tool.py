@@ -208,3 +208,40 @@ def test_the_follower_is_not_asked_before_a_denominator_exists(tool):
     tool.onPointerEvent(_left(10.0, 20.0))
     assert tool.selection.denominator is None
     assert calls == []
+
+
+def test_click_mapper_converts_clicks_to_data_pixels(qtbot, tool):
+    tool.setClickMapper(lambda x, y: (x * 2, y * 2))
+    tool.onPointerEvent(_left(5.0, 10.0))
+    np.testing.assert_array_equal(
+        tool.selection.numerator, boxPolygonPixels(10, 20, 5, 5)
+    )
+    tool.onPointerEvent(_right(15.0, 2.0))
+    np.testing.assert_array_equal(
+        tool.selection.denominator, boxPolygonPixels(30, 4, 5, 5)
+    )
+
+
+def test_click_mapper_none_shows_text_and_keeps_the_selection(qtbot, tool):
+    tool.onPointerEvent(_left(10.0, 20.0))
+    before = tool.selection
+    shown = []
+    tool.showText = lambda text, timeout=0: shown.append(text)
+    tool.setClickMapper(lambda x, y: None)
+    with qtbot.assertNotEmitted(tool.sigSelectionChanged):
+        assert tool.onPointerEvent(_left(1.0, 1.0)) is True
+        assert tool.onPointerEvent(_right(1.0, 1.0)) is True
+    assert shown == ["Outside the I/F cube"] * 2
+    assert tool.selection is before
+
+
+def test_box_projector_draws_the_boxes_through_it(qtbot, tool):
+    drawn = []
+    tool.viewport.pixelToLocalCoords = lambda p: drawn.append(p) or p
+    tool.setBoxProjector(lambda polygon: polygon + 100.0)
+    tool.onPointerEvent(_left(10.0, 20.0))
+    np.testing.assert_array_equal(drawn[-1], boxPolygonPixels(10, 20, 5, 5) + 100.0)
+    # the selection itself stays in data pixels
+    np.testing.assert_array_equal(
+        tool.selection.numerator, boxPolygonPixels(10, 20, 5, 5)
+    )

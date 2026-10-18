@@ -30,6 +30,10 @@ DenominatorPlacer = Callable[[np.ndarray, int, int], np.ndarray]
 # (new numerator polygon, current denominator polygon) -> new denominator
 # polygon, or None to keep the denominator where it is
 DenominatorFollower = Callable[[np.ndarray, np.ndarray], np.ndarray | None]
+# clicked view (x, y) -> data pixel (x, y), or None when outside the data
+ClickMapper = Callable[[float, float], tuple[float, float] | None]
+# box polygon in data pixels -> the same polygon in this view's pixels
+BoxProjector = Callable[[np.ndarray], np.ndarray]
 
 
 @attrs.frozen
@@ -70,6 +74,8 @@ class RatioExplorerTool(ViewportTool):
         self._boxSize: Callable[[], tuple[int, int]] = lambda: (5, 5)
         self._placeDenominator: DenominatorPlacer | None = None
         self._followDenominator: DenominatorFollower | None = None
+        self._mapClick: ClickMapper | None = None
+        self._projectBox: BoxProjector | None = None
         self.selection = RatioSelection(None, None)
         self._numeratorOverlay: ROIOverlayHandle | None = None
         self._denominatorOverlay: ROIOverlayHandle | None = None
@@ -87,6 +93,16 @@ class RatioExplorerTool(ViewportTool):
     def setDenominatorFollower(self, follower: DenominatorFollower | None) -> None:
         """Let the denominator move when a new numerator is placed."""
         self._followDenominator = follower
+
+    def setClickMapper(self, mapper: ClickMapper | None) -> None:
+        """Convert clicks on this view to the pixels the boxes are defined in
+        (for a view on another grid than the data)."""
+        self._mapClick = mapper
+
+    def setBoxProjector(self, projector: BoxProjector | None) -> None:
+        """Draw the boxes (always in data pixels) through ``projector``."""
+        self._projectBox = projector
+        self._redraw()
 
     def activate(self):
         super().activate()
@@ -109,7 +125,14 @@ class RatioExplorerTool(ViewportTool):
         if event.action != PointerAction.PRESS:
             return False
 
-        col, row = int(event.imagePos.x()), int(event.imagePos.y())
+        x, y = event.imagePos.x(), event.imagePos.y()
+        if self._mapClick is not None:
+            mapped = self._mapClick(x, y)
+            if mapped is None:
+                self.showText("Outside the I/F cube", timeout=2000)
+                return True
+            x, y = mapped
+        col, row = int(x), int(y)
         if event.button == Qt.MouseButton.LeftButton:
             width, height = self._boxSize()
             numerator = boxPolygonPixels(col, row, width, height)
@@ -171,6 +194,8 @@ class RatioExplorerTool(ViewportTool):
             if handle is not None:
                 handle.remove()
             return None
+        if self._projectBox is not None:
+            polygon = self._projectBox(polygon)
         points = [
             QPointF(float(c), float(r))
             for c, r in self.viewport.pixelToLocalCoords(polygon)
