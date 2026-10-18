@@ -43,7 +43,10 @@ class SetCrsDialog(QDialog):
         image: VardaRaster,
         images: Sequence[VardaRaster] = (),
         parent: QWidget | None = None,
+        text: str = "",
     ):
+        """``text``: what the field starts with (an unreadable CRS to
+        correct), on one line."""
         super().__init__(parent)
         self.image = image
         self.setWindowTitle(f"Set Coordinate System of {image.name}")
@@ -92,6 +95,7 @@ class SetCrsDialog(QDialog):
         layout.addStretch()
         layout.addWidget(self.buttons)
         self.setMinimumWidth(420)
+        self.crsEdit.setText(" ".join(text.split("\n")))
         self._update()
 
     def _onSameAs(self, index: int) -> None:

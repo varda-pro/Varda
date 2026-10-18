@@ -319,7 +319,12 @@ class ImagePropertiesDialog(QDialog):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         crs = image.crs if image.hasGeospatialData else None
         description = describeCrs(crs, image.transform, image.width, image.height)
-        form.addRow(wrapped(description.text))
+        unreadable = self._unreadableCrsText()
+        if unreadable is not None:  # the file's text, and why PROJ refused it
+            error = image.dataSource.crsError or "PROJ can't read it"
+            form.addRow(wrapped(f"Unreadable coordinate system ({error})"))
+        else:
+            form.addRow(wrapped(description.text))
         self.applyButtons = []
         self.undoButton = None
         health = image.crsHealth
@@ -349,6 +354,11 @@ class ImagePropertiesDialog(QDialog):
         self.wktToggle.toggled.connect(self._showWkt)
         buttons = FlowLayout().withWidget(self.setCrsButton)
         form.addRow(buttons)
+        if unreadable is not None:
+            self.wktEdit.setPlainText(unreadable)
+            buttons.addWidget(self.wktToggle)
+            form.addRow(self.wktEdit)
+            return content
         if crs is None:
             return content
         if description.latitudeType:  # a CRS on a body
@@ -391,8 +401,17 @@ class ImagePropertiesDialog(QDialog):
         undoCrsFix(self.image)
         self.refreshCoordinateSystem()
 
+    def _unreadableCrsText(self) -> str | None:
+        """The CRS text the file has when PROJ couldn't read it, else None."""
+        if self.image.crs is not None:
+            return None
+        return self.image.dataSource.rawCrsText or None
+
     def showSetCrs(self) -> None:
-        self.setCrsDialog = SetCrsDialog(self.image, self.images, self)
+        # an unreadable CRS starts the field, to be corrected by hand
+        self.setCrsDialog = SetCrsDialog(
+            self.image, self.images, self, text=self._unreadableCrsText() or ""
+        )
         self.setCrsDialog.accepted.connect(self._onCrsChosen)
         self.setCrsDialog.open()
 

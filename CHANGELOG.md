@@ -29,7 +29,9 @@ can alter results.
   direction and domain (0..360 or −180..180), its authority code (or the
   `IAU_2015`/EPSG code it matches), the pixel size in the CRS's units and on
   the ground, and the full WKT. An unknown body is reported as unknown,
-  never as Earth. Line-profile CSVs name the CRS the same way. See the new
+  never as Earth. A CRS PROJ can't read is shown as the file has it, with
+  PROJ's error, and fills **Set coordinate system…** to be corrected.
+  Line-profile CSVs name the CRS the same way. See the new
   [Coordinate systems](docs/user-guide/coordinate-systems.md) guide.
 - **Planetary images tagged WGS 84 are read on their own body.** When an
   image opens, Varda checks its coordinate system against its label. A

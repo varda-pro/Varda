@@ -63,7 +63,8 @@ Varda works in pixels and doesn't measure in meters. Two other cases:
   (e.g. "Local coordinates (no body), arbitrary, 2 m/px"), and no
   conventions.
 - Text that PROJ can't read as a CRS shows **Unreadable coordinate system**
-  with PROJ's error.
+  with PROJ's error; **Show WKT** shows the text as the file has it, and
+  **Set coordinate system…** starts with that text, to correct by hand.
 
 Line-profile CSV exports carry the same description in their `# CRS:`
 header line, followed by the WKT (see

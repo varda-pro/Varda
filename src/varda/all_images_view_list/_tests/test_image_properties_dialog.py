@@ -248,3 +248,38 @@ def test_the_issues_are_not_cut_off_on_a_laptop_screen(qtbot, tmp_path, size):
     dialog.undoButton.click()  # the Apply layout too
     qtbot.wait(10)
     assertNothingClipped(dialog)
+
+
+BROKEN_WKT = 'PROJCS["Mars eqc",GEOGCS["Mars",DATUM["D_Mars",SPHEROID["Mars",3396190'
+
+
+class _UnreadableCrsSource(ArrayDataSource):
+    """A file whose CRS text PROJ couldn't read."""
+
+    @property
+    def rawCrsText(self) -> str | None:
+        return BROKEN_WKT
+
+    @property
+    def crsError(self) -> str | None:
+        return "PROJ: unexpected end of WKT"
+
+
+def test_an_unreadable_crs_shows_its_text_and_the_error(qtbot):
+    data = np.zeros((4, 4, 1), dtype=np.float32)
+    image = VardaRaster(
+        _UnreadableCrsSource(data, transform=Affine(10, 0, 0, 0, -10, 0)),
+        name="broken",
+    )
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = [label.text() for label in dialog.crsBox.findChildren(QLabel)]
+    assert "Unreadable coordinate system (PROJ: unexpected end of WKT)" in texts
+    assert "No coordinate system (pixel coordinates)" not in texts
+    assert dialog.wktEdit.toPlainText() == BROKEN_WKT
+    dialog.wktToggle.setChecked(True)
+    assert dialog.wktEdit.isVisibleTo(dialog)
+    dialog.setCrsButton.click()
+    chooser = dialog.setCrsDialog
+    assert chooser is not None
+    assert chooser.crsEdit.text() == BROKEN_WKT  # to correct by hand
