@@ -306,9 +306,9 @@ says whether its lengths and areas are (see
    (Snyder, 1987, eq. 3-28), with a and c the ellipsoid's equatorial and
    polar radii. On the Moon and other bodies whose reference is a sphere,
    and for a CRS already on the reference ellipsoid, there is no
-   difference to report. Typical values on Mars:
+   difference to report. Typical values on Mars, for **lengths**:
 
-   | CRS surface | Where | Difference |
+   | CRS surface | Where | Length difference |
    |---|---|---|
    | Mars 2000 sphere, R = 3396.19 km (= a) | equator | 0% |
    | Mars 2000 sphere | 60°N | 0.44% |
@@ -316,6 +316,10 @@ says whether its lengths and areas are (see
    | HiRISE polar sphere, R = 3376.20 km (= c) | 85°N | 0.005% |
    | HiRISE polar sphere | 60°N | 0.15% |
    | HiRISE polar sphere | equator | 0.59% |
+
+   **Areas differ by about twice as much**, since an area scales with the
+   square of length (both directions scale): e.g. on the Mars 2000 sphere
+   at 85°N, 0.59% for a length and 1.18% for an area.
 
    The HiRISE polar sphere's radius is Mars's polar radius, so near the
    pole it nearly is the ellipsoid. (Comparing at the same latitude

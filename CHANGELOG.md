@@ -8,6 +8,15 @@ can alter results.
 
 ### Added
 
+- **ROI areas and perimeters on the body.** Add Column's Geometry measures
+  now include **Area on the body (km²)** and **Perimeter on the body (km)**:
+  geodesic (Karney, 2013) on the coordinate system's own surface, with the
+  ROI's edges densified to one pixel, whatever the projection. The column's
+  tooltip names the method and surface, the difference on the body's IAU 2015
+  reference ellipsoid, and why any value is blank. The map-unit area and
+  perimeter are now labeled planar, with the projection's distortion over the
+  image in their tooltip. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
 - **The pixel readout names the body and conventions.** Hovering over a
   georeferenced image shows, e.g., `lat 18.40312° N  lon 77.45120° E  (Mars,
   planetocentric)`: the body, the latitude type, the longitude direction and,
