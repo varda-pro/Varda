@@ -81,6 +81,12 @@ names another body (see
   made from it, carry the corrected CRS, and their provenance records the
   correction as `crsFix` (see
   [Reporting results](reporting-results.md#what-varda-records-and-what-it-doesnt)).
+- **A corrected transform is kept the same way.** A corrected
+  pixel-to-map transform (for example one taken from the image's label)
+  is saved with the session like a corrected CRS (`"transform"` in the
+  image's `overrides`, the six affine coefficients `a, b, c, d, e, f`, in
+  the CRS's units per pixel and the CRS's units), is written into files
+  Varda exports from the image, and the original file isn't changed.
 
 ## Sharing a project
 
