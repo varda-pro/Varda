@@ -10,10 +10,12 @@ can alter results.
 
 - **Saved ratio pairs get a class.** In the CRISM Ratio workspace, S (and P)
   now opens a small dialog with the class prefilled with the reference
-  mineral overlaid on the Ratio plot (else the last class used), the
+  mineral overlaid on the Ratio plot (its metadata's mineral or class, else
+  the short form of its name, e.g. `Olivine Fo91`; else the last class used), the
   automatic name and the verdict; Enter saves, Esc cancels. The numerator ROI
   takes the class (e.g. `Olivine`), the denominator the `Denominator` class,
-  and both record `pair`, `role` and `target` columns; a point gets the class
+  and both record `pair`, `role` and `target` columns; each new class gets
+  its own color, and `Denominator` is light gray; a point gets the class
   at the start of its description. "Don't ask" saves at once with the
   suggested class (Shift+S and Shift+P still ask); the session keeps it and
   the last class. Previously the ROIs were named `Ratio N numerator …` and

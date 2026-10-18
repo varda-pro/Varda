@@ -17,6 +17,10 @@ from varda.workspaces.crism_ratio._tests.test_crism_ratio_workspace import (
     raster,
 )
 from varda.workspaces.crism_ratio.crism_ratio_workspace import CrismRatioWorkspace
+from varda.workspaces.crism_ratio.ratio_classes import (
+    CLASS_COLORS,
+    DENOMINATOR_CLASS_COLOR,
+)
 from varda.workspaces.linked_images.linking import Link
 from varda.workspaces.workspace_kinds import buildWorkspace
 
@@ -194,6 +198,50 @@ def test_the_session_keeps_the_last_class_and_dont_ask(qtbot, spectralPair):
     assert copy.saveDialog is None
     names = [roi.name for roi in copy.roiCollection.getAllROIs()]
     assert names == ["Serpentine", "Denominator"]
+
+
+def test_a_long_library_name_prefills_its_short_form_and_lists_the_full_name(
+    qtbot, spectralPair
+):
+    full = "Olivine Fo91 GDS70.d 165-250 µm USGS splib07a AREF"
+    workspace = workspaceWith(qtbot, spectralPair, full)
+    key(workspace, Qt.Key.Key_S)
+    dialog = workspace.saveDialog
+    assert dialog is not None
+    assert dialog.className() == "Olivine Fo91"
+    box = dialog.classBox
+    assert [box.itemText(i) for i in range(box.count())] == ["Olivine Fo91", full]
+    accept(qtbot, workspace)
+    assert workspace.roiCollection.getAllROIs()[0].name == "Olivine Fo91"
+
+
+def test_the_mineral_in_the_library_metadata_is_prefilled(qtbot, spectralPair):
+    workspace = workspaceWith(qtbot, spectralPair)
+    workspace.plots.ratioPlot.addLibrarySpectrum(
+        LibrarySpectrum(
+            "Ol GDS70.d",
+            np.linspace(1000, 2500, 20),
+            np.linspace(0.2, 0.3, 20),
+            provenance={"mineral": "Olivine"},
+        )
+    )
+    key(workspace, Qt.Key.Key_S)
+    dialog = workspace.saveDialog
+    assert dialog is not None and dialog.className() == "Olivine"
+
+
+def test_new_classes_get_distinct_colors_and_denominators_one_gray(qtbot, spectralPair):
+    workspace = workspaceWith(qtbot, spectralPair)
+    for className in ("Olivine", "Kaolinite", "Olivine"):
+        key(workspace, Qt.Key.Key_S)
+        accept(qtbot, workspace, className)
+    rois = workspace.roiCollection.getAllROIs()
+    olivine, denominator, kaolinite, _, olivineAgain, _ = rois
+    hexes = [r.color.toHexString()[:7] for r in rois]
+    assert hexes[0] == CLASS_COLORS[0] and hexes[2] == CLASS_COLORS[1]
+    assert olivineAgain.color == olivine.color  # an existing class keeps its color
+    assert {hexes[1], hexes[3], hexes[5]} == {DENOMINATOR_CLASS_COLOR}
+    assert kaolinite.color != olivine.color != denominator.color
 
 
 def test_the_dialog_fits_a_laptop_with_a_long_mineral_name(qtbot, spectralPair):

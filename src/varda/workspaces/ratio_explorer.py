@@ -235,13 +235,15 @@ class RatioExplorerController(QObject):
         self,
         names: tuple[str, str] | None = None,
         properties: tuple[Mapping[str, str], Mapping[str, str]] = ({}, {}),
+        colors: tuple[Color, Color] = (NUMERATOR_ROI_COLOR, DENOMINATOR_ROI_COLOR),
     ) -> None:
         """Add the current numerator/denominator boxes to the ROI collection and
         make the denominator the ratio reference, so the pair can be re-plotted.
         ``names`` are the two ROIs' names (their classes; by default
         ``Ratio N numerator`` and ``Ratio N denominator`` with the suffix), and
-        ``properties`` their user columns (added to the collection when new).
-        An ROI joining an existing class takes the class's color."""
+        ``properties`` their user columns (added to the collection when new),
+        ``colors`` their colors. An ROI joining an existing class takes the
+        class's color instead."""
         if self._current is None or self.currentPair() is None:
             return
         image, selection = self._current
@@ -270,7 +272,7 @@ class RatioExplorerController(QObject):
             for polygon, name, color, row in zip(
                 (selection.numerator, selection.denominator),
                 names,
-                (NUMERATOR_ROI_COLOR, DENOMINATOR_ROI_COLOR),
+                colors,
                 rows,
                 strict=True,
             )

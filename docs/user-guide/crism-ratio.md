@@ -623,7 +623,16 @@ as a point**. Each has:
   one added last is prefilled and the others are listed first in the
   dropdown, followed by the classes already used in this workspace's ROI
   Manager. With none overlaid, the last class used is prefilled (empty at
-  first).
+  first). What is prefilled for a library spectrum is its metadata's
+  `mineral`, `class` or `category` field (the first present, any case) if it
+  has one; otherwise the **short form of its name**: the name split into
+  words at spaces and underscores, kept up to the first sample-ID-like word,
+  one containing a digit or a period (`GDS70.d`, `165um`, `CM9`). A
+  composition such as `Fo91` or `An60` (Fo, Fa, En, Fs, Wo, An, Ab or Or and
+  a number) is kept. So `Olivine Fo91 GDS70.d 165-250 µm USGS splib07a AREF`
+  gives `Olivine Fo91` and `Olivine_GDS70.a_Fo89_165um_BECKb_AREF` gives
+  `Olivine`; a name whose first word is an ID is kept whole. The full name
+  is listed in the dropdown right after it.
 - **Name**, prefilled with the automatic name above. Emptied, the automatic
   name is used.
 - A summary: the numerator and denominator center pixels (I/F cube column,
@@ -650,8 +659,13 @@ the one `Denominator` class (bland reference regions, whatever they were
 used against); `pair` joins a numerator to its denominator and `target` says
 what a denominator was the reference for. With the class left empty, the
 numerator's class is the Name. An ROI joining a class that already exists
-takes the class's color; a new class starts green (numerators) or magenta
-(the `Denominator` class), like the boxes. `pair`, `role`, `target` and
+takes the class's color. A new class gets the next color not yet used by a
+class from Tableau 10 without its green, purple and gray (blue `#4e79a7`,
+orange `#f28e2b`, red `#e15759`, teal `#76b7b2`, yellow `#edc948`, pink
+`#ff9da7`, brown `#9c755f`; repeated after seven classes), so it is not
+confused with the green numerator box or the magenta denominator box. The
+`Denominator` class is always light gray (`#d9d9d9`). ROIs are drawn half
+opaque. `pair`, `role`, `target` and
 `description` are ordinary ROI columns: they are kept by the session and
 written by ROI export (GeoJSON, GeoPackage, Shapefile).
 

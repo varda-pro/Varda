@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from varda.common.entities import VardaRaster
+from varda.common.entities import Color, VardaRaster
 from varda.common.grid import sameGrid
 from varda.common.parameter_widgets import (
     IntParameterWidget,
@@ -82,7 +82,17 @@ from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_manager_widget import ROIManagerWidget
 from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
+from varda.workspaces.crism_ratio.ratio_classes import (
+    DENOMINATOR_CLASS,
+    DENOMINATOR_CLASS_COLOR,
+    nextClassColor,
+    roiColor,
+)
+from varda.workspaces.crism_ratio.ratio_classes import (
+    suggestedClass as suggestedLibraryClass,
+)
 from varda.workspaces.crism_ratio.save_dialog import SaveRatioDialog
+from varda.spectral_libraries.spectrum import LibrarySpectrum
 from varda.workspaces.linked_images.linked_images_workspace import ViewGroupLink
 from varda.workspaces.linked_images.linking import Link, linkWarnings
 from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
@@ -101,8 +111,6 @@ KEYS_HINT = (
     "as a point (both ask for a class: Enter saves; Shift+S and Shift+P always "
     "ask) · Esc: clear"
 )
-# the class of every saved denominator ROI; its target is in the "target" column
-DENOMINATOR_CLASS = "Denominator"
 
 
 def columnSource(image: VardaRaster) -> str:
@@ -561,26 +569,44 @@ class CrismRatioWorkspace(QMainWindow):
 
     # --- saving ----------------------------------------------------------------------
 
-    def referenceMinerals(self) -> list[str]:
+    def referenceSpectra(self) -> list[LibrarySpectrum]:
         """The library spectra overlaid on the Ratio plot, most recently
         added first."""
-        names = [
-            curve.librarySpectrum.name
+        spectra = [
+            curve.librarySpectrum
             for curve in self.plots.ratioPlot.plots
             if curve.librarySpectrum is not None
         ]
-        return list(dict.fromkeys(reversed(names)))
+        return list(reversed(spectra))
 
     def suggestedClass(self) -> str:
-        """The reference mineral on the Ratio plot, else the last class used."""
-        minerals = self.referenceMinerals()
-        return minerals[0] if minerals else self.lastClass
+        """The reference mineral on the Ratio plot (its metadata's mineral or
+        class, else its name's short form), else the last class used."""
+        spectra = self.referenceSpectra()
+        return suggestedLibraryClass(spectra[0]) if spectra else self.lastClass
 
     def classChoices(self) -> list[str]:
-        """The Class dropdown: the reference minerals, the last class, and the
-        ROI classes already in this workspace."""
+        """The Class dropdown: each reference mineral's class and full name
+        (newest first), the last class, and the ROI classes already here."""
+        overlaid = [
+            choice
+            for spectrum in self.referenceSpectra()
+            for choice in (suggestedLibraryClass(spectrum), spectrum.name)
+        ]
         existing = [n for n in self.roiCollection.classes() if n != DENOMINATOR_CLASS]
-        return [*self.referenceMinerals(), self.lastClass, *existing]
+        return list(dict.fromkeys([*overlaid, self.lastClass, *existing]))
+
+    def classColor(self, className: str) -> Color:
+        """An existing class's color, else the next unused class color."""
+        existing = self.roiCollection.classColor(className)
+        if existing is not None:
+            return existing
+        used = [
+            c.toHexString()
+            for c in map(self.roiCollection.classColor, self.roiCollection.classes())
+            if c is not None
+        ]
+        return roiColor(nextClassColor(used))
 
     def _summary(self, numerator: np.ndarray, denominator: np.ndarray | None) -> str:
         nc, nr = centerPixel(numerator)
@@ -639,12 +665,14 @@ class CrismRatioWorkspace(QMainWindow):
         pair's name, their role and the target class in their own columns."""
         if className:
             self.lastClass = className
+        numeratorClass = className or name
         self.controller.saveCurrentBoxes(
-            (className or name, DENOMINATOR_CLASS),
+            (numeratorClass, DENOMINATOR_CLASS),
             (
                 {"pair": name, "role": "numerator", "target": className},
                 {"pair": name, "role": "denominator", "target": className},
             ),
+            (self.classColor(numeratorClass), roiColor(DENOMINATOR_CLASS_COLOR)),
         )
 
     def _requestSavePoint(self, shift: bool) -> None:
