@@ -297,9 +297,9 @@ def _factors(
                 )
             k = aspect * curvature / np.cos(phi)
             k = np.where(np.abs(lats) < 90, k, np.inf)
-        h = np.ones_like(k)
-        areal = h * k
-        omega = np.degrees(2 * np.arcsin(np.abs(h - k) / (h + k)))
+            h = np.ones_like(k)
+            areal = h * k
+            omega = np.degrees(2 * np.arcsin(np.abs(h - k) / (h + k)))
     distortions = []
     for values in zip(h, k, areal, omega, strict=True):
         finite = all(math.isfinite(value) for value in values)

@@ -271,7 +271,176 @@ assumed to be Earth.
 
 ## What Varda checks when an image opens
 
-<!-- Filled in by a later change: the coordinate-system checks and automatic fixes. -->
+When an image opens, Varda checks its coordinate system against what its
+label says and against itself, once. It doesn't ask questions or open
+dialogs. Each finding has a severity:
+
+- **Problem**: the coordinates are likely misread or missing. A dot on the
+  image's thumbnail, a line in its tooltip, and one status-bar message when
+  it opens.
+- **Tip**: worth knowing before you measure shapes or combine images. The
+  dot and the tooltip line.
+- **Info**: a convention, not an error. Shown in Image Properties only.
+
+### Where the label facts come from
+
+- A **PDS3** label: a `.lbl` / `.LBL` file beside the image, or a label
+  attached to the start of the file: `TARGET_NAME`, and from the
+  `IMAGE_MAP_PROJECTION` (or `MAP_PROJECTION`) object
+  `COORDINATE_SYSTEM_NAME`, `POSITIVE_LONGITUDE_DIRECTION` and the
+  westernmost and easternmost longitudes.
+- A **PDS4** label (`target_identification` and the `cart:` mapping
+  classes) or an **ISIS** cube label (the `Mapping` group's `TargetName`,
+  `LatitudeType`, `LongitudeDirection` and `LongitudeDomain`), as GDAL
+  reads them.
+- **Varda's provenance**, for an image Varda made: the record of each
+  result keeps the label facts of the images it was made from (their
+  `labelHints`), so a GeoTIFF Varda wrote from a CRISM product still says
+  it is on Mars. Only the **body** carries over from provenance: a result
+  may be in a different projection than its inputs, so their longitude and
+  latitude conventions don't apply to it. A label's own target wins over
+  provenance; inputs on different bodies name none.
+
+### The checks
+
+| Code | Severity | When | Example message | What happens |
+|---|---|---|---|---|
+| `no-crs` | Problem | The image has map coordinates (a transform that isn't the identity), or its label describes a map projection, but there is no CRS | "Its map coordinates have no coordinate system, so Varda treats it as unreferenced." | Nothing is changed. Use **Set coordinate system…** |
+| `unreadable-crs` | Problem | The file has CRS text that PROJ can't read | "Its coordinate system can't be read, so Varda treats it as unreferenced." | Nothing is changed. Image Properties shows the text; use **Set coordinate system…** |
+| `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know: nothing is changed; use **Set coordinate system…** |
+| `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
+| `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
+| `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
+| `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
+| `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject for figures and terrain (Reproject Image comes in a later version) |
+| `lon-0-360` | Info | The image's longitudes run 0..360 (a geographic image past 180°, or a projection centered at 180° or beyond) | "Its longitudes run from 0 to 360° (not −180 to 180°)." | Nothing to do: Varda reads both conventions and never rewrites them |
+
+Without a CRS or with an unreadable one, Varda reports that alone: the other
+checks need a CRS. An image with neither map coordinates nor a label
+projection is simply unreferenced and gets no finding.
+
+### The one automatic fix, and why only that one
+
+Varda changes a coordinate system on its own in exactly one case: the CRS
+is **Earth's and geographic** (plain degrees, e.g. `EPSG:4326`) and the
+label's target is **another body Varda knows**. Varda then reads the
+coordinates as degrees on that body's IAU 2015 sphere (e.g.
+`IAU_2015:49900` for Mars, 3396.19 km), and records the reason, e.g.:
+
+> Its CRS says Earth (WGS 84) but its label's target is Mars; read as
+> degrees on the IAU 2015 Mars sphere
+
+This is unambiguous: a geographic CRS carries nothing but longitude and
+latitude in degrees, the label names the body, and those degrees can only
+be degrees on that body. Software that writes "WGS 84" for planetary
+degrees means exactly this. The latitude is then planetocentric (the
+sphere's); if the label says planetographic, the `latitude-type-mismatch`
+tip appears. The other checks (conventions, distortion) are of the fixed
+CRS, the one Varda uses.
+
+Nothing else is fixed automatically:
+
+- A **projected** Earth CRS has map x, y in meters computed with Earth's
+  radius. Whether the producer projected with Earth's radius or only wrote
+  the wrong CRS can't be told from the file, so Varda can't know where the
+  pixels are on the body.
+- A **label that disagrees with the CRS** (longitude direction, latitude
+  type) could be wrong either way.
+- With **no evidence of another body** (no label target), an Earth CRS is
+  left as it is: it may really be Earth.
+
+The fix is recorded in the image's provenance as `crsFix` (from, to, reason,
+automatic), so every result made from the image carries it, and files Varda
+exports are written with the corrected CRS.
+
+### Reporting a corrected CRS
+
+State the CRS the file declared, the CRS used, and why, for example:
+
+> The image's GeoTIFF declared WGS 84 geographic coordinates (EPSG:4326),
+> but its PDS3 label's TARGET_NAME is MARS. Varda (version …) read its
+> coordinates as degrees on the IAU 2015 Mars sphere (IAU_2015:49900,
+> R = 3396.19 km; Archinal et al., 2018).
+
+The `crsFix` record in the provenance of any result gives these values.
+For a CRS you set yourself with **Set coordinate system…**, report it the
+same way, with your reason.
+
+### The distortion check
+
+A map projection can't keep both the sizes and the shapes of a curved
+surface: away from its standard lines it stretches some directions more
+than others. Varda reports where an image's projection does this enough to
+affect what you see: the shapes of features, slopes computed on the map
+grid, and measurements in map units.
+
+**Quantities** (Snyder, 1987, ch. 4):
+
+- **h**: the scale along a meridian (north–south), and **k**: the scale
+  along a parallel (east–west), as ratios of map length to ground length; 1
+  is true to scale.
+- **Scale error**: max(|h − 1|, |k − 1|), reported in percent with the
+  direction of the larger one.
+- **ω**: the maximum angular distortion, the most an angle on the ground
+  changes on the map, in degrees. 0 for a conformal projection (e.g. polar
+  stereographic).
+
+For a **projected** CRS these come from PROJ (`Proj.get_factors`: the
+meridional scale, the parallel scale, the areal scale and the angular
+distortion). For a **geographic** CRS (degrees), Varda shows the pixels
+square, so the image on screen is an equirectangular map in which a pixel
+is Δλ by Δφ degrees. Then h = 1 and
+
+  k = (Δφ/Δλ) · M / (N cos φ)
+
+where M and N are the ellipsoid's meridional and prime-vertical radii of
+curvature at latitude φ (equal on a sphere; Snyder, 1987, eqs. 4-18 and
+4-20) and Δφ/Δλ is the pixel's aspect in degrees. For square-degree pixels
+on a sphere this is Snyder's equirectangular k = cos φ₁ / cos φ with
+φ₁ = 0 (p. 91). The areal scale is h·k, and since meridians and parallels
+stay perpendicular, sin(ω/2) = |h − k| / (h + k) (Snyder, 1987, eq. 4-9).
+
+**Latitude.** φ in these formulas is the geodetic (planetographic)
+latitude. When a CRS's latitude is planetocentric on a flattened ellipsoid
+(e.g. `IAU_2015:49902`), Varda converts it with tan φg = (a/c)² tan φc and,
+for a geographic image, multiplies M by dφg/dφc = (a/c)² / (cos² φc +
+(a/c)⁴ sin² φc), since a pixel spans degrees of planetocentric latitude.
+Reported latitudes are in the CRS's own convention.
+
+**Where.** The check samples a 9 × 9 grid of pixel centers spread evenly
+from the first pixel to the last, in both directions, and reports the
+worst sample: the one with the largest of scale error / 1% and ω / 1°.
+Samples PROJ can't invert (outside the projection's valid area) are
+skipped.
+
+**Thresholds** (Varda's choice):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SCALE_TIP` | 0.01 | Scale error above 1% → the `high-distortion` tip |
+| `ANGLE_TIP_DEG` | 1.0 | ω above 1° → the tip |
+| `SCALE_STRONG` | 0.10 | Scale error above 10% → "badly distorted" wording |
+| `ANGLE_STRONG_DEG` | 10.0 | ω above 10° → "badly distorted" wording |
+
+Examples: a CRISM MTRDR (equirectangular, standard parallel 15°, on a
+3394.84 km sphere) at 18.4°N has k = cos 15° / cos 18.4° ≈ 1.018: 1.8%
+east–west and ω ≈ 1.0°, a tip. An equirectangular image with standard
+parallel 0° at 60°N has k ≈ 2: 100% east–west and ω ≈ 39°, badly
+distorted. A CTX DEM whose standard parallel is its own center latitude
+has none.
+
+**Measurements are not affected.** Lengths, areas and profiles are
+computed geodesically on the body, whatever the projection, so the
+distortion changes how the image looks, not what Varda measures. It does
+affect what is computed on the map grid itself: shapes traced by eye,
+slopes from map-unit pixel spacing, and areas in map units.
+
+**Limitations.** The values are exact for the CRS at each sample (PROJ's
+factors, or the closed form above). The 9 × 9 grid can miss a narrow peak
+between samples; for the cylindrical, conic and azimuthal projections used
+for planetary maps, distortion changes smoothly and is largest at the
+image's edges, which the grid includes. The check describes the
+projection, not the accuracy of the image's georeferencing.
 
 ## References
 

@@ -6,7 +6,9 @@ PDS3 labels (and attached ISIS labels) are plain ODL/PVL, read with a minimal
 reader here: ``KEY = VALUE`` statements, quoted and multi-line values,
 ``GROUP``/``OBJECT`` nesting, and units in ``<…>`` stripped. PDS4 and ISIS
 labels come from the ``xml:PDS4`` and ``json:ISIS3`` metadata domains GDAL
-exposes. Nothing here raises: an unreadable label gives
+exposes. An image Varda made has no label of its own; its provenance record
+keeps its inputs' label facts (``hintsRecord``), and ``provenanceHints``
+reads the target back from them. Nothing here raises: an unreadable label gives
 ``LabelHints.empty()`` with the reason in ``source``.
 """
 
@@ -57,6 +59,9 @@ class LabelHints:
         return cls(None, None, None, None, {}, source)
 
 
+_EMPTY = LabelHints.empty()
+
+
 def labelHints(
     path: str | None, gdalMetadata: Mapping[str, Mapping[str, str]] = {}
 ) -> LabelHints:
@@ -78,6 +83,86 @@ def labelHints(
         except Exception as error:
             reasons.append(f"no readable label for {Path(path).name} ({error})")
     return LabelHints.empty("; ".join(reasons) or "no label")
+
+
+# --- Varda provenance ---
+
+
+def hintsRecord(hints: LabelHints) -> dict[str, str | None] | None:
+    """The facts ``hints`` state, as an input's provenance keeps them
+    (``labelHints``); None when the label states none."""
+    facts = {
+        "target": hints.target,
+        "latitudeType": hints.latitudeType,
+        "longitudeDirection": hints.longitudeDirection,
+        "longitudeDomain": hints.longitudeDomain,
+    }
+    if not any(facts.values()):
+        return None
+    return {**facts, "source": hints.source}
+
+
+def provenanceHints(record: object, hints: LabelHints = _EMPTY) -> LabelHints:
+    """``hints`` with the target a Varda provenance ``record`` names when
+    they have none: its download record's ``target``, else the one target
+    all of its inputs' labels (or their own records) name. Only the body
+    carries over: a result's coordinates, and so their conventions, may
+    differ from its inputs'."""
+    if hints.target:
+        return hints
+    target, origin = _provenanceTarget(record)
+    if target is None:
+        return hints
+    stated = hints.latitudeType or hints.longitudeDirection or hints.longitudeDomain
+    if stated or hints.projectionGroup:
+        source = f"{hints.source}; target from Varda provenance ({origin})"
+    else:
+        source = f"Varda provenance ({origin})"
+    return LabelHints(
+        target,
+        hints.latitudeType,
+        hints.longitudeDirection,
+        hints.longitudeDomain,
+        hints.projectionGroup,
+        source,
+    )
+
+
+def _provenanceTarget(record: object) -> tuple[str | None, str]:
+    """The target a provenance record names, and where it says so."""
+    if not isinstance(record, Mapping):
+        return None, ""
+    fields = cast("Mapping[str, object]", record)
+    source = fields.get("source")
+    if isinstance(source, Mapping):
+        download = cast("Mapping[str, object]", source)
+        target = download.get("target")
+        if isinstance(target, str) and target.strip():
+            catalog = download.get("catalog")
+            origin = f"downloaded from {catalog}" if catalog else "downloaded"
+            return _target(target), origin
+    inputs = fields.get("inputs")
+    if not isinstance(inputs, list):
+        return None, ""
+    targets = {
+        target for entry in inputs if (target := _inputTarget(entry)) is not None
+    }
+    if len(targets) != 1:
+        return None, ""
+    process = fields.get("process")
+    return targets.pop(), str(process) if process else "its inputs"
+
+
+def _inputTarget(entry: object) -> str | None:
+    if not isinstance(entry, Mapping):
+        return None
+    fields = cast("Mapping[str, object]", entry)
+    facts = fields.get("labelHints")
+    if isinstance(facts, Mapping):
+        target = cast("Mapping[str, object]", facts).get("target")
+        if isinstance(target, str) and target.strip():
+            return _target(target)
+    return _provenanceTarget(fields.get("provenance"))[0]
 
 
 # --- PDS3 and attached ISIS labels ---

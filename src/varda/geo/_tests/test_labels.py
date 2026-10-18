@@ -11,7 +11,10 @@ import pytest
 import rasterio as rio
 from affine import Affine
 
-from varda.geo.labels import LabelHints, labelHints
+from varda.common.entities import VardaRaster
+from varda.common.provenance import inputRecord, makeProvenance
+from varda.geo.labels import LabelHints, labelHints, provenanceHints
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.data_sources.data_source import DataSource
 from varda.image_loading.data_sources.delegating_data_source import (
     DelegatingDataSource,
@@ -308,3 +311,86 @@ def test_delegating_source_defaults_for_plugin_sources() -> None:
     assert wrapped.rawCrsText is None
     assert wrapped.crsError is None
     assert wrapped.gdalMetadata() == {}
+
+
+# --- Varda provenance: the target of the images a result was made from ---
+
+
+def test_provenance_download_record_names_the_target() -> None:
+    hints = provenanceHints({"source": {"catalog": "PDS ODE", "target": "MARS"}})
+    assert hints.target == "Mars"
+    assert hints.source == "Varda provenance (downloaded from PDS ODE)"
+
+
+def test_provenance_inputs_name_the_target() -> None:
+    record = {
+        "process": "Band Math",
+        "inputs": [
+            {"name": "a", "labelHints": {"target": "Mars"}},
+            {
+                "name": "b",
+                "provenance": {"inputs": [{"labelHints": {"target": "Mars"}}]},
+            },
+            {"name": "c"},
+        ],
+    }
+    hints = provenanceHints(record)
+    assert hints.target == "Mars"
+    assert hints.source == "Varda provenance (Band Math)"
+    # only the body: the result's own coordinates may differ from its inputs'
+    assert hints.latitudeType is None and hints.longitudeDirection is None
+
+
+def test_provenance_inputs_on_different_bodies_name_none() -> None:
+    record = {
+        "inputs": [
+            {"labelHints": {"target": "Mars"}},
+            {"labelHints": {"target": "Moon"}},
+        ]
+    }
+    assert provenanceHints(record).target is None
+
+
+def test_a_label_target_wins_over_provenance() -> None:
+    label = LabelHints("Moon", None, "east", None, {}, "PDS3 label x.lbl")
+    assert provenanceHints({"source": {"target": "Mars"}}, label) == label
+
+
+def test_provenance_fills_in_only_the_target() -> None:
+    label = LabelHints(
+        None, "planetocentric", None, None, {"A": "1"}, "PDS3 label x.lbl"
+    )
+    hints = provenanceHints({"source": {"target": "Mars"}}, label)
+    assert hints.target == "Mars"
+    assert hints.latitudeType == "planetocentric"
+    assert hints.projectionGroup == {"A": "1"}
+    assert hints.source == "PDS3 label x.lbl; target from Varda provenance (downloaded)"
+
+
+@pytest.mark.parametrize("record", [None, {}, {"inputs": "x"}, {"source": 3}, []])
+def test_odd_provenance_names_nothing(record: object) -> None:
+    assert provenanceHints(record).target is None
+
+
+def test_a_result_records_its_inputs_label_facts(tmp_path: Path) -> None:
+    path = tmp_path / "FRT000107A7_07_IF166J_MTR3.IMG"
+    path.write_bytes(b"")
+    (tmp_path / "FRT000107A7_07_IF166J_MTR3.LBL").write_text(CRISM_MTRDR_LABEL)
+    data = np.zeros((2, 2, 1), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data, filePath=str(path)), name="crism")
+    entry = inputRecord(image)
+    assert entry["labelHints"] == {
+        "target": "Mars",
+        "latitudeType": "planetocentric",
+        "longitudeDirection": "east",
+        "longitudeDomain": None,
+        "source": "PDS3 label FRT000107A7_07_IF166J_MTR3.LBL",
+    }
+    record = makeProvenance("Band Math", {}, [image])
+    assert provenanceHints(record).target == "Mars"
+
+
+def test_an_input_without_a_label_records_none() -> None:
+    data = np.zeros((2, 2, 1), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data, filePath="/data/scene.img"), name="s")
+    assert "labelHints" not in inputRecord(image)

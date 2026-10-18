@@ -394,7 +394,10 @@ Sources:
 - the PDS3 `.lbl` / attached label text, read directly (plain ODL, a
   minimal parser over `KEY = VALUE` and `GROUP`/`OBJECT` blocks; no new
   dependency);
-- Varda provenance (`source.target` from catalogs) when present.
+- Varda provenance when present: `source.target` from catalogs, or the one
+  target its inputs' recorded label facts (`inputs[].labelHints`, written by
+  `inputRecord`) name; only the target carries over
+  (`labels.provenanceHints`).
 
 ```python
 # varda/geo/health.py
@@ -652,10 +655,16 @@ measures by other means (planar map-unit ROI columns, shapes, slopes).
   parallel scale k, the areal scale, and the maximum angular distortion ω
   (PROJ docs, *Factors*; Snyder 1987, ch. 4).
 - Scale error = max(|h − 1|, |k − 1|).
-- For a geographic CRS, the image is a plate carrée in degrees, so the
-  displayed shape is distorted by the pixel aspect: k = cos φ_center⁻¹ ·
-  (Δλ_px/Δφ_px) · cos φ. It's treated as equirectangular for the tip-off.
-  Measurements are geodesic anyway.
+- For a geographic CRS, the image is shown with square pixels, i.e. as an
+  equirectangular map in degrees, so the displayed shape depends on the
+  pixel aspect: h = 1 and k = (Δφ_px/Δλ_px) · M / (N cos φ), with M and N
+  the meridional and prime-vertical radii of curvature at the geodetic
+  latitude φ (equal on a sphere; Snyder 1987, eqs. 4-18, 4-20). For
+  square-degree pixels on a sphere this is k = 1/cos φ (Snyder's
+  equirectangular with φ₁ = 0). A planetocentric latitude φc on a
+  flattened ellipsoid is converted with tan φg = (a/c)² tan φc, and M is
+  multiplied by dφg/dφc = (a/c)² / (cos² φc + (a/c)⁴ sin² φc).
+  sin(ω/2) = |h − k| / (h + k). Measurements are geodesic anyway.
 - **Thresholds (our call):** scale error > 1% or ω > 1° → TIP. Scale error
   > 10% or ω > 10° → stronger wording ("shapes and slopes are badly
   distorted here"). The constants are `SCALE_TIP = 0.01`,
