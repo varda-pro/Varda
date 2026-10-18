@@ -3,6 +3,9 @@ transverse Mercator and Lambert azimuthal equal-area, on the right surface."""
 
 from __future__ import annotations
 
+import math
+import warnings
+
 from pyproj import CRS
 
 from varda.common.entities import VardaRaster
@@ -19,6 +22,7 @@ from varda.geo.recommend import (
     Purpose,
     Recommendation,
     footprintLonLat,
+    isGlobal,
     isGoodEnough,
     recommendProjection,
 )
@@ -39,7 +43,11 @@ def _recommend(
 
 
 def _params(recommendation: Recommendation) -> dict[str, object]:
-    return CRS.from_wkt(recommendation.wkt).to_dict()
+    with warnings.catch_warnings():
+        # "You will likely lose important projection information": only the
+        # parameters are read back
+        warnings.simplefilter("ignore", UserWarning)
+        return CRS.from_wkt(recommendation.wkt).to_dict()
 
 
 def test_purpose_labels():
@@ -127,12 +135,65 @@ def test_distorted_crs_gets_transverse_mercator():
 
 
 def test_wide_scene_gets_laea():
+    # 30° of longitude at the equator, in degrees (never kept for terrain):
+    # B = 15° = 0.26 rad, well over transverse Mercator's 0.14 rad
     image = makeImage(
-        MARS_EQC, centerLonLat=(0, 0), pixelSize=1000, width=1000, height=1000
+        MOLA_MEGDR_PROJ, centerLonLat=(0, 0), pixelSize=0.25, width=120, height=8
     )
     recommendation = _recommend(image, Purpose.TERRAIN)
     assert _params(recommendation)["proj"] == "laea"
     assert "°" in recommendation.reason
+
+
+def test_transverse_mercator_half_width_is_checked_on_the_equator():
+    # just over 0.14 rad either side of the center, but only within 0.4° of
+    # the equator: the 21 grid latitudes (about 1° apart, centered on 0.5°N)
+    # miss φ = 0, where B is largest
+    image = makeImage(
+        MOLA_MEGDR_PROJ,
+        centerLonLat=(0, 0.5),
+        pixelSize=math.degrees(0.280002) / 100,
+        width=100,
+        height=125,
+    )
+    assert _params(_recommend(image, Purpose.TERRAIN))["proj"] == "laea"
+
+
+def test_global_scene_is_equirectangular_not_polar():
+    image = makeImage(
+        MOLA_MEGDR_PROJ, centerLonLat=(180, 0), pixelSize=1, width=360, height=180
+    )
+    footprint = _footprint(image)
+    assert footprint.pole == "both"
+    assert isGlobal(footprint)
+    assert image.crs is not None
+    mosaic = recommendProjection(image.crs, footprint, Purpose.MOSAIC)
+    params = _params(mosaic)
+    assert params["proj"] == "eqc"
+    assert params["lat_ts"] == 0
+    assert "global" in mosaic.reason
+    terrain = recommendProjection(image.crs, footprint, Purpose.TERRAIN)
+    assert _params(terrain)["proj"] == "eqc"
+    assert "no single projection" in terrain.reason
+    assert "geodesic" in terrain.reason
+
+
+def test_global_scene_keeps_its_own_equirectangular():
+    image = makeImage(
+        MARS_EQC, centerLonLat=(0, 0), pixelSize=100_000, width=213, height=106
+    )
+    recommendation = _recommend(image, Purpose.MEASUREMENT)
+    assert recommendation.keptExisting
+    assert sameCrs(recommendation.wkt, MARS_EQC)
+
+
+def test_inputs_on_another_unknown_body_are_not_kept():
+    reference = "+proj=eqc +R=3000000 +units=m +no_defs"
+    inputs = "+proj=eqc +lat_ts=10 +R=2000000 +units=m +no_defs"
+    image = makeImage(reference, centerLonLat=(10, 10), pixelSize=100)
+    recommendation = _recommend(image, Purpose.MOSAIC, existing=[inputs, inputs])
+    assert not recommendation.keptExisting
+    assert _params(recommendation)["R"] == 3000000
 
 
 def test_geographic_never_kept_for_terrain():

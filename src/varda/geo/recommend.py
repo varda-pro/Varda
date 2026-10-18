@@ -15,6 +15,11 @@
 4. The surface: the body's IAU 2015 sphere, unless every input is on the
    body's IAU reference ellipsoid; for an unknown body, the image's own.
 
+A global scene (both poles, or ≥ 180° of latitude or ≥ 300° of longitude)
+gets equirectangular with ``lat_ts`` = 0 centered on its longitude (or keeps
+its own CRS when it already is that): no single projection has low
+distortion over it, so measurements stay geodesic on the body.
+
 Longitudes and latitudes here are planetocentric, east, in degrees. Rounding
 is half away from zero (77.5 → 78), not Python's banker's rounding. No Qt."""
 
@@ -33,7 +38,12 @@ from varda.common.parameter import LabeledEnum
 from varda.geo.bodies import Body, identifyBody, latitudeType
 from varda.geo.describe import CrsDescription, describeCrs
 from varda.geo.distortion import ANGLE_TIP_DEG, SCALE_TIP, Distortion, distortionAt
-from varda.geo.equivalence import RADIUS_TOLERANCE_M, sameCrs
+from varda.geo.equivalence import (
+    RADIUS_TOLERANCE_M,
+    Compatibility,
+    compatibility,
+    sameCrs,
+)
 from varda.geo.transform import (
     eastLonLat,
     ographicLatitude,
@@ -47,6 +57,10 @@ POLAR_LATITUDE = 65.0
 # transverse Mercator while every point is within this angle (radians) of the
 # central meridian: k − 1 = 1/cos B − 1 ≤ 0.99% (Snyder, 1987, eq. 8-1)
 TM_HALF_WIDTH = 0.14
+# a scene this tall (degrees of latitude) or wide (of longitude) is global
+GLOBAL_LATITUDE_SPAN = 180.0
+GLOBAL_LONGITUDE_SPAN = 300.0
+_SAME_BODY = (Compatibility.SAME, Compatibility.EQUIVALENT, Compatibility.SAME_BODY)
 # points per footprint edge
 _EDGE_POINTS = 21
 # samples per side of the lon/lat grid that isGoodEnough checks
@@ -69,7 +83,9 @@ class Footprint:
     east: float
     north: float
     center: tuple[float, float]  # lon, lat
-    pole: str | None  # "north" | "south" when the image contains it
+    # "north" | "south" when the image contains that pole, "both" when it
+    # contains both (a global scene)
+    pole: str | None
 
 
 @frozen
@@ -102,11 +118,14 @@ def footprintLonLat(
     lats = lats[finite]
     west, east = float(lons.min()), float(lons.max())
     south, north = float(lats.min()), float(lats.max())
-    pole = _pole(crs, transform, width, height)
-    if pole == "north":
-        north, west, east = 90.0, -180.0, 180.0
-    elif pole == "south":
-        south, west, east = -90.0, -180.0, 180.0
+    poles = _poles(crs, transform, width, height)
+    if poles:
+        west, east = -180.0, 180.0
+    if "north" in poles:
+        north = 90.0
+    if "south" in poles:
+        south = -90.0
+    pole = "both" if len(poles) == 2 else (poles[0] if poles else None)
     return Footprint(
         west=west,
         south=south,
@@ -148,6 +167,8 @@ def recommendProjection(
     all the inputs (a mosaic's). Raises ValueError for a CRS on no body."""
     surface, ellipsoidal = _surface(crs, existing)
     lon, lat = footprint.center
+    if isGlobal(footprint):
+        return _global(crs, footprint, purpose, surface)
     if footprint.pole is not None or abs(lat) >= POLAR_LATITUDE:
         south = footprint.pole == "south" or (footprint.pole is None and lat < 0)
         if purpose is Purpose.MOSAIC:
@@ -211,6 +232,47 @@ def recommendProjection(
     )
 
 
+def isGlobal(footprint: Footprint) -> bool:
+    """Whether the scene is global: it contains both poles, or spans at
+    least 180° of latitude or (without a pole) 300° of longitude. No one projection has low
+    distortion over it."""
+    return (
+        footprint.pole == "both"
+        or footprint.north - footprint.south >= GLOBAL_LATITUDE_SPAN
+        # a contained pole spans all longitudes without being global
+        or (
+            footprint.pole is None
+            and footprint.east - footprint.west >= GLOBAL_LONGITUDE_SPAN
+        )
+    )
+
+
+def _global(
+    crs: CRS | str, footprint: Footprint, purpose: Purpose, surface: str
+) -> Recommendation:
+    """Equirectangular with ``lat_ts`` = 0 centered on the scene's longitude,
+    or ``crs`` itself when it already is that."""
+    definition = (
+        f"+proj=eqc +lat_ts=0 +lat_0=0 "
+        f"+lon_0={_number(_round(_wrap(footprint.center[0]), 1.0))}"
+    )
+    why = "the scene is global"
+    if purpose is not Purpose.MOSAIC:
+        why += (
+            ", and no single projection has low distortion over it: measurements "
+            "stay geodesic on the body; crop to the area of interest for a local "
+            "projection"
+        )
+    if sameCrs(crs, _proj(definition, _ownSurface(crs))):
+        return Recommendation(
+            wkt=_wkt(crs),
+            description=describeCrs(crs),
+            reason=f"Kept its own equirectangular projection: {why}",
+            keptExisting=True,
+        )
+    return _made(definition, surface, f"Equirectangular centered on the scene: {why}")
+
+
 def _round(value: float, step: float) -> float:
     """``value`` to a multiple of ``step``, halves away from zero; first to
     1e-9 steps, so a center computed as 77.49999999999 is 77.5."""
@@ -227,8 +289,9 @@ def _wrap(lon: float) -> float:
     return (lon + 180.0) % 360.0 - 180.0
 
 
-def _pole(crs: CRS | str, transform: Affine, width: int, height: int) -> str | None:
-    """ "north" or "south" when that pole's map point is inside the image."""
+def _poles(crs: CRS | str, transform: Affine, width: int, height: int) -> list[str]:
+    """ "north" and "south", when that pole's map point is inside the image."""
+    found: list[str] = []
     lonLat = eastLonLat(crs)
     for name, lat in (("north", 90.0), ("south", -90.0)):
         try:
@@ -238,19 +301,15 @@ def _pole(crs: CRS | str, transform: Affine, width: int, height: int) -> str | N
         col, row = ~transform * (float(xs[0]), float(ys[0]))
         if math.isfinite(col) and math.isfinite(row):
             if 0 <= col <= width and 0 <= row <= height:
-                return name
-    return None
+                found.append(name)
+    return found
 
 
 def _surface(crs: CRS | str, existing: Sequence[CRS | str]) -> tuple[str, bool]:
     """The PROJ surface parameters (rule 4), and whether it's an ellipsoid."""
     body = identifyBody(crs).body
     if body is None:
-        with PROJ_LOCK:
-            ellipsoid = CRS.from_user_input(crs).ellipsoid
-        if ellipsoid is None:
-            raise ValueError(f"No surface to project on: {crs}")
-        return _parameters(ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre)
+        return _ownSurface(crs), False
     if existing and all(_onReferenceEllipsoid(other, body) for other in existing):
         reference = body.referenceCrs().ellipsoid
         assert reference is not None
@@ -258,6 +317,15 @@ def _surface(crs: CRS | str, existing: Sequence[CRS | str]) -> tuple[str, bool]:
     sphere = body.sphereCrs().ellipsoid
     assert sphere is not None
     return _parameters(sphere.semi_major_metre, sphere.semi_major_metre)
+
+
+def _ownSurface(crs: CRS | str) -> str:
+    """``crs``'s own surface as PROJ parameters."""
+    with PROJ_LOCK:
+        ellipsoid = CRS.from_user_input(crs).ellipsoid
+    if ellipsoid is None:
+        raise ValueError(f"No surface to project on: {crs}")
+    return _parameters(ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre)[0]
 
 
 def _parameters(a: float, b: float) -> tuple[str, bool]:
@@ -303,7 +371,8 @@ def _keptInputs(
     first = existing[0]
     if not all(sameCrs(first, other) for other in existing[1:]):
         return None
-    if identifyBody(first).body != identifyBody(crs).body:
+    # the same body; an unknown body only with the same radii (Phase 1's rule)
+    if compatibility(first, crs) not in _SAME_BODY:
         return None
     good, why = isGoodEnough(first, footprint)
     if not good:
@@ -317,16 +386,17 @@ def _keptInputs(
 
 
 def _fitsTransverseMercator(footprint: Footprint) -> bool:
-    """Every point of the footprint's edge within ``TM_HALF_WIDTH`` of the
-    central meridian: B = arcsin(cos φ |sin Δλ|) (Snyder, 1987, eq. 8-1)."""
+    """Every point of the footprint within ``TM_HALF_WIDTH`` of the central
+    meridian: B = arcsin(cos φ |sin Δλ|) (Snyder, 1987, eq. 8-1), on a
+    21 × 21 grid over the box plus the equator when the box spans it (where
+    cos φ is largest)."""
     if footprint.east - footprint.west >= 180.0:
         return False
-    t = np.linspace(0.0, 1.0, _EDGE_POINTS)
-    lons = footprint.west + (footprint.east - footprint.west) * np.concatenate(
-        [t, np.ones_like(t), 1 - t, np.zeros_like(t)]
-    )
-    lats = footprint.south + (footprint.north - footprint.south) * np.concatenate(
-        [np.zeros_like(t), t, np.ones_like(t), 1 - t]
+    latitudes = np.linspace(footprint.south, footprint.north, _EDGE_POINTS)
+    if footprint.south < 0 < footprint.north:
+        latitudes = np.append(latitudes, 0.0)
+    lons, lats = np.meshgrid(
+        np.linspace(footprint.west, footprint.east, _EDGE_POINTS), latitudes
     )
     deltas = np.radians(lons - footprint.center[0])
     angles = np.arcsin(np.cos(np.radians(lats)) * np.abs(np.sin(deltas)))

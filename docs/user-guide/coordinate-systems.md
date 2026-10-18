@@ -292,6 +292,16 @@ The footprint contains a pole when the pole's map point falls inside the
 image; it then spans all longitudes. "Center" is the middle of the
 footprint.
 
+**Global scenes** come first: a footprint that contains both poles, spans
+180° of latitude, or (without a pole) spans 300° of longitude. They get
+**equirectangular** with `lat_ts` = 0 and `lon_0` = the center longitude
+rounded to 1°, and an image already in exactly that projection keeps it.
+For a mosaic this is the usual global map. For terrain and measurement the
+reason says so plainly: no single projection has low distortion over a
+global scene, so Varda's measurements stay geodesic on the body (see
+[How Varda measures](#how-varda-measures)); crop to the area of interest to
+get a local projection by the rules below.
+
 1. **Polar scenes** (|center latitude| ≥ 65°, or the footprint contains a
    pole) get **polar stereographic** centered on the pole (`lat_0` = ±90,
    `lon_0` = 0). For a **mosaic** the scale is true at the pole (`k` = 1),
@@ -304,7 +314,9 @@ footprint.
    the center rounded to 1°, the convention of CTX, HiRISE and ISIS
    `cam2map` products, so most inputs need no resampling. When every input
    is in one coordinate system (the same CRS, on the scene's body) that is
-   good enough over the scene (below), Varda keeps it instead.
+   good enough over the scene (below), Varda keeps it instead. Inputs on an
+   unknown body count as the scene's body only when their radii match
+   (see [Combining images](#combining-images)).
 3. **Terrain and measurement** otherwise:
    - Keep the image's own **projected** CRS when it's good enough over the
      scene: at most 1% scale error and 1° angular distortion on a 9 × 9
@@ -314,7 +326,8 @@ footprint.
      ground.
    - Otherwise **transverse Mercator** centered on the scene (`lat_0`,
      `lon_0` = the center rounded to 0.01°, k₀ = 1), when every point of
-     the footprint's edge lies within 0.14 R of the central meridian. That
+     the footprint (a 21 × 21 grid, plus the equator when the scene crosses
+     it) lies within 0.14 R of the central meridian. That
      is the angular distance B from the central meridian, with
      sin B = cos φ · |sin Δλ| ≤ sin 0.14 (φ the latitude, Δλ the longitude
      from the center). The scale error there is k − 1 = 1/cos B − 1 ≤ 0.99%
