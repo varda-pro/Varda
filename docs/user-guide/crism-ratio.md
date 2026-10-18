@@ -147,8 +147,8 @@ is column-matched and not flagged.
 - **Ratio cube** (`… ratio cube`): float32, the input's bands, wavelengths and
   grid; dimensionless. Its description states the method, the blandness
   settings, and **how many columns fell back** (to neighbors, to the whole
-  column, or had no data). Its `ratioCube` metadata record is kept when
-  exporting to GeoTIFF or ENVI and holds the method, blandness name and
+  column, or had no data). Its `ratioCube` metadata record (see
+  [Saving and sharing](#saving-and-sharing)) holds the method, blandness name and
   thresholds, run length, Minimum Pixels, Neighbor Radius, where the columns
   came from (`geometry`, `geometryFile`, `binning`), how the oversampling
   was found (`oversamplingFrom`), the good bands used, and for every column:
@@ -173,6 +173,29 @@ is column-matched and not flagged.
   number of pixels pooled for the pixel's column (`count`; 0 for *no data*).
   In the whole-column fallback a pixel with no value in any band is neither
   pooled nor counted.
+
+### Saving and sharing
+
+Saved as ENVI (`ratio.img`), a ratio cube is **four files that must travel
+together**:
+
+| File | Holds |
+| --- | --- |
+| `ratio.img` | the ratio values |
+| `ratio.hdr` | the ENVI header; its `description` is the methods description (method, blandness check and limits, run length, Minimum Pixels, Neighbor Radius, how many columns fell back, where the columns came from, how missing values and the standard error are handled) and lists the other files |
+| `ratio.img.aux.xml` | the full `ratioCube` record (GDAL's metadata file, which ENVI itself ignores; Varda reads it back) |
+| `ratio.columns.csv` | the per-column table, readable anywhere |
+
+Saved as GeoTIFF (`ratio.tif`), the `.tif` carries the description and the
+whole record, and `ratio.columns.csv` is written beside it too. The
+`… ratio denominators` image is saved as its own file.
+
+`ratio.columns.csv` has one row per column: `strip`, `column`, `count`,
+`sensorPixels`, `oversampling`, `effectiveCount`, `fallback`, `borrowed`
+(`column:pixels`, `;`-separated), then for each good band `B<n>` (the
+image's 1-based band number; its wavelength is in the header) the
+denominator `mean_B<n>`, its `std_B<n>` and the valid count `n_B<n>`.
+Empty cells are missing values.
 
 ### Assessing uncertainty and quality
 
@@ -224,7 +247,8 @@ sample, or the unprojected cube's image columns>; blandness: <preset or Generic,
 means of <run length> pixels in the column; at least <Minimum Pixels> pixels,
 borrowing from columns within <Neighbor Radius> of the same strip, else the
 whole column)", then state how many columns fell back, taken from the
-description. Cite Viviano-Beck et al. (2014) when a preset is used.
+description. The standard errors of the denominators (σ_D, above) come from
+the per-column table. Cite Viviano-Beck et al. (2014) when a preset is used.
 
 ## The CRISM Ratio workspace
 

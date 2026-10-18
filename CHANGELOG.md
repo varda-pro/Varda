@@ -40,8 +40,9 @@ can alter results.
   deviation, per-band valid counts, the distinct sensor pixels and an
   effective sample size that accounts for map-projection oversampling, and
   which neighbor columns a fallback borrowed. The input's no-data is kept:
-  missing values are never interpolated, counted or pooled. See the new
-  CRISM ratio cubes guide.
+  missing values are never interpolated, counted or pooled. Saved, it
+  carries a methods description in its header and a per-column table
+  (`<name>.columns.csv`) beside it. See the new CRISM ratio cubes guide.
 - **Spectral plots: pull a marker off the Y axis, and remove curves with
   the keyboard.** Dragging sideways off the Y axis pulls out a vertical
   marker that drops at the wavelength where you release it (released over
@@ -238,6 +239,11 @@ can alter results.
 
 ### Fixed
 
+- **ENVI exports keep their description in the header.** GDAL wrote the
+  file's path into the `.hdr`'s `description`, so ENVI and other software
+  never saw the image's description or how Varda made it (Varda itself read
+  it from the `.aux.xml`). The header now has it, and names the files that
+  must travel with the image.
 - **CRISM companion files are found by their real names:** a TRR3's DDR
   (`…_if166l_trr3` → `…_de166l_ddr1`) and an MTRDR's DDR (`…_de166l_mtr1`)
   are now found, also with ODE's upper-case names on case-sensitive disks,

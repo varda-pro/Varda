@@ -1,3 +1,4 @@
+import csv
 import tracemalloc
 
 import attrs
@@ -344,6 +345,40 @@ def test_the_record_survives_a_geotiff_round_trip(geometry, tmp_path):
     record = reread.extraMetadata["ratioCube"]
     assert record == ratio.extraMetadata["ratioCube"]
     assert len(record["columns"]) == COLS
+
+
+def test_an_envi_ratio_cube_has_a_methods_description_and_a_column_table(
+    geometry, tmp_path
+):
+    ratio, _ = _run(_absorbing(2))
+    path = writeRaster(ratio, tmp_path / "ratio.img")
+    header = (tmp_path / "ratio.hdr").read_text()
+    start = header.index("description = {")
+    description = header[start : header.index("}", start)]
+    assert "Ratio cube of absorbing: Bland pixels" in description
+    assert "maximum depth 0.02" in description and "Neighbor Radius 2" in description
+    # the files that must travel together are named
+    for name in ("ratio.hdr", "ratio.img.aux.xml", "ratio.columns.csv"):
+        assert name in description
+    with open(tmp_path / "ratio.columns.csv", newline="") as table:
+        rows = list(csv.DictReader(table))
+    assert path == tmp_path / "ratio.img"
+    assert len(rows) == COLS
+    column2 = next(r for r in rows if r["column"] == "2")
+    assert column2["fallback"] == "neighbors" and column2["borrowed"] == "1:40"
+    entry = next(
+        c for c in ratio.extraMetadata["ratioCube"]["columns"] if c["column"] == 2
+    )
+    assert float(column2["mean_B1"]) == pytest.approx(entry["spectrum"][0])
+    assert float(column2["std_B1"]) == pytest.approx(entry["std"][0])
+    assert int(column2["n_B1"]) == entry["validCount"][0]
+    assert float(column2["effectiveCount"]) == entry["effectiveCount"]
+
+
+def test_a_geotiff_ratio_cube_gets_the_column_table_too(geometry, tmp_path):
+    ratio, _ = _run(_scene())
+    writeRaster(ratio, tmp_path / "ratio.tif")
+    assert (tmp_path / "ratio.columns.csv").exists()
 
 
 # --- presets, with HyPyRameter replaced by a stand-in ------------------------

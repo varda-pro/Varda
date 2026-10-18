@@ -8,9 +8,12 @@ Sample band), or for an unprojected cube from its own image columns
 
 from __future__ import annotations
 
+import csv
+import io
 import math
 import re
 from collections.abc import Mapping
+from pathlib import Path
 
 import numpy as np
 
@@ -52,6 +55,7 @@ from varda.image_loading.crism_geometry import (
     columnGeometryFor,
 )
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.raster_writer import SIDECAR_WRITERS
 
 CATEGORY = "CRISM"
 NO_DATA = "no data"
@@ -144,6 +148,74 @@ def parsePresetLimits(text: str, preset: Preset) -> Preset:
         (low, high),
         maximum,
     )
+
+
+def _limitsText(record: dict) -> str:
+    """The blandness limits of a record, as text."""
+    thresholds = record["thresholds"]
+    if "limits" not in thresholds:
+        return (
+            f"maximum depth {thresholds['maxDepth']:g}, maximum |slope| "
+            f"{thresholds['maxSlope']:g} per µm"
+        )
+    low, high = thresholds["slopeWindowNm"]
+    limits = ", ".join(f"{name} ≤ {v:g}" for name, v in thresholds["limits"].items())
+    return (
+        f"{limits}, |slope| ≤ {thresholds['maxSlope']:g} per µm over "
+        f"{low:g}-{high:g} nm"
+    )
+
+
+COLUMN_TABLE_SUFFIX = ".columns.csv"
+_COLUMN_FIELDS = (
+    "strip",
+    "column",
+    "count",
+    "sensorPixels",
+    "oversampling",
+    "effectiveCount",
+    "fallback",
+)
+
+
+def columnTableCsv(record: dict) -> str:
+    """A ratio cube record's per-column table as CSV: one row per column with
+    its support, fallback, the neighbor columns borrowed (``column:pixels``,
+    ``;``-separated), and per good band (``B`` + the image's 1-based band
+    number) the denominator mean, its std and the number of valid pixels."""
+    bands = [f"B{b}" for b in record["bands"]]
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(
+        [
+            *_COLUMN_FIELDS,
+            "borrowed",
+            *(f"mean_{b}" for b in bands),
+            *(f"std_{b}" for b in bands),
+            *(f"n_{b}" for b in bands),
+        ]
+    )
+    for entry in record["columns"]:
+        writer.writerow(
+            [
+                *("" if entry[k] is None else entry[k] for k in _COLUMN_FIELDS),
+                ";".join(f"{c}:{n}" for c, n in entry["borrowed"]),
+                *("" if v is None else v for v in entry["spectrum"]),
+                *("" if v is None else v for v in entry["std"]),
+                *entry["validCount"],
+            ]
+        )
+    return out.getvalue()
+
+
+def writeColumnTable(record: dict, dataFile: Path) -> list[tuple[Path, str]]:
+    """Write the record's per-column table beside a saved ratio cube."""
+    path = dataFile.with_suffix(COLUMN_TABLE_SUFFIX)
+    path.write_text(columnTableCsv(record), encoding="utf-8")
+    return [(path, "the per-column denominators, std and counts")]
+
+
+SIDECAR_WRITERS["ratioCube"] = writeColumnTable
 
 
 def _vnirApproximate(centersNm: np.ndarray, geometry: ColumnGeometry) -> bool:
@@ -521,13 +593,19 @@ class RatioCubeAnalysis(Analysis):
         image: VardaRaster, record: dict, fallback: dict[tuple[int, int], str]
     ) -> str:
         total = len(record["columns"])
-        parts = [f"Ratio cube of {image.name}: {record['method']}"]
+        parts = [
+            f"Ratio cube of {image.name}: {record['method']}: each pixel divided "
+            "by the mean spectrum of its detector column"
+        ]
         if record["blandness"]:
             parts[0] += (
-                f" ({record['blandness']} blandness, run of {record['runLength']} px)"
+                f" ({record['blandness']} blandness, {_limitsText(record)}, "
+                f"judged on means of {record['runLength']} pixels in the column)"
             )
         parts.append(
-            f"{total} columns, at least {record['minimumPixels']} pixels each"
+            f"{total} columns, at least {record['minimumPixels']} pixels each, "
+            f"borrowing from columns within Neighbor Radius "
+            f"{record['neighborRadius']} of the same strip, else the whole column"
             if record["method"] == RatioCubeMethod.BLAND_PIXELS.value
             else f"{total} columns"
         )
@@ -541,6 +619,11 @@ class RatioCubeAnalysis(Analysis):
                 parts.append(f"{n} of {total} columns {label}")
         if not fallback:
             parts.append("0 columns fell back")
+        parts.append(
+            "missing values (no-data) are kept as NaN and never pooled; the "
+            "standard error of a column's denominator is std / sqrt(validCount "
+            f"/ oversampling), oversampling from {record['oversamplingFrom']}"
+        )
         if record["geometry"] == IMAGE_COLUMNS:
             parts.append(
                 "detector columns are the image columns (unprojected cube, no "

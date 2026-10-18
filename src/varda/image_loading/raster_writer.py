@@ -10,6 +10,8 @@ beside an ENVI file (``common.provenance.fileTags``).
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +31,15 @@ def suggestedOutputPath(image: VardaRaster, stem: str | None = None) -> Path:
     """An ENVI path next to the image's file (or in the home directory)."""
     folder = Path(image.filePath).parent if image.filePath else Path.home()
     return folder / f"{stem or image.name}.img"
+
+
+# Files written beside a raster whose metadata holds a record under the key:
+# the function gets the record and the data file's path, writes its files and
+# returns them with what each holds (named in the raster's description, so a
+# reader knows what must travel with it). Analyses register their own (see
+# ratio_cube_analysis).
+SidecarWriter = Callable[[dict, Path], list[tuple[Path, str]]]
+SIDECAR_WRITERS: dict[str, SidecarWriter] = {}
 
 
 def writeRaster(image: VardaRaster, path: str | Path) -> Path:
@@ -74,6 +85,21 @@ def writeRaster(image: VardaRaster, path: str | Path) -> Path:
     if driver == "GTiff":
         profile["BIGTIFF"] = "IF_SAFER"
 
+    sidecars = [
+        sidecar
+        for key, writer in SIDECAR_WRITERS.items()
+        if isinstance(image.extraMetadata.get(key), dict)
+        for sidecar in writer(image.extraMetadata[key], target)
+    ]
+    varda = fileTags(image.extraMetadata)
+    if driver == "ENVI" and varda:
+        aux = (Path(f"{target}.aux.xml"), "Varda's metadata record, read through GDAL")
+        sidecars.insert(0, aux)
+    if driver == "ENVI" and sidecars:  # the header too, when anything else
+        sidecars.insert(0, (target.with_suffix(".hdr"), "the ENVI header"))
+
+    description = _describe(image, sidecars)
+
     with rasterio.open(target, "w", **profile) as dst:
         dst.write(np.moveaxis(data, 2, 0))
         for i, name in enumerate(names, start=1):
@@ -82,7 +108,9 @@ def writeRaster(image: VardaRaster, path: str | Path) -> Path:
             tags = {
                 "band_names": _enviList(names),
                 "default_bands": _enviList(displayBands),
-                "description": _describe(image),
+                # kept by GDAL in the .aux.xml (what Varda reads back); the
+                # header's own description is set after closing
+                "description": description,
             }
             if writeAxis:
                 tags["wavelength"] = _enviList(wavelengths)
@@ -98,25 +126,48 @@ def writeRaster(image: VardaRaster, path: str | Path) -> Path:
                     )
             dst.update_tags(ns="ENVI", **tags)
         else:
-            tags = {"description": _describe(image)}
+            tags = {"description": description}
             if writeAxis:
                 tags["wavelength"] = ", ".join(wavelengths)
                 tags["wavelength_units"] = image.wavelengthUnits
             dst.update_tags(**tags)
             for i, name in enumerate(names, start=1):
                 dst.update_tags(i, name=name)
-        varda = fileTags(image.extraMetadata)
         if varda:
             dst.update_tags(ns=VARDA_NAMESPACE, **varda)
+    if driver == "ENVI":
+        _setEnviDescription(target.with_suffix(".hdr"), description)
     return target
+
+
+_ENVI_DESCRIPTION = re.compile(r"^description = \{.*?\}", re.MULTILINE | re.DOTALL)
+
+
+def _setEnviDescription(header: Path, description: str) -> None:
+    """Put ``description`` in the header: GDAL's ENVI driver writes the
+    file's path there, whatever the ENVI metadata says."""
+    text = header.read_text()
+    entry = f"description = {{\n{description}}}"
+    if _ENVI_DESCRIPTION.search(text):
+        text = _ENVI_DESCRIPTION.sub(lambda _match: entry, text, count=1)
+    else:
+        text = text.replace("ENVI\n", f"ENVI\n{entry}\n", 1)
+    header.write_text(text)
 
 
 def _enviList(items: list[str]) -> str:
     return "{" + ", ".join(items) + "}"
 
 
-def _describe(image: VardaRaster) -> str:
-    """The image's description, with how it was made (if Varda made it)."""
-    parts = [image.dataSource.description, provenanceText(image)]
+def _describe(image: VardaRaster, sidecars: list[tuple[Path, str]]) -> str:
+    """The image's description, with how it was made (if Varda made it) and
+    the files that travel with it."""
+    travel = ", ".join(f"{path.name} ({what})" for path, what in sidecars)
+    parts = [
+        image.dataSource.description,
+        provenanceText(image),
+        f"Keep these files with it: {travel}" if travel else "",
+    ]
     # ENVI lists use braces, so keep them out of the text
-    return ". ".join(p for p in parts if p).replace("{", "(").replace("}", ")")
+    text = ". ".join(p.rstrip(".") for p in parts if p)
+    return text.replace("{", "(").replace("}", ")")
