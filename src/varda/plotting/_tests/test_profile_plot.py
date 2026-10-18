@@ -130,6 +130,57 @@ def test_csv_states_the_geodesic_method_and_its_limits(qtbot, tmp_path):
     assert "georeferencing" in header
 
 
+def _csv(widget: ProfilePlotWidget, path) -> tuple[str, list[list[str]]]:
+    widget.exportTo(path)
+    text = path.read_text()
+    comments = "\n".join(ln for ln in text.splitlines() if ln.startswith("#"))
+    rows = list(csv.reader(ln for ln in text.splitlines() if ln[:1] != "#"))
+    return comments, rows
+
+
+def test_csv_leaves_unmeasurable_distances_empty(qtbot, tmp_path):
+    # an orthographic view of Mars: the line runs off the disk
+    image = VardaRaster(
+        ArrayDataSource(
+            np.zeros((5, 20, 1), np.float32),
+            transform=Affine(100_000.0, 0, 3_000_000.0, 0, -100_000.0, 0.0),
+            crs=CRS.from_user_input("+proj=ortho +lat_0=0 +lon_0=0 +R=3396190"),
+        ),
+        name="disk",
+    )
+    widget = ProfilePlotWidget(image)
+    qtbot.addWidget(widget)
+    widget.setLines(_line([[0.0, 0.5], [10.0, 0.5]]))
+    header, rows = _csv(widget, tmp_path / "profile.csv")
+    assert "# distance gaps: " in header
+    distances = [row[1] for row in rows[1:]]
+    assert distances[0] == "0.0" and distances[-1] == ""
+
+
+def test_csv_on_an_engineering_crs_is_planar(qtbot, tmp_path):
+    image = VardaRaster(
+        ArrayDataSource(
+            np.zeros((10, 10, 1), np.float32),
+            transform=Affine(20.0, 0, 0.0, 0, -20.0, 0.0),
+            crs=CRS.from_user_input(
+                'ENGCRS["Lab",EDATUM["Lab datum"],CS[Cartesian,2],'
+                'AXIS["x",east,LENGTHUNIT["metre",1]],'
+                'AXIS["y",north,LENGTHUNIT["metre",1]]]'
+            ),
+        ),
+        name="lab",
+    )
+    widget = ProfilePlotWidget(image)
+    qtbot.addWidget(widget)
+    widget.setLines(_line([[0.0, 0.0], [3.0, 4.0]]))
+    header, rows = _csv(widget, tmp_path / "profile.csv")
+    assert (
+        "# distance unit: m (planar, in the coordinate system's units "
+        "(no body ellipsoid))" in header
+    )
+    assert float(rows[-1][1]) == pytest.approx(100.0)
+
+
 def test_an_image_export_writes_a_png(plot, tmp_path):
     plot.setLines(_line([[0.5, 15], [10.5, 15]]))
     plot.exportTo(tmp_path / "profile.png")

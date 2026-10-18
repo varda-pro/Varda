@@ -10,6 +10,11 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.lines.line_collection import LineCollection
 from varda.lines.line_manager_widget import LineTableModel, formatLength
 
+# a lab frame on no body, in meters
+ENGCRS_M = (
+    'ENGCRS["Lab",EDATUM["Lab datum"],CS[Cartesian,2],'
+    'AXIS["x",east,LENGTHUNIT["metre",1]],AXIS["y",north,LENGTHUNIT["metre",1]]]'
+)
 _EQC = "+proj=eqc +lat_ts=0 +lon_0=0 +R=3396190 +units=m +no_defs"
 
 
@@ -38,3 +43,20 @@ def test_the_length_tooltip_says_how_it_was_measured(qtbot):
 
 def test_unmeasurable_lengths_show_a_dash():
     assert formatLength(float("nan"), "m") == "—"
+
+
+def test_a_line_on_an_engineering_crs_is_planar(qtbot):
+    image = VardaRaster(
+        ArrayDataSource(
+            np.zeros((10, 10, 1), np.float32),
+            transform=Affine(20.0, 0, 0.0, 0, -20.0, 0.0),
+            crs=CRS.from_user_input(ENGCRS_M),
+        )
+    )
+    lines = LineCollection()
+    lines.addLine([[0.0, 0.0], [3.0, 4.0]])
+    model = LineTableModel(lines, image)
+    index = model.index(0, 2)
+    assert model.data(index) == "100 m"
+    tip = model.data(index, Qt.ItemDataRole.ToolTipRole)
+    assert "planar, in the coordinate system's units (no body ellipsoid)" in tip

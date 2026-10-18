@@ -33,7 +33,7 @@ from varda.common.ui import MutedLabel
 from varda.geo.bodies import surfaceText
 from varda.geo.describe import describeCrs
 from varda.lines.line_collection import VardaLine
-from varda.lines.profile import Profile, lineMeasurement, profile
+from varda.lines.profile import PLANAR_METHOD, Profile, lineMeasurement, profile
 from varda.plotting.plot_export import IMAGE_FILTER, exportImage
 from varda.utilities.proj_lock import PROJ_LOCK
 from varda.version import vardaVersion
@@ -304,6 +304,13 @@ class ProfilePlotWidget(QWidget):
         with PROJ_LOCK:
             ellipsoid = crs.ellipsoid
             surface = surfaceText(ellipsoid) if ellipsoid is not None else "?"
+        if ellipsoid is None:  # an engineering or local CRS, on no body
+            return [
+                f"distance unit: m ({PLANAR_METHOD})",
+                "distance limits: on the map's plane, converted from the "
+                "coordinate system's units; samples about 1 px apart; plus the "
+                "image's georeferencing error, which Varda can't know",
+            ]
         measurements = {
             line.fid: lineMeasurement(line.vertices, self.image.transform, crs)
             for line in self.lines
@@ -316,7 +323,7 @@ class ProfilePlotWidget(QWidget):
         method = f"m (geodesic, Karney 2013, on {surface}"
         if differences:
             finite = [d for d in differences if np.isfinite(d)]
-            amount = f"{max(finite) * 100:.2g}%" if finite else "an unknown amount"
+            amount = _percent(max(finite)) if finite else "an unknown amount"
             upTo = "up to " if len(self.lines) > 1 and finite else ""
             method += f"; IAU 2015 reference ellipsoid differs by {upTo}{amount}"
         lines = [f"distance unit: {method})"]
@@ -334,9 +341,19 @@ class ProfilePlotWidget(QWidget):
             "topography); samples about 1 px apart; plus the image's "
             "georeferencing error, which Varda can't know"
         )
-        if any(not np.isfinite(p.distance).all() for p in self.profiles.values()):
+        if any(
+            not np.isfinite(self.profiles[ln.fid].distance).all() for ln in self.lines
+        ):
             lines.append(
                 "distance gaps: samples that couldn't be converted to longitude "
                 "and latitude, and all after them on their line, have no distance"
             )
         return lines
+
+
+def _percent(fraction: float) -> str:
+    """A relative difference as a percentage to 2 significant figures, never
+    in scientific notation."""
+    if fraction < 1e-5:
+        return "< 0.001%"
+    return f"{float(f'{fraction * 100:.2g}'):g}%"

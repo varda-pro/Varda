@@ -27,6 +27,7 @@ from varda.common.entities import VardaRaster
 from varda.common.ui import FlowLayout, MutedLabel
 from varda.geo.measure import Measurement
 from varda.lines.line_collection import EXPORT_FILE_FILTER, LineCollection, LineKind
+from varda.lines.profile import PLANAR_METHOD
 from varda.vector_import import ImportPlan, Target, addToLines
 from varda.vector_import_dialog import VectorImporter
 
@@ -63,6 +64,8 @@ def lengthTip(measurement: Measurement | None) -> str:
             "Part of the line couldn't be converted to longitude and latitude, "
             "so its length on the body is unknown"
         )
+    if measurement.method == PLANAR_METHOD:
+        return f"Length on the map: {PLANAR_METHOD}"
     parts = [f"Length on the body: {measurement.method}"]
     if measurement.bodyModelDifference > BODY_MODEL_TIP:
         parts.append(
@@ -85,11 +88,14 @@ class LineTableModel(QAbstractTableModel):
         self._collection = collection
         self._image = image
         self._rows = collection.lines()
+        # fid -> its formatted length: measuring a long line takes ~10 ms
+        self._lengths: dict[int, str] = {}
         collection.sigCollectionChanged.connect(self._reload)
 
     def _reload(self) -> None:
         self.beginResetModel()
         self._rows = self._collection.lines()
+        self._lengths = {}
         self.endResetModel()
 
     def fidAt(self, row: int) -> int:
@@ -127,7 +133,9 @@ class LineTableModel(QAbstractTableModel):
             if column == 1:
                 return line.kind.value
             if column == 2:
-                return formatLength(*line.length(self._image))
+                if line.fid not in self._lengths:
+                    self._lengths[line.fid] = formatLength(*line.length(self._image))
+                return self._lengths[line.fid]
             return ""
         if role == Qt.ItemDataRole.DecorationRole and column == 3:
             return QColor(line.color)

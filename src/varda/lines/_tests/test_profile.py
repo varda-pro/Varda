@@ -10,6 +10,7 @@ from pyproj import CRS
 from varda.geo.bodies import BODIES
 from varda.geo.measure import Measurement
 from varda.lines.profile import (
+    PLANAR_METHOD,
     densify,
     lineLength,
     lineMeasurement,
@@ -145,3 +146,43 @@ def test_samples_off_the_body_have_no_distance_and_no_warnings():
         measurement = lineMeasurement(vertices, transform, crs)
     assert np.isfinite(result.distance[:4]).all() and np.isnan(result.distance[-1])
     assert measurement is not None and np.isnan(measurement.value)
+
+
+# An engineering CRS: a lab or rover frame on no body, in centimeters
+LOCAL_CM = (
+    'LOCAL_CS["Rover",LOCAL_DATUM["d",0],UNIT["centimetre",0.01],'
+    'AXIS["X",EAST],AXIS["Y",NORTH]]'
+)
+ENGCRS_M = (
+    'ENGCRS["Lab",EDATUM["Lab datum"],CS[Cartesian,2],'
+    'AXIS["x",east,LENGTHUNIT["metre",1]],AXIS["y",north,LENGTHUNIT["metre",1]]]'
+)
+LOCAL_UNKNOWN = (
+    'LOCAL_CS["Frame",LOCAL_DATUM["d",0],UNIT["unknown",1],'
+    'AXIS["X",EAST],AXIS["Y",NORTH]]'
+)
+
+
+@pytest.mark.parametrize(("crs", "meters"), [(ENGCRS_M, 100.0), (LOCAL_CM, 1.0)])
+def test_a_crs_on_no_body_measures_planar_in_its_units(crs, meters):
+    transform = Affine(20.0, 0, 0.0, 0, -20.0, 0.0)  # 20 units per pixel
+    vertices = np.array([[0.0, 0.0], [3.0, 4.0]])  # 5 px = 100 units
+    length, units = lineLength(vertices, transform, crs)
+    assert units == "m" and length == pytest.approx(meters)
+    result = profile(np.zeros((10, 10)), vertices, transform, crs)
+    assert result.distanceUnits == "m" and result.distance[-1] == pytest.approx(meters)
+    measurement = lineMeasurement(vertices, transform, crs)
+    assert measurement is not None
+    assert measurement.method == PLANAR_METHOD
+    assert measurement.reference is None and measurement.distortion is None
+
+
+def test_a_crs_on_no_body_in_unknown_units_measures_pixels():
+    transform = Affine(20.0, 0, 0.0, 0, -20.0, 0.0)
+    vertices = np.array([[0.0, 0.0], [3.0, 4.0]])
+    assert lineLength(vertices, transform, LOCAL_UNKNOWN) == (5.0, "px")
+    assert (
+        profile(np.zeros((10, 10)), vertices, transform, LOCAL_UNKNOWN).distanceUnits
+        == "px"
+    )
+    assert lineMeasurement(vertices, transform, LOCAL_UNKNOWN) is None
