@@ -105,6 +105,7 @@ class OptionalFeaturesDialog(QDialog):
             self.backendBox.addItem(label, backend.key)
         self.backendBox.currentIndexChanged.connect(self._updateSize)
         self.sizeLabel = QLabel()
+        self.sizeLabel.setWordWrap(True)  # the low-disk-space note makes it long
         location = QLabel(str(runtime.root))
         location.setWordWrap(True)
         location.setToolTip("Where PyTorch is installed")
