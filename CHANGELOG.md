@@ -27,6 +27,15 @@ can alter results.
   description and column table; the Shadow Mask's sun elevation now uses the
   incidence over the image's own pixels rather than the whole DDR.
 
+### Changed
+
+- **Open images use much less memory.** Loading an image now peaks at about
+  its own size (a 1.5 GB CRISM MTRDR took 5.2 GB, now 1.6 GB, and loads in
+  half the time), with the same values and no-data. Images in memory may
+  together take at most 40 % of RAM; beyond that the least recently used are
+  read on demand from their files, with the same results (see Installing →
+  Memory).
+
 ### Fixed
 
 - **No more errors or crashes after closing a workspace.** Loading an image

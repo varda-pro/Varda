@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from .data_sources import DataSource, RasterioDataSource, InMemoryDataSource
 from .data_sources.cached_data_source import CachedDataSource
+from .data_sources.in_memory_data_source import InMemoryBudget
 from .data_sources.registry import datasource_registry, get_image_type_filter
 from varda.branding.loader import BusyDialog
 from varda.common.entities import VardaRaster
@@ -71,13 +72,26 @@ class _MemoryStatus(ctypes.Structure):
 
 
 IN_MEMORY_SHARE = 0.25  # of installed RAM: images larger than this read on demand
+# Of installed RAM, for all in-memory images together. Beyond it the least
+# recently used are read on demand. 40 % keeps the majority for the system and
+# other programs (a few GB on a laptop), the display, and analyses, which
+# need several times their image (see Analysis.estimateMemory); on 16 GB it
+# still holds four full CRISM MTRDR cubes (1.5 GB each).
+IN_MEMORY_BUDGET_SHARE = 0.40
+IN_MEMORY_BUDGET = InMemoryBudget(int(physicalMemoryBytes() * IN_MEMORY_BUDGET_SHARE))
 
 
-def wrapForReading(source: DataSource, limitBytes: int | None = None) -> DataSource:
+def wrapForReading(
+    source: DataSource,
+    limitBytes: int | None = None,
+    budget: InMemoryBudget = IN_MEMORY_BUDGET,
+) -> DataSource:
     """Load ``source`` into memory if it fits within ``limitBytes`` (a quarter
-    of RAM by default; float32 once no-data is filled), otherwise read it on
-    demand through a small cache, so opening a very large cube is quick and
-    doesn't exhaust memory."""
+    of RAM by default; float32 once no-data is filled) and, together with the
+    images already in memory, within ``budget`` (the least recently used are
+    demoted to make room). Otherwise read it on demand through a small cache,
+    so opening a very large cube, or many, is quick and doesn't exhaust
+    memory."""
     limit = (
         int(physicalMemoryBytes() * IN_MEMORY_SHARE)
         if limitBytes is None
@@ -89,13 +103,18 @@ def wrapForReading(source: DataSource, limitBytes: int | None = None) -> DataSou
         * source.bandCount
         * max(np.dtype(source.dtype).itemsize, 4)
     )
-    if size <= limit:
-        return InMemoryDataSource(source)
+    if size <= limit and budget.reserve(size):
+        try:
+            return InMemoryDataSource(source, budget)
+        finally:
+            budget.release(size)
     logger.info(
-        "Reading %s on demand (%.1f GB is more than %.1f GB)",
+        "Reading %s on demand (%.1f GB is more than %.1f GB, or than the "
+        "%.1f GB left for images in memory)",
         source.filePath or "image",
         size / 1e9,
         limit / 1e9,
+        budget.limitBytes / 1e9,
     )
     return CachedDataSource(source)
 

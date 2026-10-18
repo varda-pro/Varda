@@ -55,7 +55,8 @@ class PdsLabelDataSource(RasterioDataSource):
         low, high = self._validRange
         if masked and data.dtype.kind == "f" and (low > -np.inf or high < np.inf):
             with np.errstate(invalid="ignore"):
-                data = np.where((data < low) | (data > high), np.nan, data)
+                for band in np.moveaxis(data, -1, 0):  # in place, a band at a time
+                    np.putmask(band, (band < low) | (band > high), np.nan)
         return data
 
     @classmethod
