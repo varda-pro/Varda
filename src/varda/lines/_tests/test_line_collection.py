@@ -49,8 +49,19 @@ def test_lines_get_names_colors_and_can_change():
 def test_lengths_are_meters_when_georeferenced():
     lines = LineCollection()
     fid = lines.addLine([[0, 0], [3, 4]])
-    assert lines.get(fid).length(_image()) == pytest.approx((100.0, "m"))
+    # geodesic on the body: 100 m on the map at 0.08°N
+    assert lines.get(fid).length(_image()) == pytest.approx((100.0, "m"), rel=1e-5)
     assert lines.get(fid).length(_image(False)) == (5.0, "px")
+
+
+def test_a_lines_measurement_on_the_body():
+    lines = LineCollection()
+    line = lines.get(lines.addLine([[0, 0], [3, 4]]))
+    measurement = line.measurement(_image())
+    assert measurement is not None
+    assert measurement.value == pytest.approx(line.length(_image())[0])
+    assert "geodesic (Karney 2013)" in measurement.method
+    assert line.measurement(_image(False)) is None
 
 
 def test_lines_round_trip_through_a_session():
@@ -70,7 +81,8 @@ def test_lines_export_as_gis_lines_in_map_coordinates(tmp_path):
     frame = gpd.read_file(tmp_path / "lines.geojson")
     assert list(frame["name"]) == ["Profile A"]
     assert frame.geometry[0].coords[:] == [(1000.0, 5000.0), (1060.0, 4920.0)]
-    assert frame["length"][0] == pytest.approx(100.0) and frame["units"][0] == "m"
+    assert frame["length"][0] == pytest.approx(100.0, rel=1e-5)
+    assert frame["units"][0] == "m"
 
 
 def test_one_lines_map_coordinates_for_other_workspaces():

@@ -4,8 +4,8 @@ Each line is one curve in its color. Hovering reads out the distance and
 value and reports where that is on the image (sigCursor), so the views can
 mark it. For a DEM with distances in meters the vertical exaggeration is
 shown. Export: CSV (every sample, with its pixel and map position, under a
-commented header naming the image, its CRS and the units), PNG, SVG and
-PDF."""
+commented header naming the image, its CRS, the units, how distances were
+measured and their limits), PNG, SVG and PDF."""
 
 from __future__ import annotations
 
@@ -30,10 +30,12 @@ from PyQt6.QtWidgets import (
 
 from varda.common.entities import VardaRaster
 from varda.common.ui import MutedLabel
+from varda.geo.bodies import surfaceText
 from varda.geo.describe import describeCrs
 from varda.lines.line_collection import VardaLine
-from varda.lines.profile import Profile, profile
+from varda.lines.profile import PLANAR_METHOD, Profile, lineMeasurement, profile
 from varda.plotting.plot_export import IMAGE_FILTER, exportImage
+from varda.utilities.proj_lock import PROJ_LOCK
 from varda.version import vardaVersion
 
 KM_FROM = 5000.0  # m: longer profiles are plotted in kilometers
@@ -255,19 +257,17 @@ class ProfilePlotWidget(QWidget):
         band = int(self.bandBox.currentData() or 0)
         unit = valueUnit(self.image, band)
         crs = CRS.from_user_input(self.image.crs) if georeferenced else None
-        if units == "px":
-            distance = "px (the image has no georeferencing)"
-        elif crs is not None and crs.is_geographic:
-            distance = f"{units} (geodesic on the body's ellipsoid)"
-        else:
-            distance = f"{units} (in the map projection's plane)"
         header = [
             f"Varda {vardaVersion()} line profiles",
             f"image: {self.image.name}"
             + (f" ({self.image.filePath})" if self.image.filePath else ""),
             f"CRS: {crsLabel(crs)}",
             *([f"CRS WKT: {crs.to_wkt()}"] if crs is not None else []),
-            f"distance unit: {distance}",
+            *(
+                ["distance unit: px (the image has no georeferencing)"]
+                if units == "px" or crs is None
+                else self._distanceHeader(crs)
+            ),
             f"values: {self.bandBox.currentText()}"
             + (f" ({unit})" if unit else " (unit not recorded in the image)"),
         ]
@@ -287,7 +287,73 @@ class ProfilePlotWidget(QWidget):
                     zip(result.distance, result.positions, result.values)
                 ):
                     # repr: the shortest text that reads back as the same float
-                    row = [line.name, repr(float(d)), f"{x:.3f}", f"{y:.3f}"]
+                    row = [
+                        line.name,
+                        repr(float(d)) if np.isfinite(d) else "",
+                        f"{x:.3f}",
+                        f"{y:.3f}",
+                    ]
                     if mapXY is not None:
                         row += [repr(float(mapXY[i, 0])), repr(float(mapXY[i, 1]))]
                     out.writerow([*row, "" if not np.isfinite(v) else f"{v:.10g}"])
+
+    def _distanceHeader(self, crs: CRS) -> list[str]:
+        """How the distances were measured: geodesic on the CRS's surface,
+        the body-model term, the projection's distortion along each line
+        (not in the distances) and what the distances leave out."""
+        with PROJ_LOCK:
+            ellipsoid = crs.ellipsoid
+            surface = surfaceText(ellipsoid) if ellipsoid is not None else "?"
+        if ellipsoid is None:  # an engineering or local CRS, on no body
+            return [
+                f"distance unit: m ({PLANAR_METHOD})",
+                "distance limits: on the map's plane, converted from the "
+                "coordinate system's units; samples about 1 px apart; plus the "
+                "image's georeferencing error, which Varda can't know",
+            ]
+        measurements = {
+            line.fid: lineMeasurement(line.vertices, self.image.transform, crs)
+            for line in self.lines
+        }
+        differences = [
+            m.bodyModelDifference
+            for m in measurements.values()
+            if m is not None and m.reference is not None
+        ]
+        method = f"m (geodesic, Karney 2013, on {surface}"
+        if differences:
+            finite = [d for d in differences if np.isfinite(d)]
+            amount = _percent(max(finite)) if finite else "an unknown amount"
+            upTo = "up to " if len(self.lines) > 1 and finite else ""
+            method += f"; IAU 2015 reference ellipsoid differs by {upTo}{amount}"
+        lines = [f"distance unit: {method})"]
+        for line in self.lines:
+            measurement = measurements[line.fid]
+            distortion = measurement.distortion if measurement else None
+            if distortion is not None:
+                where = "the line" if len(self.lines) == 1 else line.name
+                lines.append(
+                    f"projection distortion along {where}: {distortion.text} "
+                    "(not in the distances)"
+                )
+        lines.append(
+            "distance limits: horizontal, on the reference surface (not along "
+            "topography); samples about 1 px apart; plus the image's "
+            "georeferencing error, which Varda can't know"
+        )
+        if any(
+            not np.isfinite(self.profiles[ln.fid].distance).all() for ln in self.lines
+        ):
+            lines.append(
+                "distance gaps: samples that couldn't be converted to longitude "
+                "and latitude, and all after them on their line, have no distance"
+            )
+        return lines
+
+
+def _percent(fraction: float) -> str:
+    """A relative difference as a percentage to 2 significant figures, never
+    in scientific notation."""
+    if fraction < 1e-5:
+        return "< 0.001%"
+    return f"{float(f'{fraction * 100:.2g}'):g}%"

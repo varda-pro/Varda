@@ -21,7 +21,8 @@ from shapely.geometry import LineString
 from varda.common.entities import VardaRaster
 from varda.common.parameter import LabeledEnum
 from varda.common.palette import classColor
-from varda.lines.profile import lineLength
+from varda.geo.measure import Measurement
+from varda.lines.profile import lineLength, lineMeasurement
 
 EXPORT_FILE_FILTER = "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)"
 _DRIVERS = {
@@ -53,6 +54,13 @@ class VardaLine:
         if image is None or not image.hasGeospatialData:
             return lineLength(self.vertices, None, None)
         return lineLength(self.vertices, image.transform, image.crs)
+
+    def measurement(self, image: VardaRaster | None) -> Measurement | None:
+        """Its length on the body and how it was measured (``lineMeasurement``);
+        None when ``image`` isn't georeferenced."""
+        if image is None or not image.hasGeospatialData:
+            return None
+        return lineMeasurement(self.vertices, image.transform, image.crs)
 
 
 class LineCollection:
