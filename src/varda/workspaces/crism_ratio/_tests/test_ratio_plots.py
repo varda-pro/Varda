@@ -10,7 +10,7 @@ from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import
     RatioSelection,
 )
 from varda.workspaces.crism_ratio.blandness_readout import BlandnessReadout
-from varda.workspaces.crism_ratio.ratio_plots import RatioPlotsPanel
+from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
 from varda.workspaces.ratio_explorer import RatioComponents
 
 WAVELENGTHS = np.linspace(1000, 2500, 60)
@@ -55,30 +55,96 @@ def curveY(plot) -> np.ndarray:
     return plot.plots[0].data()[1]
 
 
+def named(plot, name: str) -> np.ndarray:
+    """The y values of the plot's curve with legend name ``name``."""
+    (curve,) = [c for c in plot.plots if c.plotDataItem.name() == name]
+    return curve.data()[1]
+
+
+def makePlots(qtbot) -> RatioPlots:
+    plots = RatioPlots()
+    for panel in (plots.spectraPanel, plots.ratioPanel, plots.readout):
+        qtbot.addWidget(panel)
+    return plots
+
+
 def test_show_components_replaces_curves_and_refits(qtbot):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
-    panel.showComponents(components(0.2))
-    panel.showComponents(components(5.0))
-    for plot, expected in (
-        (panel.numeratorPlot, 5.0),
-        (panel.denominatorPlot, 0.3),
-        (panel.ratioPlot, 5.0 / 0.3),
-    ):
-        np.testing.assert_allclose(curveY(plot).max(), expected)
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.2))
+    plots.showComponents(components(5.0))
+    assert len(plots.spectraPlot.plots) == 2
+    np.testing.assert_allclose(named(plots.spectraPlot, "Numerator").max(), 5.0)
+    np.testing.assert_allclose(named(plots.spectraPlot, "Denominator").max(), 0.3)
+    np.testing.assert_allclose(curveY(plots.ratioPlot).max(), 5.0 / 0.3)
+    for plot in (plots.spectraPlot, plots.ratioPlot):
+        ys = np.concatenate([c.data()[1] for c in plot.plots])
         low, high = plot.viewBox.viewRange()[1]
-        assert low <= curveY(plot).min() and curveY(plot).max() <= high
+        assert low <= ys.min() and ys.max() <= high
         # refit: not zoomed out to the old, much smaller or larger scale
-        assert high < 3 * curveY(plot).max() + 1
+        assert high < 3 * ys.max() + 1
 
 
 def test_x_axes_are_linked(qtbot):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
-    panel.showComponents(components(1.0))
-    panel.numeratorPlot.viewBox.setXRange(1200, 1500, padding=0)
-    for plot in (panel.denominatorPlot, panel.ratioPlot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(1.0))
+    plots.spectraPlot.viewBox.setXRange(1200, 1500, padding=0)
+    for plot in (plots.numeratorPlot, plots.ratioPlot):
         np.testing.assert_allclose(plot.viewBox.viewRange()[0], [1200, 1500])
+
+
+def test_separate_splits_the_spectra_into_two_plots_and_back(qtbot):
+    plots = makePlots(qtbot)
+    plots.spectraPanel.resize(400, 800)
+    plots.spectraPanel.show()
+    qtbot.waitExposed(plots.spectraPanel)
+    plots.showComponents(components(2.0))
+    plots.spectraPlot.viewBox.setXRange(1200, 1500, padding=0)
+    assert plots.numeratorBox.isHidden()
+
+    plots.setSeparate(True)
+    assert plots.numeratorBox.isVisible()
+    np.testing.assert_allclose(curveY(plots.numeratorPlot).max(), 2.0)
+    np.testing.assert_allclose(named(plots.spectraPlot, "Denominator").max(), 0.3)
+    assert len(plots.spectraPlot.plots) == 1
+    # the zoom is kept
+    np.testing.assert_allclose(plots.numeratorPlot.viewBox.viewRange()[0], [1200, 1500])
+
+    plots.setSeparate(False)
+    assert plots.numeratorBox.isHidden()
+    assert plots.numeratorPlot.plots == []
+    assert len(plots.spectraPlot.plots) == 2
+
+
+@pytest.mark.parametrize(
+    ("shape", "aspect"), [(PlotShape.SQUARE, 1.0), (PlotShape.TALL, 0.75)]
+)
+def test_a_shape_keeps_the_plots_aspect_as_its_panel_is_resized(qtbot, shape, aspect):
+    plots = makePlots(qtbot)
+    panel = plots.ratioPanel
+    panel.show()
+    plots.ratioShape.setShape(shape)
+    for width, height in ((600, 400), (300, 700), (500, 500)):
+        panel.resize(width, height)
+        qtbot.wait(1)
+        plot = plots.ratioPlot
+        assert plot.width() / plot.height() == pytest.approx(aspect, abs=0.01)
+        assert plot.width() <= width and plot.height() <= height
+        # as large as fits, centered
+        assert plot.width() == width or plot.height() == height
+        assert plot.x() == (width - plot.width()) // 2
+    plots.ratioShape.setShape(PlotShape.FREE)
+    assert plots.ratioPlot.size() == panel.size()
+
+
+def test_choosing_a_shape_from_the_menu(qtbot):
+    plots = makePlots(qtbot)
+    (tall,) = [
+        a for a in plots.spectraShape._group.actions() if a.text() == "Tall (3:4)"
+    ]
+    tall.trigger()
+    assert plots.spectraShape.shape is PlotShape.TALL
+    assert plots.numeratorBox.shape is PlotShape.TALL  # both of the dock's plots
+    assert plots.spectraShape.text().startswith("Shape: Tall")
 
 
 def test_flat_spectrum_passes_every_window(qtbot):
@@ -166,9 +232,38 @@ def test_the_co2_range_can_be_included(qtbot):
     assert "1950–2100" not in readout.describe()
 
 
+def test_the_verdict_names_each_failing_windows_dip_and_limit(qtbot):
+    readout = BlandnessReadout()
+    qtbot.addWidget(readout)
+    readout.checkCombo.setCurrentText("Fe/Mg phyllosilicates")
+    result = readout.setSpectrum(WAVELENGTHS, _withBand(0.08))
+    (w,) = [w for w in result.windows if not w.passed]
+    assert readout.verdictLabel.text() == (
+        f"✗ Not bland: 2.3 µm Fe/Mg-OH, {100 * w.depth:.1f} % dip at "
+        f"{w.dipNm:.0f} nm (limit 3.0 %)"
+    )
+    sloped = 0.3 * (1 + 0.5 * (WAVELENGTHS - 1000) / 1000)
+    readout.checkCombo.setCurrentText("Generic")
+    readout.editors["maxSlope"].setValue(0.2)
+    result = readout.setSpectrum(WAVELENGTHS, sloped)
+    first = result.windows[0]
+    assert readout.verdictLabel.text().startswith(
+        f"✗ Not bland: 1.05–1.7 µm, slope {first.slope:.2f} /µm (limit 0.2); "
+    )
+
+
+def test_the_details_start_folded(qtbot):
+    readout = BlandnessReadout()
+    qtbot.addWidget(readout)
+    readout.show()
+    readout.setSpectrum(WAVELENGTHS, np.full(WAVELENGTHS.shape, 0.3))
+    assert not readout.detailsVisible() and readout.table.isHidden()
+    readout.detailsButton.click()
+    assert readout.detailsVisible() and readout.table.isVisible()
+
+
 def test_the_denominator_plot_marks_each_failing_windows_dip(qtbot):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
+    panel = makePlots(qtbot)
     panel.readout.checkCombo.setCurrentText("Fe/Mg phyllosilicates")
     panel.showComponents(components(1.0, denominator=_withBand(0.08)))
     failing = [w for w in panel.readout.lastResult.windows if not w.passed]
@@ -182,23 +277,26 @@ def test_the_denominator_plot_marks_each_failing_windows_dip(qtbot):
     assert x[0] == pytest.approx(failing[0].dipNm)
     assert labels[0].toPlainText().startswith("2.3 µm Fe/Mg-OH: ")
     for item in panel.dipMarkers:
-        assert item in panel.denominatorPlot.plotItem.items
+        assert item in panel.spectraPlot.plotItem.items
+    # they stay on the denominator's plot when the spectra are separate
+    panel.setSeparate(True)
+    assert all(i in panel.spectraPlot.plotItem.items for i in panel.dipMarkers)
     # a bland denominator clears them
     panel.showComponents(components(1.0))
     assert panel.dipMarkers == []
 
 
-@pytest.mark.parametrize("width", [640, 1280])
-def test_panel_fits_a_laptop_screen(qtbot, width):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
-    panel.resize(width, 800)
-    panel.show()
-    qtbot.waitExposed(panel)
-    panel.showComponents(components(1.0))
-    assertNothingClipped(panel)
-    for plot in (panel.numeratorPlot, panel.denominatorPlot, panel.ratioPlot):
-        assert plot.height() >= 120
+@pytest.mark.parametrize("width", [320, 700])
+def test_the_blandness_strip_fits_a_laptop(qtbot, width):
+    readout = BlandnessReadout()
+    qtbot.addWidget(readout)
+    readout.checkCombo.setCurrentText("Fe/Mg phyllosilicates")
+    readout.setSpectrum(WAVELENGTHS, _withBand(0.08))
+    readout.setDetailsVisible(True)
+    readout.resize(width, readout.heightForWidth(width))
+    readout.show()
+    qtbot.waitExposed(readout)
+    assertNothingClipped(readout)
 
 
 def test_bad_bands_are_left_out_of_the_readout_and_the_plots(qtbot):
@@ -206,35 +304,30 @@ def test_bad_bands_are_left_out_of_the_readout_and_the_plots(qtbot):
     bbl = [0 if i == bad else 1 for i in range(len(WAVELENGTHS))]
     denominator = np.full(WAVELENGTHS.shape, 0.3)
     denominator[bad] = 0.01  # a deep spike in the bad band only
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
+    panel = makePlots(qtbot)
     panel.showComponents(components(1.0, denominator=denominator, cube=image(bbl=bbl)))
     assert panel.readout.lastResult.passed
-    for plot in (panel.numeratorPlot, panel.denominatorPlot, panel.ratioPlot):
-        y = curveY(plot)
+    for y in (
+        named(panel.spectraPlot, "Numerator"),
+        named(panel.spectraPlot, "Denominator"),
+        curveY(panel.ratioPlot),
+    ):
         assert np.isnan(y[bad]) and np.isfinite(np.delete(y, bad)).all()
 
 
 def test_without_wavelengths_the_readout_says_so(qtbot):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
+    panel = makePlots(qtbot)
     panel.showComponents(components(1.0))  # a verdict first, to see it replaced
     panel.showComponents(components(1.0, cube=image(wavelengths=None)))
     assert panel.readout.lastResult.windows == ()
     assert "wavelengths" in panel.readout.verdictLabel.text()
     assert panel.readout.table.rowCount() == 0
     np.testing.assert_allclose(
-        panel.numeratorPlot.plots[0].data()[0], np.arange(1, len(WAVELENGTHS) + 1)
+        panel.spectraPlot.plots[0].data()[0], np.arange(1, len(WAVELENGTHS) + 1)
     )
 
 
-def test_the_ratio_plot_starts_as_wide_as_the_others(qtbot):
-    panel = RatioPlotsPanel()
-    qtbot.addWidget(panel)
-    panel.resize(500, 800)
-    panel.show()
-    qtbot.waitExposed(panel)
-    assert not panel.ratioPlot.isSidebarVisible()
-    panel.showComponents(components(1.0))
-    widths = [p.viewBox.width() for p in (panel.numeratorPlot, panel.ratioPlot)]
-    assert widths[1] == pytest.approx(widths[0], rel=0.1)
+def test_the_plot_sidebars_start_folded(qtbot):
+    panel = makePlots(qtbot)
+    for plot in (panel.spectraPlot, panel.numeratorPlot, panel.ratioPlot):
+        assert not plot.isSidebarVisible()

@@ -515,20 +515,49 @@ what it saves is ROIs and points.
   navigation: no spectrum is ever read from it.
 - **I/F view** (middle): the cube the spectra are measured on. The boxes are
   defined in this cube's pixels and shown on both views.
-- **Ratio Plots** (right, scrolls when the window is short): the box size, the
-  column lock, and three plots on one wavelength axis: **Numerator**,
-  **Denominator** (with its blandness readout under it) and **Ratio**. Each new
-  pair replaces the curves, refits the Y ranges and shows the whole spectrum;
-  the three plots always show the same wavelength range, so zooming or
-  panning one moves the others. The image's bad bands (ENVI `bbl`) are left
-  out of the plots and the readout. An image without wavelengths is plotted
-  by band number, and the readout says the check needs wavelengths. The
-  Ratio plot's sidebar overlays library spectra; it starts folded so the
-  three plots are equally wide; open it with the arrow at the plot's right
-  edge.
+- **Ratio Controls** (right, top): one row (it wraps when narrow) with the box
+  size (**Box** width × height, pixels), **Lock to sensor column** (see
+  [Column lock](#column-lock)), **Choose/Change Geometry File…**, and **?**,
+  whose tooltip (hover, or click it) lists the clicks and keys of
+  [the click loop](#the-click-loop).
+- **Spectra** (under the controls, left): the numerator (green) and the
+  denominator (magenta) mean spectra overlaid on one plot, with a legend.
+  The denominator's failing blandness windows are shaded on it (see
+  [Blandness readout](#blandness-readout)). **Separate** in the panel's title
+  bar puts them on two plots instead, numerator above denominator, in the
+  same panel; click it again to overlay them.
+- **Ratio** (beside Spectra): numerator ÷ denominator. Its sidebar overlays
+  library spectra; it starts folded, so the plot keeps its width; open it with
+  the arrow at the plot's right edge.
+- **Denominator Blandness** (under both plots): the check, its limits and the
+  CO₂ exclusion on one row, then a one-line verdict. **Details ▸** opens the
+  per-window table.
 - **ROI Manager**, **Points Manager** and **ROI Plots** sit folded on the right
   edge, and the render settings and histograms of both views on the bottom
   edge: click their tabs to open them.
+
+Each new pair replaces the curves, refits the Y ranges and shows the whole
+spectrum; the plots always show the same wavelength range, so zooming or
+panning one moves the others. The image's bad bands (ENVI `bbl`) are left out
+of the plots and the readout. An image without wavelengths is plotted by band
+number, and the readout says the check needs wavelengths.
+
+**Plot shape.** Spectral features read best on a plot that is square or taller
+than wide, so the plots start taller than wide on a laptop screen (about 350 ×
+650 pixels each at 1440 × 900). **Shape** in each plot panel's title bar keeps
+that panel's plots at a shape as you resize: **Free** (default) fills the
+panel, **Square** keeps width = height, **Tall (3:4)** keeps width:height at
+3:4; the spare space beside or above the plot is left empty. With Separate,
+each of the two plots keeps the shape. The shape is of the plot (axes and
+labels included), not of the data: it does not lock the wavelength and
+reflectance scales to each other, so zooming still changes either freely.
+
+**Moving and folding panels.** Every panel is a dock: drag its title bar to
+move it beside, above or below another, or onto another to tab them; drag
+the dividers to resize; the title bar's buttons float it as a window or fold
+it into a tab on the window's edge (click the tab to open it). The browse and
+I/F views and the plot panels can't be closed, only folded. The session keeps
+where every panel is, the plot shapes, Separate and whether Details is open.
 
 The dialog picks a browse image (the one whose name contains `_SR`, else the
 first image) and an I/F image (one whose detector columns are known, else the
@@ -555,11 +584,11 @@ the I/F cube is refused with a message.
 ### The click loop
 
 1. **Ctrl/⌘+left-click** a numerator box on either view. It is centered on the
-   pixel; its size is **Box Width** and **Box Height** (pixels, 1 to 99,
-   default 5 by 5, the same for both boxes).
+   pixel; its size is **Box** width × height (pixels, 1 to 99, default 5 by
+   5, the same for both boxes).
 2. **Ctrl/⌘+right-click** the denominator box (same size).
-3. The three plots show the **mean spectrum of each box** measured on the I/F
-   cube, and their ratio (numerator mean divided by denominator mean, band by
+3. The Spectra plot shows the **mean spectrum of each box** measured on the
+   I/F cube, and the Ratio plot their ratio (numerator mean divided by denominator mean, band by
    band, dimensionless). Plain clicks and drags pan and zoom as usual.
 4. Click a new numerator and everything updates: the denominator stays, or
    follows the column (below). **Esc** clears both boxes.
@@ -584,7 +613,7 @@ the I/F cube is refused with a message.
 
 Sensor artifacts are fixed per detector column, so a denominator is only a good
 reference if it lies in the same column as the numerator (see the top of this
-page). With **Lock denominator to the numerator's sensor column** on (the
+page). With **Lock to sensor column** (the denominator to the numerator's) on (the
 default when the detector columns are known), the right-clicked denominator is put on
 the numerator's sensor column in the clicked row, and the denominator then
 **follows**: each new numerator moves it into the new numerator's column,
@@ -606,7 +635,7 @@ Two cases where the lock cannot be met are said, never silent:
   band beside the cube or the file it was made from, and not an unprojected
   CRISM cube): the lock is unavailable (the check box is disabled and
   unchecked) and the status bar says "Column lock unavailable … (choose its
-  geometry file)". **Choose Geometry File…** under the check box points Varda
+  geometry file)". **Choose Geometry File…** beside the check box points Varda
   to the IN file by hand (see [The geometry file](#the-geometry-file)); once
   accepted, the lock turns on at once. The button then reads **Change
   Geometry File…**.
@@ -615,7 +644,7 @@ Two cases where the lock cannot be met are said, never silent:
 
 ### Blandness readout
 
-Under the Denominator plot, the readout tests the **denominator box's mean
+The **Denominator Blandness** strip under the plots tests the **denominator box's mean
 spectrum**: is it featureless enough to divide by? Any feature in it appears
 inverted at the same wavelength in the ratio, where it could be mistaken for
 (or hide) a feature of the numerator.
@@ -627,19 +656,25 @@ the same bands (bad bands left out), with the readout's own defaults.
   Fe/Mg phyllosilicates, Al phyllosilicates, Carbonates, Sulfates, Hydrated
   (any)); the windows of each are in the table above. No optional feature is
   needed.
-- **One row per window**: its name, its range (nm), the **deepest dip**
-  (depth in % of the continuum, and the wavelength where it is, e.g. `2.7 %
-  at 1920 nm`), the **limit** that dip is held to (the larger of the floor
-  and k × the window's noise; hover over it to see both), the **slope** (per
-  µm) and **✓** or **✗**. The overall verdict is ✓ only if every window is,
-  and a ✗ names the failing windows. A preset may be ✗ where Generic is ✓
-  or the other way round, because each looks at different windows.
-- **On the Denominator plot**, every failing window is shaded, and its
-  deepest dip has a marker with a label (window name and depth), so a ✗
-  points at something you can see in the spectrum.
+- **The verdict** (one line): **✓ Bland enough to divide by** only if every
+  window passes; otherwise **✗ Not bland:** and, for each failing window, why:
+  its deepest dip and the limit it broke, and/or its slope and the slope
+  limit, for example `✗ Not bland: 1.7–2.65 µm, 3.9 % dip at 1948 nm (limit
+  3.0 %)`. A preset may be ✗ where Generic is ✓ or the other way round,
+  because each looks at different windows.
+- **Details ▸** (folded by default) opens **one row per window**: its name,
+  its range (nm), the **deepest dip** (depth in % of the continuum, and the
+  wavelength where it is, e.g. `2.7 % at 1920 nm`), the **limit** that dip is
+  held to (the larger of the floor and k × the window's noise; hover over it
+  to see both), the **slope** (per µm) and **✓** or **✗**. The session keeps
+  whether it is open.
+- **On the Spectra plot**, every failing window is shaded, and its deepest
+  dip has a marker on the denominator's curve with a label (window name and
+  depth), so a ✗ points at something you can see in the spectrum. With
+  Separate, they are on the denominator's plot.
 - **Limits are editable**: **Floor** (%), **k** and **Slope ≤** (per µm)
-  above the table, and **Leave out the CO₂ residual (1950–2100 nm)**, on by
-  default. The limits are shared by all checks, so changing the check keeps
+  beside the check, and **Leave out CO₂ (1950–2100 nm)** (the CO₂ residual),
+  on by default. The limits are shared by all checks, so changing the check keeps
   them; **Defaults** puts them back. The session keeps them and the CO₂
   choice, and each saved ROI's and point's description records the limits
   it was judged with; still, **report any limit you changed**. The limits
