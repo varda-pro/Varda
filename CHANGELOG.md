@@ -138,6 +138,12 @@ can alter results.
 
 ### Fixed
 
+- Masks and DEMs resampled from a sphere onto an ellipsoid grid of the same
+  body (or back) were misplaced by up to ~20 km on Mars (GDAL used PROJ's
+  ballpark); they now keep their planetocentric positions. The resampling
+  record names the operation (`coordinateOperation`). See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#rasters-between-surfaces-of-one-body).
+
 - **Planetary coordinate systems work when conda (or another GDAL/PROJ
   installation) is active in your shell.** Such a shell exports its own
   `PROJ_DATA`/`PROJ_LIB`/`GDAL_DATA`, and rasterio then read an older PROJ

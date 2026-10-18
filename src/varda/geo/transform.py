@@ -89,6 +89,77 @@ def transformPoints(
     return (second, first) if route.dst.latitudeFirst else (first, second)
 
 
+def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
+    """The PROJ pipeline that moves rasters from ``src`` to ``dst`` as
+    ``transformPoints`` moves points, for GDAL's warper (its
+    ``COORDINATE_OPERATION`` option), in the CRSs' own axis order; None when
+    PROJ's own operation is exact (equivalent CRSs, one surface, or a real
+    transformation such as Earth's datum shifts). Between surfaces of one
+    body, where PROJ has only its ballpark, its steps are:
+
+    1. ``src`` → longitude east and geodetic latitude in degrees (PROJ's own
+       steps, ``transformPoints``' step 1);
+    2. degrees → radians;
+    3. ``+proj=geoc`` on ``src``'s ellipsoid (geodetic → planetocentric),
+       left out when its latitude numbers are already planetocentric;
+    4. ``+inv +proj=geoc`` on ``dst``'s ellipsoid, left out likewise;
+    5. radians → degrees;
+    6. → ``dst`` (PROJ's own steps).
+
+    On a sphere the geoc steps change nothing. Raises ValueError with
+    ``canTransform``'s reason (e.g. different bodies). Holds PROJ_LOCK; no
+    Qt."""
+    reason = canTransform(src, dst)
+    if reason is not None:
+        raise ValueError(reason)
+    if sameCrs(src, dst):
+        return None
+    with PROJ_LOCK:
+        return _warpOperation(_key(src), _key(dst))
+
+
+def warpOptions(src: CRS | str, dst: CRS | str) -> dict[str, str]:
+    """GDAL warper options that place a raster from ``src`` on ``dst`` as
+    ``transformPoints`` places points (``warpOperation``): pass them to
+    ``rasterio.warp.reproject``. Empty when PROJ's own operation is exact.
+    Raises ValueError as ``warpOperation`` does."""
+    operation = warpOperation(src, dst)
+    return {} if operation is None else {"COORDINATE_OPERATION": operation}
+
+
+@lru_cache(maxsize=64)
+def _warpOperation(srcKey: str, dstKey: str) -> str | None:
+    """The caller holds PROJ_LOCK."""
+    route = _route(srcKey, dstKey)
+    if route.direct is not None:
+        return None
+    steps = [*_steps(route.src.plain), "proj=unitconvert xy_in=deg xy_out=rad"]
+    for side, key, inverse in ((route.src, srcKey, ""), (route.dst, dstKey, "inv ")):
+        if not side.centricNumbers:
+            ellipsoid = CRS.from_user_input(key).ellipsoid
+            assert ellipsoid is not None  # canTransform found the body
+            steps.append(
+                f"{inverse}proj=geoc a={ellipsoid.semi_major_metre!r} "
+                f"b={ellipsoid.semi_minor_metre!r}"
+            )
+    steps += ["proj=unitconvert xy_in=rad xy_out=deg", *_steps(route.dst.plain)]
+    return " ".join(
+        ["+proj=pipeline"]
+        + [" ".join(["+step", *(f"+{word}" for word in s.split())]) for s in steps]
+    )
+
+
+def _steps(transformer: Transformer) -> list[str]:
+    """The steps of ``transformer``'s PROJ definition, without the
+    ``proj=pipeline`` head (one step when it isn't a pipeline)."""
+    parts = transformer.definition.split(" step ")
+    if parts[0].strip() == "proj=pipeline":
+        return parts[1:]
+    if parts[0].startswith("proj=pipeline "):
+        raise ValueError(f"Unexpected PROJ pipeline options: {parts[0]}")
+    return parts
+
+
 def planetocentricLonLat(
     crs: CRS | str, xs: npt.ArrayLike, ys: npt.ArrayLike
 ) -> tuple[np.ndarray, np.ndarray]:
