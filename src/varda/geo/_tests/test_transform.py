@@ -13,7 +13,7 @@ from varda.geo._tests.fixtures import (
     MARS_EQC_PDS3_WKT,
     WGS84,
 )
-from varda.geo.transform import transformPoints
+from varda.geo.transform import eastLonLat, geodeticLonLat, transformPoints
 
 MARS_SPHERE = "+proj=longlat +R=3396190 +no_defs"
 OGRAPHIC = "IAU_2015:49901"  # Mars ellipsoid, planetographic, west-positive
@@ -77,3 +77,27 @@ def test_earth_keeps_projs_own_operation_and_x_is_longitude():
     lon, lat = transformPoints("EPSG:32612", WGS84, [500000.0], [4000000.0])
     assert lon[0] == pytest.approx(-111.0, abs=1e-9)
     assert lat[0] == pytest.approx(36.14, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("EPSG:4326", (77.5, 18.4)),  # latitude first
+        ("IAU_2015:49901", (-77.5, 18.4)),  # west-positive, planetographic
+        ("IAU_2015:49902", (77.5, 18.4)),  # spherical, planetocentric
+    ],
+)
+def test_east_lon_lat_reads_degrees_in_the_crs_own_latitude_type(code, expected):
+    x, y = transformPoints(eastLonLat(code), code, [77.5], [18.4])
+    assert (x[0], y[0]) == pytest.approx(expected, abs=1e-9)
+
+
+def test_geodetic_lon_lat_is_east_and_geodetic_on_the_crs_datum():
+    # 18.4° planetocentric on the Mars ellipsoid is 18.68° planetographic
+    x, y = transformPoints(
+        "IAU_2015:49902", geodeticLonLat("IAU_2015:49902"), [77.5], [18.4]
+    )
+    assert x[0] == pytest.approx(77.5, abs=1e-9)
+    a, c = 3396190.0, 3376200.0
+    expected = math.degrees(math.atan((a / c) ** 2 * math.tan(math.radians(18.4))))
+    assert y[0] == pytest.approx(expected, abs=1e-9)

@@ -2,10 +2,11 @@
 exported lines) or from another workspace placed on a 3D terrain: as
 positions over the DEM's extent, for the viewer to drape. No Qt.
 
-Coordinates in longitude and latitude are taken as degrees on the DEM's body,
-in the DEM's own geographic coordinate system (planetary GeoJSON says Earth's
-CRS84 even for Mars); projected ones are converted to the DEM's map
-projection. GeoJSON can't record a planetary map projection at all, so
+Coordinates in longitude and latitude are taken as degrees on the DEM's body
+(planetary GeoJSON says Earth's CRS84 even for Mars): longitude east first and
+the DEM's own latitude type, whatever its axes; projected ones are converted
+to the DEM's map projection (``geo.transform.transformPoints``), and refused
+on another body. GeoJSON can't record a planetary map projection at all, so
 "degrees" that can't be degrees (beyond ±360 and ±90) are taken to be in the
 DEM's projection already."""
 
@@ -17,11 +18,17 @@ import geopandas as gpd
 import numpy as np
 import shapely
 from attrs import frozen
-from pyproj import CRS, Transformer
+from pyproj import CRS
 
+from varda.geo.equivalence import sameCrs
+from varda.geo.transform import eastLonLat, transformPoints
 from varda.utilities.proj_lock import PROJ_LOCK
 
 Bounds = tuple[float, float, float, float]  # west, south, east, north
+
+
+class OffDemError(ValueError):
+    """No line crosses the DEM."""
 
 
 @frozen
@@ -62,15 +69,16 @@ def toDemCoordinates(frame: gpd.GeoDataFrame, demCrs: CRS) -> list[np.ndarray]:
                 or np.abs(everything[:, 1]).max() > 90
             ):
                 return paths  # projected coordinates whose projection was lost
-            # degrees on the DEM's body (its own geographic coordinate
-            # system), whatever body the file claims
-            source = demCrs.geodetic_crs or demCrs
+            # degrees on the DEM's body, whatever body the file claims
+            source = eastLonLat(demCrs) if demCrs.geodetic_crs else demCrs
         else:
             source = CRS.from_user_input(crs)
-        if source == demCrs:
+        if sameCrs(source, demCrs):
             return paths
-        transformer = Transformer.from_crs(source, demCrs, always_xy=True)
-        return [np.column_stack(transformer.transform(p[:, 0], p[:, 1])) for p in paths]
+        return [
+            np.column_stack(transformPoints(source, demCrs, p[:, 0], p[:, 1]))
+            for p in paths
+        ]
 
 
 def readLines(
@@ -82,12 +90,11 @@ def readLines(
 ) -> PageLine:
     """A vector file's lines over a DEM (``bounds`` in its map units), as
     fractions of its extent. Parts entirely off the DEM are dropped."""
+    frame = gpd.read_file(path)
     try:
-        return placeLines(
-            gpd.read_file(path), demCrs, bounds, color, name or Path(path).stem
-        )
-    except ValueError as error:
-        raise ValueError(f"No line in {Path(path).name} crosses the DEM.") from error
+        return placeLines(frame, demCrs, bounds, color, name or Path(path).stem)
+    except OffDemError as error:
+        raise OffDemError(f"No line in {Path(path).name} crosses the DEM.") from error
 
 
 def placeLines(
@@ -103,5 +110,5 @@ def placeLines(
         if len(points) >= 2 and inside.any():
             kept.append(tuple((float(a), float(b)) for a, b in zip(u, v)))
     if not kept:
-        raise ValueError(f"{name} doesn't cross the DEM.")
+        raise OffDemError(f"{name} doesn't cross the DEM.")
     return PageLine(name, color, tuple(kept))

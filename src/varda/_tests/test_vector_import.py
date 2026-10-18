@@ -22,6 +22,8 @@ from shapely.geometry import (
 )
 
 from varda.common.entities import Color, ROIMode, VardaRaster
+from varda.geo._tests.fixtures import makeImage
+from varda.geo.transform import transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.lines.line_collection import LineCollection, LineKind
 from varda.points.point_collection import PointCollection
@@ -734,3 +736,40 @@ def test_invalid_polygons_are_reported(tmp_path):
     plan = _plan(path, _plainImage(), Target.ROIS)
     assert len(plan.features) == 1
     assert any("1 polygon invalid" in note for note in plan.notes)
+
+
+@pytest.mark.parametrize(
+    "code, center",
+    [
+        ("IAU_2015:49911", (-77.5, 18.4)),  # west-positive, planetographic
+        ("IAU_2015:49912", (77.5, 18.4)),  # planetocentric
+    ],
+)
+def test_degrees_land_on_an_iau_ellipsoid_projection(tmp_path, code, center):
+    """GeoJSON degrees (east, the image's own latitude type) on a projection
+    of the Mars ellipsoid, whose geographic axes are latitude first."""
+    image = makeImage(code, centerLonLat=center, pixelSize=100.0)
+    path = tmp_path / "site.geojson"
+    gpd.GeoDataFrame(
+        {"name": ["site"]}, geometry=[Point(77.5, 18.4)], crs=4326
+    ).to_file(path)
+    plan = _plan(path, image, Target.POINTS)
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx((32.0, 32.0), abs=1e-6)
+
+
+def test_a_file_in_another_mars_crs_lands_on_an_iau_ellipsoid_image(tmp_path):
+    """Degrees on the Mars sphere onto a west-positive projection of the
+    ellipsoid: the same planetocentric place."""
+    image = makeImage("IAU_2015:49911", centerLonLat=(-77.5, 18.4), pixelSize=100.0)
+    x, y = image.pixelToGeo(32, 32)
+    lon, lat = transformPoints("IAU_2015:49911", "IAU_2015:49900", [x], [y])
+    path = tmp_path / "site.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["site"]},
+        geometry=[Point(lon[0], lat[0])],
+        crs=CRS.from_user_input("IAU_2015:49900"),
+    ).to_file(path)
+    plan = _plan(path, image, Target.POINTS)
+    point = plan.features[0].geometry
+    assert (point.x, point.y) == pytest.approx((32.5, 32.5), abs=1e-6)

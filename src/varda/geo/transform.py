@@ -123,6 +123,38 @@ def ographicLatitude(centric: npt.ArrayLike, a: float, c: float) -> np.ndarray:
     return _tanScaled(np.asarray(centric, dtype=np.float64), (a / c) ** 2)
 
 
+def eastLonLat(crs: CRS | str) -> CRS:
+    """``crs``'s own geographic CRS (its datum, latitude type and units)
+    with longitude first and east-positive: how GeoJSON and most planetary
+    tools write degrees on a body. ``transformPoints`` from it reads such
+    degrees on ``crs``. Raises ValueError for a CRS on no body. Holds
+    PROJ_LOCK."""
+    with PROJ_LOCK:
+        geodetic = CRS.from_user_input(crs).geodetic_crs
+        if geodetic is None:
+            raise ValueError(f"No longitude and latitude on this CRS: {crs}")
+        definition = geodetic.to_json_dict()
+        definition.pop("id", None)
+        definition.pop("ids", None)
+        axes = definition["coordinate_system"]["axis"]
+        longitude = next(a for a in axes if a["direction"] in ("east", "west"))
+        latitude = next(a for a in axes if a["direction"] in ("north", "south"))
+        definition["coordinate_system"]["axis"] = [
+            {**longitude, "direction": "east"},
+            latitude,
+        ]
+        definition["name"] = f"{geodetic.name} (longitude east first)"
+        return CRS.from_json_dict(definition)
+
+
+def geodeticLonLat(crs: CRS | str) -> CRS:
+    """Longitude east and geodetic (planetographic) latitude, in degrees, on
+    ``crs``'s own datum and prime meridian: what a PROJ projection string
+    takes. Holds PROJ_LOCK."""
+    with PROJ_LOCK:
+        return _plain(CRS.from_user_input(crs))
+
+
 @frozen
 class _Side:
     """One CRS's part of the route."""

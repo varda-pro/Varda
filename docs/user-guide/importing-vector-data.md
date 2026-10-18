@@ -42,6 +42,10 @@ coordinate system Varda **detected** and how.
 - **The file's coordinate system** (the default when the file has one):
   coordinates are reprojected from it to the image's coordinate system with
   PROJ (through pyproj), then to pixels with the image's geotransform.
+  Between two surfaces of one body (a sphere and an ellipsoid), each point
+  keeps its planetocentric longitude and latitude, as everywhere in Varda
+  (see [Coordinate systems](coordinate-systems.md)); a file on another body,
+  or on an unknown body whose radii differ from the image's, is refused.
 - **Degrees on Mars** (named for the image's body): the coordinates are
   longitude (east) and latitude in degrees on the image's body, in the
   image's own geographic coordinate system, whatever the file says. The body

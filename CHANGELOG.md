@@ -190,6 +190,15 @@ can alter results.
   reads the coordinate system's own axis order, so a pixel near 18.4° N,
   77.5° E reads `lat 18.39916° N  lon -77.49916° W  (Mars, planetographic)` in
   49911 and `… lon 77.50084° E  (Mars, planetocentric)` in 49912.
+- **Vector import, terrain lines and Find Data misread degrees for map
+  projections on the IAU 2015 ellipsoid codes.** Their geographic axes are
+  latitude first (and west-positive for the planetographic ones), so
+  imported features and lines draped on a terrain landed in the wrong place
+  and Find Data drew such an image's footprint mirrored. Degrees are now
+  read longitude east first, in the image's own latitude type, and
+  conversions between surfaces of one body keep the planetocentric place
+  (as Linked Images and points do). Terrain lines on another body are
+  refused with a message rather than "No line crosses the DEM".
 - **A box zoom no longer leaves its yellow box on a plot.** In every
   spectral plot, letting go of Cmd, Ctrl or Shift just before the mouse
   button turned the end of a box zoom into a pan, so the box was never

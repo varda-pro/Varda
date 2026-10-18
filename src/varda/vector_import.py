@@ -41,6 +41,13 @@ from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.common.palette import classColor
 from varda.common.parameter import LabeledEnum
 from varda.geo.bodies import Body, identifyBody
+from varda.geo.equivalence import sameCrs
+from varda.geo.transform import (
+    eastLonLat,
+    geodeticLonLat,
+    planetocentricLonLat,
+    transformPoints,
+)
 from varda.lines.line_collection import LineCollection, LineKind
 from varda.points.point_collection import PointCollection
 from varda.rois.roi_collection import NewROI, ROICollection
@@ -400,15 +407,14 @@ def _fileCrs(
 def _sameCoordinates(first: CRS, second: CRS, frame: gpd.GeoDataFrame) -> bool:
     """Whether the frame's coordinates are the same (to 1e-5 of their
     size) in both coordinate systems."""
-    if first == second:
+    if sameCrs(first, second):
         return True
     xy = shapely.get_coordinates(np.asarray(frame.geometry, dtype=object))[:100]
     if not len(xy):
         return False
     try:
-        transformer = Transformer.from_crs(first, second, always_xy=True)
-        x, y = transformer.transform(xy[:, 0].tolist(), xy[:, 1].tolist())
-    except ProjError:
+        x, y = transformPoints(first, second, xy[:, 0], xy[:, 1])
+    except (ValueError, ProjError):  # different or unknown bodies
         return False
     return bool(np.allclose(np.column_stack([x, y]), xy, rtol=1e-5, atol=1e-6))
 
@@ -537,6 +543,19 @@ def planImport(
     )
 
 
+@attrs.frozen
+class _Conversion:
+    """From one CRS to another of the same body (``transformPoints``: x the
+    east–west coordinate, whatever the axis order; the same planetocentric
+    place between two surfaces). Infinite where PROJ can't convert."""
+
+    source: CRS
+    target: CRS
+
+    def transform(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return transformPoints(self.source, self.target, x, y)
+
+
 class _PixelMapping:
     """From the file's (n, 2) coordinates to image pixel coordinates, for
     ``shapely.transform``: ``transformer`` (to the image's CRS, or to its
@@ -549,7 +568,7 @@ class _PixelMapping:
         self,
         notes: list[str],
         inverse: Affine | None = None,
-        transformer: Transformer | None = None,
+        transformer: _Conversion | None = None,
         center: float | None = None,
         projector: Transformer | None = None,
     ) -> None:
@@ -570,7 +589,9 @@ class _PixelMapping:
         if self._inverse is None:
             return xy  # pixels already
         x, y = xy[:, 0], xy[:, 1]
-        for step in (self._transformer, "wrap", self._projector):
+        if self._transformer is not None:
+            x, y = self._transformer.transform(x, y)
+        for step in ("wrap", self._projector):
             if step == "wrap":
                 if self._center is not None:
                     x = self._wrap(x, self._center)
@@ -605,7 +626,8 @@ def _pixelMapping(
         body = imageBody.name if imageBody is not None else "the image's body"
         if mode is Coordinates.BODY:
             if imageCrs.geodetic_crs is not None:
-                sourceCrs = imageCrs.geodetic_crs
+                # longitude east first, whatever the image's axes
+                sourceCrs = eastLonLat(imageCrs)
             elif imageBody is not None:
                 sourceCrs = imageBody.sphereCrs()
             else:
@@ -657,19 +679,18 @@ def _pixelMapping(
         target = imageCrs
         if sourceCrs.is_geographic:
             center, projector = _longitudeRange(image, imageCrs)
-            if projector is not None:
-                target = imageCrs.geodetic_crs or imageCrs
-        try:
-            transformer = (
-                None
-                if sourceCrs == target
-                else Transformer.from_crs(sourceCrs, target, always_xy=True)
-            )
-        except ProjError as error:
-            raise VectorImportError(
-                f"Varda can't convert {sourceCrs.name} to the image's "
-                f"{imageCrs.name}: {error}"
-            ) from error
+            if projector is not None:  # takes longitude east, geodetic latitude
+                target = geodeticLonLat(imageCrs)
+        transformer = None
+        if not sameCrs(sourceCrs, target):
+            transformer = _Conversion(sourceCrs, target)
+            try:  # builds PROJ's operation, or says why there is none
+                transformer.transform(np.zeros(0), np.zeros(0))
+            except (ValueError, ProjError) as error:
+                raise VectorImportError(
+                    f"Varda can't convert {sourceCrs.name} to the image's "
+                    f"{imageCrs.name}: {error}"
+                ) from error
     if mode is not Coordinates.BODY and (transformer or projector) is not None:
         notes.append(f"Reprojected from {sourceCrs.name} to {imageCrs.name}.")
     return _PixelMapping(notes, ~image.transform, transformer, center, projector)
@@ -702,19 +723,22 @@ def _longitudeRange(
         [[u * width, v * height] for u in (0, 0.5, 1) for v in (0, 0.5, 1)]
     )
     x, y = edges[:, 0].tolist(), edges[:, 1].tolist()
+    directions = [axis.direction for axis in imageCrs.axis_info[:2]]
+    if directions not in (["east", "north"], ["west", "north"]):
+        return None, None  # a PROJ string can't say these axes
+    # a westing (IAU_2015 west-positive projections) is the easting negated
+    westing = " +step +proj=axisswap +order=-1,2" if directions[0] == "west" else ""
     try:
         projection = proj4.replace("+type=crs", "").strip()
         projector = Transformer.from_pipeline(
             "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad "
-            f"+step {projection} +over"
+            f"+step {projection} +over{westing}"
         )
         overLon = np.asarray(
             projector.transform(x, y, direction=TransformDirection.INVERSE)[0]
         )
-        plainLon = np.asarray(
-            Transformer.from_crs(imageCrs, geodetic, always_xy=True).transform(x, y)[0]
-        )
-    except (CRSError, ProjError):
+        plainLon, _ = planetocentricLonLat(imageCrs, x, y)  # east, any axes
+    except (CRSError, ProjError, ValueError):
         return None, None
     known = np.isfinite(plainLon) & np.isfinite(overLon)
     center = float(overLon[4])  # the middle of the image

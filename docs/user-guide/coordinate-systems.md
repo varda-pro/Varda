@@ -214,8 +214,8 @@ PROJ's suggestions and then every `IAU_2015` code of the image's body (e.g.
 "Reprojects" in the **Same body** row means each point keeps its
 **planetocentric longitude and latitude**: the same direction from the
 body's center (Archinal et al., 2018). Linked Images, applying ROIs to
-another image and saving points from several images all move points this
-way. When both CRSs share one surface, or PROJ knows a real transformation
+another image, saving points from several images, vector import and lines
+draped on a 3D terrain all move points this way. When both CRSs share one surface, or PROJ knows a real transformation
 between them (Earth's datum shifts), Varda uses PROJ's own operation.
 Between two surfaces of one body PROJ has none: its "ballpark geographic
 offset" keeps the number of the geodetic latitude. Between a sphere and a

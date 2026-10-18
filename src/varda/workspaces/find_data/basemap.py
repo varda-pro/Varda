@@ -18,6 +18,7 @@ from rasterio.warp import Resampling, reproject, transform_bounds
 from varda.catalogs.basemaps import GLOBE
 from varda.common.entities import VardaRaster
 from varda.geo.bodies import identifyBody
+from varda.geo.transform import eastLonLat
 from varda.utilities.proj_lock import PROJ_LOCK
 from varda.workspaces.find_data.projection import Projector
 from varda.workspaces.mosaic.views import displayBands, downsampled, toRgba
@@ -45,12 +46,13 @@ def _crsBody(wkt: str) -> str | None:
 
 
 def imageBounds(image: VardaRaster) -> Bounds:
-    """The image's bounds in longitude and latitude on its own body (its own
-    geographic coordinate system)."""
+    """The image's bounds in longitude (east) and latitude on its own body:
+    its own geographic coordinate system's datum and latitude type, with
+    longitude east first whatever its axes (``eastLonLat``)."""
     bounds = array_bounds(image.height, image.width, image.transform)
     with PROJ_LOCK:
         crs = CRS.from_user_input(image.crs)
-        degrees = (crs.geodetic_crs or crs).to_wkt()
+        degrees = (eastLonLat(crs) if crs.geodetic_crs else crs).to_wkt()
     return tuple(transform_bounds(image.crs, degrees, *bounds))
 
 
