@@ -3,9 +3,11 @@
 Lines are in image pixel coordinates (x = column, y = row, with pixel
 corners at whole numbers, as the viewports and ROIs use), so a pixel's value
 sits at its center, (col + 0.5, row + 0.5). Distances are in meters when the
-image is georeferenced: planar in a projected coordinate system (converted
-from its units), geodesic on the body's ellipsoid in a geographic one; in
-pixels otherwise.
+image is georeferenced, in any coordinate system: the sum of the geodesics
+(Karney, 2013) between samples about 1 px apart, on the CRS's own ellipsoid
+or sphere (``varda.geo.measure``), so the projection's scale error doesn't
+enter them; in pixels otherwise. Samples PROJ can't convert to longitude and
+latitude have NaN distances, and so do all after them.
 """
 
 from __future__ import annotations
@@ -14,7 +16,10 @@ import numpy as np
 import shapely
 from affine import Affine
 from attrs import frozen
-from pyproj import CRS, Geod
+from pyproj import CRS
+
+from varda.geo import measure
+from varda.geo.measure import Measurement
 
 Points = np.ndarray  # (n, 2): x (column), y (row)
 
@@ -86,23 +91,16 @@ def mapDistances(
     positions: Points, transform: Affine | None, crs: CRS | str | None
 ) -> tuple[np.ndarray, str]:
     """Distance along ``positions`` from the first, and its units: meters
-    when the image is georeferenced, pixels otherwise."""
-    steps = np.diff(positions, axis=0)
+    on the body (geodesic) when the image is georeferenced, pixels
+    otherwise."""
     if transform is None or transform.is_identity or crs is None:
+        steps = np.diff(positions, axis=0)
         return np.concatenate([[0.0], np.cumsum(np.hypot(*steps.T))]), "px"
-    crs = CRS.from_user_input(crs)
-    xs, ys = transform * (positions[:, 0], positions[:, 1])
-    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
-    if crs.is_geographic:
-        geod = crs.get_geod() or Geod(ellps="WGS84")
-        _, _, lengths = geod.inv(
-            xs[:-1].tolist(), ys[:-1].tolist(), xs[1:].tolist(), ys[1:].tolist()
-        )
-        lengths = np.abs(np.asarray(lengths, float))
-    else:
-        factor = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-        lengths = np.hypot(np.diff(xs), np.diff(ys)) * factor
-    return np.concatenate([[0.0], np.cumsum(lengths)]), "m"
+    # samples PROJ can't convert are NaN, not warnings (np.errstate is
+    # per thread)
+    with np.errstate(invalid="ignore"):
+        distance = measure.cumulativeDistance(crs, _mapPoints(positions, transform))
+    return distance, "m"
 
 
 def profile(
@@ -128,8 +126,40 @@ def simplify(points: Points, tolerance: float = 0.5) -> Points:
     return np.asarray(line.coords, dtype=float)
 
 
-def lineLength(vertices: Points, transform: Affine | None, crs) -> tuple[float, str]:
-    """The polyline's length (its vertices only) and units."""
-    positions, _ = densify(vertices, step=np.inf)
-    distance, units = mapDistances(positions, transform, crs)
-    return float(distance[-1]) if len(distance) else 0.0, units
+def lineMeasurement(
+    vertices: Points,
+    transform: Affine | None,
+    crs: CRS | str | None,
+    *,
+    withDistortion: bool = True,
+) -> Measurement | None:
+    """The polyline's length on the body, followed about 1 px at a time as
+    drawn on the image, with how it was measured, the body-model term and
+    (``withDistortion``) the projection's distortion over it; None without
+    georeferencing. NaN when PROJ can't convert part of it."""
+    if transform is None or transform.is_identity or crs is None:
+        return None
+    positions, _ = densify(vertices)
+    with np.errstate(invalid="ignore"):  # NaN where PROJ can't convert
+        return measure.lineLength(
+            crs,
+            _mapPoints(positions, transform),
+            transform=transform if withDistortion else None,
+        )
+
+
+def lineLength(
+    vertices: Points, transform: Affine | None, crs: CRS | str | None
+) -> tuple[float, str]:
+    """The polyline's length and units: meters on the body when the image
+    is georeferenced (``lineMeasurement``), pixels otherwise."""
+    measurement = lineMeasurement(vertices, transform, crs, withDistortion=False)
+    if measurement is not None:
+        return measurement.value, "m"
+    _, distance = densify(vertices, step=np.inf)
+    return float(distance[-1]) if len(distance) else 0.0, "px"
+
+
+def _mapPoints(positions: Points, transform: Affine) -> np.ndarray:
+    xs, ys = transform * (positions[:, 0], positions[:, 1])
+    return np.column_stack([np.asarray(xs, float), np.asarray(ys, float)])

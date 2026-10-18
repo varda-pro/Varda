@@ -98,6 +98,16 @@ can alter results.
 
 ### Fixed
 
+- **Line lengths and profile distances in projected images were measured
+  on the flat map (e.g. 2× too long east–west at 60° in a 0°-centered
+  equirectangular map); they're now geodesic on the body.** In every
+  coordinate system, distances are geodesic (Karney, 2013) on the CRS's own
+  sphere or ellipsoid. The Lines tab's length tooltip and the profile CSV's
+  header give the method and surface, the difference on the body's IAU 2015
+  reference ellipsoid, the projection's distortion along the line, and the
+  limits (horizontal; plus the image's georeferencing error). Line lengths
+  now follow the line at about 1 px, as profiles do. See
+  [Lines and profiles](docs/user-guide/lines-and-profiles.md).
 - **Images and footprint files of Vesta and other bodies with IAU 2015
   radii were identified as Earth; unknown bodies are now reported as
   unknown.** Varda now identifies a body from a coordinate system's
