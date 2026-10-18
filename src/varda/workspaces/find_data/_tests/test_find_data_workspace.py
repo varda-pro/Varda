@@ -399,9 +399,10 @@ def test_offline_tiles_leave_the_bundled_image_and_a_note(workspace, qtbot):
         lambda: "couldn't be fetched" in workspace.status.currentMessage(),
         timeout=10000,
     )
+    # the bundled image loads in the background too, and may land after the note
+    qtbot.waitUntil(lambda: workspace.map.basemapItem.image is not None, timeout=10000)
     image = workspace.map.tilesItem.image
     assert image is None or (image[..., 3] == 0).all()
-    assert workspace.map.basemapItem.image is not None
 
 
 def test_the_basemap_choice_comes_back_from_a_session(workspace, qtbot):
