@@ -1,18 +1,23 @@
-"""Overlay a co-registered project image on a workspace's views.
+"""Overlay another project image on a workspace's views.
 
 Any project image on the same pixel grid as the workspace's image can be laid
-over it: a classification shows its classes in their colors (or one class's
-probability), any other result one band through a color map, with its own
-stretch. Pixels without data stay see-through. The bar sits under the main
-view and drives every view it is given (the triple view's zoom panels follow
-the main view). Clicking a class's swatch in the legend changes its color,
-kept in the result's metadata, so every view showing it follows.
+over it, and so can any georeferenced image of the same body that overlaps
+it, in any map projection: that one is reprojected for display only, onto the
+workspace image's grid (``common.display_grid``), on a worker thread, and kept
+in a cache shared by every bar. A classification shows its classes in their
+colors (or one class's probability), any other result one band through a
+color map, with its own stretch. Pixels without data stay see-through. The
+bar sits under the main view and drives every view it is given (the triple
+view's zoom panels follow the main view). Clicking a class's swatch in the
+legend changes its color, kept in the result's metadata, so every view
+showing it follows.
 """
 
 from __future__ import annotations
 
 import weakref
 from collections.abc import Sequence
+from functools import partial
 from html import escape
 
 import numpy as np
@@ -31,8 +36,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.display_grid import (
+    DisplayCache,
+    displayChoices,
+    displayNote,
+    needsReprojection,
+    reprojectForDisplay,
+)
 from varda.common.entities import VardaRaster
-from varda.common.grid import sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
 from varda.common.parameter_widgets import connectWhileAlive
@@ -42,6 +53,7 @@ from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.image_rendering.render_parameters import StretchParameter
 from varda.image_rendering.stretch_algorithms import LinearPercentileStretch
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
+from varda.utilities.background import runInBackground
 
 NO_OVERLAY = "No overlay"
 CLASSES = "Classes"
@@ -63,6 +75,12 @@ STRETCHES: dict[str, tuple[int, int] | None] = {
     "5-95 %": (5, 95),
 }
 CLASS_LINK = "class:"  # legend swatch links: class:<index>
+REPROJECTING = "Reprojecting…"
+REPROJECTED = "reprojected for display"
+MAX_NOTE_WIDTH = 320  # px: a longer status is elided, in full in the tooltip
+
+# overlays reprojected onto a workspace image's grid, shared by every bar
+displayCache = DisplayCache()
 
 
 class _ClassColorEvents:
@@ -117,6 +135,33 @@ def _like(raster: VardaRaster, data: np.ndarray, name: str) -> VardaRaster:
     return VardaRaster(source, name=name)
 
 
+def layerBand(raster: VardaRaster, layer: str) -> int:
+    """The band a layer shows: the Class band for **Classes**."""
+    return 0 if layer == CLASSES else list(raster.bandNames).index(layer)
+
+
+def displayRaster(
+    overlay: VardaRaster, base: VardaRaster, array: np.ndarray, layer: str
+) -> VardaRaster:
+    """``array``, one layer of ``overlay`` reprojected onto ``base``'s grid,
+    as an image on that grid whose band is named as the layer (``Class`` for
+    **Classes**, with the class names and colors), for ``overlayRaster``."""
+    metadata = {}
+    if layer == CLASSES:
+        metadata = {
+            "classes": list(overlay.extraMetadata.get("classes", [])),
+            "classColors": classColors(overlay),
+        }
+    source = ArrayDataSource(
+        array[:, :, None].astype(np.float32),
+        bandNames=["Class" if layer == CLASSES else layer],
+        transform=base.transform,
+        crs=base.crs,
+        extraMetadata=metadata,
+    )
+    return VardaRaster(source, name=overlay.name)
+
+
 def overlayRaster(raster: VardaRaster, layer: str) -> tuple[VardaRaster, bool]:
     """(image to render, whether it is RGB) for one layer of ``raster``."""
     if layer == CLASSES:
@@ -157,9 +202,15 @@ class OverlayBar(QWidget):
         )
         # long names are elided, with the full name in the tooltip
         self.layerBox = ElidingComboBox()
-        # the images left out (overlays need this image's grid): a count in
-        # the bar, each image and why in its tooltip
+        # the images left out (other bodies, no overlap, ...): a count in the
+        # bar, each image and why in its tooltip
         self.notListed = MutedLabel()
+        # an overlay in another projection: being, or been, reprojected
+        self.reprojectedLabel = MutedLabel()
+        self.reprojectedLabel.setVisible(False)
+        # counts the overlays chosen, so a reprojection finishing after
+        # another choice is dropped
+        self._generation = 0
         self.opacityLabel = QLabel("Opacity:")
         self.opacitySlider = QSlider(Qt.Orientation.Horizontal)
         self.opacitySlider.setRange(0, 100)
@@ -198,6 +249,7 @@ class OverlayBar(QWidget):
         layout.addWidget(self.opacityLabel)
         layout.addWidget(self.opacitySlider)
         layout.addWidget(self.legendButton)
+        layout.addWidget(self.reprojectedLabel)
         layout.addStretch(1)
 
         self.imageBox.currentIndexChanged.connect(self._onImageChosen)
@@ -212,6 +264,9 @@ class OverlayBar(QWidget):
             # a bound method: Qt disconnects it when the bar is deleted, while
             # the project's list lives on
             images.sigDataChanged.connect(self._refreshImages)
+        # the base's coordinate system or transform places a reprojected overlay
+        self._watched.add(base)
+        connectWhileAlive(base.sigMetadataChanged, self._onImageEdited, self)
         self._refreshImages()
         self._updateControls()
 
@@ -265,13 +320,14 @@ class OverlayBar(QWidget):
     # --- internals -------------------------------------------------------------
 
     def _refreshImages(self) -> None:
-        """List the project's images on this grid. The views are redrawn only
-        when the overlay shown is gone from the list (removed, or no longer
-        on this grid); every other change to the project leaves them be."""
+        """List the project's images that can be overlaid. The views are
+        redrawn only when the overlay shown is gone from the list (removed,
+        or no longer placeable); every other change to the project leaves
+        them be."""
         current = self.currentOverlay()
-        choices = sameGridChoices(list(self.images), self.base)
+        choices = displayChoices(list(self.images), self.base)
         left = len(choices.excluded)
-        self.notListed.setText(f"({left} not on this grid)" if left else "")
+        self.notListed.setText(f"({left} can't be overlaid)" if left else "")
         self.notListed.setToolTip(choices.note)
         self.notListed.setVisible(bool(left))
         listed = [(image, image.name) for image in choices.images]
@@ -296,13 +352,31 @@ class OverlayBar(QWidget):
             self.setOverlay(current if stillListed else None)
         if current is not None and not stillListed:
             self._onImageChosen()
+            reason = next(
+                (e.reason for e in choices.excluded if e.image is current), ""
+            )
+            if reason:  # e.g. the base's coordinate system is now on another body
+                self._setReprojected(f"overlay removed: {reason}")
+                self.reprojectedLabel.setToolTip(f"{current.name}: {reason}")
 
     def _onImageEdited(self) -> None:
         """An image was edited: list it under its new name and, when it's the
         overlay shown, show it again (its no-data value, band names), on the
-        same layer if it still has it."""
+        same layer if it still has it. Its reprojections are dropped. When
+        the base was edited, a reprojected overlay is reprojected again (its
+        coordinate system or transform may have changed), and one it can no
+        longer take is removed."""
         edited = Signal.sender()
+        displayCache.forget(edited)
         self._refreshImages()
+        if edited is self.base:
+            current = self.currentOverlay()
+            if current is not None and (
+                not self.reprojectedLabel.isHidden()
+                or needsReprojection(current, self.base)
+            ):
+                self._apply()
+            return
         if edited is not self.currentOverlay():
             return
         layer = self.layerBox.currentText()
@@ -325,28 +399,93 @@ class OverlayBar(QWidget):
                 self.layerBox.addItems(overlayLayers(overlay))
 
     def _updateControls(self) -> None:
-        """Show the controls (and legend) the chosen overlay and layer need."""
+        """Show the controls (and legend) the chosen overlay and layer need:
+        the layer picker once one is chosen, the rest once it's drawn (not
+        while it's being reprojected, nor after that failed)."""
         overlay = self.currentOverlay()
         layer = self.layerBox.currentText()
-        hasOverlay = overlay is not None and bool(layer)
-        self.layerBox.setVisible(hasOverlay and self.layerBox.count() > 1)
-        self.opacityLabel.setVisible(hasOverlay)
-        self.opacitySlider.setVisible(hasOverlay)
-        self.legendButton.setVisible(hasOverlay and layer == CLASSES)
-        self.colorsButton.setVisible(hasOverlay and layer != CLASSES)
+        chosen = overlay is not None and bool(layer)
+        drawn = chosen and self.renderer is not None
+        self.layerBox.setVisible(chosen and self.layerBox.count() > 1)
+        self.opacityLabel.setVisible(drawn)
+        self.opacitySlider.setVisible(drawn)
+        self.legendButton.setVisible(drawn and layer == CLASSES)
+        self.colorsButton.setVisible(drawn and layer != CLASSES)
         self._showLegend()
 
     def _apply(self) -> None:
+        """Show the chosen overlay and layer: at once when it's on this grid
+        or its reprojection is cached, otherwise once a worker has
+        reprojected it."""
+        self._generation += 1
         overlay = self.currentOverlay()
         layer = self.layerBox.currentText()
+        self.renderer = None
         self._updateControls()
         for viewport in self.viewports:
             if viewport.hasOverlayImage():
                 viewport.removeOverlayImage()
-        self.renderer = None
-        if overlay is None or not layer:
-            self._refreshViews()
+        if overlay is None or not layer or not needsReprojection(overlay, self.base):
+            self._setReprojected("")
+            if overlay is not None and layer:
+                self._render(overlay, layer)
+            else:
+                self._refreshViews()
             return
+        band = layerBand(overlay, layer)
+        self.reprojectedLabel.setToolTip(displayNote(overlay, self.base))
+        array = displayCache.get(overlay, self.base, band)
+        if array is not None:
+            self._showReprojected(overlay, layer, array)
+            return
+        self._setReprojected(REPROJECTING)
+        self._refreshViews()  # the overlay shown before is gone
+        generation = self._generation
+        runInBackground(
+            partial(reprojectForDisplay, overlay, self.base, band),
+            partial(self._onReprojected, generation, overlay, layer, band),
+            partial(self._onReprojectFailed, generation),
+            description=f"Reprojecting {overlay.name} for display",
+            owner=self,
+        )
+
+    def _onReprojected(
+        self,
+        generation: int,
+        overlay: VardaRaster,
+        layer: str,
+        band: int,
+        array: np.ndarray,
+    ) -> None:
+        if generation != self._generation:  # another overlay was chosen since
+            return
+        displayCache.put(overlay, self.base, band, array)
+        self._showReprojected(overlay, layer, array)
+
+    def _onReprojectFailed(self, generation: int, error: Exception) -> None:
+        if generation == self._generation:
+            self._setReprojected(f"couldn't reproject: {error}")
+
+    def _showReprojected(
+        self, overlay: VardaRaster, layer: str, array: np.ndarray
+    ) -> None:
+        self._setReprojected(REPROJECTED)
+        self._render(displayRaster(overlay, self.base, array, layer), layer)
+
+    def _setReprojected(self, text: str) -> None:
+        """The label's text, elided (a failure's reason can be long); then
+        the full text leads its tooltip."""
+        label = self.reprojectedLabel
+        shown = label.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, MAX_NOTE_WIDTH
+        )
+        label.setText(shown)
+        label.setVisible(bool(text))
+        if shown != text:
+            label.setToolTip(text)
+
+    def _render(self, overlay: VardaRaster, layer: str) -> None:
+        """Lay ``layer`` of ``overlay`` (on this grid) over every view."""
         raster, isRgb = overlayRaster(overlay, layer)
         renderer = ImageRenderer(image=raster)
         renderer.transparentNoData = True
@@ -359,6 +498,7 @@ class OverlayBar(QWidget):
         self.renderer = renderer
         for viewport in self.viewports:
             viewport.overlayImage(renderer)
+        self._updateControls()
         self._refreshViews()
 
     def _setColors(self, renderer: ImageRenderer) -> None:
@@ -403,13 +543,14 @@ class OverlayBar(QWidget):
             self._apply()
 
     def _showLegend(self) -> None:
-        """The class key over the first view, when a class map is shown and
+        """The class key over the first view, when a class map is drawn and
         the Legend button is on."""
         if not self.viewports:
             return
         overlay = self.currentOverlay()
         show = (
             overlay is not None
+            and self.renderer is not None  # drawn, not being reprojected
             and self.layerBox.currentText() == CLASSES
             and self.legendButton.isChecked()
         )

@@ -6,19 +6,30 @@ from affine import Affine
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from pyproj import CRS
 
 from varda.common.di_types import ProjectImages
+from varda.common.display_grid import reprojectForDisplay
 from varda.common.entities import VardaRaster
 from varda.common.grid import compatibleImages
+from varda.common.layout_audit import assertNothingClipped
+from varda.geo._tests.fixtures import WGS84, makeImage
+from varda.geo.transform import transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
+from varda.workspaces import raster_overlay
+from varda.workspaces.general_image_analysis.general_image_analysis import (
+    GeneralImageAnalysisConfig,
+    GeneralImageAnalysisWorkflow,
+)
 from varda.workspaces.raster_overlay import (
     CLASSES,
     NO_OVERLAY,
     OverlayBar,
     overlayLayers,
     overlayRaster,
+    setClassColor,
 )
 
 
@@ -149,14 +160,14 @@ def test_new_results_appear_in_the_list(qtbot):
     assert widget.imageBox.count() == 2
 
 
-def test_the_bar_says_which_images_arent_on_this_grid(qtbot):
+def test_the_bar_says_which_images_cant_be_overlaid(qtbot):
     base = _base()
     smaller = _raster(np.zeros((3, 8)), "smaller")
     widget = OverlayBar(ProjectImages([base, smaller]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    assert widget.notListed.text() == "(1 not on this grid)"
-    assert "smaller (different pixel grid" in widget.notListed.toolTip()
+    assert widget.notListed.text() == "(1 can't be overlaid)"
+    assert "smaller (a different size" in widget.notListed.toolTip()
 
 
 def test_the_overlay_sits_between_the_image_and_what_is_drawn_on_it(bar):
@@ -344,3 +355,292 @@ def test_a_rename_shows_at_once(projectBar):
     result.setMetadataOverrides({}, name="renamed")  # no list refresh
     assert widget.imageBox.itemText(1) == "renamed"
     assert redraws == []
+
+
+# --- overlays across projections ------------------------------------------------
+
+MARS_EQC = "IAU_2015:49910"  # Mars sphere, equirectangular
+MARS_EQC_OCENTRIC = "IAU_2015:49912"  # Mars ellipsoid, planetocentric
+
+
+def _marsBase() -> VardaRaster:
+    return makeImage(
+        MARS_EQC, centerLonLat=(10, 5), pixelSize=1000, bands=3, name="mars base"
+    )
+
+
+def _marsClassMap(name: str = "mars classes") -> VardaRaster:
+    """A two-class map near the base, on the Mars ellipsoid."""
+    grid = makeImage(MARS_EQC_OCENTRIC, centerLonLat=(10, 5), pixelSize=900)
+    classes = np.zeros((64, 64, 1), np.float32)
+    classes[:, 32:] = 1
+    source = ArrayDataSource(
+        classes,
+        bandNames=["Class"],
+        transform=grid.transform,
+        crs=grid.crs,
+        extraMetadata={"classes": ["dark", "bright"]},
+    )
+    return VardaRaster(source, name=name)
+
+
+def _marsBand(name: str = "mars index") -> VardaRaster:
+    grid = makeImage(MARS_EQC_OCENTRIC, centerLonLat=(10, 5), pixelSize=800)
+    source = ArrayDataSource(
+        np.linspace(0, 1, 64 * 64, dtype=np.float32).reshape(64, 64, 1),
+        bandNames=["Index"],
+        transform=grid.transform,
+        crs=grid.crs,
+    )
+    return VardaRaster(source, name=name)
+
+
+@pytest.fixture
+def marsBar(qtbot):
+    base = _marsBase()
+    images = ProjectImages([base, _marsClassMap()])
+    viewport = ImageViewport(ImageRenderer(image=base))
+    qtbot.addWidget(viewport)
+    widget = OverlayBar(images, base, [viewport])
+    qtbot.addWidget(widget)
+    return widget, viewport, images
+
+
+def _waitReprojected(qtbot, widget: OverlayBar) -> None:
+    qtbot.waitUntil(lambda: widget.reprojectedLabel.text() == "reprojected for display")
+
+
+def test_an_overlay_in_another_projection_is_reprojected_for_display(marsBar, qtbot):
+    widget, viewport, images = marsBar
+    assert widget.imageBox.count() == 2  # the class map is offered
+    widget.setOverlay(images[1])
+    assert widget.reprojectedLabel.text() == "Reprojecting…"
+    assert widget.reprojectedLabel.isVisibleTo(widget)
+    _waitReprojected(qtbot, widget)
+    assert viewport.hasOverlayImage()
+    assert widget.reprojectedLabel.isVisibleTo(widget)
+    tip = widget.reprojectedLabel.toolTip()
+    assert "nearest neighbor" in tip and "for display only" in tip
+    # the class map is shown in its classes' colors, on the base's grid
+    assert widget.renderer is not None
+    shown = widget.renderer.image
+    assert shown.getData().shape[:2] == (images[0].height, images[0].width)
+    assert "dark" in viewport.legendText()
+
+
+def test_an_image_of_another_body_is_not_offered(qtbot):
+    base = _marsBase()
+    earth = makeImage(WGS84, centerLonLat=(10, 5), pixelSize=0.01, name="earth")
+    widget = OverlayBar(ProjectImages([base, earth]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.imageBox.count() == 1
+    assert widget.notListed.text() == "(1 can't be overlaid)"
+    tip = widget.notListed.toolTip()
+    assert "Mars" in tip and "Earth" in tip
+
+
+def test_display_marker_keeps_planetocentric_latitude():
+    """A marker at 45°N on the Mars sphere lands, on an ellipsoid base,
+    within ½ pixel of where ``transformPoints`` puts it."""
+    sphere = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+    values = np.zeros((100, 100, 1), np.float32)
+    values[50, 50] = 1.0  # centered at 77.505°E, 44.995°N
+    overlay = _raster(
+        values,
+        "sphere",
+        transform=Affine(0.01, 0, 77.0, 0, -0.01, 45.5),
+        crs=sphere,
+    )
+    ellipsoid = CRS.from_user_input(MARS_EQC_OCENTRIC)
+    (x,), (y,) = transformPoints(sphere, ellipsoid, [77.505], [44.995])
+    transform = Affine(500.0, 0, x - 50.5 * 500.0, 0, -500.0, y + 50.5 * 500.0)
+    base = _raster(np.zeros((100, 100)), "base", transform=transform, crs=ellipsoid)
+
+    shown = reprojectForDisplay(overlay, base, 0)
+
+    rows, cols = np.nonzero(shown == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5
+
+
+def test_a_stale_reprojection_is_dropped(qtbot, monkeypatch):
+    base = _marsBase()
+    first, second = _marsClassMap(), _marsBand()
+    finished = []
+
+    def reproject(overlay, onto, band):
+        result = reprojectForDisplay(overlay, onto, band)
+        finished.append(overlay)
+        return result
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", reproject)
+    delivered = []
+    onReprojected = OverlayBar._onReprojected
+
+    def deliver(self, *args):
+        delivered.append(args[0])
+        onReprojected(self, *args)
+
+    monkeypatch.setattr(OverlayBar, "_onReprojected", deliver)
+    viewport = ImageViewport(ImageRenderer(image=base))
+    qtbot.addWidget(viewport)
+    shown = []
+    original = viewport.overlayImage
+    monkeypatch.setattr(
+        viewport, "overlayImage", lambda r: (shown.append(r), original(r))
+    )
+    widget = OverlayBar(ProjectImages([base, first, second]), base, [viewport])
+    qtbot.addWidget(widget)
+
+    widget.setOverlay(first)
+    widget.setOverlay(second)  # at once, before the first is done
+    qtbot.waitUntil(lambda: len(delivered) == 2)  # both results came back
+    assert widget.reprojectedLabel.text() == "reprojected for display"
+
+    assert len(shown) == 1
+    assert list(shown[0].image.bandNames) == ["Index 1"]
+    assert raster_overlay.displayCache.get(first, base, 0) is None
+
+
+def test_a_class_color_change_recolors_from_the_cache(marsBar, qtbot, monkeypatch):
+    widget, viewport, images = marsBar
+    calls = []
+
+    def reproject(overlay, onto, band):
+        calls.append(band)
+        return reprojectForDisplay(overlay, onto, band)
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", reproject)
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+    assert calls == [0]
+    before = widget.renderer
+
+    setClassColor(images[1], 1, "#00ff00")
+
+    assert calls == [0]  # not reprojected again
+    assert widget.renderer is not before
+    assert widget.reprojectedLabel.text() == "reprojected for display"
+    rgb = widget.renderer.image.getData()
+    assert np.any(np.all(rgb == (0.0, 1.0, 0.0), axis=2))
+
+
+def test_editing_a_reprojected_overlay_reprojects_it_again(marsBar, qtbot):
+    widget, viewport, images = marsBar
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+    assert raster_overlay.displayCache.get(images[1], images[0], 0) is not None
+    images[1].setMetadataOverrides({"nodata": 1.0})
+    assert raster_overlay.displayCache.get(images[1], images[0], 0) is None
+    _waitReprojected(qtbot, widget)
+    assert viewport.hasOverlayImage()
+
+
+def test_a_failed_reprojection_leaves_no_overlay(marsBar, qtbot, monkeypatch):
+    widget, viewport, images = marsBar
+
+    def fail(overlay, onto, band):
+        raise ValueError("no overlap")
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", fail)
+    widget.setOverlay(images[1])
+    qtbot.waitUntil(
+        lambda: widget.reprojectedLabel.text() == "couldn't reproject: no overlap"
+    )
+    assert not viewport.hasOverlayImage()
+    assert widget.renderer is None
+    # nothing is drawn, so neither is a legend nor an opacity slider
+    assert viewport.legendText() == ""
+    assert not widget.opacitySlider.isVisibleTo(widget)
+    assert not widget.legendButton.isVisibleTo(widget)
+
+
+def test_a_long_failure_is_elided_in_full_in_the_tooltip(marsBar, qtbot, monkeypatch):
+    widget, _viewport, images = marsBar
+    reason = "the warp ran out of memory " * 20
+
+    def fail(overlay, onto, band):
+        raise ValueError(reason)
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", fail)
+    widget.setOverlay(images[1])
+    qtbot.waitUntil(lambda: widget.reprojectedLabel.text().startswith("couldn't"))
+    label = widget.reprojectedLabel
+    assert label.text().endswith("…")
+    assert label.sizeHint().width() <= raster_overlay.MAX_NOTE_WIDTH + 10
+    assert reason in label.toolTip()
+
+
+def test_no_legend_while_reprojecting(marsBar):
+    widget, viewport, images = marsBar
+    widget.setOverlay(images[1])
+    assert widget.reprojectedLabel.text() == "Reprojecting…"
+    assert viewport.legendText() == ""
+    assert not widget.opacitySlider.isVisibleTo(widget)
+
+
+def test_editing_the_base_georeferencing_reprojects_the_overlay(
+    marsBar, qtbot, monkeypatch
+):
+    widget, viewport, images = marsBar
+    calls = []
+
+    def reproject(overlay, onto, band):
+        calls.append(onto.transform)
+        return reprojectForDisplay(overlay, onto, band)
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", reproject)
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+    base = images[0]
+    moved = base.transform * Affine.translation(5, 0)  # 5 km east
+
+    base.setMetadataOverrides({"transform": list(moved)[:6]})
+
+    assert widget.currentOverlay() is images[1]
+    qtbot.waitUntil(lambda: len(calls) == 2)
+    _waitReprojected(qtbot, widget)
+    assert calls[1] == moved
+    assert viewport.hasOverlayImage()
+
+
+def test_a_base_moved_to_another_body_drops_the_overlay(marsBar, qtbot):
+    widget, viewport, images = marsBar
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+
+    images[0].setMetadataOverrides({"crs": WGS84})
+
+    assert widget.currentOverlay() is None
+    assert not viewport.hasOverlayImage()
+    assert viewport.legendText() == ""
+    label = widget.reprojectedLabel
+    assert label.isVisibleTo(widget) and "removed" in label.text()
+    assert "different bodies" in label.toolTip()
+    assert "different bodies" in widget.notListed.toolTip()
+
+
+def test_a_same_grid_overlay_shows_no_reprojection_label(bar):
+    widget, viewports, images = bar
+    widget.setOverlay(images[1])
+    assert all(v.hasOverlayImage() for v in viewports)
+    assert not widget.reprojectedLabel.isVisibleTo(widget)
+
+
+def test_the_reprojection_label_fits_a_laptop(qtbot):
+    base = _marsBase()
+    classes = _marsClassMap(
+        "frt00004185_07_if165j_mtr3.img CNN classes reprojected from CTX"
+    )
+    images = ProjectImages([base, classes])
+    workspace = GeneralImageAnalysisWorkflow(GeneralImageAnalysisConfig(images))
+    qtbot.addWidget(workspace)
+    workspace.showNormal()
+    workspace.resize(1280, 700)  # a 1280 × 800 screen less the menu bar and tabs
+    qtbot.waitExposed(workspace)
+    bar = workspace.overlayBar
+    bar.setOverlay(classes)
+    _waitReprojected(qtbot, bar)
+    qtbot.wait(50)
+    assert bar.reprojectedLabel.isVisible()
+    assertNothingClipped(workspace)
