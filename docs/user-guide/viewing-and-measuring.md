@@ -82,7 +82,7 @@ image.
   positions), shown pixel for pixel as they are;
 - georeferenced images of the **same body** that overlap the view's image,
   in any map projection, on any surface of that body (a sphere or an
-  ellipsoid), with longitudes 0–360 or −180..180. These are **reprojected
+  ellipsoid), with longitudes 0–360 or −180–180. These are **reprojected
   for display** (below).
 
 The images left out are counted beside the list ("(2 can't be overlaid)"),

@@ -77,6 +77,7 @@ STRETCHES: dict[str, tuple[int, int] | None] = {
 CLASS_LINK = "class:"  # legend swatch links: class:<index>
 REPROJECTING = "Reprojecting…"
 REPROJECTED = "reprojected for display"
+MAX_NOTE_WIDTH = 320  # px: a longer status is elided, in full in the tooltip
 
 # overlays reprojected onto a workspace image's grid, shared by every bar
 displayCache = DisplayCache()
@@ -263,6 +264,9 @@ class OverlayBar(QWidget):
             # a bound method: Qt disconnects it when the bar is deleted, while
             # the project's list lives on
             images.sigDataChanged.connect(self._refreshImages)
+        # the base's coordinate system or transform places a reprojected overlay
+        self._watched.add(base)
+        connectWhileAlive(base.sigMetadataChanged, self._onImageEdited, self)
         self._refreshImages()
         self._updateControls()
 
@@ -348,14 +352,31 @@ class OverlayBar(QWidget):
             self.setOverlay(current if stillListed else None)
         if current is not None and not stillListed:
             self._onImageChosen()
+            reason = next(
+                (e.reason for e in choices.excluded if e.image is current), ""
+            )
+            if reason:  # e.g. the base's coordinate system is now on another body
+                self._setReprojected(f"overlay removed: {reason}")
+                self.reprojectedLabel.setToolTip(f"{current.name}: {reason}")
 
     def _onImageEdited(self) -> None:
         """An image was edited: list it under its new name and, when it's the
         overlay shown, show it again (its no-data value, band names), on the
-        same layer if it still has it. Its reprojections are dropped."""
+        same layer if it still has it. Its reprojections are dropped. When
+        the base was edited, a reprojected overlay is reprojected again (its
+        coordinate system or transform may have changed), and one it can no
+        longer take is removed."""
         edited = Signal.sender()
         displayCache.forget(edited)
         self._refreshImages()
+        if edited is self.base:
+            current = self.currentOverlay()
+            if current is not None and (
+                not self.reprojectedLabel.isHidden()
+                or needsReprojection(current, self.base)
+            ):
+                self._apply()
+            return
         if edited is not self.currentOverlay():
             return
         layer = self.layerBox.currentText()
@@ -378,15 +399,18 @@ class OverlayBar(QWidget):
                 self.layerBox.addItems(overlayLayers(overlay))
 
     def _updateControls(self) -> None:
-        """Show the controls (and legend) the chosen overlay and layer need."""
+        """Show the controls (and legend) the chosen overlay and layer need:
+        the layer picker once one is chosen, the rest once it's drawn (not
+        while it's being reprojected, nor after that failed)."""
         overlay = self.currentOverlay()
         layer = self.layerBox.currentText()
-        hasOverlay = overlay is not None and bool(layer)
-        self.layerBox.setVisible(hasOverlay and self.layerBox.count() > 1)
-        self.opacityLabel.setVisible(hasOverlay)
-        self.opacitySlider.setVisible(hasOverlay)
-        self.legendButton.setVisible(hasOverlay and layer == CLASSES)
-        self.colorsButton.setVisible(hasOverlay and layer != CLASSES)
+        chosen = overlay is not None and bool(layer)
+        drawn = chosen and self.renderer is not None
+        self.layerBox.setVisible(chosen and self.layerBox.count() > 1)
+        self.opacityLabel.setVisible(drawn)
+        self.opacitySlider.setVisible(drawn)
+        self.legendButton.setVisible(drawn and layer == CLASSES)
+        self.colorsButton.setVisible(drawn and layer != CLASSES)
         self._showLegend()
 
     def _apply(self) -> None:
@@ -396,11 +420,11 @@ class OverlayBar(QWidget):
         self._generation += 1
         overlay = self.currentOverlay()
         layer = self.layerBox.currentText()
+        self.renderer = None
         self._updateControls()
         for viewport in self.viewports:
             if viewport.hasOverlayImage():
                 viewport.removeOverlayImage()
-        self.renderer = None
         if overlay is None or not layer or not needsReprojection(overlay, self.base):
             self._setReprojected("")
             if overlay is not None and layer:
@@ -449,8 +473,16 @@ class OverlayBar(QWidget):
         self._render(displayRaster(overlay, self.base, array, layer), layer)
 
     def _setReprojected(self, text: str) -> None:
-        self.reprojectedLabel.setText(text)
-        self.reprojectedLabel.setVisible(bool(text))
+        """The label's text, elided (a failure's reason can be long); then
+        the full text leads its tooltip."""
+        label = self.reprojectedLabel
+        shown = label.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, MAX_NOTE_WIDTH
+        )
+        label.setText(shown)
+        label.setVisible(bool(text))
+        if shown != text:
+            label.setToolTip(text)
 
     def _render(self, overlay: VardaRaster, layer: str) -> None:
         """Lay ``layer`` of ``overlay`` (on this grid) over every view."""
@@ -466,6 +498,7 @@ class OverlayBar(QWidget):
         self.renderer = renderer
         for viewport in self.viewports:
             viewport.overlayImage(renderer)
+        self._updateControls()
         self._refreshViews()
 
     def _setColors(self, renderer: ImageRenderer) -> None:
@@ -510,13 +543,14 @@ class OverlayBar(QWidget):
             self._apply()
 
     def _showLegend(self) -> None:
-        """The class key over the first view, when a class map is shown and
+        """The class key over the first view, when a class map is drawn and
         the Legend button is on."""
         if not self.viewports:
             return
         overlay = self.currentOverlay()
         show = (
             overlay is not None
+            and self.renderer is not None  # drawn, not being reprojected
             and self.layerBox.currentText() == CLASSES
             and self.legendButton.isChecked()
         )

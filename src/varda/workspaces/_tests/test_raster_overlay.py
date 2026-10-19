@@ -474,6 +474,14 @@ def test_a_stale_reprojection_is_dropped(qtbot, monkeypatch):
         return result
 
     monkeypatch.setattr(raster_overlay, "reprojectForDisplay", reproject)
+    delivered = []
+    onReprojected = OverlayBar._onReprojected
+
+    def deliver(self, *args):
+        delivered.append(args[0])
+        onReprojected(self, *args)
+
+    monkeypatch.setattr(OverlayBar, "_onReprojected", deliver)
     viewport = ImageViewport(ImageRenderer(image=base))
     qtbot.addWidget(viewport)
     shown = []
@@ -486,9 +494,8 @@ def test_a_stale_reprojection_is_dropped(qtbot, monkeypatch):
 
     widget.setOverlay(first)
     widget.setOverlay(second)  # at once, before the first is done
-    qtbot.waitUntil(lambda: len(finished) == 2)
-    _waitReprojected(qtbot, widget)
-    qtbot.wait(50)  # let the first result's callback run, too
+    qtbot.waitUntil(lambda: len(delivered) == 2)  # both results came back
+    assert widget.reprojectedLabel.text() == "reprojected for display"
 
     assert len(shown) == 1
     assert list(shown[0].image.bandNames) == ["Index 1"]
@@ -542,6 +549,75 @@ def test_a_failed_reprojection_leaves_no_overlay(marsBar, qtbot, monkeypatch):
     )
     assert not viewport.hasOverlayImage()
     assert widget.renderer is None
+    # nothing is drawn, so neither is a legend nor an opacity slider
+    assert viewport.legendText() == ""
+    assert not widget.opacitySlider.isVisibleTo(widget)
+    assert not widget.legendButton.isVisibleTo(widget)
+
+
+def test_a_long_failure_is_elided_in_full_in_the_tooltip(marsBar, qtbot, monkeypatch):
+    widget, _viewport, images = marsBar
+    reason = "the warp ran out of memory " * 20
+
+    def fail(overlay, onto, band):
+        raise ValueError(reason)
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", fail)
+    widget.setOverlay(images[1])
+    qtbot.waitUntil(lambda: widget.reprojectedLabel.text().startswith("couldn't"))
+    label = widget.reprojectedLabel
+    assert label.text().endswith("…")
+    assert label.sizeHint().width() <= raster_overlay.MAX_NOTE_WIDTH + 10
+    assert reason in label.toolTip()
+
+
+def test_no_legend_while_reprojecting(marsBar):
+    widget, viewport, images = marsBar
+    widget.setOverlay(images[1])
+    assert widget.reprojectedLabel.text() == "Reprojecting…"
+    assert viewport.legendText() == ""
+    assert not widget.opacitySlider.isVisibleTo(widget)
+
+
+def test_editing_the_base_georeferencing_reprojects_the_overlay(
+    marsBar, qtbot, monkeypatch
+):
+    widget, viewport, images = marsBar
+    calls = []
+
+    def reproject(overlay, onto, band):
+        calls.append(onto.transform)
+        return reprojectForDisplay(overlay, onto, band)
+
+    monkeypatch.setattr(raster_overlay, "reprojectForDisplay", reproject)
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+    base = images[0]
+    moved = base.transform * Affine.translation(5, 0)  # 5 km east
+
+    base.setMetadataOverrides({"transform": list(moved)[:6]})
+
+    assert widget.currentOverlay() is images[1]
+    qtbot.waitUntil(lambda: len(calls) == 2)
+    _waitReprojected(qtbot, widget)
+    assert calls[1] == moved
+    assert viewport.hasOverlayImage()
+
+
+def test_a_base_moved_to_another_body_drops_the_overlay(marsBar, qtbot):
+    widget, viewport, images = marsBar
+    widget.setOverlay(images[1])
+    _waitReprojected(qtbot, widget)
+
+    images[0].setMetadataOverrides({"crs": WGS84})
+
+    assert widget.currentOverlay() is None
+    assert not viewport.hasOverlayImage()
+    assert viewport.legendText() == ""
+    label = widget.reprojectedLabel
+    assert label.isVisibleTo(widget) and "removed" in label.text()
+    assert "different bodies" in label.toolTip()
+    assert "different bodies" in widget.notListed.toolTip()
 
 
 def test_a_same_grid_overlay_shows_no_reprojection_label(bar):
