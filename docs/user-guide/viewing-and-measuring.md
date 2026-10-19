@@ -82,8 +82,11 @@ CRS reads "° W", and a 0..360 image shows longitudes in [0, 360) followed by
 
 ## Pixel spectra
 
-Turn on **Pixel Select** under a view and Ctrl-click (Cmd-click on a Mac) a
-pixel to plot its spectrum. Under **Pixel Spectra** in the plot's sidebar,
+Turn on **Pixel Select** under a view and click a pixel to plot its
+spectrum; the **Pixel Spectra** tab comes to the front. A plain drag still
+pans the view; Ctrl-drag (⌘-drag on a Mac) plots the pixel under the pointer
+as it moves. Clicking a pixel already plotted highlights its curve instead of
+drawing it again. Under **Pixel Spectra** in the plot's sidebar,
 **Window Width** and **Window Height** (1 px each by default, up to 99) set
 a box around the click instead. A box plots the mean of its pixels, with a
 shaded band of ±1 standard deviation (see [ROI statistics](#roi-statistics)

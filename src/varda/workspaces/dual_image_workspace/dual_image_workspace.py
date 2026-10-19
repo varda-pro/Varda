@@ -83,7 +83,7 @@ class PixelSourceConfig(ParameterGroup):
         "Spectrum Source",
         PixelSpectrumSource,
         PixelSpectrumSource.CLICKED_VIEWPORT,
-        "Which image's spectrum a Ctrl+click plots. The images are assumed to be "
+        "Which image's spectrum a click with Pixel Select plots. The images are assumed to be "
         "co-registered, so the clicked pixel is looked up in both.",
     )
 

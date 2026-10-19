@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.keys import shortcutText
 from varda.common.spectral_axis import SpectralUnit
 from varda.common.ui import FlowLayout, HBoxBuilder, WrapperWidget
 from varda.library_manager.add_to_library_dialog import AddToLibraryDialog
@@ -74,7 +75,9 @@ class EndmemberTable(QWidget):
         self.deleteButton = QPushButton("Delete")
         self.deleteButton.clicked.connect(self._deleteSelected)
         self.undoButton = QPushButton("Undo")
-        self.undoButton.setToolTip("Undo the last endmember edit (Ctrl+Z)")
+        self.undoButton.setToolTip(
+            f"Undo the last endmember edit ({shortcutText('Ctrl+Z')})"
+        )
         self.undoButton.clicked.connect(self.model.undo)
         self.suggestCount = QSpinBox()
         self.suggestCount.setRange(2, 30)

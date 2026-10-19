@@ -19,6 +19,7 @@ from PyQt6.QtCore import QObject, QPointF, pyqtSignal
 from PyQt6.QtGui import QColor
 from shapely.geometry import Polygon
 
+from varda.common.keys import controlClick
 from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.common.parameter import IntParameter, ParameterGroup
 from varda.common.ui import ButtonBuilder, SectionBox, VBoxBuilder, MutedLabel
@@ -197,7 +198,8 @@ class RatioExplorerController(QObject):
 
     def createSidebarSection(self) -> SectionBox:
         hint = MutedLabel(
-            "Ctrl/⌘+left-click: numerator · Ctrl/⌘+right-click: denominator · S: save"
+            f"{controlClick('left-click')}: numerator · "
+            f"{controlClick('right-click')}: denominator · S: save"
         )
         hint.setWordWrap(True)
         return SectionBox(

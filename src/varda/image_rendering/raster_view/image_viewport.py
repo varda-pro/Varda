@@ -211,6 +211,9 @@ class ImageViewport(QWidget):
         self._legendOverlay = _LegendOverlay(self, self._gv)
         self._legendOverlay.linkActivated.connect(self.sigLegendLink)
         self._gv.scene().sigMouseMoved.connect(self._onHover)
+        # A click that was not a drag (pyqtgraph tells them apart) reaches the
+        # tools as CLICK: a plain press is left to the view, which pans with it
+        self._gv.scene().sigMouseClicked.connect(self._onSceneClicked)
         self._gv.viewport().installEventFilter(self)
 
     def overlayImage(self, overlayImageRenderer: ImageRenderer):
@@ -472,6 +475,25 @@ class ImageViewport(QWidget):
                 if consumed:
                     return True
         return super().eventFilter(obj, event)
+
+    def _onSceneClicked(self, event) -> None:
+        """Deliver a click on the image (not a double-click) to the tools."""
+        if event.double():
+            return
+        if not self._imageItem.sceneBoundingRect().contains(event.scenePos()):
+            return
+        localPos = self._imageItem.mapFromScene(event.scenePos())
+        pointerEvent = PointerEvent(
+            action=PointerAction.CLICK,
+            localPos=localPos,
+            imagePos=self._imageItem.localToImage(localPos),
+            button=event.button(),
+            modifiers=event.modifiers(),
+        )
+        for tool in list(self._tools):
+            if tool.onPointerEvent(pointerEvent):
+                event.accept()
+                break
 
     def _buildPointerEvent(self, action: PointerAction, event) -> PointerEvent:
         localPos = self._imageItem.mapFromScene(event.scenePos())
