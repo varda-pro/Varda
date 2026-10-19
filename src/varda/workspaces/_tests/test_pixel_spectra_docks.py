@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
 )
@@ -231,3 +232,32 @@ def test_workspaces_install_no_application_wide_filter(qtbot, monkeypatch):
     qtbot.addWidget(dual)
 
     assert installed == []
+
+
+def test_a_selection_brings_the_pixel_plot_to_the_front(qtbot, docks, image):
+    """Release QA #1: the spectrum went to a tab hidden behind ROI Plots."""
+    docks.newPlot()
+    docks._anchor.setAsCurrentTab()
+    assert not docks.activeDock.isCurrentTab()
+
+    docks.addPixelSpectra([image], 1, 1)
+
+    assert docks.activeDock.isCurrentTab()
+
+
+def test_bringing_the_plot_to_the_front_leaves_keyboard_focus_alone(
+    qtbot, docks, image
+):
+    window = docks.parent()
+    docks.newPlot()
+    docks._anchor.setAsCurrentTab()
+    field = QLineEdit(window)
+    window.show()
+    qtbot.waitExposed(window)
+    field.setFocus()
+    qtbot.waitUntil(field.hasFocus)
+
+    docks.addPixelSpectra([image], 1, 1)
+
+    assert docks.activeDock.isCurrentTab()
+    assert field.hasFocus()

@@ -143,3 +143,22 @@ def test_batch_selection_skips_images_where_pixel_is_out_of_bounds(widget, image
 
     assert len(curves) == 1
     assert curves[0].plotDataItem.name() == "Pixel (15, 15)"
+
+
+def test_selecting_the_same_pixel_again_adds_no_second_curve(widget, image):
+    """Release QA #19: a repeat selection drew an identical curve over the first."""
+    first = widget.addPixelSpectrum(image, 3, 4)
+    again = widget.addPixelSpectrum(image, 3, 4)
+
+    assert again is first
+    assert len(widget.pixelCurves) == 1
+    assert widget.selectedCurve is first  # the existing curve is highlighted
+
+
+def test_the_same_pixel_with_another_window_is_a_new_curve(widget, image):
+    widget.addPixelSpectrum(image, 3, 4)
+    widget.pixelConfig.windowWidth.set(3)
+    widget.pixelConfig.windowHeight.set(3)
+    widget.addPixelSpectrum(image, 3, 4)
+
+    assert len(widget.pixelCurves) == 2
