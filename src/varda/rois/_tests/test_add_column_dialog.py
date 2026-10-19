@@ -194,3 +194,20 @@ def test_the_zonal_page_fits_at_laptop_size(qtbot):
     dialog.show()
     qtbot.waitExposed(dialog)
     assertNothingClipped(dialog)
+
+
+def test_area_statistics_fall_back_when_the_raster_has_no_crs(qtbot):
+    dialog, _ = _zonalGeoreferencedDialog(qtbot)
+    box_ = dialog.statisticBox
+    index = box_.findData("area_weighted_mean")
+    item = box_.model().item(index)
+    assert item.isEnabled() and "whole" in item.toolTip()
+    box_.setCurrentIndex(index)
+    # a raster without map coordinates (the same grid needs the same CRS, so
+    # the dialog never lists one beside a georeferenced image; checked directly)
+    dialog._enableAreaStatistics(_image(rows=64))
+    assert not item.isEnabled()
+    assert item.toolTip() == "The image has no map coordinates"
+    assert box_.currentData() == "mean"  # moved off the disabled statistic
+    dialog._enableAreaStatistics(dialog.base)
+    assert item.isEnabled()

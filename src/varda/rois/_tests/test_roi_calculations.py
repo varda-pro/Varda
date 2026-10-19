@@ -1,6 +1,7 @@
 """Calculated ROI columns: geometry, zonal statistics and expressions."""
 
 import math
+import time
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ from varda.rois.roi_calculations import (
     ExpressionError,
     GeometryMeasure,
     ZonalStatistic,
+    areaStatistic,
     expressionVariables,
     mapUnits,
     parseExpression,
@@ -479,3 +481,37 @@ def test_area_statistics_follow_a_crs_set_on_the_image_and_bulk_added_rois():
         [NewROI(rois.getROI(fid).geometry, "copy", RED, ROIMode.RECTANGLE)]
     )
     assert rois.getProperty(added, "a") == pytest.approx(rois.getProperty(fid, "a"))
+
+
+def test_a_weighted_mean_over_zero_area_is_blank_not_an_error():
+    values = np.array([1.0, 2.0])
+    assert math.isnan(areaStatistic("area_weighted_mean", values, np.zeros(2)))
+    assert areaStatistic("area_km2", values, np.zeros(2)) == 0.0
+    assert math.isnan(areaStatistic("area_km2", values, None))
+    assert areaStatistic("area_km2", np.array([np.nan]), np.ones(1)) == 0.0
+
+
+def test_area_columns_on_a_large_polar_image_reuse_its_pixel_areas():
+    """A 4000 × 4000 polar stereographic image (areal-scale method,
+    interpolated): after the first computation, its pixel areas are reused,
+    so ROI edits and further columns are quick."""
+    image = makeImage(
+        HIRISE_POLAR_PROJ,
+        centerLonLat=(0.0, 85.0),
+        pixelSize=1000.0,
+        width=4000,
+        height=4000,
+    )
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 0, 0, 4000, 4000)
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))  # computes the areas
+    first = rois.getProperty(fid, "a")
+    calc.add("w", ZonalStatistic(image, 0, "area_weighted_mean"))
+    calc.add("s", ZonalStatistic(image, 0, "sum_times_area_km2"))
+    started = time.perf_counter()
+    calc.recalculate(columns=["a"])  # as on an ROI edit
+    assert time.perf_counter() - started < 1.0
+    assert rois.getProperty(fid, "a") == first
+    # the map area over areal scales ≥ 1 (true scale at the pole)
+    assert 0.85 * 4000**2 < first < 4000**2

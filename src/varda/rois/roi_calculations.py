@@ -5,7 +5,8 @@ areas and perimeters also on the body, geodesically, with
 ``geo.measure.polygonArea``),
 from a statistic of a raster band inside the ROI (zonal statistics; also the
 ground area of its pixels with data, and area-weighted statistics, with
-``geo.measure.pixelAreas``), or from
+``geo.measure.imagePixelAreas``, kept per image until its georeferencing
+changes), or from
 an expression over other columns. ``CalculatedColumns`` keeps them current as
 ROIs are drawn or edited. Expressions are parsed and evaluated by a small
 whitelisting evaluator, never ``eval``.
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 from affine import Affine
 from pyproj import CRS
+from rasterio.crs import CRS as RasterioCRS
 from shapely.geometry import MultiPolygon, Polygon
 
 from varda.common.expressions import (
@@ -31,7 +33,12 @@ from varda.common.expressions import (
     words,
 )
 from varda.common.entities import VardaRaster
-from varda.geo.measure import Measurement, pixelAreaMethod, pixelAreas, polygonArea
+from varda.geo.measure import (
+    Measurement,
+    imagePixelAreas,
+    pixelAreaMethod,
+    polygonArea,
+)
 from varda.rois.roi_collection import ROICollection
 
 # kind -> (label, short name used in suggested column names)
@@ -249,36 +256,40 @@ def _pixelAreaMethod(image: VardaRaster) -> str:
 
 
 def areaStatistic(
-    statistic: str,
-    image: VardaRaster,
-    values: np.ndarray,
-    rows: np.ndarray,
-    cols: np.ndarray,
+    statistic: str, values: np.ndarray, areas: np.ndarray | None
 ) -> float:
-    """An ``AREA_STATISTICS`` value of the pixels at (``rows``, ``cols``) of
-    ``image`` with ``values``; only the finite values count. NaN without
-    georeferencing or where an area can't be measured."""
-    finite = np.isfinite(values)
-    values = values[finite]
-    if image.crs is None:
+    """An ``AREA_STATISTICS`` value of pixels with ``values`` and ground
+    ``areas`` (m²; None without georeferencing); only the finite values
+    count. NaN without georeferencing or where an area can't be measured."""
+    if areas is None:
         return math.nan
+    finite = np.isfinite(values)
+    values, km2 = values[finite], areas[finite] * 1e-6
     if values.size == 0:
         return 0.0 if statistic == "area_km2" else math.nan
+    total = float(np.sum(km2))
+    if statistic == "area_km2":
+        return total
+    weighted = float(np.sum(values * km2))
+    if statistic == "sum_times_area_km2":
+        return weighted
+    return weighted / total if total > 0 else math.nan
+
+
+def imageAreas(image: VardaRaster) -> np.ndarray | None:
+    """Every pixel's ground area (m²) of ``image`` (``imagePixelAreas``:
+    interpolated within 10⁻⁶ above 4,000,000 pixels outside the row-only
+    case), or None without georeferencing or for a CRS on no body."""
+    if image.crs is None:
+        return None
     try:
         # points PROJ can't invert become NaN, with NumPy's invalid-value warnings
         with np.errstate(invalid="ignore"):
-            areas = (
-                pixelAreas(image.crs, image.transform, rows[finite], cols[finite])
-                * 1e-6
+            return imagePixelAreas(
+                image.crs, image.transform, image.width, image.height
             )
     except ValueError:
-        return math.nan
-    if statistic == "area_km2":
-        return float(np.sum(areas))
-    weighted = float(np.sum(values * areas))
-    if statistic == "sum_times_area_km2":
-        return weighted
-    return weighted / float(np.sum(areas))
+        return None
 
 
 class CalculatedColumns:
@@ -289,6 +300,10 @@ class CalculatedColumns:
         self._columns: dict[str, Calculation] = {}
         # body measures' last values per kind and ROI, for the descriptions
         self._onBody: dict[str, dict[int, BodyValue]] = {}
+        # each image's pixel areas, by id(image): (image, crs, transform, areas)
+        self._areas: dict[
+            int, tuple[VardaRaster, RasterioCRS | None, Affine, np.ndarray | None]
+        ] = {}
         self._updating = False
         collection.sigROIAdded.connect(self._onROIChanged)
         collection.sigROIsAdded.connect(self._onROIsAdded)
@@ -386,17 +401,13 @@ class CalculatedColumns:
         raw = calculation.image.getBands([calculation.band])
         band = np.ma.filled(np.ma.asarray(raw, dtype=np.float64), np.nan)[:, :, 0]
         if calculation.statistic in AREA_STATISTICS:
+            areas = self._pixelAreas(calculation.image)
             results = []
             for fid in fids:
-                rows, cols = np.nonzero(self.collection.getMask(fid, calculation.image))
+                mask = self.collection.getMask(fid, calculation.image)
+                selected = None if areas is None else areas[mask]
                 results.append(
-                    areaStatistic(
-                        calculation.statistic,
-                        calculation.image,
-                        band[rows, cols],
-                        rows,
-                        cols,
-                    )
+                    areaStatistic(calculation.statistic, band[mask], selected)
                 )
             return results
         statistic = STATISTICS[calculation.statistic]
@@ -406,6 +417,20 @@ class CalculatedColumns:
             empty = values.size == 0 and calculation.statistic != "count"
             results.append(math.nan if empty else statistic(values))
         return results
+
+    def _pixelAreas(self, image: VardaRaster) -> np.ndarray | None:
+        """``imageAreas(image)``, computed once per image and georeferencing."""
+        cached = self._areas.get(id(image))
+        if (
+            cached is not None
+            and cached[0] is image
+            and cached[1] == image.crs
+            and cached[2] == image.transform
+        ):
+            return cached[3]
+        areas = imageAreas(image)
+        self._areas[id(image)] = (image, image.crs, image.transform, areas)
+        return areas
 
     def _onROIChanged(self, fid: int) -> None:
         if not self._updating and self._columns:
@@ -419,6 +444,7 @@ class CalculatedColumns:
         """A new CRS: every map and body measure is read anew."""
         if self._columns:
             self._onBody.clear()
+            self._areas.clear()
             self.recalculate()
 
     def _onColumnsChanged(self) -> None:

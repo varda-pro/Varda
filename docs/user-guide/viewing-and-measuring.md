@@ -347,7 +347,21 @@ column (below) with the **count** statistic.
   pixel center. The column's header tooltip names the method and surface,
   e.g. "Pixel areas exact per row (geodesic polygon, edges densified to 16
   points) on sphere R = 1737.40 km". Without map coordinates the values are
-  blank, and the tooltip says so ("the image has no map coordinates").
+  blank, and the tooltip says so ("the image has no map coordinates"). An
+  ROI with no pixels with data has an **area of pixels with data** of 0 and
+  a blank **area-weighted mean** and **sum × pixel area**.
+  - **Whole images, computed once.** Varda computes the areas of all of an
+    image's pixels once, then reuses them for every ROI and column until
+    the image's coordinate system or transform changes. Outside the
+    exact-per-row case, an image of more than 4,000,000 pixels has its
+    areas interpolated from a grid of every n-th pixel, within 10⁻⁶
+    (relative) of the evaluated ones (see [Pixel
+    areas](coordinate-systems.md#pixel-areas)).
+  - **Another image's coordinate system.** A column computed on another
+    image on the same pixel grid updates when the ROIs change, and when
+    the ROIs' own image changes its coordinate system, but not when only
+    that other image's coordinate system is changed. Add the column again
+    after changing it.
   - **Whole pixels, not the polygon.** These count whole pixels (those
     whose centers are inside the ROI, with data in the band), so **area of
     pixels with data** differs from **Area on the body**, which measures
