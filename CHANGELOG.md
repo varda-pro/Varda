@@ -8,6 +8,18 @@ can alter results.
 
 ### Added
 
+- **Overlays across map projections.** The overlay bar in General Image
+  Analysis and Dual Image now offers any georeferenced image of the same
+  body that overlaps the view's image, in any projection, not only images
+  on its pixel grid. Such an overlay is reprojected for display only, onto
+  the view image's grid, with nearest-neighbor resampling (a class map
+  keeps its classes; positions within ½ overlay pixel plus ½ view pixel,
+  planetocentric between a sphere and an ellipsoid), on a worker thread and
+  cached. The bar says "reprojected for display", with both coordinate
+  systems in its tooltip. Analyses, statistics and exports still use each
+  image as it is. Images of other bodies are refused, and the bar counts
+  the images it can't overlay, with why in its tooltip. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#overlays).
 - **ROI areas and perimeters on the body.** Add Column's Geometry measures
   now include **Area on the body (km²)** and **Perimeter on the body (km)**:
   geodesic (Karney, 2013) on the coordinate system's own surface, with the

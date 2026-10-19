@@ -234,10 +234,12 @@ one convention covers it; the rest is no data.
 
 **Same grid only** (the same size, map projection and pixel positions):
 Image Arithmetic's second image, Band Math's other images (`i3_b1`), PCA/
-MNF weights, ROI zonal-statistic columns, overlays in the image workspaces
-and drapes in 3D Terrain. These combine or compare values pixel for pixel,
-and silently resampling science data first would change them. Resample an
-image yourself when you mean to.
+MNF weights, ROI zonal-statistic columns and drapes in 3D Terrain. These
+combine or compare values pixel for pixel, and silently resampling science
+data first would change them. Resample an image yourself when you mean to.
+Overlays in the image workspaces aren't on this list: one in another
+projection is reprojected for display only (see
+[Overlays](viewing-and-measuring.md#overlays)).
 
 ### Shadow Mask
 

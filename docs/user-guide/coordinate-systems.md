@@ -189,6 +189,10 @@ of five classes:
 | **Different body** | Different bodies, e.g. Mars and Earth | **Never combines them** |
 | **Unknown** | A CRS is missing, unreadable, or on no body (a local CRS); or a body is unknown and the two surfaces differ | Can't place one image on the other |
 
+An image workspace's overlay of the **same body** in another projection is
+reprojected for display only, onto the view image's grid (see
+[Overlays](viewing-and-measuring.md#overlays)).
+
 ### What "the same" means
 
 **Names don't matter.** The same coordinate system is written many ways:
