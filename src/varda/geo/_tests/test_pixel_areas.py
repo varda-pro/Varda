@@ -3,6 +3,7 @@ where the area depends on the row only, else the map pixel area over the
 projection's areal scale (spec §4.5, Phase 2)."""
 
 import math
+import tracemalloc
 
 import numpy as np
 import pytest
@@ -69,15 +70,58 @@ def test_polar_stereographic_uses_areal_scale():
     assert pixelAreaMethod(HIRISE_POLAR_PROJ, transform).startswith(AREA_METHOD_SCALE)
 
 
+def _polarImage(size: int, pixel: float) -> Affine:
+    """A ``size`` × ``size`` image of ``pixel`` m pixels on the HiRISE
+    polar sphere, centered on 85°N."""
+    half = size * pixel / 2
+    return Affine(pixel, 0, -half, 0, -pixel, _polarY(85.0) + half)
+
+
 def test_whole_image_interpolation_error():
+    # 1 km pixels: the grid (every 2nd pixel) is 2 km apart, so the areas
+    # interpolated halfway between grid points are off by ~1e-7, and a
+    # wrong interpolation (e.g. the nearest grid value, 3e-4 off) fails
     size = 4000
-    transform = Affine(1.0, 0, -size / 2, 0, -1.0, _polarY(85.0) + size / 2)
+    transform = _polarImage(size, 1000.0)
     areas = imagePixelAreas(HIRISE_POLAR_PROJ, transform, size, size)
     assert areas.shape == (size, size)
     rng = np.random.default_rng(0)
-    rows, cols = rng.integers(0, size, 100), rng.integers(0, size, 100)
+    # odd rows and columns: every sample is between grid points
+    rows = 2 * rng.integers(0, size // 2, 100) + 1
+    cols = 2 * rng.integers(0, size // 2, 100) + 1
     exact = pixelAreas(HIRISE_POLAR_PROJ, transform, rows, cols)
+    nearestGrid = pixelAreas(HIRISE_POLAR_PROJ, transform, rows - 1, cols - 1)
+    assert np.max(np.abs(nearestGrid / exact - 1)) > 1e-4
     np.testing.assert_allclose(areas[rows, cols], exact, rtol=1e-6)
+    # on the grid, the evaluated value itself
+    np.testing.assert_allclose(areas[rows - 1, cols - 1], nearestGrid, rtol=1e-12)
+
+
+def test_whole_image_peak_memory_is_about_the_result():
+    size = 2400  # 5.76 Mpx: interpolated (every 2nd pixel)
+    transform = _polarImage(size, 100.0)
+    tracemalloc.start()
+    try:
+        areas = imagePixelAreas(HIRISE_POLAR_PROJ, transform, size, size)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak <= 1.3 * areas.nbytes
+
+
+def test_row_only_whole_image_is_a_read_only_view():
+    width, height = 15000, 5000
+    transform = Affine(100.0, 0, 0.0, 0, -100.0, 1e6)
+    tracemalloc.start()
+    try:
+        areas = imagePixelAreas("IAU_2015:49910", transform, width, height)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert areas.shape == (height, width)
+    assert not areas.flags.writeable
+    # the row areas and their 64-point rings only (~50 MB), not a 600 MB copy
+    assert peak < 0.2 * width * height * 8
 
 
 def test_whole_image_rows_repeat_the_row_area():

@@ -17,7 +17,10 @@ Pixel areas (``pixelAreas``): where a pixel's area depends on its row only
 (no rotation, and a geographic CRS or an equidistant cylindrical, Mercator
 or cylindrical equal-area projection), each row's area is the geodesic
 polygon area of one pixel's corners, each edge densified to 16 points, so
-it's exact up to the geodesic algorithm. Otherwise it's the map pixel area
+its only error is that the geodesic chords between the 16 points cut
+inside the parallels: relative error ≈ δλ² (cos² φ − 2 sin² φ) / 12 with
+δλ = Δλ / 16 in radians (Δλ the pixel's width in longitude), at most about
+2.1e-7 × (Δλ / 1°)² (and Karney's algorithm, nanometers). Otherwise it's the map pixel area
 over PROJ's areal scale at the pixel center (relative error of order
 (pixel / R)²).
 
@@ -35,6 +38,7 @@ import shapely
 from affine import Affine
 from attrs import frozen
 from pyproj import CRS, Geod
+from pyproj.exceptions import CRSError
 
 from varda.geo.bodies import identifyBody, latitudeType, surfaceText
 from varda.geo.distortion import (
@@ -57,6 +61,8 @@ _EDGE_POINTS = 16
 # imagePixelAreas evaluates the areas of larger images outside the row-only
 # case on a grid of every n-th pixel and interpolates (spec §4.5)
 _MAX_EVALUATED_PIXELS = 4_000_000
+# grid points evaluated at once by imagePixelAreas (bounds its temporaries)
+_BLOCK_POINTS = 65_536
 # projections whose scale depends on latitude only: north-up, a pixel's
 # area depends on its row only
 _ROW_ONLY_METHODS = frozenset(
@@ -289,34 +295,60 @@ def imagePixelAreas(
     crs: CRS | str, transform: Affine, width: int, height: int
 ) -> np.ndarray:
     """The (``height``, ``width``) ground areas (m²) of every pixel of an
-    image, as ``pixelAreas``. Outside the row-only case, images of more than
-    4,000,000 pixels evaluate the areas on a grid of every n-th pixel
+    image, as ``pixelAreas``.
+
+    Row-only layouts compute each row once and return a **read-only**
+    broadcast view of the row areas (no copy; ``.ravel()`` or ``.copy()``
+    makes a full array). Otherwise images of more than 4,000,000 pixels
+    evaluate the areas on a grid of every n-th pixel
     (n = ⌈√(pixels / 4,000,000)⌉, plus the last row and column) and
-    interpolate bilinearly between them (scale factors vary smoothly); a
-    NaN grid value spreads to the pixels next to it. Raises as
-    ``pixelAreas``."""
+    interpolate bilinearly between them (scale factors vary smoothly); a NaN
+    grid value spreads to the pixels between it and its neighbors. The work
+    goes in blocks of rows, so the peak memory is about the result's size.
+    Raises as ``pixelAreas``."""
     surface = _surfacesFor(crs).own
     layout = _layoutFor(crs)
     if width <= 0 or height <= 0:
         return np.zeros((max(height, 0), max(width, 0)))
     if _isRowOnly(layout, transform):
         rows = np.arange(height, dtype=np.float64)
+        # any column has the row's area; the middle one is inside the image
+        # (a column past the projection's edge would be NaN)
         areas = _rowAreas(crs, surface, transform, rows, np.full(height, width // 2))
-        return np.repeat(areas[:, None], width, axis=1)
-    pixels = width * height
-    step = max(1, math.ceil(math.sqrt(pixels / _MAX_EVALUATED_PIXELS)))
+        return np.broadcast_to(areas[:, None], (height, width))
+    step = max(1, math.ceil(math.sqrt(width * height / _MAX_EVALUATED_PIXELS)))
     gridRows, gridCols = _gridIndices(height, step), _gridIndices(width, step)
-    values = _scaledAreas(
-        crs, layout, surface, transform, gridRows[:, None], gridCols[None, :]
-    )
-    if step == 1:
-        return values
     lowerC, upperC, tC = _weights(gridCols, width)
-    acrossColumns = values[:, lowerC] * (1 - tC) + values[:, upperC] * tC
-    lowerR, upperR, tR = _weights(gridRows, height)
-    return (
-        acrossColumns[lowerR] * (1 - tR)[:, None] + acrossColumns[upperR] * tR[:, None]
-    )
+    movingC = tC > 0
+
+    def acrossColumns(blockRows: np.ndarray) -> np.ndarray:
+        """The grid rows ``blockRows``, interpolated to every column."""
+        values = _scaledAreas(
+            crs, layout, surface, transform, blockRows[:, None], gridCols[None, :]
+        )
+        across = values[:, lowerC] * (1 - tC)
+        # only where the weight isn't 0, so a NaN neighbor stays out of
+        # pixels on the grid
+        across[:, movingC] += values[:, upperC[movingC]] * tC[movingC]
+        return across
+
+    out = np.empty((height, width))
+    if len(gridRows) == 1:
+        out[:] = acrossColumns(gridRows)
+        return out
+    # grid rows per block, sharing the last with the next block
+    perBlock = max(2, _BLOCK_POINTS // len(gridCols))
+    for first in range(0, len(gridRows) - 1, perBlock - 1):
+        block = gridRows[first : first + perBlock]
+        across = acrossColumns(block)
+        top = int(block[0])
+        bottom = height if first + len(block) == len(gridRows) else int(block[-1])
+        lower, upper, t = _weights(block, bottom - top, top)
+        rows = out[top:bottom]
+        np.multiply(across[lower], (1 - t)[:, None], out=rows)
+        moving = t > 0
+        rows[moving] += across[upper[moving]] * t[moving, None]
+    return out
 
 
 def pixelAreaMethod(crs: CRS | str, transform: Affine) -> str:
@@ -403,16 +435,23 @@ def _gridIndices(count: int, step: int) -> np.ndarray:
     return np.unique(np.append(np.arange(0, count, step), count - 1)).astype(np.float64)
 
 
-def _weights(grid: np.ndarray, count: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """For each index below ``count``, its grid neighbors (positions in
-    ``grid``) and the linear weight of the upper one."""
-    positions = np.arange(count, dtype=np.float64)
+def _weights(
+    grid: np.ndarray, count: int, start: int = 0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """For each of ``count`` indices from ``start``, its grid neighbors
+    (positions in ``grid``) and the linear weight of the upper one."""
+    positions = np.arange(start, start + count, dtype=np.float64)
     if len(grid) == 1:
         zeros = np.zeros(count, dtype=np.intp)
         return zeros, zeros, np.zeros(count)
     upper = np.clip(np.searchsorted(grid, positions, side="right"), 1, len(grid) - 1)
     lower = upper - 1
     weight = (positions - grid[lower]) / (grid[upper] - grid[lower])
+    # the last grid point takes its own value only (weight 0), as the others
+    # do, so a NaN neighbor can't reach it
+    last = positions >= grid[-1]
+    lower[last] = upper[last] = len(grid) - 1
+    weight[last] = 0.0
     return lower, upper, weight
 
 
@@ -468,16 +507,25 @@ def _distortion(
     return distortionOver(crs, transform, width, height, (row0, col0, height, width))
 
 
+def _key(crs: CRS | str) -> str:
+    """The CRS as text, for caching; the caller holds PROJ_LOCK."""
+    return crs if isinstance(crs, str) else CRS.from_user_input(crs).srs
+
+
 def _surfacesFor(crs: CRS | str) -> _Surfaces:
     with PROJ_LOCK:
-        return _surfaces(crs if isinstance(crs, str) else CRS.from_user_input(crs).srs)
+        return _surfaces(_key(crs))
 
 
 @lru_cache(maxsize=64)
 def _surfaces(key: str) -> _Surfaces:
     """The CRS's own surface and, when it differs, the body's reference
-    ellipsoid; the caller holds PROJ_LOCK."""
-    crs = CRS.from_user_input(key)
+    ellipsoid; the caller holds PROJ_LOCK. Raises ValueError for a CRS on
+    no body or one PROJ can't read."""
+    try:
+        crs = CRS.from_user_input(key)
+    except CRSError as error:
+        raise ValueError(f"Unreadable coordinate system: {error}") from error
     ellipsoid = crs.ellipsoid
     if ellipsoid is None:
         raise ValueError(f"{crs.name} is on no body (no ellipsoid)")
@@ -498,13 +546,18 @@ def _surfaces(key: str) -> _Surfaces:
 
 def _layoutFor(crs: CRS | str) -> _Layout:
     with PROJ_LOCK:
-        return _layout(crs if isinstance(crs, str) else CRS.from_user_input(crs).srs)
+        return _layout(_key(crs))
 
 
 @lru_cache(maxsize=64)
 def _layout(key: str) -> _Layout:
-    """The caller holds PROJ_LOCK."""
-    crs = CRS.from_user_input(key)
+    """The caller holds PROJ_LOCK. Raises ValueError for a CRS PROJ can't
+    read. The latitude type is the shared reading (``latitudeType``), as
+    ``planetocentricLonLat`` and ``distortion`` read it."""
+    try:
+        crs = CRS.from_user_input(key)
+    except CRSError as error:
+        raise ValueError(f"Unreadable coordinate system: {error}") from error
     unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
     if crs.is_geographic:
         centric = latitudeType(crs) == "planetocentric"

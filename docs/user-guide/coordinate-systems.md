@@ -400,8 +400,14 @@ sphere R = 3394.84 km".
   latitude (as for every measurement, above), and the area is Karney's
   (2013) geodesic polygon area. The densified top and bottom edges follow
   their parallels; the geodesic chords between the 16 points cut slightly
-  inside them, which leaves a relative error of at most about
-  2.1 × 10⁻⁷ × (Δλ / 1°)², with Δλ the pixel's width in longitude:
+  inside them (poleward), which leaves a relative error of about
+
+  δλ² (cos² φ − 2 sin² φ) / 12, with δλ = Δλ / 16 in radians
+
+  (Δλ the pixel's width in longitude, φ its latitude): +1.0 × 10⁻⁷ ×
+  (Δλ / 1°)² at the equator, −2.0 × 10⁻⁷ × (Δλ / 1°)² at the poles, at
+  most about 2.1 × 10⁻⁷ × (Δλ / 1°)² on an ellipsoid. It is the same for
+  every pixel of a row, so it doesn't average out over an ROI:
   2 × 10⁻⁹ for 0.1° pixels, 2 × 10⁻⁷ for 1° pixels, negligible for map
   pixels of a few km or less.
 - **Areal scale** ("map pixel area over the projection's areal scale at
@@ -422,8 +428,11 @@ sphere R = 3394.84 km".
   4,000,000 pixels has its pixel areas evaluated on a grid of every n-th
   pixel (n = ⌈√(pixels / 4,000,000)⌉, plus the last row and column) and
   interpolated bilinearly between them; scale factors vary smoothly. On a
-  4000 × 4000 polar stereographic image at 85°N the interpolated areas are
-  within 10⁻⁶ (relative) of the evaluated ones (Varda's tests check this).
+  4000 × 4000 polar stereographic image of 1 km pixels centered at 85°N
+  (grid points 2 km apart), the interpolated areas are within 10⁻⁶
+  (relative) of the evaluated ones, about 10⁻⁷ in fact (Varda's tests
+  check this); with smaller pixels the error falls as the square of the
+  grid spacing.
   Near the edge of a projection's valid area, a pixel PROJ can't invert
   has no area (blank), and the pixels interpolated from it are blank too.
 

@@ -35,6 +35,7 @@ from attrs import frozen
 from pyproj import CRS, Proj
 from pyproj.exceptions import CRSError
 
+from varda.geo.bodies import latitudeType
 from varda.utilities.proj_lock import PROJ_LOCK
 
 SCALE_TIP: float = 0.01
@@ -232,21 +233,14 @@ def _model(key: str) -> _Model | None:
     inverse = crs.ellipsoid.inverse_flattening
     flattening = 1 / inverse if inverse else 0.0
     e2 = flattening * (2 - flattening)
-    centric = e2 > 0 and _planetocentric(geodetic)
+    # the shared reading of the latitude type (as describeCrs and
+    # transform.planetocentricLonLat read it)
+    centric = e2 > 0 and latitudeType(crs) == "planetocentric"
     if crs.is_projected:
         westing = bool(crs.axis_info) and crs.axis_info[0].direction == "west"
         return _Model(Proj(crs), 1.0, e2, west, westing, centric)
     unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
     return _Model(None, math.degrees(unit), e2, west, False, centric)
-
-
-def _planetocentric(geodetic: CRS) -> bool:
-    """A planetocentric latitude axis, read as ``describeCrs`` reads its
-    latitude type (axis name, or a spherical coordinate system)."""
-    names = " ".join(axis.name.lower() for axis in geodetic.axis_info)
-    system = geodetic.coordinate_system
-    subtype = system.to_json_dict().get("subtype") if system is not None else None
-    return "planetocentric" in names or "geocentric" in names or subtype == "spherical"
 
 
 def _toGraphic(lats: np.ndarray, e2: float) -> np.ndarray:
