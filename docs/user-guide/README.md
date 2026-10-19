@@ -5,6 +5,7 @@ Detailed guides to Varda's features. For an overview, see the
 
 - [Reporting results from Varda](reporting-results.md): citing Varda and its methods, what results record, precision vs. accuracy
 - [Installing Varda](installing.md): downloading a release, running from source, optional extras
+- [Network use and privacy](network-and-privacy.md): every connection Varda makes, when, and what it sends; turning off the update check; where AI keys are kept
 - [Sessions and saving results](sessions-and-saving.md): saving and restoring your work, autosave, exporting images
 - [3D Terrain](3d-terrain.md): DEMs in 3D with draped images, figures and interactive web pages
 - [Linked Images](linked-images.md): any number of images linked by pixel or map location, with every image's spectrum and profile at once

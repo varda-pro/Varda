@@ -6,6 +6,7 @@ from app_model.types import Action, MenuRule, StandardKeyBinding
 from PyQt6.QtCore import QStandardPaths, Qt
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QProgressDialog
 
+from varda.utilities.resources import bundledIcon
 from varda._actions._menu_ids import MenuGroup, MenuId
 from varda.common.di_types import ProjectImages
 from varda.context_keys import EXPR_HAS_IMAGES
@@ -218,7 +219,7 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.import_image",
         title="Import Image(s)",
-        icon="fa6-solid:folder-open",
+        icon=bundledIcon("folder-open"),
         callback=importImage,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_IO, order=1)],
         keybindings=[StandardKeyBinding.New.to_keybinding_rule()],
@@ -226,7 +227,7 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.export_image",
         title="Export Image…",
-        icon="fa6-solid:floppy-disk",
+        icon=bundledIcon("floppy-disk"),
         callback=exportImage,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_IO, order=2)],
@@ -234,7 +235,7 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.open_session",
         title="Open Session…",
-        icon="fa6-solid:folder-tree",
+        icon=bundledIcon("folder-tree"),
         callback=openSession,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_SESSION, order=1)],
         keybindings=[StandardKeyBinding.Open.to_keybinding_rule()],
@@ -242,7 +243,7 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.save_session",
         title="Save Session…",
-        icon="fa6-solid:bookmark",
+        icon=bundledIcon("bookmark"),
         callback=saveSession,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_SESSION, order=2)],
@@ -263,14 +264,14 @@ FILE_ACTIONS: list[Action] = [
     Action(
         id="varda.file.restore_last_session",
         title="Restore Last Session",
-        icon="fa6-solid:clock-rotate-left",
+        icon=bundledIcon("clock-rotate-left"),
         callback=restoreLastSession,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_SESSION, order=4)],
     ),
     Action(
         id="varda.file.exit",
         title="Exit",
-        icon="fa6-solid:xmark",
+        icon=bundledIcon("xmark"),
         callback=exitApp,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_EXIT, order=1)],
         keybindings=[StandardKeyBinding.Quit.to_keybinding_rule()],
