@@ -1,5 +1,6 @@
 """Calculated ROI columns: geometry, zonal statistics and expressions."""
 
+import gc
 import math
 import time
 
@@ -25,17 +26,21 @@ from varda.rois.roi_calculations import (
     MAP_MEASURES,
     NO_MAP_COORDINATES,
     CalculatedColumns,
+    PixelAreaCache,
     Expression,
     ExpressionError,
     GeometryMeasure,
     ZonalStatistic,
     areaStatistic,
+    imageAreas,
     expressionVariables,
     mapUnits,
     parseExpression,
     suggestName,
 )
+from varda.geo.measure import pixelAreas
 from varda.rois.roi_collection import NewROI, ROICollection
+from varda.utilities.background import runInBackground
 
 RED = Color(1.0, 0.0, 0.0, 0.5)
 
@@ -515,3 +520,141 @@ def test_area_columns_on_a_large_polar_image_reuse_its_pixel_areas():
     assert rois.getProperty(fid, "a") == first
     # the map area over areal scales ≥ 1 (true scale at the pole)
     assert 0.85 * 4000**2 < first < 4000**2
+
+
+# --- the pixel-area cache and background computation -------------------------
+
+
+def _polar(size: int = 64, name: str = "polar") -> VardaRaster:
+    return makeImage(
+        HIRISE_POLAR_PROJ,
+        centerLonLat=(0.0, 85.0),
+        pixelSize=1000.0,
+        width=size,
+        height=size,
+        name=name,
+    )
+
+
+def test_cached_areas_match_per_pixel_areas_within_1e_6():
+    """Float32 storage and, above 4,000,000 pixels, interpolation stay
+    within 10⁻⁶ of ``pixelAreas`` evaluated at each pixel."""
+    rng = np.random.default_rng(1)
+    for image in (_polar(), _polar(2560)):  # 4096 pixels, and 6.5 Mpx
+        areas = imageAreas(image.crs, image.transform, image.width, image.height)
+        assert areas is not None and areas.dtype == np.float32
+        rows = rng.integers(0, image.height, 300)
+        cols = rng.integers(0, image.width, 300)
+        assert image.crs is not None
+        exact = pixelAreas(image.crs, image.transform, rows, cols)
+        assert areas[rows, cols] == pytest.approx(exact, rel=1e-6)
+
+
+def test_row_only_areas_stay_a_broadcast_view_and_cost_nothing():
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    cache = PixelAreaCache()
+    areas = imageAreas(image.crs, image.transform, image.width, image.height)
+    assert areas is not None and 0 in areas.strides
+    cache.put(image, image.crs, image.transform, areas)
+    assert cache.nbytes == 0
+
+
+def test_a_cache_entry_goes_with_its_image():
+    cache = PixelAreaCache()
+    image = _polar()
+    cache.put(
+        image,
+        image.crs,
+        image.transform,
+        imageAreas(image.crs, image.transform, 64, 64),
+    )
+    assert len(cache) == 1
+    del image
+    gc.collect()
+    assert len(cache) == 0
+
+
+def test_the_cache_drops_the_least_recently_used_above_its_limit():
+    images = [_polar(name=f"p{i}") for i in range(3)]
+    areas = imageAreas(images[0].crs, images[0].transform, 64, 64)
+    assert areas is not None
+    cache = PixelAreaCache(maxBytes=2 * areas.nbytes)
+    cache.put(images[0], images[0].crs, images[0].transform, areas)
+    cache.put(images[1], images[1].crs, images[1].transform, areas.copy())
+    assert cache.get(images[0])[0]  # used: now the newer of the two
+    cache.put(images[2], images[2].crs, images[2].transform, areas.copy())
+    assert images[0] in cache and images[2] in cache
+    assert images[1] not in cache
+    assert cache.nbytes <= cache.maxBytes
+
+
+class _HeldRunner:
+    """Holds each task until the test runs it."""
+
+    def __init__(self):
+        self.pending: list[tuple] = []
+
+    def __call__(self, task, onDone) -> None:
+        self.pending.append((task, onDone))
+
+    def finish(self) -> None:
+        pending, self.pending = self.pending, []
+        for task, onDone in pending:
+            onDone(task())
+
+
+def test_area_columns_are_blank_while_computing_then_fill_in():
+    image = _polar()
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 10, 10, 20, 20)
+    runner = _HeldRunner()
+    calc = CalculatedColumns(rois, runner=runner, areaCache=PixelAreaCache())
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    calc.add("w", ZonalStatistic(image, 0, "area_weighted_mean"))
+    assert len(runner.pending) == 1  # one computation for both columns
+    assert math.isnan(rois.getProperty(fid, "a"))
+    assert "computing the pixel areas" in (calc.describe("a") or "")
+    runner.finish()
+    assert rois.getProperty(fid, "a") > 0
+    assert math.isfinite(rois.getProperty(fid, "w"))
+    assert "computing" not in (calc.describe("a") or "")
+
+
+def test_a_result_for_an_old_crs_is_dropped_and_asked_again():
+    image = makeImage("EPSG:4326", centerLonLat=(10.0, 0.0), pixelSize=0.01)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 10, 10, 20, 20)
+    runner = _HeldRunner()
+    cache = PixelAreaCache()
+    calc = CalculatedColumns(rois, runner=runner, areaCache=cache)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    (old,) = runner.pending
+    runner.pending.clear()
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})  # Mars, meanwhile
+    task, onDone = old
+    onDone(task())  # Earth's areas arrive late: dropped
+    assert not cache.get(image)[0]
+    assert math.isnan(rois.getProperty(fid, "a"))
+    runner.finish()  # Mars's
+    assert cache.get(image)[0]
+    onMars = rois.getProperty(fid, "a")
+    synchronous = CalculatedColumns(rois, areaCache=PixelAreaCache())
+    synchronous.add("b", ZonalStatistic(image, 0, "area_km2"))
+    assert onMars == pytest.approx(rois.getProperty(fid, "b"))
+
+
+def test_area_columns_compute_off_the_gui_thread(qtbot):
+    image = _polar(2048)  # 4 Mpx: about 0.3 s of PROJ work
+
+    def runner(task, onDone) -> None:
+        runInBackground(task, onDone, lambda error: onDone(None))
+
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 0, 0, 2048, 2048)
+    calc = CalculatedColumns(rois, runner=runner, areaCache=PixelAreaCache())
+    started = time.perf_counter()
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    assert time.perf_counter() - started < 0.2  # returned before the areas
+    assert math.isnan(rois.getProperty(fid, "a"))
+    qtbot.waitUntil(lambda: math.isfinite(rois.getProperty(fid, "a")), timeout=30000)
+    assert 0.85 * 2048**2 < rois.getProperty(fid, "a") < 2048**2

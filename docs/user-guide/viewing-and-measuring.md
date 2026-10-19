@@ -350,13 +350,20 @@ column (below) with the **count** statistic.
   blank, and the tooltip says so ("the image has no map coordinates"). An
   ROI with no pixels with data has an **area of pixels with data** of 0 and
   a blank **area-weighted mean** and **sum × pixel area**.
-  - **Whole images, computed once.** Varda computes the areas of all of an
-    image's pixels once, then reuses them for every ROI and column until
-    the image's coordinate system or transform changes. Outside the
-    exact-per-row case, an image of more than 4,000,000 pixels has its
-    areas interpolated from a grid of every n-th pixel, within 10⁻⁶
-    (relative) of the evaluated ones (see [Pixel
-    areas](coordinate-systems.md#pixel-areas)).
+  - **Whole images, computed once, in the background.** Varda computes
+    the areas of all of an image's pixels once, in the background, then
+    reuses them for every ROI and column until the image's coordinate
+    system or transform changes. Until they're ready the columns are blank
+    and their tooltip says "computing the pixel areas…"; a result for a
+    coordinate system that changed meanwhile is discarded and computed
+    again. Outside the exact-per-row case, an image of more than 4,000,000
+    pixels has its areas interpolated from a grid of every n-th pixel,
+    within 10⁻⁶ (relative) of the evaluated ones (see [Pixel
+    areas](coordinate-systems.md#pixel-areas)). The areas are kept as
+    32-bit floats (relative rounding about 6 × 10⁻⁸, well inside that
+    bound; sums are taken in 64 bits), up to 512 MB for all images
+    together, the least recently used dropped first. If the computation
+    fails (logged), the columns stay blank.
   - **Another image's coordinate system.** A column computed on another
     image on the same pixel grid updates when the ROIs change, and when
     the ROIs' own image changes its coordinate system, but not when only
