@@ -1020,16 +1020,22 @@ def arealScaleAtPixels(crs, transform: Affine, cols: np.ndarray, rows: np.ndarra
   Area. Then each row's pixels share one area. It's computed once per row,
   as `Geod.polygon_area_perimeter` of the pixel's corners with each edge
   densified to 16 points, so the top and bottom edges follow their
-  parallels. This is exact up to the geodesic algorithm.
+  parallels. The geodesic chords between the 16 points cut inside the
+  parallels, so the relative error is ≈ δλ² (cos² φ − 2 sin² φ) / 12 with
+  δλ = Δλ/16 (radians), at most ≈ 2.1e-7 · (Δλ/1°)² (2e-9 for 0.1° pixels);
+  plus the geodesic algorithm's (nanometers).
 - **Otherwise:** the area is |det(transform)| × u² / areal scale at the
   pixel center (u is the map unit's meters). The areal scale is PROJ's
   (`arealScaleAtPixels`). The relative error is of order (pixel / R)², so
   it's negligible for pixels ≪ R.
 - **Whole images** (`imagePixelAreas`) larger than 4,000,000 pixels
-  outside the row-only case evaluate the areal scale on a grid of every
-  n-th pixel (n = ⌈√(pixels / 4,000,000)⌉) and interpolate bilinearly.
-  Scale factors vary smoothly, and the test bounds the interpolation error
-  below 1e-6 relative on a 4000 × 4000 polar stereographic image.
+  outside the row-only case evaluate the pixel areas (map area over areal
+  scale) on a grid of every n-th pixel (n = ⌈√(pixels / 4,000,000)⌉, plus
+  the last row and column) and interpolate bilinearly, in blocks of rows
+  (peak memory ≈ 1× the result). Row-only images return a read-only
+  broadcast of the row areas. Scale factors vary smoothly, and the test
+  bounds the interpolation error below 1e-6 relative on a 4000 × 4000
+  polar stereographic image of 1 km pixels (grid spacing 2 km).
 - An ROI's or class's area is the sum of its pixels' areas. That's the area
   of the **pixels** chosen (centers inside), not of the drawn polygon, so it
   differs from **Area on the body** by up to half a pixel along the
