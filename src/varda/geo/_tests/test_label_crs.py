@@ -434,3 +434,35 @@ def test_west_center_longitude_normalizes_to_east() -> None:
     crs = _crs(result)
     assert _parameter(crs, "Longitude of natural origin") == 180
     assert math.isclose(_parameter(crs, "Latitude of 1st standard parallel"), 0)
+
+
+def test_planetographic_equirectangular_uses_the_local_radius() -> None:
+    """ISIS's Equirectangular projects with the local radius at the center
+    latitude whatever the latitude type: x = r·cos φ₀·Δλ, y = r·φ, with φ
+    the label's (here planetographic) latitude. That is PROJ's eqc on the
+    body's ellipsoid scaled to a = r, so it's assumed."""
+    a, c = MARS_A_KM * 1000, MARS_C_KM * 1000
+    result = _built(
+        _isis(
+            {
+                "PROJECTIONNAME": "Equirectangular",
+                "EQUATORIALRADIUS": str(a),
+                "POLARRADIUS": str(c),
+                "LATITUDETYPE": "Planetographic",
+                "CENTERLATITUDE": "15.0",
+                "CENTERLONGITUDE": "0.0",
+            }
+        )
+    )
+    crs = _crs(result)
+    phi = math.radians(15)
+    r = a * c / math.hypot(c * math.cos(phi), a * math.sin(phi))
+    assert crs.ellipsoid is not None
+    assert crs.ellipsoid.semi_major_metre == pytest.approx(r)
+    assert crs.ellipsoid.semi_minor_metre == pytest.approx(r * c / a)
+    assert not result.complete
+    assert any("local radius" in line for line in result.assumed)
+    # ISIS's formulas at 30° planetographic latitude, 1° east
+    (x,), (y,) = transformPoints(crs.geodetic_crs, crs, [1.0], [30.0])
+    assert x == pytest.approx(r * math.cos(phi) * math.radians(1), abs=1e-6)
+    assert y == pytest.approx(r * math.radians(30), abs=1e-6)

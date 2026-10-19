@@ -12,11 +12,9 @@ from pyproj import CRS
 
 from varda.common.entities import VardaRaster
 from varda.common.provenance import CRS_FIX_KEY, PROVENANCE_KEY
-from varda.geo.describe import describeCrs
 from varda.geo.equivalence import sameCrs
-from varda.geo.health import CrsHealth, checkCrs, fixRecord
+from varda.geo.health import CrsHealth, checkCrs, fixRecord, recordText
 from varda.geo.labels import LabelHints, labelHints, provenanceHints
-from varda.utilities.proj_lock import PROJ_LOCK
 
 
 def imageLabelHints(image: VardaRaster) -> LabelHints:
@@ -112,15 +110,10 @@ def undoCrsFix(image: VardaRaster) -> CrsHealth:
 
 
 def _recordText(crs: CRS | str | None) -> str:
-    """``crs`` as ``crsFix`` records it: its authority code, else its WKT;
-    "none" for none."""
-    if crs is None:
-        return "none"
-    authority = describeCrs(crs).authority
-    if authority is not None:
-        return authority
-    with PROJ_LOCK:
-        return CRS.from_user_input(crs).to_wkt()
+    """``crs`` as ``crsFix`` records it (``health.recordText``: its authority
+    code, else its WKT, else its PROJJSON when WKT would drop a west
+    longitude axis); "none" for none."""
+    return "none" if crs is None else recordText(crs)
 
 
 def _describes(record: dict | None, crs: CRS | str | None) -> bool:

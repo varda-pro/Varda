@@ -1269,7 +1269,8 @@ a line to `assumed`.
 | Label | Surface | Assumed? |
 |---|---|---|
 | a = c (to 1 m), or only a | sphere R = a | no |
-| a ≠ c, planetographic | ellipsoid (a, c); geodetic latitude is planetographic | no |
+| a ≠ c, planetographic (not Equirectangular with φ ≠ 0) | ellipsoid (a, c); geodetic latitude is planetographic | no |
+| a ≠ c, planetographic, Equirectangular with center latitude φ ≠ 0 | the ellipsoid scaled to a = r (the local radius below), c × r/a: ISIS's Equirectangular uses r whatever the latitude type (x = r·cos φ·Δλ, y = r·φ_label; `Equirectangular::SetGround`), and PROJ's eqc on that ellipsoid gives the same numbers with planetographic latitude (decided in Task 8 of Phase 2) | yes |
 | a ≠ c, planetocentric, Equirectangular with center latitude φ ≠ 0 | sphere of the local radius at φ, r = a·c / √((c cos φ)² + (a sin φ)²): ISIS's Equirectangular convention. With a = 3396.19, c = 3376.20 km and φ = 15° it gives 3394839.8133 m, the CRISM MTRDR's sphere exactly | yes ("ISIS's convention: the sphere of the local radius at the center latitude") |
 | a ≠ c, planetocentric, Polar Stereographic | sphere R = c (as GDAL 3.9.3 does) | yes |
 | a ≠ c, planetocentric, other projections | sphere R = a (as GDAL 3.9.3 does) | yes |

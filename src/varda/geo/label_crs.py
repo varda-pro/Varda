@@ -21,7 +21,11 @@ with a ≠ c has no exact PROJ projection string, so Varda uses a sphere and
 says so in ``assumed``: Equirectangular with center latitude φ ≠ 0, the local
 radius at φ, r = a·c / √((c cos φ)² + (a sin φ)²) (ISIS's convention, which
 gives CRISM MTRDRs their scene-specific spheres); Polar Stereographic, c; any
-other projection, a (both as GDAL 3.9.3 does). No radii: the label target's
+other projection, a (both as GDAL 3.9.3 does). ISIS's Equirectangular uses r
+whatever the latitude type (x = r·cos φ₀·Δλ, y = r·φ; ``SetGround`` in ISIS's
+Equirectangular.cpp), so a planetographic Equirectangular label with φ ≠ 0
+gets the body's ellipsoid scaled to a = r (PROJ's eqc on an ellipsoid is
+x = a·cos φ₀·Δλ, y = a·φ), also in ``assumed``. No radii: the label target's
 IAU 2015 sphere (Archinal et al., 2018), also in ``assumed``.
 
 **West-positive labels, and the direction of map x.** For a label whose
@@ -368,19 +372,33 @@ def _surface(
             "the label doesn't state its latitude type: planetocentric, "
             "the IAU's default"
         )
-    if latitudeType == "planetographic":
-        return f"+a={a!r} +b={c!r}"
     kind = method[0] if method is not None else ""
     latitude = group.number(TRUE_SCALE_LATITUDE)
     if kind == "equirectangular" and latitude is not None and latitude != 0:
+        # ISIS's Equirectangular: x = r·cos φ₀·Δλ, y = r·φ, with r the local
+        # radius at the center latitude φ₀ and φ the label's own latitude,
+        # whatever its type (ISIS Equirectangular.cpp, SetGround)
         phi = math.radians(latitude)
         radius = a * c / math.hypot(c * math.cos(phi), a * math.sin(phi))
+        if latitudeType == "planetographic":
+            # PROJ's eqc on an ellipsoid is x = a·cos φ₀·Δλ, y = a·φ (φ
+            # geodetic), so the body's ellipsoid scaled to a = r gives ISIS's
+            # numbers and keeps planetographic latitude as geodetic
+            assumed.append(
+                "ISIS's convention: the local radius at the center latitude "
+                f"({radius:.4f} m at {latitude:g}°) as the map's scale, on the "
+                f"body's ellipsoid scaled by {radius / a:.6f} (lengths measured "
+                "on it are that much short)"
+            )
+            return f"+a={radius!r} +b={radius * c / a!r}"
         assumed.append(
             "ISIS's convention: the sphere of the local radius at the center "
             f"latitude ({radius:.4f} m at {latitude:g}°), since a planetocentric "
             "label on an ellipsoid has no exact PROJ form"
         )
         return f"+R={radius!r}"
+    if latitudeType == "planetographic":
+        return f"+a={a!r} +b={c!r}"
     if kind == "polarstereographic":
         assumed.append(
             f"the sphere of the polar radius ({c:.1f} m), as GDAL does, since a "

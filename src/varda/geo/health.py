@@ -1,14 +1,21 @@
 """The coordinate-system health check run when an image opens (spec §4.2):
 what is wrong or worth knowing about an image's CRS, in plain words, with
-what to do, and the one fix Varda applies without asking.
+what to do, and the fixes Varda applies without asking.
 
-The only automatic fix: an Earth *geographic* CRS (just degrees) on an image
+Two fixes are automatic. An Earth *geographic* CRS (just degrees) on an image
 whose label names another body Varda knows is read as degrees on that body's
-IAU 2015 sphere. Everything else is reported, never changed: Varda can't know
-which of the CRS and the label is right."""
+IAU 2015 sphere. An image with no CRS whose own label has a complete map
+projection group (``label_crs.labelCrs``, nothing assumed) gets the label's
+CRS, and its pixel grid when the file has none. A label CRS built with an
+assumption is offered, and so is one that disagrees with the CRS GDAL built
+(``label-crs-mismatch``): GDAL may be right. Hints from Varda provenance
+never raise a label issue, since a result's grid may differ from its
+inputs'. Everything else is reported, never changed: Varda can't know which
+of the CRS and the label is right."""
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 
 import attrs
@@ -19,7 +26,10 @@ from pyproj import CRS
 from varda.geo.bodies import BodyMatch, bodyNamed, identifyBody, isNonBodyTarget
 from varda.geo.describe import CrsDescription, describeCrs
 from varda.geo.distortion import DistortionSummary, distortionOver
+from varda.geo.equivalence import sameCrs
+from varda.geo.label_crs import LabelCrs, labelCrs
 from varda.geo.labels import LabelHints
+from varda.geo.transform import geodeticLonLat, transformPoints
 from varda.utilities.proj_lock import PROJ_LOCK
 
 SET_CRS = "Set coordinate system…"
@@ -29,6 +39,13 @@ DISTORTION_SUGGESTION = (
     "later version) for figures and terrain"
 )
 _NO_LABEL = LabelHints.empty()
+LABEL_FIX_HEADLINE = "No coordinate system in its file; built from its label."
+PROVENANCE_SOURCE = "Varda provenance"
+# The projections whose longitude depends on map x alone, for the check of
+# the label's longitude range
+_CYLINDRICAL = ("equidistant cylindrical", "mercator")
+
+type Transform = tuple[float, float, float, float, float, float]
 
 
 class Severity(Enum):
@@ -42,13 +59,17 @@ class CrsFix:
     wkt: str  # the CRS to use instead
     reason: str  # one sentence, recorded in provenance
     automatic: bool  # applied at load without asking
+    # the pixel-to-map transform to use too (Affine's a, b, c, d, e, f), when
+    # the file has none and the label gives one (§4.8)
+    transform: Transform | None = None
 
 
 @frozen
 class CrsIssue:
     # "no-crs", "unreadable-crs", "earth-crs-on-body", "unknown-body",
     # "ambiguous-body", "lon-direction-mismatch", "latitude-type-mismatch",
-    # "high-distortion", "lon-0-360" ("label-crs-mismatch" is Phase 2)
+    # "high-distortion", "lon-0-360", "label-crs-mismatch",
+    # "lon-bounds-westward"
     code: str
     severity: Severity
     message: str  # one line, plain words
@@ -108,21 +129,39 @@ def _check(
     description = describeCrs(crs, transform, width, height)
     own = identifyBody(crs)
     body = own if own.body is not None else identifyBody(crs, hints.target)
-    if crs is None or description.kind == "unreadable":
-        issue = _missing(crs, transform, hints, rawCrsText)
-        return CrsHealth(description, body, (issue,) if issue else (), None)
+    label = labelCrs(hints) if _ownLabel(hints) else None
     issues: list[CrsIssue] = []
-    effective, used = crs, description
-    earth = _earthOnBody(crs, description, own, hints, applyFix)
-    if earth is not None:
-        issues.append(earth)
-        if earth.fix is not None and earth.fix.automatic:
-            effective = earth.fix.wkt
-            used = describeCrs(effective, transform, width, height)
-            body = identifyBody(effective, hints.target)
+    effective: CRS | str
+    if crs is None or description.kind == "unreadable":
+        issue = _missing(crs, transform, hints, rawCrsText, label, applyFix)
+        if issue is None or issue.fix is None or not issue.fix.automatic:
+            return CrsHealth(description, body, (issue,) if issue else (), None)
+        # the checks below are of the label's CRS and grid, which Varda uses
+        issues.append(issue)
+        effective = issue.fix.wkt
+        if issue.fix.transform is not None:
+            transform = Affine(*issue.fix.transform)
+        used = describeCrs(effective, transform, width, height)
+        body = identifyBody(effective, hints.target)
+    else:
+        effective, used = crs, description
+        earth = _earthOnBody(crs, description, own, hints, applyFix)
+        if earth is not None:
+            issues.append(earth)
+            if earth.fix is not None and earth.fix.automatic:
+                effective = earth.fix.wkt
+                used = describeCrs(effective, transform, width, height)
+                body = identifyBody(effective, hints.target)
+        mismatch = _labelMismatch(effective, used, transform, label)
+        if mismatch is not None:
+            issues.append(mismatch)
     if used.kind in ("geographic", "projected") and body.body is None:
         issues.append(_unknownBody(body))
     issues.extend(_conventions(used, hints))
+    if label is not None and used.kind == "projected":
+        westward = _westwardBounds(effective, transform, width, height, hints)
+        if westward is not None:
+            issues.append(westward)
     distortion = None
     if used.kind in ("geographic", "projected") and not transform.is_identity:
         distortion = distortionOver(effective, transform, width, height)
@@ -140,13 +179,23 @@ def _check(
     return CrsHealth(description, body, tuple(issues), distortion)
 
 
+def _ownLabel(hints: LabelHints) -> bool:
+    """Whether ``hints`` come from the image's own label (not only from Varda
+    provenance, which carries a target, never a projection group)."""
+    return not hints.source.startswith(PROVENANCE_SOURCE)
+
+
 def _missing(
     crs: CRS | str | None,
     transform: Affine,
     hints: LabelHints,
     rawCrsText: str | None,
+    label: LabelCrs | None,
+    applyFix: bool,
 ) -> CrsIssue | None:
-    """No CRS, or one Varda can't read."""
+    """No CRS, or one Varda can't read; with no CRS at all, the one the
+    image's own label (``label``) describes, applied when it's complete and
+    gives a pixel grid (``applyFix``), else offered."""
     if crs is not None or rawCrsText:
         return CrsIssue(
             "unreadable-crs",
@@ -166,7 +215,179 @@ def _missing(
         )
     else:
         return None
-    return CrsIssue("no-crs", Severity.PROBLEM, message, SET_CRS)
+    if label is None:
+        return CrsIssue("no-crs", Severity.PROBLEM, message, SET_CRS)
+    if label.wkt is None:
+        # what the CRS needs; the pixel grid's keys only when that's all
+        crsNeeds = [m for m in label.missing if "pixel grid" not in m]
+        needs = "; ".join(crsNeeds or label.missing)
+        suggestion = (
+            f"Its label lacks what Varda needs to build one ({needs}); {SET_CRS}"
+        )
+        return CrsIssue("no-crs", Severity.PROBLEM, message, suggestion)
+    grid = label.transform if transform.is_identity else None
+    gridMissing = transform.is_identity and grid is None
+    automatic = label.complete and not gridMissing
+    source = label.source.split(";")[0]
+    surface = describeCrs(label.wkt).surface
+    fix = CrsFix(
+        wkt=label.wkt,
+        reason=(
+            "Its file has no coordinate system; built from its "
+            f"{source} map projection group ({label.projection}, {surface})"
+        ),
+        automatic=automatic and applyFix,
+        transform=grid,
+    )
+    if automatic and applyFix:
+        message = (
+            "Its file has no coordinate system; Varda built it from its label's "
+            "map projection."
+        )
+        suggestion = f"Varda uses it; {SET_CRS} to use another"
+        return CrsIssue("no-crs", Severity.PROBLEM, message, suggestion, fix)
+    caveats = [f"assumes {line}" for line in label.assumed]
+    if gridMissing:
+        needs = ", ".join(m for m in label.missing if "pixel grid" in m)
+        caveats.append(f"has no pixel grid without {needs}")
+    if not automatic:
+        suggestion = (
+            f"Apply to use the CRS built from its label, which {'; '.join(caveats)}, "
+            f"or {SET_CRS}"
+        )
+    else:  # complete, but the user kept the file's (no) CRS
+        message = f"{message.removesuffix('.')}; you chose not to use its label's."
+        suggestion = f"Apply to use the CRS built from its label, or {SET_CRS}"
+    return CrsIssue("no-crs", Severity.PROBLEM, message, suggestion, fix)
+
+
+def _labelMismatch(
+    crs: CRS | str,
+    used: CrsDescription,
+    transform: Affine,
+    label: LabelCrs | None,
+) -> CrsIssue | None:
+    """The CRS in use (after any Earth fix) against the one its own label
+    describes: offered, never automatic, since GDAL may be right."""
+    if label is None or label.wkt is None or sameCrs(crs, label.wkt):
+        return None
+    labelText = describeCrs(label.wkt).text
+    grid = label.transform if transform.is_identity else None
+    fix = CrsFix(
+        wkt=label.wkt,
+        reason=(
+            f"Its label ({label.source.split(';')[0]}) describes {labelText}, but "
+            f"its CRS was {used.text}; the label's map projection group used"
+        ),
+        automatic=False,
+        transform=grid,
+    )
+    assumes = f" (it assumes {'; '.join(label.assumed)})" if label.assumed else ""
+    return CrsIssue(
+        "label-crs-mismatch",
+        Severity.PROBLEM,
+        f"Its label describes {labelText}, but its CRS is {used.text}.",
+        "Check a known feature's position, then Apply to use its label's CRS"
+        f"{assumes}, or keep this one: GDAL may be right",
+        fix,
+    )
+
+
+def _westwardBounds(
+    crs: CRS | str,
+    transform: Affine,
+    width: int,
+    height: int,
+    hints: LabelHints,
+) -> CrsIssue | None:
+    """Varda (as PDS3, ISIS and GDAL) reads map x, and so sample number, as
+    increasing eastward. This checks that per file: the longitudes of the
+    image's left and right edges against the longitude range its label
+    states (PDS3 ``WESTERNMOST``/``EASTERNMOST_LONGITUDE``, ISIS
+    ``MinimumLongitude``/``MaximumLongitude``, PDS4 ``west``/
+    ``east_bounding_coordinate``). An issue only when the range fits the
+    edges read westward (mirrored about the center meridian) and not
+    eastward. Only for cylindrical projections, whose longitude depends on x
+    alone."""
+    bounds = _labelBounds(hints)
+    if bounds is None or transform.is_identity or width <= 0 or height <= 0:
+        return None
+    with PROJ_LOCK:
+        parsed = CRS.from_user_input(crs)
+        operation = parsed.coordinate_operation
+        if operation is None:
+            return None
+        method = operation.method_name.lower()
+        if not any(name in method for name in _CYLINDRICAL):
+            return None
+        falseEasting = next(
+            (float(p.value) for p in operation.params if p.name == "False easting"),
+            0.0,
+        )
+        lonLat = geodeticLonLat(parsed)
+    left, y = transform * (0, height / 2)
+    right, _ = transform * (width, height / 2)
+    mirrored = (2 * falseEasting - left, 2 * falseEasting - right)
+    lons, _ = transformPoints(parsed, lonLat, [left, right, *mirrored], [y] * 4)
+    if not all(math.isfinite(lon) for lon in lons):
+        return None
+    span = abs(_wrapped(lons[1] - lons[0]))
+    if span >= 359 or span == 0:
+        return None
+    # the label may give pixel edges or centers, rounded
+    tolerance = max(1.5 * span / width, 0.01 * span, 1e-4)
+    east = hints.longitudeDirection != "west"
+    first, second = (b if east else -b for b in bounds)  # east-positive
+
+    def fits(a: float, b: float) -> bool:
+        return any(
+            abs(_wrapped(p - first)) <= tolerance
+            and abs(_wrapped(q - second)) <= tolerance
+            for p, q in ((a, b), (b, a))
+        )
+
+    if fits(lons[0], lons[1]) or not fits(lons[2], lons[3]):
+        return None
+    word = "east" if east else "west"
+    low, high = sorted(bounds)
+    return CrsIssue(
+        "lon-bounds-westward",
+        Severity.PROBLEM,
+        f"Its label's longitude range ({low:g}° to {high:g}° {word}) fits its map "
+        "only if its samples run westward; Varda reads them eastward.",
+        "Check a known feature's position: the image may be mirrored about its "
+        f"center meridian; if so, {SET_CRS} or fix its label",
+    )
+
+
+# The label's longitude range: PDS3, ISIS, PDS4
+_BOUNDS = (
+    ("WESTERNMOST_LONGITUDE", "EASTERNMOST_LONGITUDE"),
+    ("MINIMUMLONGITUDE", "MAXIMUMLONGITUDE"),
+    ("WEST_BOUNDING_COORDINATE", "EAST_BOUNDING_COORDINATE"),
+)
+
+
+def _labelBounds(hints: LabelHints) -> tuple[float, float] | None:
+    group = hints.projectionGroup
+    for keys in _BOUNDS:
+        values = [_number(group.get(key)) for key in keys]
+        if values[0] is not None and values[1] is not None:
+            return values[0], values[1]
+    return None
+
+
+def _number(text: str | None) -> float | None:
+    try:
+        value = float((text or "").strip())
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _wrapped(degrees: float) -> float:
+    """``degrees`` in [−180, 180)."""
+    return (degrees + 180.0) % 360.0 - 180.0
 
 
 def _earthOnBody(
@@ -232,37 +453,66 @@ def headline(health: CrsHealth | None) -> str | None:
             if issue.severity is not severity:
                 continue
             body = health.body.body
-            if (
-                issue.code == "earth-crs-on-body"
-                and issue.fix is not None
-                and issue.fix.automatic
-                and body is not None
-            ):
+            automatic = issue.fix is not None and issue.fix.automatic
+            if issue.code == "earth-crs-on-body" and automatic and body is not None:
                 return f"Its CRS says Earth; read as {body.name} (from its label)."
+            if issue.code == "no-crs" and automatic:
+                return LABEL_FIX_HEADLINE
             return issue.message
     return None
 
 
-def fixRecord(health: CrsHealth, declared: CRS | str) -> dict[str, str | bool] | None:
-    """The automatic fix in ``health`` (of the ``declared`` CRS) as
-    provenance records it (``crsFix``): the CRS declared and the CRS used,
-    each as an authority code when it has one (else its WKT), the reason,
-    and ``automatic``. ``None`` when there's no automatic fix."""
-    fix = next(
-        (i.fix for i in health.issues if i.fix is not None and i.fix.automatic), None
+type FixRecord = dict[str, str | bool | list[float]]
+
+
+def fixRecord(health: CrsHealth, declared: CRS | str | None) -> FixRecord | None:
+    """The automatic fix in ``health`` (of the ``declared`` CRS, None for
+    none) as provenance records it (``crsFix``): the CRS declared and the
+    CRS used (``recordText``; "none" for none), the reason, ``automatic``,
+    and for a fix built from the label, ``"source": "label"`` and the
+    ``transform`` it sets, if any. ``None`` when there's no automatic fix."""
+    issue = next(
+        (i for i in health.issues if i.fix is not None and i.fix.automatic), None
     )
-    if fix is None:
+    if issue is None or issue.fix is None:
         return None
-    declaredText = health.description.authority
-    if declaredText is None:
-        with PROJ_LOCK:
-            declaredText = CRS.from_user_input(declared).to_wkt()
-    return {
-        "from": declaredText,
-        "to": describeCrs(fix.wkt).authority or fix.wkt,
+    fix = issue.fix
+    declaredText = "none" if declared is None else health.description.authority
+    record: FixRecord = {
+        "from": declaredText or recordText(declared or ""),
+        "to": recordText(fix.wkt),
         "reason": fix.reason,
         "automatic": True,
     }
+    if issue.code == "no-crs":
+        record["source"] = "label"
+    if fix.transform is not None:
+        record["transform"] = list(fix.transform)
+    return record
+
+
+def recordText(crs: CRS | str) -> str:
+    """``crs`` as a ``crsFix`` record writes it: its authority code, else its
+    WKT, else (when WKT would lose something, e.g. the west longitude axis
+    of a projected CRS built from a west-positive label) its PROJJSON.
+    Holds PROJ_LOCK."""
+    authority = describeCrs(crs).authority
+    if authority is not None:
+        return authority
+    with PROJ_LOCK:
+        parsed = CRS.from_user_input(crs)
+        wkt = parsed.to_wkt()
+        kept = CRS.from_wkt(wkt)
+        if sameCrs(kept, parsed) and _baseAxes(kept) == _baseAxes(parsed):
+            return wkt
+        return parsed.to_json()
+
+
+def _baseAxes(crs: CRS) -> set[str]:
+    """The directions of ``crs``'s geodetic CRS's axes, in any order
+    (``sameCrs`` compares a projected CRS's own axes only)."""
+    geodetic = crs.geodetic_crs
+    return {axis.direction for axis in geodetic.axis_info} if geodetic else set()
 
 
 def _unknownBody(body: BodyMatch) -> CrsIssue:
