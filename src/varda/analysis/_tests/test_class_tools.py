@@ -2,6 +2,8 @@
 
 import numpy as np
 import pytest
+from affine import Affine
+from pyproj import CRS
 
 from varda.analysis.class_tools import (
     ClumpAnalysis,
@@ -11,10 +13,15 @@ from varda.analysis.class_tools import (
     MajorityRule,
     SieveAnalysis,
     SliceMode,
+    classAreas,
+    classAreasCsv,
     classRaster,
     isClassMap,
 )
 from varda.common.entities import VardaRaster
+from varda.geo.measure import pixelAreaMethod, pixelAreas
+from varda.analysis import class_tools
+from varda.geo._tests.fixtures import LRO_WAC_SOUTH_POLAR_PROJ, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 QUIET = lambda percent, message: None  # noqa: E731
@@ -133,3 +140,109 @@ def test_quantile_slices_have_equal_counts():
         _classes(analysis.run(_band(values), QUIET)).astype(int).ravel()
     )
     assert counts.tolist() == pytest.approx([400] * 4, abs=2)
+
+
+def _mapped() -> VardaRaster:
+    """A 3-class map on Mars's equirectangular sphere at 0°N, 1 km pixels."""
+    base = makeImage(
+        "IAU_2015:49910",
+        centerLonLat=(10.0, 0.0),
+        pixelSize=1000.0,
+        width=12,
+        height=10,
+    )
+    classes = np.full((10, 12), np.nan)
+    classes[:4] = 0
+    classes[4:7, :8] = 1
+    classes[7:, 3:] = 2
+    return classRaster(base, classes, NAMES, COLORS, name="classes", description="test")
+
+
+def _pixelAreas(image: VardaRaster) -> np.ndarray:
+    assert image.crs is not None
+    rows, cols = np.indices((image.height, image.width))
+    return pixelAreas(image.crs, image.transform, rows, cols)
+
+
+def test_class_areas_sum_the_pixel_areas_of_each_class():
+    image = _mapped()
+    classes = _classes(image)
+    areas = _pixelAreas(image)
+    result = classAreas(image)
+    assert [row.name for row in result.rows] == NAMES
+    for k, row in enumerate(result.rows):
+        mask = classes == k
+        assert row.index == k
+        assert row.pixels == mask.sum()
+        assert row.areaKm2 == pytest.approx(areas[mask].sum() / 1e6, rel=1e-12)
+        # ~1 km² pixels at the equator
+        assert row.areaKm2 == pytest.approx(row.pixels, rel=1e-3)
+    assert sum(row.fraction for row in result.rows) == pytest.approx(1.0)
+    assert result.rows[0].fraction == pytest.approx(48 / 99)
+    assert result.totalKm2 == pytest.approx(sum(r.areaKm2 for r in result.rows))
+    assert image.crs is not None
+    assert result.method == pixelAreaMethod(image.crs, image.transform)
+
+
+def test_an_unreferenced_class_map_has_pixel_counts_only():
+    classes = np.array([[0, 0, 1], [2, np.nan, 1]])
+    result = classAreas(_scene(classes))
+    assert [row.pixels for row in result.rows] == [2, 2, 1]
+    assert all(np.isnan(row.areaKm2) for row in result.rows)
+    assert np.isnan(result.totalKm2)
+    assert [row.fraction for row in result.rows] == pytest.approx([0.4, 0.4, 0.2])
+    assert result.method == "pixel counts only: the image has no map coordinates"
+
+
+def test_class_areas_csv_has_header_lines_and_a_row_per_class():
+    text = classAreasCsv(classAreas(_mapped()), "scene.tif")
+    lines = text.splitlines()
+    header = [line for line in lines if line.startswith("#")]
+    assert header[0] == "# image: scene.tif"
+    assert header[1].startswith("# method: exact per row")
+    assert header[2].startswith("# Varda version: ")
+    table = lines[len(header) :]
+    assert table[0] == "class,name,pixels,area_km2,fraction"
+    assert [line.split(",")[:3] for line in table[1:]] == [
+        ["0", "water", "48"],
+        ["1", "rock", "24"],
+        ["2", "dust", "27"],
+    ]
+
+
+def test_class_areas_in_blocks_match_off_the_row_only_path(monkeypatch):
+    base = makeImage(
+        LRO_WAC_SOUTH_POLAR_PROJ,
+        centerLonLat=(0.0, -85.0),
+        pixelSize=500.0,
+        width=9,
+        height=7,
+    )
+    classes = np.arange(63, dtype=float).reshape(7, 9) % 3
+    image = classRaster(base, classes, NAMES, COLORS, name="c", description="t")
+    areas = _pixelAreas(image)
+    monkeypatch.setattr(class_tools, "_BLOCK_PIXELS", 10)  # one row at a time
+    result = classAreas(image)
+    assert result.method.startswith("map pixel area over")
+    for k, row in enumerate(result.rows):
+        assert row.areaKm2 == pytest.approx(areas[classes == k].sum() / 1e6)
+
+
+def test_a_crs_varda_cannot_measure_on_falls_back_to_pixel_counts(monkeypatch):
+    def refuse(*args: object) -> np.ndarray:
+        raise ValueError("the CRS is on no body")
+
+    monkeypatch.setattr(class_tools, "imagePixelAreas", refuse)
+    source = ArrayDataSource(
+        np.zeros((2, 2, 1), np.float32),
+        transform=Affine(1, 0, 0, 0, -1, 2),
+        crs=CRS("+proj=longlat +R=1000 +no_defs"),
+    )
+    base = VardaRaster(source, name="odd")
+    classes = np.array([[0, 1], [2, 2]], float)
+    result = classAreas(
+        classRaster(base, classes, NAMES, COLORS, name="c", description="t")
+    )
+    assert [row.pixels for row in result.rows] == [1, 1, 2]
+    assert np.isnan(result.totalKm2)
+    assert result.method == "pixel counts only: the CRS is on no body"

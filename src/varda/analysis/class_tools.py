@@ -6,10 +6,14 @@ classifiers write."""
 
 from __future__ import annotations
 
+import csv
+import io
 
 import numpy as np
+from attrs import frozen
 from matplotlib import colormaps
 from matplotlib.colors import to_hex
+from pyproj.exceptions import ProjError
 from scipy import ndimage
 
 from varda.analysis.analysis import Analysis, ProgressCallback
@@ -23,7 +27,9 @@ from varda.common.parameter import (
     FloatParameter,
     IntParameter,
 )
+from varda.geo.measure import imagePixelAreas, pixelAreaMethod
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.version import vardaVersion
 
 CATEGORY = "Classification"
 
@@ -53,6 +59,96 @@ def classRaster(
         extraMetadata={"classes": list(names), "classColors": list(colors)},
     )
     return VardaRaster(source, name=name)
+
+
+UNREFERENCED_METHOD = "pixel counts only: the image has no map coordinates"
+# pixels summed at once by classAreas (bounds its temporaries)
+_BLOCK_PIXELS = 1_000_000
+
+
+@frozen
+class ClassArea:
+    """One class of a class map: its pixels and their ground area."""
+
+    index: int  # the 0-based class number in the Class band
+    name: str
+    pixels: int
+    areaKm2: float  # NaN without map coordinates (or where PROJ can't invert)
+    fraction: float  # of the classified pixels
+
+
+@frozen
+class ClassAreas:
+    """Every class's area, and how the areas were measured."""
+
+    rows: tuple[ClassArea, ...]
+    method: str  # pixelAreaMethod's sentence, or why there are only counts
+    totalKm2: float  # of all classified pixels; NaN as the areas
+
+
+def classAreas(image: VardaRaster) -> ClassAreas:
+    """The pixel count, ground area and fraction of each class of a class
+    map: each classified pixel's ground area (``geo.measure.imagePixelAreas``,
+    on the CRS's own surface) summed per class. A pixel counts whole for its
+    class; NaN, non-integer and out-of-range class values are unclassified.
+    Without map coordinates (or a CRS Varda can't measure on) the areas are
+    NaN and ``method`` says why. Never raises for a class map."""
+    names = [str(name) for name in image.extraMetadata.get("classes", [])]
+    count = len(names)
+    classes = readBand(image, 0)
+    height, width = classes.shape
+    areas: np.ndarray | None = None
+    method = UNREFERENCED_METHOD
+    crs = image.crs
+    if crs is not None and image.hasGeospatialData:
+        try:
+            areas = imagePixelAreas(crs, image.transform, width, height)
+            method = pixelAreaMethod(crs, image.transform)
+        except (ValueError, ProjError) as error:
+            areas, method = None, f"pixel counts only: {error}"
+    pixels = np.zeros(count, np.int64)
+    sums = np.zeros(count)
+    step = max(1, _BLOCK_PIXELS // max(width, 1))
+    for top in range(0, height, step):
+        block = classes[top : top + step]
+        valid = np.isfinite(block) & (block >= 0) & (block < count)
+        valid &= block == np.round(block)
+        index = block[valid].astype(np.int64)
+        pixels += np.bincount(index, minlength=count)
+        if areas is not None:
+            sums += np.bincount(
+                index, weights=areas[top : top + step][valid], minlength=count
+            )
+    if areas is None:
+        sums[:] = np.nan
+    km2 = sums / 1e6
+    total = int(pixels.sum())
+    rows = tuple(
+        ClassArea(
+            index=k,
+            name=names[k],
+            pixels=int(pixels[k]),
+            areaKm2=float(km2[k]),
+            fraction=float(pixels[k] / total) if total else 0.0,
+        )
+        for k in range(count)
+    )
+    return ClassAreas(rows=rows, method=method, totalKm2=float(km2.sum()))
+
+
+def classAreasCsv(areas: ClassAreas, imageName: str) -> str:
+    """``areas`` as CSV: ``#`` lines naming the image, the method and Varda's
+    version, then one row per class (blank areas where there are none)."""
+    out = io.StringIO()
+    out.write(f"# image: {imageName}\n")
+    out.write(f"# method: {areas.method}\n")
+    out.write(f"# Varda version: {vardaVersion()}\n")
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["class", "name", "pixels", "area_km2", "fraction"])
+    for row in areas.rows:
+        area = "" if np.isnan(row.areaKm2) else repr(row.areaKm2)
+        writer.writerow([row.index, row.name, row.pixels, area, repr(row.fraction)])
+    return out.getvalue()
 
 
 class ClassMapAnalysis(Analysis):
