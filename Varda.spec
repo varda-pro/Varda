@@ -25,6 +25,13 @@ TORCH_WORKER = [
     for f in Path('src/varda_torch_worker').glob('*.py')
 ]
 
+# Help > Documentation shows the user guide of this version, offline
+USER_GUIDE = [
+    (str(f), str(f.parent))
+    for f in Path('docs/user-guide').rglob('*')
+    if f.is_file()
+]
+
 # Kindle a Feature gives the AI the plugin authoring guide and the examples
 PLUGIN_DOCS = [
     (str(f), str(f.parent))
@@ -44,6 +51,7 @@ a = Analysis(
     + LIBRARY_SPECTRA
     + TORCH_WORKER
     + PLUGIN_DOCS
+    + USER_GUIDE
     # keyring finds its keychain backends through package metadata
     + copy_metadata('keyring')
     # Help > About reads the version from package metadata; Cite reads CITATION.cff
