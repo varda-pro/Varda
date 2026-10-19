@@ -1,13 +1,47 @@
 from typing import Optional, Type
 
 from PyQt6.QtCore import QObject, pyqtSignal, QEvent
-from PyQt6.QtWidgets import QToolBar
+from PyQt6.QtWidgets import QFrame, QSizePolicy, QToolButton, QWidget
 from PyQt6.QtGui import QAction, QActionGroup
 
+from varda.common.ui import FlowLayout
 from varda.image_rendering.raster_view.viewport_tools.viewport_tool import ViewportTool
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
 from varda.image_rendering.raster_view.pointer_event import KeyEvent
 from varda.image_rendering.raster_view.viewport_tools.tool_registry import ToolRegistry
+
+
+class WrappingToolBar(QWidget):
+    """A row of tool buttons that wraps onto another row when the view is
+    narrow, so no tool hides behind a QToolBar's » overflow menu."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._flow = FlowLayout(self)
+        self._flow.setSpacing(2)
+        self._buttons: dict[QAction, QToolButton] = {}
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def addToolAction(self, action: QAction) -> QToolButton:
+        """Add ``action`` (also to ``actions()``) as a button in the row."""
+        self.addAction(action)
+        button = QToolButton(self)
+        button.setDefaultAction(action)
+        button.setAutoRaise(True)
+        self._flow.addWidget(button)
+        self._buttons[action] = button
+        return button
+
+    def addSeparator(self) -> None:
+        line = QFrame(self)
+        line.setFrameShape(QFrame.Shape.VLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        self._flow.addWidget(line)
+
+    def widgetForAction(self, action: QAction) -> QToolButton | None:
+        return self._buttons.get(action)
 
 
 class ToolManager(QObject):
@@ -78,9 +112,11 @@ class ToolManager(QObject):
             return self.activeTool.onKeyEvent(KeyEvent.fromQt(event))
         return False
 
-    def _createToolbar(self) -> QToolBar:
-        """Create a toolbar with actions for all available tools."""
-        toolbar = QToolBar("Tools")
+    def _createToolbar(self) -> WrappingToolBar:
+        """Create a toolbar with actions for all available tools, in the
+        order they were registered (Pixel Select, the first step of looking
+        at an image, comes first)."""
+        toolbar = WrappingToolBar()
 
         # One tool at a time, but the active one can be clicked again to turn
         # it off and go back to plain navigation.
@@ -92,12 +128,11 @@ class ToolManager(QObject):
         # Add tools by category
         currentCategory = None
 
-        # Sort categories to ensure consistent order
-        categories = sorted(
+        categories = [
             c
             for c in self.toolRegistry.getCategories()
             if c not in self.excludeCategories
-        )
+        ]
 
         for category in categories:
             # Get tools in this category
@@ -115,9 +150,6 @@ class ToolManager(QObject):
 
             currentCategory = category
 
-            # Sort tools by name for consistent order
-            tools.sort(key=lambda t: t.toolName)
-
             # Add each tool's action to the toolbar
             for toolClass in tools:
                 action = toolClass.createAction(toolbar)
@@ -125,7 +157,7 @@ class ToolManager(QObject):
                     lambda checked, tc=toolClass: self._onToolTriggered(tc, checked)
                 )
                 actionGroup.addAction(action)
-                toolbar.addAction(action)
+                toolbar.addToolAction(action)
                 self.toolActions[toolClass] = action
 
         return toolbar
