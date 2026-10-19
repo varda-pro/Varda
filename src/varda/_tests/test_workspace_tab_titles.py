@@ -2,7 +2,7 @@
 
 import pytest
 from app_model import Application
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 
 from varda.common.di_types import ProjectImages
 from varda.maingui import MainGUI, elidedTabTitle
@@ -86,3 +86,22 @@ def test_a_new_workspace_tab_comes_to_the_front(gui):
     gui.addTab(second, "second")
 
     assert gui.currentWorkspace() is second
+
+
+def test_the_empty_window_says_how_to_start(gui, monkeypatch):
+    """Release QA #11: an empty window gave no hint of what to do first."""
+    assert gui.centralWidget().currentWidget() is gui.startPanel
+    text = gui.startPanel.findChild(QLabel, "startHint").text()
+    assert "drop" in text.lower()
+    ran = []
+    monkeypatch.setattr(gui.app.commands, "execute_command", ran.append)
+    gui.startPanel.findChild(QPushButton, "importButton").click()
+    assert ran == ["varda.file.import_image"]
+
+
+def test_the_start_panel_gives_way_to_workspaces_and_comes_back(gui):
+    workspace = QWidget()
+    gui.addTab(workspace, "a")
+    assert gui.centralWidget().currentWidget() is gui.centralTabs
+    gui.closeWorkspace(workspace)
+    assert gui.centralWidget().currentWidget() is gui.startPanel

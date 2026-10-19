@@ -2,12 +2,24 @@ import logging
 from collections.abc import Iterable
 from pathlib import Path
 
-from app_model.types import Action, MenuRule, StandardKeyBinding
+from app_model.types import (
+    Action,
+    KeyBindingRule,
+    KeyCode,
+    KeyMod,
+    MenuRule,
+    StandardKeyBinding,
+)
 from PyQt6.QtCore import QStandardPaths, Qt
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QProgressDialog
 
 from varda.utilities.resources import bundledIcon
 from varda._actions._menu_ids import MenuGroup, MenuId
+from varda.command_ids import (
+    IMPORT_IMAGE_ID,
+    OPEN_SESSION_ID,
+    RESTORE_LAST_SESSION_ID,
+)
 from varda.common.di_types import ProjectImages
 from varda.context_keys import EXPR_HAS_IMAGES
 from varda.image_loading import ImageLoadingService
@@ -217,12 +229,13 @@ def exitApp() -> None:
 
 FILE_ACTIONS: list[Action] = [
     Action(
-        id="varda.file.import_image",
+        id=IMPORT_IMAGE_ID,
         title="Import Image(s)",
         icon=bundledIcon("folder-open"),
         callback=importImage,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_IO, order=1)],
-        keybindings=[StandardKeyBinding.New.to_keybinding_rule()],
+        # Open is where users look for opening an image
+        keybindings=[StandardKeyBinding.Open.to_keybinding_rule()],
     ),
     Action(
         id="varda.file.export_image",
@@ -233,12 +246,14 @@ FILE_ACTIONS: list[Action] = [
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_IO, order=2)],
     ),
     Action(
-        id="varda.file.open_session",
+        id=OPEN_SESSION_ID,
         title="Open Session…",
         icon=bundledIcon("folder-tree"),
         callback=openSession,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_SESSION, order=1)],
-        keybindings=[StandardKeyBinding.Open.to_keybinding_rule()],
+        keybindings=[
+            KeyBindingRule(primary=KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyO)
+        ],
     ),
     Action(
         id="varda.file.save_session",
@@ -262,7 +277,7 @@ FILE_ACTIONS: list[Action] = [
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_SESSION, order=3)],
     ),
     Action(
-        id="varda.file.restore_last_session",
+        id=RESTORE_LAST_SESSION_ID,
         title="Restore Last Session",
         icon=bundledIcon("clock-rotate-left"),
         callback=restoreLastSession,

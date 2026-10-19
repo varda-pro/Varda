@@ -1,8 +1,19 @@
 # Sessions and saving results
 
+## Opening images
+
+**File → Import Image(s)…** (⌘O on a Mac, Ctrl+O elsewhere), the buttons in
+the empty window, or dropping files on the window open images. Images chosen
+together join the Image List in the order you chose them, whichever finishes
+loading first. While any is still loading, a window says Varda is opening
+them. When a file can't be opened, the message says why in plain words (a
+folder, a file that doesn't exist or is empty, a damaged or incomplete file,
+an ENVI header with no bands, a format Varda doesn't read, no permission) and
+what to do; GDAL's own text is under **Show Details…**.
+
 ## Workspace tabs
 
-Workspaces open as tabs, which work like a web browser's: drag a tab to
+A new workspace comes to the front. Workspaces open as tabs, which work like a web browser's: drag a tab to
 reorder it, drag it out of the tab bar (or double-click it) to open it in a
 window of its own, and close it with its × or a middle click. Closing a
 workspace's own window puts it back in the tabs. Sessions reopen the
@@ -22,7 +33,7 @@ render settings and histogram), leaving the two images and the ratio plots.
 
 **File → Save Session…** (⌘S) writes a `.varda` file recording the open
 images (by path), the open workspaces and their ROIs. **File → Open Session…**
-(⌘O) loads the images and reopens the workspaces alongside whatever is already
+(⇧⌘O on a Mac, Ctrl+Shift+O elsewhere) loads the images and reopens the workspaces alongside whatever is already
 open. Images that exist only in memory (analysis results you have not
 exported) are left out, so export them first, or package the project.
 
