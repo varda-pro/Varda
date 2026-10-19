@@ -38,9 +38,11 @@ def transformPoints(
     points on ``dst``, the same direction from the body's center (the same
     planetocentric longitude and latitude).
 
-    When both share one surface (or PROJ knows a real transformation, such
-    as Earth's datum shifts) this is PROJ's own operation. Between different
-    surfaces of one body, where PROJ has only a ballpark:
+    When both share one surface (or PROJ knows a real transformation
+    between registered datums, such as Earth's datum shifts) this is PROJ's
+    own operation. Between other surfaces of one body, where PROJ only keeps
+    the latitude's number (its ballpark, or what it calls "Transformation
+    from unknown to unknown" for ``+lon_wrap`` or ``+over``):
 
     1. ``src`` → longitude (east) and geodetic latitude on ``src``'s own
        datum, with PROJ (an exact conversion: projection, axes, west-positive
@@ -87,6 +89,74 @@ def transformPoints(
             out = route.dst.plain.transform(lon.tolist(), lat.tolist())
     first, second = (np.asarray(v, dtype=np.float64) for v in out)
     return (second, first) if route.dst.latitudeFirst else (first, second)
+
+
+def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
+    """The PROJ pipeline that moves rasters from ``src`` to ``dst`` as
+    ``transformPoints`` moves points, for GDAL's warper (its
+    ``COORDINATE_OPERATION`` option), in the CRSs' own axis order; None when
+    PROJ's own operation is exact (equivalent CRSs, one surface, or a real
+    transformation such as Earth's datum shifts). Between surfaces of one
+    body, where PROJ has only its ballpark, its steps are:
+
+    1. ``src`` → longitude east and geodetic latitude in degrees (PROJ's own
+       steps, ``transformPoints``' step 1);
+    2. degrees → radians;
+    3. ``+proj=geoc`` on ``src``'s ellipsoid (geodetic → planetocentric),
+       left out when its latitude numbers are already planetocentric;
+    4. ``+inv +proj=geoc`` on ``dst``'s ellipsoid, left out likewise;
+    5. radians → degrees;
+    6. → ``dst`` (PROJ's own steps).
+
+    On a sphere the geoc steps change nothing. Raises ValueError with
+    ``canTransform``'s reason (e.g. different bodies). Holds PROJ_LOCK; no
+    Qt."""
+    reason = canTransform(src, dst)
+    if reason is not None:
+        raise ValueError(reason)
+    if sameCrs(src, dst):
+        return None
+    with PROJ_LOCK:
+        return _warpOperation(_key(src), _key(dst))
+
+
+def warpOptions(src: CRS | str, dst: CRS | str) -> dict[str, str]:
+    """GDAL warper options that place a raster from ``src`` on ``dst`` as
+    ``transformPoints`` places points (``warpOperation``): pass them to
+    ``rasterio.warp.reproject``. Empty when PROJ's own operation is exact.
+    Raises ValueError as ``warpOperation`` does."""
+    operation = warpOperation(src, dst)
+    return {} if operation is None else {"COORDINATE_OPERATION": operation}
+
+
+@lru_cache(maxsize=64)
+def _warpOperation(srcKey: str, dstKey: str) -> str | None:
+    """The caller holds PROJ_LOCK."""
+    route = _route(srcKey, dstKey)
+    if route.direct is not None:
+        return None
+    steps = [*_steps(route.src.plain), "proj=unitconvert xy_in=deg xy_out=rad"]
+    for side, inverse in ((route.src, ""), (route.dst, "inv ")):
+        if not side.centricNumbers:
+            steps.append(
+                f"{inverse}proj=geoc a={side.semiMajor!r} b={side.semiMinor!r}"
+            )
+    steps += ["proj=unitconvert xy_in=rad xy_out=deg", *_steps(route.dst.plain)]
+    return " ".join(
+        ["+proj=pipeline"]
+        + [" ".join(["+step", *(f"+{word}" for word in s.split())]) for s in steps]
+    )
+
+
+def _steps(transformer: Transformer) -> list[str]:
+    """The steps of ``transformer``'s PROJ definition, without the
+    ``proj=pipeline`` head (one step when it isn't a pipeline)."""
+    parts = transformer.definition.split(" step ")
+    if parts[0].strip() == "proj=pipeline":
+        return parts[1:]
+    if parts[0].startswith("proj=pipeline "):
+        raise ValueError(f"Unexpected PROJ pipeline options: {parts[0]}")
+    return parts
 
 
 def planetocentricLonLat(
@@ -165,6 +235,8 @@ class _Side:
     # (planetocentric) CRS latitude first
     plain: Transformer
     ratio: float  # (c/a)² of its ellipsoid; 1 on a sphere
+    semiMajor: float  # a, meters
+    semiMinor: float  # c, meters
     # the numbers PROJ reads as geodetic latitude are planetocentric (an
     # ellipsoidal coordinate system whose latitude is named planetocentric)
     centricNumbers: bool
@@ -176,8 +248,8 @@ class _Route:
     src: _Side
     dst: _Side
     # PROJ's own operation, when it is exact or a real transformation (the
-    # same surface, or Earth's datum shifts); None when PROJ has only a
-    # ballpark between different surfaces, which goes through the sides
+    # same surface, or Earth's datum shifts between registered datums); None
+    # between different surfaces otherwise, which go through the sides
     direct: Transformer | None
 
 
@@ -192,7 +264,7 @@ def _route(srcKey: str, dstKey: str) -> _Route:
     build), used only inside PROJ_LOCK; the caller holds it."""
     src, dst = CRS.from_user_input(srcKey), CRS.from_user_input(dstKey)
     direct = Transformer.from_crs(src, dst)
-    if not _sameSurface(src, dst) and "ballpark" in direct.description.lower():
+    if not _sameSurface(src, dst) and not _datumShift(src, dst, direct):
         direct = None
     return _Route(
         _source(srcKey), _side(dst, Transformer.from_crs(_plain(dst), dst)), direct
@@ -216,18 +288,37 @@ def _side(crs: CRS, plain: Transformer) -> _Side:
     return _Side(
         plain,
         (ellipsoid.semi_minor_metre / ellipsoid.semi_major_metre) ** 2,
+        ellipsoid.semi_major_metre,
+        ellipsoid.semi_minor_metre,
         centric and _subtype(crs) != "spherical",
         _latitudeFirst(crs),
     )
 
 
 def _sameSurface(a: CRS, b: CRS) -> bool:
+    """The same ellipsoid (or sphere), to 1 mm in each radius. Decided from
+    the CRSs, never from PROJ's description of its operation: PROJ names the
+    latitude-keeping operation between PROJ strings with ``+lon_wrap`` or
+    ``+over`` "Transformation from unknown to unknown", not a ballpark."""
     ellipsoidA, ellipsoidB = a.ellipsoid, b.ellipsoid
     assert ellipsoidA is not None and ellipsoidB is not None
     return (
-        ellipsoidA.semi_major_metre == ellipsoidB.semi_major_metre
-        and ellipsoidA.semi_minor_metre == ellipsoidB.semi_minor_metre
+        abs(ellipsoidA.semi_major_metre - ellipsoidB.semi_major_metre) <= 1e-3
+        and abs(ellipsoidA.semi_minor_metre - ellipsoidB.semi_minor_metre) <= 1e-3
     )
+
+
+def _datumShift(a: CRS, b: CRS, operation: Transformer) -> bool:
+    """Whether ``operation`` is a real transformation between two different
+    surfaces (Earth's datum shifts, e.g. NAD27 → WGS 84): both datums are
+    registered with an authority (EPSG, IAU) and PROJ found more than a
+    ballpark between them. Otherwise PROJ only keeps the latitude's number,
+    whatever it calls the operation."""
+    registered = all(
+        crs.datum is not None and crs.datum.to_json_dict().get("id") is not None
+        for crs in (a, b)
+    )
+    return registered and "ballpark" not in operation.description.lower()
 
 
 def _subtype(crs: CRS) -> str | None:

@@ -268,6 +268,48 @@ sphere, so the same line measured in the two differs by the ratio of their
 radii (0.07% for these two). State the radius of each product you measure
 on.
 
+### Rasters between surfaces of one body
+
+Rasters have the same problem as points. GDAL's warper, which reprojects
+and resamples images, asks PROJ for the operation between the two CRSs,
+and between a sphere and an ellipsoid of one body PROJ has only its
+ballpark, which keeps the number of the geodetic latitude. Checked with
+GDAL 3.9.3 and PROJ 9.5.1: a pixel at 45°N on the 3396.19 km Mars sphere,
+warped onto a 500 m grid on the Mars ellipsoid (`IAU_2015:49912`,
+planetocentric), landed 40 rows (20 km) south of where it belongs.
+
+So Varda hands GDAL its own operation (the warper's `COORDINATE_OPERATION`
+option): one PROJ pipeline that does what the four steps above do for
+points. Its steps are:
+
+1. the source CRS → longitude east and geodetic latitude in degrees on its
+   own datum (PROJ's exact steps: the inverse projection, the axes, a
+   west-positive longitude);
+2. degrees → radians;
+3. `+proj=geoc` on the source's ellipsoid: geodetic → planetocentric
+   latitude (Snyder, 1987, eq. 3-28), left out when the source's latitude
+   numbers are already planetocentric;
+4. `+inv +proj=geoc` on the target's ellipsoid: planetocentric → geodetic,
+   left out likewise;
+5. radians → degrees;
+6. → the target CRS (PROJ's exact steps).
+
+On a sphere the geoc steps change nothing. Every pixel position then
+matches the points' route to 1e-6 m (tested over Mars, including polar
+stereographic onto the west-positive, planetographic `IAU_2015:49901`), and
+the 45°N pixel above lands on its own row. When both CRSs share one
+surface (radii equal to 1 mm), or PROJ knows a real transformation between
+two registered datums (Earth's datum shifts), GDAL's own operation is used
+unchanged. Varda decides this from the two CRSs, not from PROJ's name for
+its operation: between PROJ strings with `+lon_wrap` or `+over`, PROJ calls
+the same latitude-keeping operation "Transformation from unknown to
+unknown", and points and rasters take the route above there too. Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
+Mask…), display overlays and Reproject Image all place rasters this way,
+and a resampled input's provenance metadata records the operation
+(`coordinateOperation`: the pipeline, or `PROJ` for PROJ's own). The
+resampling itself (nearest, bilinear, average) is still GDAL's, with its
+own interpolation error; this only fixes where each pixel goes.
+
 ### Different bodies are never combined
 
 Coordinates on Mars mean nothing on the Moon, so Varda refuses to combine

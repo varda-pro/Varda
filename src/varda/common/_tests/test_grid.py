@@ -28,6 +28,7 @@ from varda.geo._tests.fixtures import (
     WGS84,
     makeImage,
 )
+from varda.geo.transform import transformPoints, warpOptions
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 UTM = CRS.from_epsg(32612)
@@ -249,3 +250,65 @@ def test_two_crism_scenes_need_reprojecting_not_one_grid():
     assert not sameGrid(north, sameNumbers)  # same transform, other surface
     assert not sameGrid(north, south)
     assert placementProblem(south, north) is None  # reprojected onto it
+
+
+# the Mars sphere in degrees: 100 × 100 pixels of 0.01°, the marker pixel's
+# center at (77.505°E, 44.995°N), row 50, column 50
+SPHERE_DEGREES = CRS.from_user_input("+proj=longlat +R=3396190 +no_defs")
+MARKER_LON_LAT = (77.505, 44.995)
+
+
+def _markerScene() -> tuple[VardaRaster, VardaRaster]:
+    """The sphere image with its marker, and a 100 × 100, 500 m grid on the
+    Mars ellipsoid (``IAU_2015:49912``, planetocentric) whose pixel (50, 50)
+    is centered where ``transformPoints`` puts the marker."""
+    values = np.zeros((100, 100), np.float32)
+    values[50, 50] = 1.0
+    source = _raster(
+        values, "sphere", Affine(0.01, 0, 77.0, 0, -0.01, 45.5), SPHERE_DEGREES
+    )
+    ellipsoid = CRS.from_user_input("IAU_2015:49912")
+    (x,), (y,) = transformPoints(
+        SPHERE_DEGREES, ellipsoid, [MARKER_LON_LAT[0]], [MARKER_LON_LAT[1]]
+    )
+    transform = Affine(500.0, 0, x - 50.5 * 500.0, 0, -500.0, y + 50.5 * 500.0)
+    target = _raster(np.zeros((100, 100)), "ellipsoid", transform, ellipsoid)
+    return source, target
+
+
+def test_onGridOf_keeps_planetocentric_latitude():
+    source, target = _markerScene()
+    out = onGridOf(source, target, Resampling.nearest)[..., 0]
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    # GDAL's ballpark put it 40 rows (20 km) south
+    assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5
+
+
+def test_resampling_record_names_the_operation():
+    source, target = _markerScene()
+    record = resamplingRecord(source, target, Resampling.nearest)
+    assert record is not None and "geoc" in record["coordinateOperation"]
+    crism, _, dem, *_ = _scene()
+    same = resamplingRecord(dem, crism, Resampling.average)
+    assert same is not None and same["coordinateOperation"] == "PROJ"
+
+
+def test_onGridOf_onto_a_lon_wrap_ellipsoid_keeps_planetocentric_latitude():
+    """PROJ names this pair's operation "Transformation from unknown to
+    unknown", not a ballpark, yet it keeps the latitude's number too."""
+    source, _ = _markerScene()
+    wrapped = CRS.from_user_input(
+        "+proj=longlat +a=3396190 +b=3376200 +lon_wrap=180 +no_defs"
+    )
+    assert warpOptions(SPHERE_DEGREES, wrapped)
+    (lon,), (lat,) = transformPoints(
+        SPHERE_DEGREES, wrapped, [MARKER_LON_LAT[0]], [MARKER_LON_LAT[1]]
+    )
+    transform = Affine(0.01, 0, lon - 0.505, 0, -0.01, lat + 0.505)
+    target = _raster(np.zeros((100, 100)), "wrapped", transform, wrapped)
+    out = onGridOf(source, target, Resampling.nearest)[..., 0]
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    # PROJ's latitude-keeping operation put it 34 rows (0.34°) south
+    assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5

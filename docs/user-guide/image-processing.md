@@ -209,7 +209,12 @@ out of the resampling; image pixels outside the source, or with no source
 data under them, are no data. The result's description says what was done
 ("ctx_dem resampled from 6.0 m to 18.0 m pixels (average)", "reprojected
 and resampled" across map projections), and its metadata keeps the source,
-the method, both pixel sizes and both coordinate systems. If you need
+the method, both pixel sizes and both coordinate systems. Between a sphere
+and an ellipsoid of one body (or two spheres), positions keep their
+planetocentric longitude and latitude, and the metadata's
+`coordinateOperation` names the PROJ pipeline used (`PROJ` when PROJ's own
+operation is exact); see [Rasters between surfaces of one
+body](coordinate-systems.md#rasters-between-surfaces-of-one-body). If you need
 another method (cubic, a mode filter, a different target grid), resample
 the input yourself first (e.g. GDAL's `gdalwarp`, or Varda's Resample) and
 choose that image: an image on the same grid is never resampled again.

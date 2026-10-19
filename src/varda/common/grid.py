@@ -22,6 +22,7 @@ from rasterio.windows import from_bounds
 from varda.common.entities import VardaRaster
 from varda.geo.describe import describeCrs
 from varda.geo.equivalence import Compatibility, canTransform, compatibility, sameCrs
+from varda.geo.transform import warpOperation, warpOptions
 
 # source pixels read beyond the target's footprint, so the resampling
 # kernels at its edge have their neighbors
@@ -301,7 +302,8 @@ def onGridOf(
     """``source``'s ``bands`` (all by default) on ``target``'s pixel grid,
     as float64 (rows, cols, bands): read as they are when the grids are the
     same, otherwise reprojected and resampled by map location with
-    ``resampling`` (GDAL's warper). No data in the source (its no-data value
+    ``resampling`` (GDAL's warper; between surfaces of one body, positions
+    keep their planetocentric coordinates, ``warpOptions``). No data in the source (its no-data value
     or masked pixels) is left out of the resampling; target pixels outside
     the source, or with no source data under them, are NaN."""
     if sameGrid(source, target):
@@ -317,6 +319,7 @@ def onGridOf(
     window = _sourceWindow(source, target, shift)
     if window is None:
         return out.transpose(1, 2, 0)
+    assert source.crs is not None and target.crs is not None  # placementProblem
     data = _readFloat(source, bands, window).transpose(2, 0, 1)
     # the source's longitudes, written in the target's convention
     sourceTransform = Affine.translation(-shift, 0.0) * source.transform
@@ -330,6 +333,7 @@ def onGridOf(
         dst_crs=target.crs,
         dst_nodata=np.nan,
         resampling=resampling,
+        **warpOptions(source.crs, target.crs),
     )
     return out.transpose(1, 2, 0)
 
@@ -353,7 +357,8 @@ def resamplingRecord(
     source: VardaRaster, target: VardaRaster, resampling: Resampling
 ) -> dict | None:
     """The resampling, for a result's provenance metadata (None on the same
-    grid)."""
+    grid). Call it after ``onGridOf`` succeeded: for images that can't be
+    placed it raises ValueError (``warpOperation``)."""
     if sameGrid(source, target):
         return None
     assert source.crs is not None and target.crs is not None
@@ -366,4 +371,6 @@ def resamplingRecord(
         "toPixelSize": pixelSizeText(target),
         "fromCrs": source.crs.to_string(),
         "toCrs": target.crs.to_string(),
+        # the PROJ pipeline between surfaces of one body, or PROJ's own
+        "coordinateOperation": warpOperation(source.crs, target.crs) or "PROJ",
     }
