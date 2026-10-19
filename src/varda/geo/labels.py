@@ -4,7 +4,9 @@ body, latitude type and longitude conventions, read from a PDS3 label
 
 PDS3 labels (and attached ISIS labels) are plain ODL/PVL, read with a minimal
 reader here: ``KEY = VALUE`` statements, quoted and multi-line values,
-``GROUP``/``OBJECT`` nesting, and units in ``<…>`` stripped. PDS4 and ISIS
+``GROUP``/``OBJECT`` nesting, and units in ``<…>`` stripped from values and
+kept beside them as ``{KEY}_UNIT`` (e.g. ``MAP_SCALE_UNIT = "METERS/PIXEL"``).
+PDS4 and ISIS
 labels come from the ``xml:PDS4`` and ``json:ISIS3`` metadata domains GDAL
 exposes. An image Varda made has no label of its own; its provenance record
 keeps its inputs' label facts (``hintsRecord``), and ``provenanceHints``
@@ -51,7 +53,9 @@ class LabelHints:
     latitudeType: str | None  # "planetocentric" | "planetographic"
     longitudeDirection: str | None  # "east" | "west"
     longitudeDomain: str | None  # "0..360" | "-180..180"
-    projectionGroup: dict[str, str]  # MAP_PROJECTION / Mapping / cart keys, upper-case
+    # MAP_PROJECTION / Mapping / cart keys, upper-case, values without units;
+    # a value's unit, when the label gives one, is under "{KEY}_UNIT"
+    projectionGroup: dict[str, str]
     source: str  # "PDS3 label x.lbl", "PDS4 label", "ISIS cube label", or why none
 
     @classmethod
@@ -247,6 +251,14 @@ def _open(value: str) -> bool:
     return value.count("(") + value.count("{") > value.count(")") + value.count("}")
 
 
+def _unit(value: str) -> str | None:
+    """The unit in ``<…>`` after a value (or after its quotes), if any."""
+    if value.startswith('"'):
+        value = value[1:].partition('"')[2]
+    found = _UNITS.search(value)
+    return " ".join(found.group()[1:-1].split()) if found else None
+
+
 def _clean(value: str) -> str:
     """A value's text: quotes removed, units stripped, whitespace collapsed."""
     if value.startswith('"'):
@@ -257,7 +269,8 @@ def _clean(value: str) -> str:
 
 def parseOdl(text: str) -> Node:
     """A minimal ODL/PVL reader: the label as a tree with upper-case keys;
-    a repeated key keeps its first value, and repeated groups merge."""
+    a repeated key keeps its first value, and repeated groups merge. A
+    value's unit is kept as ``{KEY}_UNIT``."""
     root: Node = {}
     stack = [root]
     for key, value in _statements(text):
@@ -273,6 +286,8 @@ def parseOdl(text: str) -> Node:
                 stack.pop()
         else:
             stack[-1].setdefault(key, _clean(value))
+            if (unit := _unit(value)) is not None:
+                stack[-1].setdefault(f"{key}_UNIT", unit)
     return root
 
 
@@ -331,7 +346,8 @@ def _isisJsonHints(text: str) -> LabelHints:
 
 def _jsonNode(obj: dict[str, object]) -> Node:
     """GDAL's ``json:ISIS3`` label as an ODL tree: ``{"value", "unit"}``
-    pairs become their value, and GDAL's ``_type`` keys are dropped."""
+    pairs become their value, with the unit as ``{KEY}_UNIT``, and GDAL's
+    ``_type`` keys are dropped."""
     node: Node = {}
     for key, value in obj.items():
         if key.startswith("_"):
@@ -342,6 +358,8 @@ def _jsonNode(obj: dict[str, object]) -> Node:
                 node[key.upper()] = _jsonNode(fields)
                 continue
             value = fields["value"]
+            if fields.get("unit") is not None:
+                node[f"{key.upper()}_UNIT"] = str(fields["unit"])
         if isinstance(value, list):
             value = ", ".join(str(item) for item in value)
         node[key.upper()] = str(value)
@@ -368,6 +386,8 @@ def _isisHints(root: Node) -> LabelHints:
 
 
 def _pds4Hints(text: str) -> LabelHints:
+    """The hints of a PDS4 label; each leaf ``cart:`` element's text, with
+    its ``unit`` attribute as ``{KEY}_UNIT`` when it has one."""
     root = ET.fromstring(text.encode())
     target = None
     cart: dict[str, str] = {}
@@ -378,7 +398,11 @@ def _pds4Hints(text: str) -> LabelHints:
                 (c.text for c in element if c.tag.rpartition("}")[2] == "name"), None
             )
         elif "/cart/" in namespace and len(element) == 0 and element.text:
-            cart.setdefault(name.upper(), element.text.strip())
+            key = name.upper()
+            if key not in cart:
+                cart[key] = element.text.strip()
+                if unit := element.get("unit"):
+                    cart[f"{key}_UNIT"] = unit.strip()
     return LabelHints(
         target=_target(target),
         latitudeType=_latitudeType(cart.get("LATITUDE_TYPE")),

@@ -122,6 +122,22 @@ authority, whose codes are those used in OGC services for planetary data
   planetographic) has a west-positive longitude axis; eastward for Earth and
   the Moon by tradition, and for Venus, which rotates retrograde. Varda reads the direction from the CRS's
   longitude axis, and PROJ applies it in every transformation.
+- **Map x increases eastward, also in west-positive labels (an assumption).**
+  When Varda builds a CRS from a label whose longitude is positive west
+  (PDS3 `POSITIVE_LONGITUDE_DIRECTION = WEST`, ISIS `PositiveWest`, PDS4
+  "Positive West"), the CRS's central meridian is the label's center
+  longitude converted to east-positive (100°W becomes −100°), and its
+  longitude axis points west, so readouts show °W as the label does. Varda
+  assumes the label's map x, and so its sample number, still increases
+  **eastward**, toward smaller west longitudes. That is the PDS3
+  equirectangular relation for west longitudes, lon = CENTER_LONGITUDE −
+  x / (R cos φ₁) with x = (sample − SAMPLE_PROJECTION_OFFSET − 1) ×
+  MAP_SCALE (PDS3 Standards Reference), ISIS's convention (its projections
+  negate the longitude difference for `PositiveWest` before computing x),
+  and what GDAL reads. A product that numbered its samples westward
+  instead would appear mirrored about its central meridian. To check one,
+  compare the longitudes of its first and last samples with the label's
+  `WESTERNMOST_LONGITUDE` and `EASTERNMOST_LONGITUDE`.
 - **0..360 vs −180..180.** Both are correct; they name the same places.
   Varda reports **0..360** when a geographic image's longitudes go past 180°
   (e.g. a MOLA MEGDR from 0° to 360°) or a projection's central meridian is
