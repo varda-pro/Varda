@@ -234,8 +234,8 @@ def recommendProjection(
 
 def isGlobal(footprint: Footprint) -> bool:
     """Whether the scene is global: it contains both poles, or spans at
-    least 180° of latitude or (without a pole) 300° of longitude. No one projection has low
-    distortion over it."""
+    least 180° of latitude or (without a pole) 300° of longitude. No one
+    projection has low distortion over it."""
     return (
         footprint.pole == "both"
         or footprint.north - footprint.south >= GLOBAL_LATITUDE_SPAN
@@ -263,7 +263,7 @@ def _global(
             "stay geodesic on the body; crop to the area of interest for a local "
             "projection"
         )
-    if sameCrs(crs, _proj(definition, _ownSurface(crs))):
+    if sameCrs(crs, _proj(definition, _ownSurface(crs)[0])):
         return Recommendation(
             wkt=_wkt(crs),
             description=describeCrs(crs),
@@ -309,7 +309,7 @@ def _surface(crs: CRS | str, existing: Sequence[CRS | str]) -> tuple[str, bool]:
     """The PROJ surface parameters (rule 4), and whether it's an ellipsoid."""
     body = identifyBody(crs).body
     if body is None:
-        return _ownSurface(crs), False
+        return _ownSurface(crs)
     if existing and all(_onReferenceEllipsoid(other, body) for other in existing):
         reference = body.referenceCrs().ellipsoid
         assert reference is not None
@@ -319,13 +319,14 @@ def _surface(crs: CRS | str, existing: Sequence[CRS | str]) -> tuple[str, bool]:
     return _parameters(sphere.semi_major_metre, sphere.semi_major_metre)
 
 
-def _ownSurface(crs: CRS | str) -> str:
-    """``crs``'s own surface as PROJ parameters."""
+def _ownSurface(crs: CRS | str) -> tuple[str, bool]:
+    """``crs``'s own surface as PROJ parameters, and whether it's an
+    ellipsoid."""
     with PROJ_LOCK:
         ellipsoid = CRS.from_user_input(crs).ellipsoid
     if ellipsoid is None:
         raise ValueError(f"No surface to project on: {crs}")
-    return _parameters(ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre)[0]
+    return _parameters(ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre)
 
 
 def _parameters(a: float, b: float) -> tuple[str, bool]:

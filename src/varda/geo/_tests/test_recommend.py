@@ -238,3 +238,19 @@ def test_rounds_half_away_from_zero():
     for lon, expected in ((77.5, 78), (-77.5, -78)):
         image = makeImage(CTX_DEM_PROJ, centerLonLat=(lon, 18.4), pixelSize=20)
         assert _params(_recommend(image, Purpose.MOSAIC))["lon_0"] == expected
+
+
+def test_unknown_oblate_body_converts_latitudes_to_planetographic():
+    # an unknown ellipsoid: PROJ reads lat_ts as geodetic, so the scene's
+    # planetocentric center (about 40.07°) is converted back to about 42°
+    crs = "+proj=eqc +a=3000000 +b=2900000 +units=m +no_defs"
+    image = makeImage(crs, centerLonLat=(10, 42), pixelSize=100)
+    assert abs(_footprint(image).center[1] - 42) > 1
+    recommendation = _recommend(image, Purpose.MOSAIC)
+    ellipsoid = CRS.from_wkt(recommendation.wkt).ellipsoid
+    assert ellipsoid is not None
+    assert (ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre) == (
+        3000000,
+        2900000,
+    )
+    assert _params(recommendation)["lat_ts"] == 42
