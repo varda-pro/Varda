@@ -1,15 +1,19 @@
 """Tests for ROIManagerWidget plotting + denominator behavior."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
+import pytest
 from psygnal import SignalInstance
 from PyQt6.QtWidgets import QMessageBox
 from shapely.geometry import box
 
 from varda.common.entities import Color, ROIMode
 from varda.common.spectral_axis import BandModel
+from varda.geo._tests.fixtures import LRO_WAC_PROJ, makeImage
 from varda.plotting.plot import VardaPlotWidget
+from varda.rois.roi_calculations import PixelAreaCache, ZonalStatistic
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_drawing_state import ROIDrawingState
 from varda.rois.roi_drawing_widgets import ROIClassPicker, ROIShapePicker
@@ -296,3 +300,18 @@ def test_delete_selected_removes_every_selected_roi_after_asking(
     )
     w._deleteBtn.click()
     assert len(c) == 0
+
+
+def test_area_columns_fill_in_from_the_background(qtbot):
+    """The widget computes pixel areas off the GUI thread; the columns are
+    blank until they arrive."""
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    c = ROICollection.fromImage(image)
+    (x0, y0), (x1, y1) = image.transform * (27, 27), image.transform * (37, 37)
+    fid = c.addROI(box(x0, y1, x1, y0), "r", RED, ROIMode.RECTANGLE)
+    w = ROIManagerWidget(c, image, cast(VardaPlotWidget, _FakePlot()))
+    qtbot.addWidget(w)
+    w.calculatedColumns.areaCache = PixelAreaCache()
+    w.calculatedColumns.add("a", ZonalStatistic(image, 0, "area_km2"))
+    qtbot.waitUntil(lambda: np.isfinite(c.getProperty(fid, "a")), timeout=10000)
+    assert c.getProperty(fid, "a") == pytest.approx(1.0, rel=1e-6)

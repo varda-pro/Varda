@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import cast
 
+from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -28,11 +30,13 @@ from varda.common.grid import sameGridChoices
 from varda.common.ui import notListedLabel
 from varda.geo.distortion import distortionOver
 from varda.rois.roi_calculations import (
+    AREA_STATISTICS,
+    BODY_MEASURES,
     CONSTANTS,
     FUNCTIONS,
-    BODY_MEASURES,
     GEOMETRY_MEASURES,
     MAP_MEASURES,
+    NO_MAP_COORDINATES,
     STATISTICS,
     CalculatedColumns,
     Calculation,
@@ -153,7 +157,10 @@ class AddColumnDialog(QDialog):
             self.imageBox.addItem(image.name)
         self.bandBox = QComboBox()
         self.statisticBox = QComboBox()
-        self.statisticBox.addItems(STATISTICS)
+        for statistic in STATISTICS:
+            self.statisticBox.addItem(statistic, statistic)
+        for statistic, label in AREA_STATISTICS.items():
+            self.statisticBox.addItem(label, statistic)
         self.imageBox.currentIndexChanged.connect(self._fillBands)
         self.bandBox.currentIndexChanged.connect(lambda _: self._update())
         self.statisticBox.currentIndexChanged.connect(lambda _: self._update())
@@ -192,7 +199,7 @@ class AddColumnDialog(QDialog):
         if kind == self.ZONAL:
             image = self.images[self.imageBox.currentIndex()]
             return ZonalStatistic(
-                image, self.bandBox.currentIndex(), self.statisticBox.currentText()
+                image, self.bandBox.currentIndex(), self.statisticBox.currentData()
             )
         if kind == self.EXPRESSION:
             return Expression(self.expressionEdit.text())
@@ -204,7 +211,25 @@ class AddColumnDialog(QDialog):
         self.bandBox.clear()
         self.bandBox.addItems([str(name) for name in image.bandNames])
         self.bandBox.blockSignals(False)
+        self._enableAreaStatistics(image)
         self._update()
+
+    def _enableAreaStatistics(self, image: VardaRaster) -> None:
+        """Area statistics need the image's map coordinates."""
+        # a QComboBox's own model is a QStandardItemModel
+        model = cast(QStandardItemModel, self.statisticBox.model())
+        for statistic in AREA_STATISTICS:
+            item = model.item(self.statisticBox.findData(statistic))
+            assert item is not None
+            item.setEnabled(image.crs is not None)
+            item.setToolTip(
+                "Each pixel with data counts whole, weighted by its ground area "
+                "on the body (not the drawn shape: see Area on the body)"
+                if image.crs is not None
+                else NO_MAP_COORDINATES.capitalize()
+            )
+        if self.statisticBox.currentData() in AREA_STATISTICS and image.crs is None:
+            self.statisticBox.setCurrentIndex(0)
 
     def _onKindChanged(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
