@@ -22,7 +22,6 @@ from dataclasses import dataclass
 import numpy as np
 from affine import Affine
 from pyproj import CRS
-from rasterio.crs import CRS as RasterioCRS
 from shapely.geometry import MultiPolygon, Polygon
 
 from varda.common.expressions import (
@@ -302,7 +301,7 @@ class CalculatedColumns:
         self._onBody: dict[str, dict[int, BodyValue]] = {}
         # each image's pixel areas, by id(image): (image, crs, transform, areas)
         self._areas: dict[
-            int, tuple[VardaRaster, RasterioCRS | None, Affine, np.ndarray | None]
+            int, tuple[VardaRaster, CRS | None, Affine, np.ndarray | None]
         ] = {}
         self._updating = False
         collection.sigROIAdded.connect(self._onROIChanged)

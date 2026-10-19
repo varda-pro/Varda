@@ -1,9 +1,12 @@
 """Add Column: an empty column to type into, or one calculated from geometry,
 a raster's zonal statistics, or an expression."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWidgets import QDialogButtonBox
 from shapely.geometry import box
 
@@ -200,7 +203,8 @@ def test_area_statistics_fall_back_when_the_raster_has_no_crs(qtbot):
     dialog, _ = _zonalGeoreferencedDialog(qtbot)
     box_ = dialog.statisticBox
     index = box_.findData("area_weighted_mean")
-    item = box_.model().item(index)
+    item = cast(QStandardItemModel, box_.model()).item(index)
+    assert item is not None
     assert item.isEnabled() and "whole" in item.toolTip()
     box_.setCurrentIndex(index)
     # a raster without map coordinates (the same grid needs the same CRS, so
