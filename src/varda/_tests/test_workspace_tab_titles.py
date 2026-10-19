@@ -77,3 +77,12 @@ def test_elided_tab_title_keeps_both_ends():
     assert len(short) <= 40
     assert short.startswith("EMIT_L2A_RFL_001") and short.endswith("_022_ortho.img")
     assert "…" in short
+
+
+def test_a_new_workspace_tab_comes_to_the_front(gui):
+    """Release QA #3: a new tab opened behind the current one."""
+    first, second = QWidget(), QWidget()
+    gui.addTab(first, "first")
+    gui.addTab(second, "second")
+
+    assert gui.currentWorkspace() is second

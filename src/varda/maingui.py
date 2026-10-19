@@ -129,13 +129,15 @@ class MainGUI(QModelMainWindow):
 
     def addTab(self, widget: QWidget, title: str | None = None):
         """Add a workspace tab, named after the widget's window title unless
-        ``title`` is given. Long names are shortened in the middle; the tooltip
-        carries the full name."""
+        ``title`` is given, and bring it to the front (what the user opened is
+        what they look at next). Long names are shortened in the middle; the
+        tooltip carries the full name."""
         if title is None:
             title = widget.windowTitle()
         self.childWindows.append(widget)
         index = self.centralTabs.addTab(widget, elidedTabTitle(title))
         self.centralTabs.setTabToolTip(index, title)
+        self.centralTabs.setCurrentIndex(index)
         self._updateWorkspaceCount()
 
     def _showTabMenu(self, pos: QPoint) -> None:
