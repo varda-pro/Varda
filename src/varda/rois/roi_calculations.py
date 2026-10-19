@@ -3,7 +3,9 @@
 A column can be filled from each ROI's geometry (area, perimeter, centroid;
 areas and perimeters also on the body, geodesically, with
 ``geo.measure.polygonArea``),
-from a statistic of a raster band inside the ROI (zonal statistics), or from
+from a statistic of a raster band inside the ROI (zonal statistics; also the
+ground area of its pixels with data, and area-weighted statistics, with
+``geo.measure.pixelAreas``), or from
 an expression over other columns. ``CalculatedColumns`` keeps them current as
 ROIs are drawn or edited. Expressions are parsed and evaluated by a small
 whitelisting evaluator, never ``eval``.
@@ -29,7 +31,7 @@ from varda.common.expressions import (
     words,
 )
 from varda.common.entities import VardaRaster
-from varda.geo.measure import Measurement, polygonArea
+from varda.geo.measure import Measurement, pixelAreaMethod, pixelAreas, polygonArea
 from varda.rois.roi_collection import ROICollection
 
 # kind -> (label, short name used in suggested column names)
@@ -64,6 +66,12 @@ STATISTICS: dict[str, Callable[[np.ndarray], float]] = {
     "sum": lambda v: float(np.sum(v)),
     "count": lambda v: float(v.size),
 }
+# statistics weighted by each pixel's ground area: key -> label
+AREA_STATISTICS: dict[str, str] = {
+    "area_km2": "area of pixels with data (km²)",
+    "area_weighted_mean": "area-weighted mean",
+    "sum_times_area_km2": "sum × pixel area (value·km²)",
+}
 
 FUNCTIONS: dict[str, Callable[..., float]] = {
     "sqrt": math.sqrt,
@@ -87,7 +95,7 @@ class GeometryMeasure:
 class ZonalStatistic:
     image: VardaRaster
     band: int
-    statistic: str  # a key of STATISTICS
+    statistic: str  # a key of STATISTICS or AREA_STATISTICS
 
 
 @dataclass(frozen=True)
@@ -145,6 +153,8 @@ def suggestName(calculation: Calculation, units: str | None = None) -> str:
         return short
     if isinstance(calculation, ZonalStatistic):
         band = words(str(calculation.image.bandNames[calculation.band])).lower()
+        if calculation.statistic in AREA_STATISTICS:
+            return f"{band[:20]}_{calculation.statistic}"
         return f"{calculation.statistic}_{band[:20]}"
     return "calc"
 
@@ -217,9 +227,58 @@ def describe(calculation: Calculation) -> str:
     if isinstance(calculation, GeometryMeasure):
         return GEOMETRY_MEASURES[calculation.kind][0]
     if isinstance(calculation, ZonalStatistic):
-        band = calculation.image.bandNames[calculation.band]
-        return f"{calculation.statistic} of {band} in {calculation.image.name}"
+        image = calculation.image
+        band = image.bandNames[calculation.band]
+        label = AREA_STATISTICS.get(calculation.statistic, calculation.statistic)
+        text = f"{label} of {band} in {image.name}"
+        if calculation.statistic not in AREA_STATISTICS:
+            return text
+        return f"{text}. {_pixelAreaMethod(image)}"
     return f"= {calculation.text}"
+
+
+def _pixelAreaMethod(image: VardaRaster) -> str:
+    """How the pixel areas of ``image`` are measured, or why they can't be."""
+    if image.crs is None:
+        return f"Blank: {NO_MAP_COORDINATES}"
+    try:
+        method = pixelAreaMethod(image.crs, image.transform)
+    except ValueError as error:
+        return f"Blank: {error}"
+    return f"Pixel areas {method}; whole pixels with data, not the drawn shape"
+
+
+def areaStatistic(
+    statistic: str,
+    image: VardaRaster,
+    values: np.ndarray,
+    rows: np.ndarray,
+    cols: np.ndarray,
+) -> float:
+    """An ``AREA_STATISTICS`` value of the pixels at (``rows``, ``cols``) of
+    ``image`` with ``values``; only the finite values count. NaN without
+    georeferencing or where an area can't be measured."""
+    finite = np.isfinite(values)
+    values = values[finite]
+    if image.crs is None:
+        return math.nan
+    if values.size == 0:
+        return 0.0 if statistic == "area_km2" else math.nan
+    try:
+        # points PROJ can't invert become NaN, with NumPy's invalid-value warnings
+        with np.errstate(invalid="ignore"):
+            areas = (
+                pixelAreas(image.crs, image.transform, rows[finite], cols[finite])
+                * 1e-6
+            )
+    except ValueError:
+        return math.nan
+    if statistic == "area_km2":
+        return float(np.sum(areas))
+    weighted = float(np.sum(values * areas))
+    if statistic == "sum_times_area_km2":
+        return weighted
+    return weighted / float(np.sum(areas))
 
 
 class CalculatedColumns:
@@ -326,6 +385,20 @@ class CalculatedColumns:
     def _zonal(self, calculation: ZonalStatistic, fids: Sequence[int]) -> list[float]:
         raw = calculation.image.getBands([calculation.band])
         band = np.ma.filled(np.ma.asarray(raw, dtype=np.float64), np.nan)[:, :, 0]
+        if calculation.statistic in AREA_STATISTICS:
+            results = []
+            for fid in fids:
+                rows, cols = np.nonzero(self.collection.getMask(fid, calculation.image))
+                results.append(
+                    areaStatistic(
+                        calculation.statistic,
+                        calculation.image,
+                        band[rows, cols],
+                        rows,
+                        cols,
+                    )
+                )
+            return results
         statistic = STATISTICS[calculation.statistic]
         results = []
         for fid in fids:

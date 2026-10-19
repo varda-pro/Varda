@@ -326,6 +326,43 @@ column (below) with the **count** statistic.
   resampled; images on other grids are named under the **Raster** dropdown,
   with why). Same pixel rule as above; **count** is the number of valid (non-no-data) pixels in
   that band.
+
+  Three more statistics weight each pixel by its **ground area** (georeferenced
+  images only):
+  - **area of pixels with data (km²)**: A = Σ aᵢ, the summed ground area
+    of the ROI's pixels with a valid value in the band.
+  - **area-weighted mean**: Σ vᵢ aᵢ / Σ aᵢ. On a map whose pixels differ
+    in ground area (an equirectangular map away from its true-scale
+    latitude, a polar stereographic one), it's the mean per unit of ground,
+    where the plain **mean** is per pixel; for pixels of equal area the two
+    are the same.
+  - **sum × pixel area (value·km²)**: Σ vᵢ aᵢ, e.g. a column density
+    times area for a total.
+
+  Here vᵢ is a pixel's value and aᵢ its ground area in km², on the CRS's own
+  surface, by the method in [Pixel
+  areas](coordinate-systems.md#pixel-areas): exact per row for north-up
+  geographic, equirectangular, Mercator and cylindrical equal-area images,
+  otherwise the map pixel area over the projection's areal scale at the
+  pixel center. The column's header tooltip names the method and surface,
+  e.g. "Pixel areas exact per row (geodesic polygon, edges densified to 16
+  points) on sphere R = 1737.40 km". Without map coordinates the values are
+  blank, and the tooltip says so ("the image has no map coordinates").
+  - **Whole pixels, not the polygon.** These count whole pixels (those
+    whose centers are inside the ROI, with data in the band), so **area of
+    pixels with data** differs from **Area on the body**, which measures
+    the drawn polygon: by up to half a pixel along the perimeter, and by
+    every no-data pixel inside. Report which you used, and its method.
+  - **Uncertainty.** The area method's own error is below 10⁻⁶ (relative)
+    for map pixels of a few km or less (see [Pixel
+    areas](coordinate-systems.md#pixel-areas)). The larger terms are the
+    image's georeferencing (a wrong pixel size or CRS scales every area;
+    Varda can't check it) and the pixel-selection rule above, whose
+    relative effect is about the perimeter in pixels / (2 × the pixel
+    count): small for large ROIs, large for ROIs a few pixels across. Areas
+    are on the reference surface, not along the terrain. A pixel whose area
+    can't be computed (past the edge of where the projection can be
+    converted) leaves the value blank.
 - **Expression**: arithmetic on other columns, with `sqrt`, `log`, `log10`,
   `exp`, `abs`, `min`, `max`, `round`, `pi` and `e`. A value that can't be
   computed is left blank.

@@ -17,6 +17,14 @@ can alter results.
   perimeter are now labeled planar, with the projection's distortion over the
   image in their tooltip. See
   [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
+- **ROI columns weighted by ground area.** Add Column's zonal statistics
+  now include **area of pixels with data (km²)**, **area-weighted mean**
+  and **sum × pixel area (value·km²)**: each pixel with data counts with
+  its ground area on the coordinate system's own surface (exact per row, or
+  over the projection's areal scale). They count whole pixels, so they're
+  reported apart from **Area on the body**, which measures the drawn
+  polygon; the column's tooltip names the method and surface. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
 - **The pixel readout names the body and conventions.** Hovering over a
   georeferenced image shows, e.g., `lat 18.40312° N  lon 77.45120° E  (Mars,
   planetocentric)`: the body, the latitude type, the longitude direction and,

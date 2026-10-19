@@ -154,3 +154,43 @@ def test_the_geometry_page_fits_at_laptop_size(qtbot):
     dialog.show()
     qtbot.waitExposed(dialog)
     assertNothingClipped(dialog)
+
+
+def _zonalGeoreferencedDialog(qtbot) -> tuple[AddColumnDialog, ROICollection]:
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    rois = ROICollection.fromImage(image)
+    (x0, y0), (x1, y1) = image.transform * (27, 27), image.transform * (37, 37)
+    rois.addROI(box(x0, y1, x1, y0), "r", Color(1, 0, 0, 0.5), ROIMode.RECTANGLE)
+    dialog = AddColumnDialog(CalculatedColumns(rois), [image])
+    qtbot.addWidget(dialog)
+    dialog.setKind(dialog.ZONAL)
+    return dialog, rois
+
+
+def test_the_dialog_offers_the_area_of_pixels_with_data(qtbot):
+    dialog, rois = _zonalGeoreferencedDialog(qtbot)
+    dialog.statisticBox.setCurrentText("area of pixels with data (km²)")
+    assert dialog.calculation() == ZonalStatistic(dialog.base, 0, "area_km2")
+    assert dialog.nameEdit.text().endswith("_area_km2")
+    assert "First ROI: 1." in dialog.previewLabel.text()
+    _ok(dialog)
+    (fid,) = rois.fids
+    assert rois.getProperty(fid, dialog.nameEdit.text()) == pytest.approx(1.0)
+
+
+def test_area_statistics_need_a_georeferenced_image(setup):
+    dialog, *_ = setup
+    dialog.setKind(dialog.ZONAL)
+    box_ = dialog.statisticBox
+    model = box_.model()
+    index = box_.findData("area_km2")
+    assert not model.item(index).isEnabled()
+    assert model.item(box_.findData("max")).isEnabled()
+
+
+def test_the_zonal_page_fits_at_laptop_size(qtbot):
+    dialog, _ = _zonalGeoreferencedDialog(qtbot)
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)

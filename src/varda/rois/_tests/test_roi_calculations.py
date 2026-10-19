@@ -11,11 +11,18 @@ from rasterio.crs import CRS
 from shapely.geometry import box
 
 from varda.common.entities import Color, ROIMode, VardaRaster
-from varda.geo._tests.fixtures import HIRISE_POLAR_PROJ, MOLA_MEGDR_PROJ, makeImage
+from varda.geo._tests.fixtures import (
+    HIRISE_POLAR_PROJ,
+    LRO_WAC_PROJ,
+    MOLA_MEGDR_PROJ,
+    makeImage,
+)
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.rois.roi_calculations import (
+    AREA_STATISTICS,
     GEOMETRY_MEASURES,
     MAP_MEASURES,
+    NO_MAP_COORDINATES,
     CalculatedColumns,
     Expression,
     ExpressionError,
@@ -334,3 +341,141 @@ def test_rois_in_pixels_move_to_map_coordinates_when_the_image_gains_a_crs():
     image.setMetadataOverrides({})
     assert rois.crs is None
     assert rois.getROI(fid).geometry.equals(box(2, 2, 6, 4))
+
+
+# --- areas of the pixels with data (pixel-area statistics) -------------------
+
+WAC_RADIUS = 1737400.0
+
+
+def _wacImage(data: np.ndarray, pixelSize: float, top: float) -> VardaRaster:
+    """LRO WAC's equirectangular Moon (true scale at the equator), north-up,
+    the image's top edge at map y ``top``."""
+    transform = Affine(pixelSize, 0, 0, 0, -pixelSize, top)
+    source = ArrayDataSource(
+        data,
+        bandNames=["value"],
+        transform=transform,
+        crs=CRS.from_string(LRO_WAC_PROJ),
+    )
+    return VardaRaster(source, name="wac")
+
+
+def test_area_statistics_are_listed_with_labels():
+    assert AREA_STATISTICS == {
+        "area_km2": "area of pixels with data (km²)",
+        "area_weighted_mean": "area-weighted mean",
+        "sum_times_area_km2": "sum × pixel area (value·km²)",
+    }
+
+
+def test_the_area_of_100_pixels_of_100_m_at_the_equator_is_1_km2():
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 27, 27, 37, 37)  # 10 × 10 pixels
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    assert rois.getProperty(fid, "a") == pytest.approx(100 * 0.1**2, rel=1e-6)
+
+
+def test_1_km_pixels_at_60N_on_the_mars_equirectangular_have_half_the_area():
+    image = makeImage("IAU_2015:49910", centerLonLat=(0.0, 60.0), pixelSize=1000.0)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 27, 27, 37, 37)
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    calc.add("n", ZonalStatistic(image, 0, "count"))
+    assert rois.getProperty(fid, "n") == 100
+    assert rois.getProperty(fid, "a") == pytest.approx(50.0, rel=1e-3)
+
+
+def test_the_area_weighted_mean_is_the_mean_for_uniform_areas():
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 10, 30, 20, 34)  # rows near the equator
+    calc = CalculatedColumns(rois)
+    calc.add("mean", ZonalStatistic(image, 0, "mean"))
+    calc.add("weighted", ZonalStatistic(image, 0, "area_weighted_mean"))
+    assert rois.getProperty(fid, "weighted") == pytest.approx(
+        rois.getProperty(fid, "mean"), rel=1e-7
+    )
+
+
+def test_area_weights_follow_latitude_in_a_roi_spanning_latitudes():
+    """Rows of 1° at 50–80°N: a row's pixels have the exact spherical area
+    R² Δλ (sin φ_top − sin φ_bottom); the value of a pixel is its row."""
+    degree = WAC_RADIUS * math.pi / 180  # 1° of map in meters
+    rows = np.arange(30)
+    data = np.repeat(rows[:, None], 4, axis=1)[:, :, None].astype(np.float32)
+    data[0, 0, 0] = np.nan  # no data: neither counted nor weighted
+    image = _wacImage(data, degree, top=80 * degree)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 0, 0, 4, 30)
+    calc = CalculatedColumns(rois)
+    calc.add("mean", ZonalStatistic(image, 0, "mean"))
+    calc.add("weighted", ZonalStatistic(image, 0, "area_weighted_mean"))
+    calc.add("area", ZonalStatistic(image, 0, "area_km2"))
+    calc.add("sum_area", ZonalStatistic(image, 0, "sum_times_area_km2"))
+
+    top = np.radians(80.0 - rows)
+    rowArea = (
+        WAC_RADIUS**2
+        * math.radians(1.0)
+        * (np.sin(top) - np.sin(top - math.radians(1.0)))
+    )
+    counts = np.full(30, 4)
+    counts[0] = 3
+    areas = rowArea * counts / 1e6  # km² per row
+    assert rois.getProperty(fid, "area") == pytest.approx(areas.sum(), rel=1e-6)
+    assert rois.getProperty(fid, "sum_area") == pytest.approx(
+        (rows * areas).sum(), rel=1e-6
+    )
+    weighted = (rows * areas).sum() / areas.sum()
+    assert rois.getProperty(fid, "weighted") == pytest.approx(weighted, rel=1e-6)
+    # the low rows (further south) are larger: the weighted mean is pulled up
+    assert rois.getProperty(fid, "weighted") > rois.getProperty(fid, "mean") + 1
+
+
+def test_area_statistics_are_blank_without_georeferencing_and_say_why():
+    image = _image()
+    rois = _rois(image)
+    fid = _addPixelBox(rois, image, 2, 2, 6, 4)
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    assert math.isnan(rois.getProperty(fid, "a"))
+    assert NO_MAP_COORDINATES in (calc.describe("a") or "")
+
+
+def test_area_statistics_are_described_with_the_pixel_area_method():
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    rois = ROICollection.fromImage(image)
+    _addPixelBox(rois, image, 27, 27, 37, 37)
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    text = calc.describe("a") or ""
+    assert text.startswith("area of pixels with data (km²) of Band 1 in fixture")
+    assert "exact per row" in text and "sphere R = 1737.40 km" in text
+
+
+def test_area_statistic_names():
+    image = makeImage(LRO_WAC_PROJ, centerLonLat=(0.0, 0.0), pixelSize=100.0)
+    band = suggestName(ZonalStatistic(image, 0, "mean")).removeprefix("mean_")
+    for statistic in AREA_STATISTICS:
+        assert suggestName(ZonalStatistic(image, 0, statistic)) == (
+            f"{band}_{statistic}"
+        )
+
+
+def test_area_statistics_follow_a_crs_set_on_the_image_and_bulk_added_rois():
+    image = makeImage("EPSG:4326", centerLonLat=(10.0, 0.0), pixelSize=0.01)
+    rois = ROICollection.fromImage(image)
+    fid = _addPixelBox(rois, image, 10, 10, 20, 20)
+    calc = CalculatedColumns(rois)
+    calc.add("a", ZonalStatistic(image, 0, "area_km2"))
+    onEarth = rois.getProperty(fid, "a")
+    image.setMetadataOverrides({"crs": "IAU_2015:49900"})  # Mars, geographic
+    assert rois.getProperty(fid, "a") < onEarth * 0.3
+    (added,) = rois.addROIs(
+        [NewROI(rois.getROI(fid).geometry, "copy", RED, ROIMode.RECTANGLE)]
+    )
+    assert rois.getProperty(added, "a") == pytest.approx(rois.getProperty(fid, "a"))
