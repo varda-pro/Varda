@@ -1,5 +1,7 @@
 import ctypes
+import functools
 import logging
+from collections.abc import Callable
 import os
 import sys
 from pathlib import Path
@@ -8,12 +10,13 @@ import numpy as np
 
 from PyQt6.QtWidgets import (
     QFileDialog,
-    QMessageBox,
     QApplication,
 )
 
 from .data_sources import DataSource, RasterioDataSource, InMemoryDataSource
 from .crs_check import checkImageCrs
+from .error_box import showPlainError
+from .plain_errors import PlainError, explainOpenError
 from .data_sources.cached_data_source import CachedDataSource
 from .data_sources.in_memory_data_source import InMemoryBudget
 from .data_sources.registry import datasource_registry, get_image_type_filter
@@ -123,7 +126,7 @@ def wrapForReading(
 class ImageLoadingService:
     """Loads images in the background as VardaRasters (see ``loadRaster``)."""
 
-    LARGE_FILE_THRESHOLD_MB = 100
+    BUSY_DELAY_MS = 400  # loads quicker than this show nothing
 
     @classmethod
     def load_image_data(
@@ -133,7 +136,7 @@ class ImageLoadingService:
 
         If file_path is None, prompts the user to select a file.
         on_success_callback receives a VardaRaster on success.
-        on_failure_callback receives an error message string on failure
+        on_failure_callback receives a plain error message on failure
         (without one, the error is shown in a message box).
         """
         logger.debug(f"Loading image data for {file_path}")
@@ -142,87 +145,66 @@ class ImageLoadingService:
             if file_path is None:
                 logger.info("No file path provided.")
                 return
-
-        dialog = (
-            cls._show_large_file_loading_dialog(file_path)
-            if cls._get_file_size(file_path) > cls.LARGE_FILE_THRESHOLD_MB
-            else None
-        )
-
-        def done(vardaRaster: VardaRaster) -> None:
-            if dialog is not None:
-                dialog.close()
-            logger.info(f"Done loading image: {file_path}")
-            if on_success_callback:
-                on_success_callback(vardaRaster)
-
-        def failed(error: Exception) -> None:
-            if dialog is not None:
-                dialog.close()
-            if on_failure_callback:
-                on_failure_callback(str(error))
-            else:
-                cls._show_error_message(f"Failed to load {file_path}:\n{error}")
-
-        runInBackground(
-            lambda: loadRaster(file_path),
-            done,
-            failed,
-            description=f"Loading {file_path}",
-        )
+        cls.load_images([file_path], on_success_callback, on_failure_callback)
 
     @classmethod
     def load_images(
         cls, file_paths=None, on_success_callback=None, on_failure_callback=None
     ):
-        """Load one or more images.
+        """Load one or more images, each in the background.
 
         If file_paths is None, prompts the user to select one or more files.
-        Each file is loaded independently in the background, so the callbacks
-        are invoked once per file (on_success_callback receives a VardaRaster,
-        on_failure_callback receives an error message string).
+        The callbacks run once per file, in the order the files were given
+        (not the order they finish), so images join the project as chosen:
+        on_success_callback receives a VardaRaster, on_failure_callback a
+        plain error message (without one, the error is shown in a message
+        box, with the library's own text under Details). A busy indicator
+        shows while any of them is still loading.
         """
         if file_paths is None:
             file_paths = cls._request_file_paths()
             if not file_paths:
                 logger.info("No file paths provided.")
                 return
+        paths = [str(path) for path in file_paths]
 
-        for file_path in file_paths:
-            cls.load_image_data(
-                file_path=file_path,
-                on_success_callback=on_success_callback,
-                on_failure_callback=on_failure_callback,
+        def deliver(path: str, outcome: VardaRaster | PlainError) -> None:
+            if isinstance(outcome, PlainError):
+                logger.info("Couldn't open %s: %s", path, outcome.details)
+                if on_failure_callback:
+                    on_failure_callback(outcome.message)
+                else:
+                    cls._show_error(outcome)
+            else:
+                logger.info(f"Done loading image: {path}")
+                if on_success_callback:
+                    on_success_callback(outcome)
+
+        batch = _OrderedBatch(paths, deliver, cls._busyDialog(paths))
+        for index, path in enumerate(paths):
+            runInBackground(
+                functools.partial(loadRaster, path),
+                functools.partial(batch.settle, index),
+                functools.partial(batch.fail, index),
+                description=f"Loading {path}",
             )
 
-    @staticmethod
-    def _get_file_size(filePath) -> float:
-        """File size in megabytes."""
-        try:
-            return Path(filePath).stat().st_size / (1024 * 1024)
-        except OSError:
-            return 0
-
     @classmethod
-    def _show_large_file_loading_dialog(cls, filePath) -> BusyDialog:
-        """Say what's happening when a large file takes a while to open."""
+    def _busyDialog(cls, paths: list[str]) -> BusyDialog:
+        """Says Varda is opening the files, if it takes a moment."""
+        names = Path(paths[0]).name if len(paths) == 1 else f"{len(paths)} images"
         dialog = BusyDialog(
-            f"Loading large file ({cls._get_file_size(filePath):.1f} MB)…\n"
-            f"{Path(filePath).name}",
-            title="Loading Large File",
+            f"Opening {names}…",
+            title="Opening",
             parent=QApplication.activeWindow(),
         )
-        dialog.showAfter(1000)
+        dialog.showAfter(cls.BUSY_DELAY_MS)
         return dialog
 
     @staticmethod
-    def _show_error_message(message):
-        """Display an error message to the user."""
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Icon.Critical)
-        msg_box.setWindowTitle("Error Loading Image")
-        msg_box.setText(message)
-        msg_box.exec()
+    def _show_error(error: PlainError) -> None:
+        """Show a load error: the plain message, the library's text as details."""
+        showPlainError(QApplication.activeWindow(), "Couldn't Open Image", error)
 
     @staticmethod
     def _request_file_path():
@@ -245,6 +227,40 @@ class ImageLoadingService:
             get_image_type_filter(),
         )
         return file_names if file_names else None
+
+
+class _OrderedBatch:
+    """Hands each load's outcome on in the order the files were chosen,
+    holding back ones that finish early, and closes the busy indicator when
+    all are done."""
+
+    def __init__(
+        self,
+        paths: list[str],
+        deliver: Callable[[str, VardaRaster | PlainError], None],
+        busy: BusyDialog,
+    ) -> None:
+        self._paths = paths
+        self._deliver = deliver
+        self._busy = busy
+        self._outcomes: dict[int, VardaRaster | PlainError] = {}
+        self._next = 0
+
+    def settle(self, index: int, outcome: VardaRaster | PlainError) -> None:
+        self._outcomes[index] = outcome
+        while self._next in self._outcomes:
+            self._deliver(self._paths[self._next], self._outcomes.pop(self._next))
+            self._next += 1
+        if self._next == len(self._paths):
+            self._busy.close()
+        elif len(self._paths) > 1:
+            self._busy.setLabelText(
+                f"Opening {len(self._paths)} images… "
+                f"({self._next} of {len(self._paths)} open)"
+            )
+
+    def fail(self, index: int, error: BaseException) -> None:
+        self.settle(index, explainOpenError(self._paths[index], error))
 
 
 def loadRaster(filePath: str) -> VardaRaster:

@@ -1,5 +1,7 @@
 """writeRaster saves a VardaRaster to disk with the metadata Varda reads back."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -8,7 +10,8 @@ from pyproj import CRS
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import openDataSource
-from varda.image_loading.raster_writer import writeRaster
+from varda.image_loading.raster_writer import resolveOutputPath, writeRaster
+from varda.utilities.debug import generate_random_image
 
 
 def _spectralImage() -> VardaRaster:
@@ -136,3 +139,53 @@ def test_a_product_that_is_not_a_spectrum_gets_no_wavelength(tmp_path):
     header = (tmp_path / "slope.hdr").read_text().lower()
     assert "wavelength =" not in header and "wavelength units" not in header
     assert "slope 1000-2000 nm" in header  # still named, as its band
+
+
+# --- Where Save as text points (release QA #10, #16, #24) -------------------
+
+
+def test_a_bare_name_goes_into_the_given_folder(tmp_path):
+    assert resolveOutputPath("relative name.tif", tmp_path) == tmp_path / (
+        "relative name.tif"
+    )
+    assert resolveOutputPath("🙂", tmp_path) == tmp_path / "🙂"
+
+
+def test_a_full_path_is_kept(tmp_path):
+    target = tmp_path / "out.img"
+    assert resolveOutputPath(f"  {target}  ", Path.home()) == target
+
+
+def test_trailing_dots_and_spaces_are_dropped(tmp_path):
+    assert resolveOutputPath("trailing dot.", tmp_path) == tmp_path / "trailing dot"
+    assert resolveOutputPath("name. . ", tmp_path) == tmp_path / "name"
+
+
+def test_writing_a_name_ending_in_a_dot_makes_no_double_dot(tmp_path):
+    written = writeRaster(
+        generate_random_image((20, 20, 10)),
+        resolveOutputPath("trailing dot.", tmp_path),
+    )
+    assert written.name == "trailing dot.img"
+
+
+@pytest.mark.parametrize("name", ["bad<>.tif", "a|b.tif", "what?.img", "x*.tif"])
+def test_characters_windows_forbids_are_named(tmp_path, name):
+    with pytest.raises(ValueError, match="can't be used in file names"):
+        resolveOutputPath(name, tmp_path)
+
+
+@pytest.mark.parametrize("name", ["CON.tif", "nul", "com1.img", "LPT9.tif"])
+def test_names_windows_reserves_are_refused(tmp_path, name):
+    with pytest.raises(ValueError, match="reserved"):
+        resolveOutputPath(name, tmp_path)
+
+
+def test_an_empty_name_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="Type a file name"):
+        resolveOutputPath(" . ", tmp_path)
+
+
+def test_a_missing_folder_is_named(tmp_path):
+    with pytest.raises(ValueError, match="doesn't exist"):
+        resolveOutputPath(str(tmp_path / "no such folder" / "x.tif"), tmp_path)

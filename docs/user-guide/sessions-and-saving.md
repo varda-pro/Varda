@@ -139,6 +139,17 @@ file** in the analysis dialog to also write it to disk (ENVI `.img`/`.hdr` or
 GeoTIFF), or export any image later with **File → Export Image…** or by
 right-clicking an image → **Export Image…**.
 
+In **Save as**, a name without a folder (`result.tif`) goes into the folder
+you last exported to, or else the image's own folder; the dialog then shows
+the full path, and the status bar says where the file was written. The
+suffix picks the format (`.img` or none for ENVI, `.tif` for GeoTIFF).
+Trailing dots and spaces are dropped. Names that some system can't store are
+refused before anything is written, so the file can be shared with any
+computer: the characters `< > : " | ? *` and the names Windows reserves
+(`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`). When writing
+fails (a folder that doesn't exist, no permission, a full disk) the message
+says what to do; the library's own text is under **Show Details…**.
+
 Every result records how it was made: the process, every setting, its
 inputs with how each of them was made, the Varda version, the time, the
 plugin and its version if a plugin made it, and the versions of the
