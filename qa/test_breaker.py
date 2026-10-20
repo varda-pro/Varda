@@ -12,6 +12,7 @@ import sys
 from pathlib import Path, PureWindowsPath
 
 import keyring.backend
+from keyring.backends.chainer import ChainerBackend
 import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
@@ -538,7 +539,8 @@ def _windows(run: QaRun, qaData: QaData) -> None:
     with run.step("keyring (Windows)", "Where AI keys would be kept"):
         backend = _realKeyring()
         run.log("keyring backend", backend=backend)
-        if "Windows" not in backend and "WinVault" not in backend:
+        # keyring's chainer defers to its members; the name lists them
+        if "WinVault" not in backend:
             run.finding(
                 "confused",
                 f"AI keys would go to {backend}, not Windows Credential Manager",
@@ -645,17 +647,24 @@ def _linux(run: QaRun, qaData: QaData) -> None:
 def _realKeyring() -> str:
     """The backend keyring would pick on this machine. The tests' in-memory
     one (conftest.MemoryKeyring) is a KeyringBackend subclass too, so
-    keyring offers it: leave out backends defined in test code."""
+    keyring offers it: leave out backends defined in test code. keyring's
+    ChainerBackend only defers to the other backends (on Windows to
+    WinVaultKeyring), so it is named with its members: ``chainer[WinVault…]``."""
+
+    def name(b: keyring.backend.KeyringBackend) -> str:
+        return type(b).__module__ + "." + type(b).__name__
+
+    def real(b: keyring.backend.KeyringBackend) -> bool:
+        return not type(b).__module__.split(".")[-1].startswith(("conftest", "test_"))
+
     backends = sorted(
-        (
-            b
-            for b in keyring.backend.get_all_keyring()
-            if not type(b).__module__.split(".")[-1].startswith(("conftest", "test_"))
-        ),
+        (b for b in keyring.backend.get_all_keyring() if real(b)),
         key=lambda b: b.priority,
     )
-    return (
-        type(backends[-1]).__module__ + "." + type(backends[-1]).__name__
-        if backends
-        else "none"
-    )
+    if not backends:
+        return "none"
+    best = backends[-1]
+    if isinstance(best, ChainerBackend):
+        members = [name(b) for b in ChainerBackend.backends if real(b)]
+        return f"{name(best)}[{', '.join(members)}]"
+    return name(best)

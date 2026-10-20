@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from varda.common.ui import MutedLabel
 from varda.kindling.ai_settings import (
     PROVIDER_LABELS,
+    NO_KEYCHAIN_NOTE,
     AISettings,
     makeProvider,
     openAIProvider,
@@ -165,7 +166,11 @@ class AISettingsDialog(QDialog):
         self.form.setRowVisible(1, provider == COMPATIBLE)
         self.form.setRowVisible(4, provider == ANTHROPIC)
         self.loadModels.setVisible(provider != ANTHROPIC)
-        self.keyHelp.setText(KEY_HELP[provider])
+        self.keyHelp.setText(
+            KEY_HELP[provider]
+            if self.settings.hasKeychain
+            else f"{KEY_HELP[provider]}<br><b>{NO_KEYCHAIN_NOTE}</b>"
+        )
         self.budgetNote.setText(BUDGET_NOTE[provider])
         self.model.clear()
         if provider == ANTHROPIC:
@@ -194,7 +199,11 @@ class AISettingsDialog(QDialog):
             self.status.setText(str(error))
         self.key.clear()
         self.key.setPlaceholderText(
-            "Saved in your keychain"
+            (
+                "Saved in your keychain"
+                if self.settings.hasKeychain
+                else "Kept this session"
+            )
             if saved
             else KEY_PLACEHOLDER[self.chosenProvider()]
         )

@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from qa.harness import SEVERITIES, Finding, readFindings
+from qa.harness import FINDINGS_FILE, SEVERITIES, Finding, readFindings
 
 
 @dataclass
@@ -72,7 +72,10 @@ def markdown(folders: list[Path], limit: int = 40) -> str:
 
 def main(arguments: list[str]) -> int:
     folders = [Path(a) for a in arguments] or [Path("release-qa")]
-    print(markdown([f for f in folders if (f / "findings.json").exists()]))
+    for folder in folders:
+        if not (folder / FINDINGS_FILE).exists():
+            print(f"WARNING: {folder} has no {FINDINGS_FILE}: the run did not finish\n")
+    print(markdown([f for f in folders if (f / FINDINGS_FILE).exists()]))
     return 0
 
 

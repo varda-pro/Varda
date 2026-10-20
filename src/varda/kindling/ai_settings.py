@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import keyring
 import keyring.errors
+from keyring.backends import fail, null
 from PyQt6.QtCore import QSettings
 
 from varda.kindling.providers import (
@@ -28,6 +29,13 @@ TOKEN_BUDGET_KEY = "ai/tokenBudget"
 WORKSPACE_KEY = "ai/workspaceId"
 BASE_URL_KEY = "ai/openai-compatible/baseUrl"
 DEFAULT_TOKEN_BUDGET = 400_000
+# Keys entered where there is no keychain: kept for this session only
+_sessionKeys: dict[str, str] = {}
+NO_KEYCHAIN_NOTE = (
+    "No secure key store was found on this computer, so the key won't be "
+    "saved between sessions: it works until you quit Varda. On Linux, install "
+    "gnome-keyring or KWallet (or the keyrings.alt Python package) to keep it."
+)
 PROVIDER_LABELS = {
     ANTHROPIC: "Anthropic (Claude)",
     OPENAI: "OpenAI",
@@ -131,28 +139,42 @@ class AISettings:
     def workspaceId(self, workspaceId: str) -> None:
         self.settings.setValue(WORKSPACE_KEY, workspaceId)
 
+    @property
+    def hasKeychain(self) -> bool:
+        """Whether keyring found somewhere secure to keep keys."""
+        return not isinstance(keyring.get_keyring(), (fail.Keyring, null.Keyring))
+
     def apiKey(self, provider: str = "") -> str:
         """The provider's saved key (the chosen provider's by default), or ""
         if there's none. Raises ProviderError when the keychain can't be used."""
+        provider = provider or self.provider
+        if provider in _sessionKeys:
+            return _sessionKeys[provider]
         try:
-            return (
-                keyring.get_password(KEYRING_SERVICE, provider or self.provider) or ""
-            )
+            return keyring.get_password(KEYRING_SERVICE, provider) or ""
+        except keyring.errors.NoKeyringError:
+            return ""
         except keyring.errors.KeyringError as error:
             raise ProviderError(f"Varda couldn't read the keychain: {error}") from error
 
     def setApiKey(self, key: str, provider: str = "") -> None:
+        provider = provider or self.provider
+        _sessionKeys.pop(provider, None)
         try:
-            keyring.set_password(KEYRING_SERVICE, provider or self.provider, key)
+            keyring.set_password(KEYRING_SERVICE, provider, key)
+        except keyring.errors.NoKeyringError:
+            _sessionKeys[provider] = key  # works for this session only
         except keyring.errors.KeyringError as error:
             raise ProviderError(
                 f"Varda couldn't save the key in the keychain: {error}"
             ) from error
 
     def removeApiKey(self, provider: str = "") -> None:
+        provider = provider or self.provider
+        _sessionKeys.pop(provider, None)
         try:
-            keyring.delete_password(KEYRING_SERVICE, provider or self.provider)
-        except keyring.errors.PasswordDeleteError:
+            keyring.delete_password(KEYRING_SERVICE, provider)
+        except (keyring.errors.PasswordDeleteError, keyring.errors.NoKeyringError):
             pass  # there was none
         except keyring.errors.KeyringError as error:
             raise ProviderError(f"Varda couldn't remove the key: {error}") from error

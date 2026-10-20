@@ -1,8 +1,10 @@
+import keyring
 import pytest
+from keyring.backends import fail
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QLabel, QMessageBox
 
-from varda.kindling import kindle_dialog
+from varda.kindling import ai_settings, kindle_dialog
 from varda.kindling.ai_settings import KEYRING_SERVICE, AISettings
 from varda.kindling.ai_settings_dialog import AISettingsDialog
 from varda.kindling.docs import EXAMPLES
@@ -249,3 +251,35 @@ def test_a_declined_request_closes_without_asking(
     dialog.reject()
     assert asked == []  # nothing was written, so nothing to discard
     assert not dialog.isVisible()
+
+
+@pytest.fixture
+def noKeychain(monkeypatch):
+    """keyring's fail backend, which Linux without a keychain service gets."""
+    previous = keyring.get_keyring()
+    keyring.set_keyring(fail.Keyring())
+    monkeypatch.setattr(ai_settings, "_sessionKeys", {})
+    yield
+    keyring.set_keyring(previous)
+
+
+def test_without_a_keychain_the_key_lasts_the_session(settings, noKeychain):
+    assert not settings.hasKeychain
+    settings.setApiKey("sk-ant-test")
+    assert settings.apiKey() == "sk-ant-test"
+    assert settings.isReady()
+    settings.removeApiKey()
+    settings.removeApiKey()
+    assert settings.apiKey() == ""
+
+
+def test_the_dialog_says_when_keys_cannot_be_kept(qtbot, settings, noKeychain):
+    dialog = AISettingsDialog(settings)
+    qtbot.addWidget(dialog)
+    note = dialog.keyHelp.text()
+    assert "No secure key store" in note and "gnome-keyring" in note
+    assert "keyrings.alt" in note and "won't be saved between sessions" in note
+    dialog.key.setText("sk-ant-test")
+    dialog._save()
+    assert settings.apiKey() == "sk-ant-test"
+    assert "Kept this session" in AISettingsDialog(settings).key.placeholderText()
