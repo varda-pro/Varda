@@ -3,6 +3,13 @@
 PROJ is not thread-safe: hold PROJ_LOCK around CRS construction, transformer
 creation, transforms and WKT export.
 
+The rule for workers: a worker may be handed an image's live ``pyproj.CRS``
+(or its text), and every use of it, any method or property, holds
+PROJ_LOCK; the ``varda.geo`` functions take the lock themselves. Handing
+over the CRS as text (WKT, PROJJSON) is never wrong; handing over the object
+is fine under the lock. pyproj's ``Geod`` (GeographicLib) has no PROJ
+context and needs no lock.
+
 pyproj keeps one PROJ context per OS thread, but frees it with the thread's
 *Python* state. A Qt pool thread is not a Python thread: its Python state is
 made for each task and dropped after it, so pyproj frees the thread's context

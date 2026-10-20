@@ -411,8 +411,12 @@ class ImagePropertiesDialog(QDialog):
         self.classMethod.setText("")
         self._enableCsv(False)
 
-        def measure() -> tuple[int, ClassAreas]:
-            return run, classAreas(image)
+        def measure() -> tuple[int, ClassAreas | Exception]:
+            # a failure comes back with its run too, so a stale one is dropped
+            try:
+                return run, classAreas(image)
+            except Exception as error:  # a failed read: shown in the group
+                return run, error
 
         runInBackground(
             measure,
@@ -426,9 +430,12 @@ class ImagePropertiesDialog(QDialog):
         self.copyCsvButton.setEnabled(enabled)
         self.exportCsvButton.setEnabled(enabled)
 
-    def _showClassAreas(self, result: tuple[int, ClassAreas]) -> None:
+    def _showClassAreas(self, result: tuple[int, ClassAreas | Exception]) -> None:
         run, areas = result
         if run != self._classRun:  # the CRS changed meanwhile
+            return
+        if isinstance(areas, Exception):
+            self._classAreasFailed(areas)
             return
         table = self.classTable
         table.clearSpans()

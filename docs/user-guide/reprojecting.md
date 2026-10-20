@@ -154,7 +154,17 @@ Polar stereographic: the scene reaches 85.0°N".
   that would cross the target's cut (180° from its central meridian) is
   refused, with a `lon_0` at the scene's center to use instead. Varda never
   makes a world-wide grid for a small scene that straddles the cut. A
-  polar image spans every longitude once.
+  polar image spans every longitude once. A target with PROJ's `+over`
+  (longitudes past ±180° allowed) is cut the same way: use a `lon_0` at
+  the scene's center there too.
+- **A map past its own cut.** An equirectangular source whose grid runs
+  past its own ±180° edge (x beyond πR, which only `+over` defines) is
+  placed by GDAL only up to that edge when warped to or from its `+over`
+  twin (about 62% of a scene centered 0.05° from the edge was placed in a
+  test), though every point converts. Onto any other target, including
+  one centered on the scene, it is placed in full. Such a file is unusual;
+  reproject it onto a CRS centered on the scene rather than its `+over`
+  twin.
 - **The size guard.** An output of more than 400,000,000 pixels is refused
   before anything is allocated, naming its size and a coarser resolution
   that fits.
@@ -174,7 +184,13 @@ Polar stereographic: the scene reaches 85.0°N".
   output pixel.
 - **Coarsening.** Average is the right choice when the output pixels are
   larger than the source's (`scaleChange` well above 1). Mode is the right
-  choice for coarsening class maps.
+  choice for coarsening class maps. GDAL also widens the bilinear and
+  cubic kernels to the output pixel's footprint when it is larger than the
+  source's, so they then average over it too: near a pole on a cylindrical
+  target (output pixels 10–15× the source's east–west) the interpolated
+  position was about 2 source pixels from the pixel center's mapped point
+  in a test. The Source pixel distance band measures the center's mapping,
+  not this.
 - **Spectra.** Resampling mixes neighboring spectra. Use nearest neighbor
   for band-ratio work at pixel scale.
 - **No-data edges.** GDAL's warper leaves NaN outside the source. Pixels at

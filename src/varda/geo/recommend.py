@@ -36,7 +36,7 @@ from pyproj.crs import Ellipsoid
 
 from varda.common.parameter import LabeledEnum
 from varda.geo.bodies import Body, identifyBody, latitudeType
-from varda.geo.describe import CrsDescription, describeCrs
+from varda.geo.describe import CrsDescription, crsText, describeCrs
 from varda.geo.distortion import ANGLE_TIP_DEG, SCALE_TIP, Distortion, distortionAt
 from varda.geo.equivalence import (
     RADIUS_TOLERANCE_M,
@@ -90,7 +90,7 @@ class Footprint:
 
 @frozen
 class Recommendation:
-    wkt: str
+    wkt: str  # WKT; PROJJSON for a kept west label CRS (``crsText``)
     description: CrsDescription
     reason: str  # "Polar stereographic: the scene reaches 82.3°N"
     keptExisting: bool
@@ -448,12 +448,18 @@ def _proj(definition: str, surface: str) -> str:
 
 
 def _wkt(crs: CRS | str) -> str:
+    """A kept CRS as WKT, or as PROJJSON (``crsText``) when its base CRS's
+    longitude counts west (a west label CRS), which WKT would lose."""
     with PROJ_LOCK:
-        return CRS.from_user_input(crs).to_wkt()
+        parsed = CRS.from_user_input(crs)
+        base = parsed.geodetic_crs
+        west = base is not None and any(a.direction == "west" for a in base.axis_info)
+        return crsText(parsed) if west else parsed.to_wkt()
 
 
 def _made(definition: str, surface: str, reason: str) -> Recommendation:
-    wkt = _wkt(_proj(definition, surface))
+    with PROJ_LOCK:  # from a PROJ string: WKT loses nothing
+        wkt = CRS.from_user_input(_proj(definition, surface)).to_wkt()
     return Recommendation(
         wkt=wkt, description=describeCrs(wkt), reason=reason, keptExisting=False
     )

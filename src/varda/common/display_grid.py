@@ -87,10 +87,11 @@ def displayNote(overlay: VardaRaster, base: VardaRaster) -> str:
 
 def gridKey(base: VardaRaster) -> GridKey:
     """``base``'s pixel grid, so a base with a new ``crs`` or ``transform``
-    override is a different key."""
+    override is a different key (PROJJSON, which keeps every axis direction,
+    when the CRS has no authority code)."""
     with PROJ_LOCK:
         crs = base.crs
-        name = describeCrs(crs).authority or ("" if crs is None else crs.to_wkt())
+        name = describeCrs(crs).authority or ("" if crs is None else crs.to_json())
     return name, tuple(base.transform)[:6], base.width, base.height
 
 

@@ -392,12 +392,13 @@ def _rowAreas(
     lat = surface.latitudes(centric)
     finite = np.isfinite(lon).all(axis=1) & np.isfinite(lat).all(axis=1)
     areas = np.full(len(rows), np.nan)
-    with PROJ_LOCK:
-        for index in np.flatnonzero(finite):
-            area, _ = surface.geod.polygon_area_perimeter(
-                lon[index].tolist(), lat[index].tolist()
-            )
-            areas[index] = abs(area)
+    # Geod is GeographicLib, not a PROJ context object: no PROJ_LOCK, so a
+    # tall image doesn't block the GUI's readouts
+    for index in np.flatnonzero(finite):
+        area, _ = surface.geod.polygon_area_perimeter(
+            lon[index].tolist(), lat[index].tolist()
+        )
+        areas[index] = abs(area)
     return areas
 
 

@@ -14,9 +14,14 @@ from varda.geo._tests.fixtures import (
     HIRISE_POLAR_PROJ,
     LRO_WAC_SOUTH_POLAR_PROJ,
     MOLA_MEGDR_PROJ,
+    WEST_LABEL_GROUP,
     makeImage,
+    westAxis,
+    writePds3,
 )
 from varda.geo.equivalence import sameCrs
+from varda.geo.label_crs import labelCrs
+from varda.geo.labels import labelHints
 from varda.geo.recommend import (
     Footprint,
     Purpose,
@@ -254,3 +259,17 @@ def test_unknown_oblate_body_converts_latitudes_to_planetographic():
         2900000,
     )
     assert _params(recommendation)["lat_ts"] == 42
+
+
+def test_a_kept_west_label_crs_keeps_its_west_axis(tmp_path):
+    """WKT can't hold a projected CRS's west-positive base axis, so a kept
+    west label CRS comes back as PROJJSON."""
+    label = labelCrs(labelHints(str(writePds3(tmp_path, WEST_LABEL_GROUP))))
+    assert label is not None
+    west = label.wkt
+    assert west is not None and westAxis(west)
+    image = makeImage(west, centerLonLat=(-100.0, 10.0), pixelSize=500.0)
+    recommendation = recommendProjection(west, _footprint(image), Purpose.TERRAIN)
+    assert recommendation.keptExisting
+    assert westAxis(recommendation.wkt)
+    assert sameCrs(recommendation.wkt, west)

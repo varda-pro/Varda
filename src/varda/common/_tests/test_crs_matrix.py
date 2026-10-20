@@ -17,8 +17,16 @@ from rasterio.enums import Resampling
 from varda.common.display_grid import displayChoices, reprojectForDisplay
 from varda.common.entities import VardaRaster
 from varda.common.grid import onGridOf, placementProblem
+from varda.geo._tests.fixtures import (
+    CRISM_MTRDR_WKT,
+    MARS_EQC_PDS3_WKT,
+    WEST_LABEL_GROUP,
+    writePds3,
+)
+from varda.geo.label_crs import labelCrs
+from varda.geo.labels import labelHints
 from varda.geo.reproject import imageGrid, reprojectBand
-from varda.geo.transform import transformPoints, warpOperation
+from varda.geo.transform import planetocentricLonLat, transformPoints, warpOperation
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 SPHERE = "+proj=longlat +R=3396190 +no_defs"  # planetocentric degrees
@@ -117,26 +125,34 @@ def _inside(col: np.ndarray, row: np.ndarray, margin: float) -> np.ndarray:
     )
 
 
-def _assertPlaced(out: np.ndarray, scene: _Scene, nearest: bool = False) -> None:
-    """Every target pixel whose truth is inside the source got data, within
-    ½ source pixel of the truth (bilinear), or from the right source pixel
-    (nearest, away from pixel edges, where the warper's 0.125 px
-    approximation decides)."""
+def _misplacement(out: np.ndarray, scene: _Scene, nearest: bool = False) -> str:
+    """Why ``out`` isn't placed, or "": every target pixel whose truth is
+    inside the source got data, within ½ source pixel of the truth
+    (bilinear), or from the right source pixel (nearest, away from pixel
+    edges, where the warper's 0.125 px approximation decides)."""
     col, row = scene.truth()
     inside = _inside(col, row, 1.5)
-    assert inside.sum() > 50, "the scene has too few pixels inside the source"
+    if inside.sum() == 0:
+        return "no target pixel lies inside the source"
     got = out[..., 0][inside], out[..., 1][inside]
-    assert np.isfinite(got[0]).all(), (
-        f"{np.isfinite(got[0]).mean():.0%} of the pixels inside the source got data"
-    )
+    if not np.isfinite(got[0]).all():
+        return f"{np.isfinite(got[0]).mean():.0%} of the pixels inside got data"
     if nearest:
         fc, fr = col - np.floor(col), row - np.floor(row)
         away = inside & (fc > 0.15) & (fc < 0.85) & (fr > 0.15) & (fr < 0.85)
-        assert (np.floor(out[..., 0][away]) == np.floor(col[away])).all()
-        assert (np.floor(out[..., 1][away]) == np.floor(row[away])).all()
-    else:
-        error = np.hypot(got[0] - col[inside], got[1] - row[inside])
-        assert error.max() <= 0.5
+        wrong = (np.floor(out[..., 0][away]) != np.floor(col[away])) | (
+            np.floor(out[..., 1][away]) != np.floor(row[away])
+        )
+        return f"{wrong.mean():.0%} wrong pixels" if wrong.any() else ""
+    error = float(np.hypot(got[0] - col[inside], got[1] - row[inside]).max())
+    return f"{error:.3f} px off" if error > 0.5 else ""
+
+
+def _assertPlaced(out: np.ndarray, scene: _Scene, nearest: bool = False) -> None:
+    col, row = scene.truth()
+    assert _inside(col, row, 1.5).sum() > 50, "too few pixels inside the source"
+    problem = _misplacement(out, scene, nearest)
+    assert not problem, problem
 
 
 # --- a west-positive geographic source --------------------------------------------
@@ -209,3 +225,108 @@ def test_ocentric_ellipsoid_and_wrapped_crs_placement_and_display():
     assert displayChoices([wrapped, ocentric], wrapped).excluded == []
     assert wrapped in displayChoices([wrapped, ocentric], ocentric).images
     assert ocentric in displayChoices([wrapped, ocentric], wrapped).images
+
+
+# --- the Mars CRS matrix ----------------------------------------------------------
+
+# A compact form of the Phase 2 final review's harness: a representative
+# subset of the Mars coordinate systems, every ordered pair, through
+# transformPoints, reprojectBand and onGridOf (the display overlay is
+# onGridOf by nearest neighbor; IAU_2015:49910 and 49911 are in the tests
+# above)
+MATRIX = {
+    "49900": "IAU_2015:49900",  # sphere, degrees
+    "49901": "IAU_2015:49901",  # west, planetographic, latitude first
+    "49902": "IAU_2015:49902",  # planetocentric ellipsoid, spherical CS
+    "49912": "IAU_2015:49912",  # equirectangular, planetocentric ellipsoid
+    "49930": "IAU_2015:49930",  # north polar stereographic
+    "crism": CRISM_MTRDR_WKT,  # the scene's local-radius sphere
+    "wrap": "+proj=longlat +a=3396190 +b=3376200 +lon_wrap=180 +no_defs",
+    "over": "+proj=eqc +R=3396190 +over +units=m +no_defs",
+    "pds3": MARS_EQC_PDS3_WKT,
+    "westLabel": "",  # the west label CRS (PROJJSON), built per session
+}
+NORTH_POLAR = {"49930"}
+MATRIX_MARKERS = [
+    (10.0, 45.0),
+    (10.0, -60.0),
+    (10.0, 89.5),
+    (10.0, -89.5),
+    (179.95, 45.0),
+    (-179.95, -30.0),
+]
+# GDAL places an equirectangular map past its own ±180° edge only up to
+# that edge when warping to or from its +over twin (documented in
+# Reprojecting images, "A map past its own cut")
+PAST_ITS_CUT = {("pds3", "over"), ("over", "pds3")}
+
+
+@pytest.fixture(scope="module")
+def matrix(tmp_path_factory) -> dict[str, str]:
+    folder = tmp_path_factory.mktemp("west")
+    west = labelCrs(labelHints(str(writePds3(folder, WEST_LABEL_GROUP)))).wkt
+    assert west is not None
+    return {**MATRIX, "westLabel": west}
+
+
+def _markers(src: str, dst: str) -> list[tuple[float, float]]:
+    """The markers both CRSs hold (north polar stereographic has no south
+    pole); the exact pole for a polar source."""
+    markers = [
+        (lon, lat)
+        for lon, lat in MATRIX_MARKERS
+        if not (lat < -80 and NORTH_POLAR & {src, dst})
+    ]
+    return markers + ([(0.0, 90.0)] if src in NORTH_POLAR else [])
+
+
+@pytest.mark.slow
+@pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+@pytest.mark.parametrize("src", list(MATRIX))
+def test_mars_crs_matrix(src, matrix):
+    """Every pair from ``src``: points round-trip and keep their
+    planetocentric position; rasters land within ½ source pixel (bilinear),
+    with no pixel inside the source left empty; nothing raises."""
+    problems = []
+    for dst in matrix:
+        if dst == src:
+            continue
+        for lon, lat in _markers(src, dst):
+            where = f"{src} → {dst} at ({lon:g}, {lat:g})"
+            try:
+                problems += _pairProblems(matrix, src, dst, lon, lat, where)
+            except Exception as error:  # report every pair, not the first
+                problems.append(f"{where}: {type(error).__name__}: {error}")
+    assert not problems, "\n".join(problems)
+
+
+def _pairProblems(
+    matrix: dict[str, str], src: str, dst: str, lon: float, lat: float, where: str
+) -> list[str]:
+    problems = []
+    (sx,), (sy,) = transformPoints(SPHERE, matrix[src], [lon], [lat])
+    (dx,), (dy,) = transformPoints(matrix[src], matrix[dst], [sx], [sy])
+    pLon, pLat = planetocentricLonLat(matrix[dst], [dx], [dy])
+    dLon = (float(pLon[0]) - lon + 180.0) % 360.0 - 180.0
+    if (
+        abs(lat) < 90
+        and max(abs(dLon) * math.cos(math.radians(lat)), abs(pLat[0] - lat)) > 1e-9
+    ):
+        problems.append(f"{where}: point at ({pLon[0]}, {pLat[0]})")
+    (bx,), (by,) = transformPoints(matrix[dst], matrix[src], [dx], [dy])
+    if _geographic(matrix[src]):  # the same longitude, maybe a turn apart
+        bx = sx + (bx - sx + 180.0) % 360.0 - 180.0
+    if not np.allclose((bx, by), (sx, sy), atol=1e-6, rtol=0):
+        problems.append(f"{where}: round trip to ({bx}, {by})")
+    scene = _Scene(matrix[src], matrix[dst], lon, lat)
+    lost = (src, dst) in PAST_ITS_CUT and abs(lon) > 179
+    for route, out in (
+        ("reprojectBand", scene.reprojected()),
+        ("onGridOf", scene.onGrid()),
+    ):
+        problem = _misplacement(out, scene)
+        if lost and problem.endswith("got data"):
+            continue
+        if problem:
+            problems.append(f"{where}, {route}: {problem}")
+    return problems

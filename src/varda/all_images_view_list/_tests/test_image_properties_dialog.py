@@ -1,6 +1,8 @@
 """Image Properties: shows the metadata, turns what's changed into edits
 (only what differs from the file), and can save them into an ENVI header."""
 
+import threading
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -9,6 +11,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QLabel, QPlainTextEdit, QTableWidget
 
+from varda.all_images_view_list import image_properties_dialog
 from varda.all_images_view_list.image_properties_dialog import (
     GOOD,
     NAME,
@@ -16,7 +19,7 @@ from varda.all_images_view_list.image_properties_dialog import (
     ImagePropertiesDialog,
     parseNoData,
 )
-from varda.analysis.class_tools import classAreas, classRaster
+from varda.analysis.class_tools import ClassAreas, classAreas, classRaster
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.geo._tests.fixtures import (
@@ -504,3 +507,39 @@ def test_a_fits_image_shows_its_header(qtbot, tmp_path, size):
     dialog.show()
     qtbot.waitExposed(dialog)
     assertNothingClipped(dialog)
+
+
+def test_a_stale_failure_leaves_the_newer_measurement(qtbot, monkeypatch):
+    """A measurement that fails after a newer one finished (the CRS changed
+    meanwhile) doesn't replace the newer table."""
+    release, failed, calls = threading.Event(), threading.Event(), []
+
+    def firstFailsLate(image: VardaRaster) -> ClassAreas:
+        calls.append(image)
+        if len(calls) == 1:
+            release.wait(10)
+            failed.set()
+            raise OSError("stale read")
+        return classAreas(image)
+
+    monkeypatch.setattr(image_properties_dialog, "classAreas", firstFailsLate)
+    dialog = ImagePropertiesDialog(_classMap())
+    qtbot.addWidget(dialog)
+    dialog.measureClasses()  # a newer run
+    qtbot.waitUntil(lambda: dialog.classAreas is not None, timeout=10000)
+    release.set()
+    qtbot.waitUntil(failed.is_set, timeout=10000)
+    qtbot.wait(300)  # the stale failure's callback arrives
+    assert dialog.classTable.rowCount() == 3
+    assert "stale read" not in dialog.classMethod.text()
+
+
+def test_a_failed_read_is_shown(qtbot, monkeypatch):
+    def broken(image: VardaRaster) -> None:
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(image_properties_dialog, "classAreas", broken)
+    dialog = ImagePropertiesDialog(_classMap())
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: "disk gone" in dialog.classMethod.text(), timeout=10000)
+    assert dialog.classTable.rowCount() == 0

@@ -2,6 +2,7 @@ import gc
 
 import numpy as np
 import pytest
+from pyproj import CRS
 
 from varda.common import display_grid
 from varda.common.display_grid import (
@@ -14,6 +15,7 @@ from varda.common.display_grid import (
 from varda.common.entities import VardaRaster
 from varda.geo._tests.fixtures import (
     CTX_DEM_PROJ,
+    GDAL_WEST_PROJ,
     HIRISE_POLAR_PROJ,
     MOLA_MEGDR_PROJ,
     WGS84,
@@ -167,3 +169,27 @@ def test_reproject_reads_only_the_band(band):
     )
     shown = reprojectForDisplay(_withData(grid, data), base, band)
     assert set(np.unique(shown[np.isfinite(shown)]).tolist()) == {[7.0, 9.0][band]}
+
+
+def test_grid_key_tells_a_west_base_axis_apart():
+    """WKT drops a projected CRS's west-positive base axis; the key keeps it."""
+    east = CRS.from_user_input(GDAL_WEST_PROJ)
+    definition = east.to_json_dict()
+    for axis in definition["base_crs"]["coordinate_system"]["axis"]:
+        if axis["direction"] == "east":
+            axis["direction"] = "west"
+    west = CRS.from_json_dict(definition)
+    assert east.to_wkt() == west.to_wkt()  # why WKT can't be the key
+    image = makeImage(east, centerLonLat=(100, 10), pixelSize=500)
+    keys = {
+        display_grid.gridKey(
+            VardaRaster(
+                ArrayDataSource(
+                    np.zeros((4, 4, 1), np.float32), transform=image.transform, crs=crs
+                ),
+                name="base",
+            )
+        )
+        for crs in (east, west)
+    }
+    assert len(keys) == 2
