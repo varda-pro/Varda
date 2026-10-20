@@ -31,6 +31,7 @@ NOT_MEASURED = {
     "Clump Classes",
     "Accuracy Assessment",
     "Ratio Cube (Column Denominators)",  # needs a DDR/DE backplane: measured in its own test
+    "Reproject Image",  # needs a georeferenced image: measured in test_reproject_analysis.py
 }
 
 

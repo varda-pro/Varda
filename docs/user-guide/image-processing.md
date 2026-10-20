@@ -459,6 +459,11 @@ units × 1000 (Z Factor)").
   The pixel counts are rounded, so the actual factors along rows and
   columns can differ slightly from the one you typed; the result's
   description records them (and the σ used).
+- **Reproject Image:** puts the image on another map projection (the one
+  Varda recommends for the scene, another image's grid, or a coordinate
+  system you type) with GDAL's warper, plus a quality image (source pixel
+  distance, valid) and a `reprojection` record. See
+  [Reprojecting images](reprojecting.md).
 - **Rotate / Flip:** quarter turns and mirrors.
 - **Subset:** keeps a range of rows and columns and a list of bands. Its
   preview shows the image with a box: drag it over the part to keep, or

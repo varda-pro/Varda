@@ -196,6 +196,14 @@ def gridFor(
     )
 
 
+def imageGrid(crs: CRS | str, transform: Affine, width: int, height: int) -> TargetGrid:
+    """An image's own grid as a ``TargetGrid`` (its CRS as WKT, or PROJJSON
+    when WKT would lose an axis direction): to put another image on it, or
+    to keep an image's grid."""
+    t = transform
+    return TargetGrid(_crsText(crs), (t.a, t.b, t.c, t.d, t.e, t.f), width, height)
+
+
 def _target(crs: CRS | str) -> _Target:
     with PROJ_LOCK:
         parsed = CRS.from_user_input(crs)

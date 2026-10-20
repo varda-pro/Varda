@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 SET_CRS = "Set coordinate system…"
 DISTORTION_SUGGESTION = (
     "Measurements are geodesic and unaffected; shapes and slopes on this map "
-    "are distorted — reproject (Processing → Reproject Image, coming in a "
-    "later version) for figures and terrain"
+    "are distorted — reproject it (Processing → Geometry → Reproject Image) "
+    "for figures and terrain"
 )
 _NO_LABEL = LabelHints.empty()
 LABEL_FIX_HEADLINE = "No coordinate system in its file; built from its label."

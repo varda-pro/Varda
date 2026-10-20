@@ -91,6 +91,7 @@ KEPT_METADATA_KEYS = (
     "componentSelection",
     "unmixing",
     "iovf",
+    "reprojection",
     CRS_FIX_KEY,
     *CRISM_GEOMETRY_KEYS,
     *RESULT_KEYS,

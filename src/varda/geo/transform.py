@@ -453,11 +453,22 @@ def _datumShift(a: CRS, b: CRS, operation: Transformer) -> bool:
     registered with an authority (EPSG, IAU) and PROJ found more than a
     ballpark between them. Otherwise PROJ only keeps the latitude's number,
     whatever it calls the operation."""
-    registered = all(
-        crs.datum is not None and crs.datum.to_json_dict().get("id") is not None
-        for crs in (a, b)
-    )
+    registered = all(_registeredDatum(crs) for crs in (a, b))
     return registered and "ballpark" not in operation.description.lower()
+
+
+def _registeredDatum(crs: CRS) -> bool:
+    """Whether the CRS's datum is an authority's: the datum carries an id,
+    or its geodetic CRS does. WKT drops a datum ensemble's id (WGS 84's,
+    so ``CRS.from_wkt(CRS("EPSG:4326").to_wkt())``'s datum has none) and,
+    under a projected or bound CRS, the datum's, but keeps the geodetic
+    CRS's."""
+    if crs.datum is None:
+        return False
+    if crs.datum.to_json_dict().get("id") is not None:
+        return True
+    geodetic = crs.geodetic_crs
+    return geodetic is not None and geodetic.to_json_dict().get("id") is not None
 
 
 def _subtype(crs: CRS) -> str | None:

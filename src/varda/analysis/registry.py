@@ -65,6 +65,7 @@ from varda.analysis.class_tools import (
     MajorityFilterAnalysis,
     SieveAnalysis,
 )
+from varda.analysis.reproject import ReprojectAnalysis
 from varda.analysis.topography import TerrainAnalysis
 from varda.analysis.geometry import (
     CropToRoiAnalysis,
@@ -134,6 +135,7 @@ ANALYSES: list[type[Analysis]] = [
     MatchedFilterAnalysis,
     TerrainAnalysis,
     ResampleAnalysis,
+    ReprojectAnalysis,
     RotateFlipAnalysis,
     SubsetAnalysis,
     CropToRoiAnalysis,

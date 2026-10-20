@@ -141,7 +141,11 @@ class TerrainAnalysis(Analysis):
 
     def unavailableReason(self, image: VardaRaster) -> str:
         if image.crs is not None and image.crs.is_geographic:
-            return "Its pixels are in degrees: terrain needs a projected image (e.g. meters per pixel)."
+            return (
+                "Its pixels are in degrees: terrain needs a projected image (e.g. "
+                "meters per pixel); reproject it first (Processing → Geometry → "
+                "Reproject Image)."
+            )
         return ""
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:

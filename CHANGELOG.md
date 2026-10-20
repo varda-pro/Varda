@@ -8,6 +8,21 @@ can alter results.
 
 ### Added
 
+- **Reproject Image** (Processing → Geometry, after Resample). Puts an
+  image on the projection Varda recommends for the scene (by Purpose:
+  Measurement, Mosaic or Terrain), exactly on another image's grid, or on a
+  coordinate system you type (EPSG, IAU_2015, WKT or PROJ), with GDAL's
+  warper (nearest, bilinear, cubic, average or mode; nearest by default for
+  class maps and masks). Resolution is ground meters per pixel at the
+  output's center (0 keeps the source's pixel area); the extent can be the
+  whole image or another image's. Another body, an unreadable CRS, a grid
+  across the antimeridian or an output over 400 million pixels is refused
+  with the reason; an image already on the target grid is copied, not
+  resampled. A companion quality image gives each pixel's source pixel
+  distance and a Valid mask, and the `reprojection` record (CRSs, kernel,
+  resolution, grid, PROJ pipeline, GDAL and PROJ versions, scale change) is
+  kept in saved files. See
+  [Reprojecting images](docs/user-guide/reprojecting.md).
 - **Overlays across map projections.** The overlay bar in General Image
   Analysis and Dual Image now offers any georeferenced image of the same
   body that overlaps the view's image, in any projection, not only images
@@ -182,6 +197,11 @@ can alter results.
 
 ### Fixed
 
+- **Earth datum shifts in reprojection.** Reprojecting between registered
+  Earth datums onto a computed grid (NAD27 → WGS 84) dropped the datum
+  shift, about 200 m, because the grid's WKT loses WGS 84's datum-ensemble
+  id. A datum now counts as registered when it or its geodetic CRS has an
+  authority code.
 - **Masks and DEMs placed between a sphere and an ellipsoid keep their
   positions.** Masks and DEMs resampled from a sphere onto an ellipsoid grid
   of the same body (or back) were misplaced by up to ~20 km on Mars (GDAL
