@@ -19,12 +19,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 import anthropic
+import geopandas as gpd
 import openai
 import certifi
 import keyring
 import numpy as np
 from affine import Affine
 from astropy.io import fits
+from shapely.geometry import Point
 from pyproj import Transformer
 from PyQt6.QtSvg import QSvgRenderer
 from varda.terrain.scene import TerrainSettings, buildTerrain, pageHtml
@@ -74,6 +76,10 @@ def runSelfTest(app: VardaApplication) -> int:
                 lambda: _roundTrip(image, Path(folder) / "a.tif"),
             ),
             ("FITS read (astropy)", lambda: _fitsRead(Path(folder) / "dtm.fits")),
+            (
+                "vector files (pyogrio)",
+                lambda: _vectorRoundTrip(Path(folder) / "p.geojson"),
+            ),
             ("rendering", lambda: _render(image)),
             ("PCA (SPy)", lambda: _pca(image)),
             ("band parameters (HyPyRameter)", lambda: _bandParameters(image)),
@@ -230,6 +236,16 @@ def _fitsRead(path: Path) -> str:
         return f"{path.name} {loaded.shape}, {loaded.bandNames[1]}"
     finally:
         loaded.close()
+
+
+def _vectorRoundTrip(path: Path) -> str:
+    """Write and read a GeoJSON through geopandas' pyogrio engine (vector import, footprints)."""
+    gpd.GeoDataFrame({"id": [1]}, geometry=[Point(1.0, 2.0)], crs="EPSG:4326").to_file(
+        path, driver="GeoJSON", engine="pyogrio"
+    )
+    frame = gpd.read_file(path, engine="pyogrio")
+    assert len(frame) == 1 and frame.geometry.iloc[0].equals(Point(1.0, 2.0))
+    return f"{path.name} {len(frame)} feature"
 
 
 def _load(path: Path) -> VardaRaster:
