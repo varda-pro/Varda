@@ -33,6 +33,7 @@ from varda.terrain.scene import TerrainSettings, buildTerrain, pageHtml
 from varda.workspaces.terrain.terrain_view import TerrainView
 from PyQt6.QtWidgets import QApplication
 from rasterio.crs import CRS
+from rasterio.enums import Resampling
 
 from varda.analysis.band_parameters import BandParametersAnalysis
 from varda.analysis.transforms import PcaAnalysis
@@ -42,6 +43,8 @@ from varda.catalogs.basemaps import LAYERS, bundledImage
 from varda.catalogs.gazetteer import loadGazetteer
 from varda.common.entities import VardaRaster
 from varda.geo.bodies import identifyBody
+from varda.geo.reproject import gridFor, reprojectBand
+from varda.geo.transform import gdalWarp, transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import ImageLoadingService
 from varda.image_loading.raster_writer import writeRaster
@@ -69,6 +72,7 @@ def runSelfTest(app: VardaApplication) -> int:
                 lambda: _spectralLibraries(Path(folder) / "lib.sli"),
             ),
             ("coordinate systems", _coordinateSystems),
+            ("planetocentric reprojection (GDAL, PROJ geoc)", _planetocentricWarp),
             ("Find Data basemaps and names", _basemaps),
             ("ENVI write and read", lambda: _roundTrip(image, Path(folder) / "a.img")),
             (
@@ -203,6 +207,29 @@ def _coordinateSystems() -> str:
     # from another installation fails here
     assert CRS.from_user_input("IAU_2015:49900").to_wkt()
     return f"EPSG:{CRS_EPSG} -> ({lon:.3f}, {lat:.3f}), {vesta.evidence} is Vesta"
+
+
+def _planetocentricWarp() -> str:
+    """A 4 x 4 Mars sphere image at 45°N reprojected onto the Mars ellipsoid
+    lands where Varda's point transform puts it: GDAL's warper honors the
+    COORDINATE_OPERATION pipeline and the bundled PROJ has geoc. PROJ's
+    ballpark operation would put it 20 km (4 pixels) south, off the grid."""
+    src, dst = "IAU_2015:49910", "IAU_2015:49912"
+    transform = Affine(5000.0, 0.0, 4590000.0, 0.0, -5000.0, 2670000.0)
+    values = np.zeros((4, 4))
+    values[1, 1] = 1.0
+    grid = gridFor(src, transform, 4, 4, dst, resolution=1000.0)
+    out = reprojectBand(values, src, transform, grid, Resampling.nearest)
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size, "the marker fell off the grid"
+    centerX, centerY = transform * (1.5, 1.5)  # the marker pixel's center
+    (x,), (y,) = transformPoints(src, dst, [centerX], [centerY])
+    col, row = ~grid.affine * (x, y)
+    offset = max(abs(rows.mean() + 0.5 - row), abs(cols.mean() + 0.5 - col))
+    assert offset <= 0.5, f"the marker is {offset:.1f} pixels off"
+    operation = gdalWarp(src, dst).operation
+    assert "geoc" in operation, operation
+    return f"marker within {offset:.2f} px of the point transform"
 
 
 def _roundTrip(image: VardaRaster, path: Path) -> str:
