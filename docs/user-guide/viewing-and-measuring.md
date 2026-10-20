@@ -66,6 +66,70 @@ give:
 Sessions keep the display settings of Linked Images and 3D Terrain
 workspaces, but not those of General Image Analysis, so write them down.
 
+## Overlays
+
+The **Overlay** bar under the main view of General Image Analysis (and under
+each side of Dual Image) lays another loaded image over the view: a class
+map in its classes' colors, with a legend whose swatches you click to
+recolor a class, or one band of any other image through a color map, with
+its own stretch (**Colors**) and **Opacity**. Pixels without data stay
+see-through. An overlay is for looking only: it changes nothing in either
+image.
+
+**What can be overlaid.** The list offers:
+
+- images on the view's pixel grid (the same size, map projection and pixel
+  positions), shown pixel for pixel as they are;
+- georeferenced images of the **same body** that overlap the view's image,
+  in any map projection, on any surface of that body (a sphere or an
+  ellipsoid), with longitudes 0–360 or −180–180. These are **reprojected
+  for display** (below).
+
+The images left out are counted beside the list ("2 images can't be overlaid"),
+and its tooltip names each with the reason: "Mars and Earth are different
+bodies", "doesn't overlap this image", "not georeferenced, can't be placed
+on this image". Images of other bodies are always refused. An image that
+would be reprojected onto a view image larger than 100 million pixels is
+left out too, "too large to reproject for display (N Mpx)": reproject it
+yourself with **Processing → Geometry → Reproject Image** onto the view
+image's grid and overlay that.
+
+### Reprojected for display
+
+An overlay in another projection is reprojected onto the view image's grid
+by GDAL's warper (`rasterio.warp.reproject`) with **nearest neighbor**
+resampling, one band at a time: the Class band for **Classes**, or the band
+chosen. Values are never blended, so a class map keeps its classes and a
+band keeps its values; pixels outside the overlay, or without data in it,
+stay see-through. While it runs the bar says **Reprojecting…**, then
+**reprojected for display**; hover over that for the two coordinate
+systems and the method. If it fails, the bar says "couldn't reproject:"
+and why, and no overlay is shown.
+
+- **Where pixels land.** Each view pixel shows the overlay pixel under its
+  center, so a feature is drawn within ½ overlay pixel plus ½ view pixel
+  of where the two images' georeferencing puts it. Between a sphere and an
+  ellipsoid of one body, positions keep their planetocentric longitude and
+  latitude (see [Rasters between surfaces of one
+  body](coordinate-systems.md#rasters-between-surfaces-of-one-body)). The
+  georeferencing's own errors (a misregistered image) are on top of this:
+  the overlay shows them, it doesn't correct them.
+- **Display only.** Nothing reprojected for display is saved or written.
+  Analyses, statistics, ROIs, spectra and exports read each image as it
+  is. Tools that combine images pixel for pixel (Image Arithmetic, Band
+  Math, zonal-statistic columns) still need the [same
+  grid](image-processing.md#images-on-other-grids): make one with Reproject
+  Image.
+- **Cache.** Reprojected bands are kept (up to 512 MiB, the least recently
+  used dropped first), so choosing an overlay again, or recoloring a class,
+  is instant. Editing the overlay's metadata (its no-data value, band
+  names, coordinate system or transform) reprojects it again.
+
+In a figure caption, state that the overlay was reprojected for display
+from its coordinate system to the view image's with nearest-neighbor
+resampling (the tooltip's text), and give both images' pixel sizes, which
+set the ½ + ½ pixel position error above.
+
 ## Pixel readout
 
 Hovering over an image shows, at its bottom left, the pixel's column and row,
@@ -329,6 +393,64 @@ column (below) with the **count** statistic.
   resampled; images on other grids are named under the **Raster** dropdown,
   with why). Same pixel rule as above; **count** is the number of valid (non-no-data) pixels in
   that band.
+
+  Three more statistics weight each pixel by its **ground area** (georeferenced
+  images only):
+  - **area of pixels with data (km²)**: A = Σ aᵢ, the summed ground area
+    of the ROI's pixels with a valid value in the band.
+  - **area-weighted mean**: Σ vᵢ aᵢ / Σ aᵢ. On a map whose pixels differ
+    in ground area (an equirectangular map away from its true-scale
+    latitude, a polar stereographic one), it's the mean per unit of ground,
+    where the plain **mean** is per pixel; for pixels of equal area the two
+    are the same.
+  - **sum × pixel area (value·km²)**: Σ vᵢ aᵢ, e.g. a column density
+    times area for a total.
+
+  Here vᵢ is a pixel's value and aᵢ its ground area in km², on the CRS's own
+  surface, by the method in [Pixel
+  areas](coordinate-systems.md#pixel-areas): exact per row for north-up
+  geographic, equirectangular, Mercator and cylindrical equal-area images,
+  otherwise the map pixel area over the projection's areal scale at the
+  pixel center. The column's header tooltip names the method and surface,
+  e.g. "Pixel areas exact per row (geodesic polygon, edges densified to 16
+  points) on sphere R = 1737.40 km". Without map coordinates the values are
+  blank, and the tooltip says so ("the image has no map coordinates"). An
+  ROI with no pixels with data has an **area of pixels with data** of 0 and
+  a blank **area-weighted mean** and **sum × pixel area**.
+  - **Whole images, computed once, in the background.** Varda computes
+    the areas of all of an image's pixels once, in the background, then
+    reuses them for every ROI and column until the image's coordinate
+    system or transform changes. Until they're ready the columns are blank
+    and their tooltip says "computing the pixel areas…"; a result for a
+    coordinate system that changed meanwhile is discarded and computed
+    again. Outside the exact-per-row case, an image of more than 4,000,000
+    pixels has its areas interpolated from a grid of every n-th pixel,
+    within 10⁻⁶ (relative) of the evaluated ones (see [Pixel
+    areas](coordinate-systems.md#pixel-areas)). The areas are kept as
+    32-bit floats (relative rounding about 6 × 10⁻⁸, well inside that
+    bound; sums are taken in 64 bits), up to 512 MB for all images
+    together, the least recently used dropped first. If the computation
+    fails (logged), the columns stay blank.
+  - **Another image's coordinate system.** A column computed on another
+    image on the same pixel grid updates when the ROIs change, and when
+    the ROIs' own image changes its coordinate system, but not when only
+    that other image's coordinate system is changed. Add the column again
+    after changing it.
+  - **Whole pixels, not the polygon.** These count whole pixels (those
+    whose centers are inside the ROI, with data in the band), so **area of
+    pixels with data** differs from **Area on the body**, which measures
+    the drawn polygon: by up to half a pixel along the perimeter, and by
+    every no-data pixel inside. Report which you used, and its method.
+  - **Uncertainty.** The area method's own error is below 10⁻⁶ (relative)
+    for map pixels of a few km or less (see [Pixel
+    areas](coordinate-systems.md#pixel-areas)). The larger terms are the
+    image's georeferencing (a wrong pixel size or CRS scales every area;
+    Varda can't check it) and the pixel-selection rule above, whose
+    relative effect is about the perimeter in pixels / (2 × the pixel
+    count): small for large ROIs, large for ROIs a few pixels across. Areas
+    are on the reference surface, not along the terrain. A pixel whose area
+    can't be computed (past the edge of where the projection can be
+    converted) leaves the value blank.
 - **Expression**: arithmetic on other columns, with `sqrt`, `log`, `log10`,
   `exp`, `abs`, `min`, `max`, `round`, `pi` and `e`. A value that can't be
   computed is left blank.
@@ -449,6 +571,9 @@ for what applies to every process.
   spectra are also at their own spectral resolution, often finer than your
   sensor's.
 - **Stretches** don't affect any number on this page.
+- **Overlays reprojected for display** are placed within ½ overlay pixel
+  plus ½ view pixel (nearest neighbor) and never feed a number on this
+  page; see [Overlays](#overlays).
 
 ### References
 

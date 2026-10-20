@@ -100,6 +100,7 @@ pythonpath = ["varda"]
 addopts = ["-m", "not qa"]
 markers = [
     "qa: release-QA persona runs; excluded unless -m qa",
+    "slow: takes more than about 10 s; run by default (skip with -m 'not slow and not qa')",
     "qa_env(**variables): environment variables for a QA persona's own process",
 ]
 # Varda must not use its own deprecated APIs (varda.common.deprecation)
@@ -131,6 +132,7 @@ source_modules = [
     "varda.spectral_libraries",
     "varda.common.expressions",
     "varda.common.grid",
+    "varda.common.display_grid",
     "varda.common.provenance",
     "varda.common.memory",
     "varda.common.parameter",

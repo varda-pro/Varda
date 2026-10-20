@@ -8,6 +8,69 @@ can alter results.
 
 ### Added
 
+- **Class areas in Image Properties.** For a class map, a Classes group
+  lists each class's pixels, ground area (km², from each pixel's area on
+  the coordinate system's own surface) and share of the classified pixels,
+  with the totals and the method; it's measured in the background. **Copy
+  as CSV** and **Export CSV…** write the table with the method, Varda's
+  version, and the classified and unclassified pixel counts. Without map
+  coordinates it gives pixel counts. The CSV also records the image's
+  coordinate system (its description and its code or WKT) and pixel grid
+  (affine transform and pixel size), and escapes newlines in the image name
+  so the header stays intact. Class areas now read the class map in
+  blocks of rows (about half the memory), and any failure of PROJ falls
+  back to pixel counts with the reason. See Classification → Class areas.
+- **Reproject Image** (Processing → Geometry, after Resample). Puts an
+  image on the projection Varda recommends for the scene (by Purpose:
+  Measurement, Mosaic or Terrain), exactly on another image's grid, or on a
+  coordinate system you type (EPSG, IAU_2015, WKT or PROJ), with GDAL's
+  warper (nearest, bilinear, cubic, average or mode; nearest by default for
+  class maps and masks). Resolution is ground meters per pixel at the
+  output's center (0 keeps the source's pixel area); the extent can be the
+  whole image or another image's. Another body, an unreadable CRS, a grid
+  across the antimeridian or an output over 400 million pixels is refused
+  with the reason; an image already on the target grid is copied, not
+  resampled. A companion quality image gives each pixel's source pixel
+  distance and a Valid mask, and the `reprojection` record (CRSs, kernel,
+  resolution, grid, PROJ pipeline, GDAL and PROJ versions, scale change) is
+  kept in saved files. See
+  [Reprojecting images](docs/user-guide/reprojecting.md).
+- **Overlays across map projections.** The overlay bar in General Image
+  Analysis and Dual Image now offers any georeferenced image of the same
+  body that overlaps the view's image, in any projection, not only images
+  on its pixel grid. Such an overlay is reprojected for display only, onto
+  the view image's grid, with nearest-neighbor resampling (a class map
+  keeps its classes; positions within ½ overlay pixel plus ½ view pixel,
+  planetocentric between a sphere and an ellipsoid), on a worker thread and
+  cached. The bar says "reprojected for display", with both coordinate
+  systems in its tooltip. Analyses, statistics and exports still use each
+  image as it is. Images of other bodies are refused, and the bar counts
+  the images it can't overlay, with why in its tooltip. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#overlays).
+- **CRSs built from planetary labels in the coordinate-system check.** When
+  an image has no CRS, Varda builds one (and, if the file has none, its
+  pixel grid) from its own PDS3, ISIS or PDS4 map projection group: used
+  automatically when the label needs no assumed convention, otherwise
+  offered with the assumption named (e.g. ISIS's local-radius
+  equirectangular). A label whose CRS differs from the one GDAL built (GDAL
+  3.9.3 reads west-positive PDS3 labels as east, and planetographic
+  ellipsoids as spheres) gets the new `label-crs-mismatch` problem, its
+  label's CRS offered, never applied on its own. A label whose longitude
+  range fits the image only with samples running westward gets
+  `lon-bounds-westward`. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#crss-built-from-the-label).
+- **CRSs from planetary labels are applied at load, and can be applied and
+  undone in Image Properties.** An image whose file has no CRS and whose
+  label's map projection group needs nothing assumed opens with the
+  label's CRS and, when the file has none, its pixel grid (both kept in
+  sessions and exports, recorded as `crsFix` with `"source": "label"` and
+  the `"transform"`). **Apply** on an offered label CRS (including a
+  `label-crs-mismatch` against GDAL's) uses it, and **Undo** returns to the
+  file's CRS and grid. A west-positive label's CRS is stored as PROJJSON,
+  keeping its west axis. A CRS you chose that differs from the label's is
+  now an Info finding worded as your choice, not a problem. Image
+  Properties' OK no longer drops a corrected transform. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#reporting-a-crs-built-from-the-label).
 - **FITS images and ALTWG/SPC terrain cubes open.** `.fits`, `.fit`, `.fts`
   and `.fz` files are read with astropy. The image is the primary HDU or the
   first image extension, and each plane is a band. OSIRIS-REx ALTWG/SPC cubes
@@ -26,6 +89,14 @@ can alter results.
   reference ellipsoid, and why any value is blank. The map-unit area and
   perimeter are now labeled planar, with the projection's distortion over the
   image in their tooltip. See
+  [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
+- **ROI columns weighted by ground area.** Add Column's zonal statistics
+  now include **area of pixels with data (km²)**, **area-weighted mean**
+  and **sum × pixel area (value·km²)**: each pixel with data counts with
+  its ground area on the coordinate system's own surface (exact per row, or
+  over the projection's areal scale). They count whole pixels, so they're
+  reported apart from **Area on the body**, which measures the drawn
+  polygon; the column's tooltip names the method and surface. See
   [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#calculated-columns).
 - **The pixel readout names the body and conventions.** Hovering over a
   georeferenced image shows, e.g., `lat 18.40312° N  lon 77.45120° E  (Mars,
@@ -173,6 +244,29 @@ can alter results.
 
 ### Fixed
 
+- **Earth datum shifts in reprojection.** Reprojecting between registered
+  Earth datums onto a computed grid (NAD27 → WGS 84) dropped the datum
+  shift, about 200 m, because the grid's WKT loses WGS 84's datum-ensemble
+  id. A datum now counts as registered when it or its geodetic CRS has an
+  authority code.
+- **Masks and DEMs placed between a sphere and an ellipsoid keep their
+  positions.** Masks and DEMs resampled from a sphere onto an ellipsoid grid
+  of the same body (or back) were misplaced by up to ~20 km on Mars (GDAL
+  used PROJ's ballpark); they now keep their planetocentric positions. This
+  changes earlier results of Apply Mask, Band Math and Image Arithmetic
+  masks, Shadow Mask's DEM, a FATT map's Exclude and the ROI Manager's From
+  Threshold or Mask… whenever the input was on another grid across a sphere
+  and an ellipsoid of one body: re-run those. Points (Linked Images, ROIs,
+  saved points, lines) between a sphere and a PROJ-string ellipsoid with
+  `+lon_wrap` or `+over` were also kept at the latitude's number; they too
+  now keep their planetocentric positions. The resampling record names the
+  operation (`coordinateOperation`). A west-positive geographic image
+  (`IAU_2015:49901`) east of about 135°E at 45°N, or across ±180°, placed
+  or reprojected onto any grid came out empty (GDAL lost it); it is now
+  placed in full. `IAU_2015:49902` with a `+lon_wrap` or `+over` PROJ
+  string raised a PROJ error in points, placement and the overlay bar; it
+  now takes Varda's own route. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#rasters-between-surfaces-of-one-body).
 - **AI keys without a keychain.** Where no secure key store exists (Linux without
   gnome-keyring or KWallet), the AI Assistant Settings now say so, a key still
   works for the session, and it isn't saved between sessions. Installing

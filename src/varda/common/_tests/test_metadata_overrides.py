@@ -6,6 +6,7 @@ new no-data value; everything that asks the image sees the change."""
 import numpy as np
 import pytest
 
+from affine import Affine
 from pyproj import CRS
 
 from varda.common.entities import VardaRaster
@@ -129,3 +130,66 @@ def test_a_crs_override_that_isnt_a_crs_is_refused():
 def test_an_image_starts_without_a_health_check_or_label_facts():
     image = _image()
     assert image.crsHealth is None and image.labelHints is None
+
+
+# --- a corrected pixel-to-map transform ---
+
+
+def _identityOnMars() -> VardaRaster:
+    """An image whose file has no transform (the identity), given a CRS."""
+    image = VardaRaster(ArrayDataSource(np.zeros((4, 5, 1), dtype=np.float32)))
+    image.setMetadataOverrides({"crs": MARS_SPHERE.to_wkt()})
+    return image
+
+
+def test_a_transform_override_makes_the_image_geospatial():
+    image = _identityOnMars()
+    assert not image.hasGeospatialData
+    crs = image.metadataOverrides["crs"]
+    image.setMetadataOverrides(
+        {"crs": crs, "transform": [0.5, 0, 137.0, 0, -0.5, -4.0]}
+    )
+    assert image.hasGeospatialData
+    assert image.transform == Affine(0.5, 0, 137.0, 0, -0.5, -4.0)
+    lat, lon = image.pixelToLatLon(2, 4)  # pixel centers
+    assert lon == pytest.approx(137.0 + 2.5 * 0.5)
+    assert lat == pytest.approx(-4.0 - 4.5 * 0.5)
+
+
+def test_a_transform_override_can_be_a_tuple():
+    image = _identityOnMars()
+    image.setMetadataOverrides({"transform": (2.0, 0.0, 10.0, 0.0, -2.0, 20.0)})
+    assert image.transform == Affine(2.0, 0.0, 10.0, 0.0, -2.0, 20.0)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        [1.0, 0.0, 0.0, 0.0, -1.0],  # five numbers
+        [1.0, 2.0, 0.0, 2.0, 4.0, 0.0],  # a zero determinant
+        [1.0, 0.0, float("nan"), 0.0, -1.0, 0.0],
+        [1.0, 0.0, float("inf"), 0.0, -1.0, 0.0],
+        ["1", 0.0, 0.0, 0.0, -1.0, 0.0],
+        "garbage",
+        5.0,
+    ],
+)
+def test_a_transform_override_that_isnt_one_is_refused(bad):
+    image = _onWgs84()
+    before = image.transform
+    good = list(before)[:6]
+    image.setMetadataOverrides({"transform": good})
+    with pytest.raises(ValueError, match="six finite numbers"):
+        image.setMetadataOverrides({"transform": bad})
+    assert image.metadataOverrides == {"transform": good}  # unchanged
+    assert image.transform == before
+
+
+def test_a_transform_override_of_none_is_the_files_transform():
+    image = _onWgs84()
+    files = image.transform
+    image.setMetadataOverrides({"transform": [1.0, 0.0, 0.0, 0.0, -1.0, 0.0]})
+    assert image.transform != files
+    image.setMetadataOverrides({"transform": None})
+    assert image.transform == files
+    assert image.metadataOverrides == {"transform": None}

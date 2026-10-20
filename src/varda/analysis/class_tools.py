@@ -6,9 +6,15 @@ classifiers write."""
 
 from __future__ import annotations
 
+import csv
+import io
+import logging
 
 import numpy as np
+from affine import Affine
+from attrs import frozen
 from matplotlib import colormaps
+from pyproj import CRS
 from matplotlib.colors import to_hex
 from scipy import ndimage
 
@@ -23,7 +29,12 @@ from varda.common.parameter import (
     FloatParameter,
     IntParameter,
 )
+from varda.geo.describe import NO_CRS_TEXT, crsText, describeCrs
+from varda.geo.measure import imagePixelAreas, pixelAreaMethod
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.version import vardaVersion
+
+logger = logging.getLogger(__name__)
 
 CATEGORY = "Classification"
 
@@ -53,6 +64,202 @@ def classRaster(
         extraMetadata={"classes": list(names), "classColors": list(colors)},
     )
     return VardaRaster(source, name=name)
+
+
+UNREFERENCED_METHOD = "pixel counts only: the image has no map coordinates"
+# pixels summed at once by classAreas (bounds its temporaries)
+_BLOCK_PIXELS = 1_000_000
+# pixels whose ground areas classAreas holds at once (float64, 64 MB);
+# imagePixelAreas evaluates up to 4,000,000 of them exactly and interpolates
+# the rest
+_AREA_BLOCK_PIXELS = 8_000_000
+
+
+@frozen
+class ClassArea:
+    """One class of a class map: its pixels and their ground area."""
+
+    index: int  # the 0-based class number in the Class band
+    name: str
+    pixels: int
+    areaKm2: float  # NaN without map coordinates (or where PROJ can't invert)
+    fraction: float  # of the classified pixels
+
+
+@frozen
+class ClassAreas:
+    """Every class's area, and how the areas were measured."""
+
+    rows: tuple[ClassArea, ...]
+    method: str  # pixelAreaMethod's sentence, or why there are only counts
+    totalKm2: float  # of all classified pixels; NaN as the areas
+    # NaN, no-data, non-integer and out-of-range class values
+    unclassifiedPixels: int
+    # the image's coordinate system when measured (describeCrs's text) and
+    # its definition: the authority code, or WKT (PROJJSON when WKT would
+    # lose an axis direction); "" without one
+    crs: str = NO_CRS_TEXT
+    crsDefinition: str = ""
+    # the pixel grid: the affine transform (a, b, c, d, e, f); None without
+    # map coordinates
+    transform: tuple[float, ...] | None = None
+    crsUnits: str = ""  # the transform's units ("m", "°")
+
+    @property
+    def classifiedPixels(self) -> int:
+        """The fractions' denominator."""
+        return sum(row.pixels for row in self.rows)
+
+
+def _countsOnly(error: Exception) -> str:
+    logger.warning("Class areas: pixel counts only", exc_info=error)
+    return f"pixel counts only: {error}"
+
+
+def _classRows(image: VardaRaster, top: int, rows: int) -> np.ndarray:
+    """``rows`` rows of the Class band from ``top``, as float32 (class
+    numbers are small integers), NaN where they're no-data."""
+    data = image.getData(bandIndices=[0], window=(top, 0, rows, image.width))
+    band = np.ma.filled(np.ma.asarray(data, dtype=np.float32)[:, :, 0], np.nan)
+    if image.nodata is not None:  # not in place: band may be the source's
+        band = np.where(band == image.nodata, np.float32(np.nan), band)
+    return band
+
+
+def classAreas(image: VardaRaster) -> ClassAreas:
+    """The pixel count, ground area and fraction of each class of a class
+    map: each classified pixel's ground area (``geo.measure.imagePixelAreas``,
+    on the CRS's own surface) summed per class. A pixel counts whole for its
+    class; NaN, no-data, non-integer and out-of-range class values are
+    unclassified. Without map coordinates (or a CRS Varda can't measure on)
+    the areas are NaN and ``method`` says why. Reads the Class band in row
+    blocks and holds the areas of at most ``_AREA_BLOCK_PIXELS`` pixels at
+    once. Never raises for a class map but for a failed read."""
+    names = [str(name) for name in image.extraMetadata.get("classes", [])]
+    count = len(names)
+    width, height = image.width, image.height
+    crs, transform = image.crs, image.transform
+    method = UNREFERENCED_METHOD
+    measuring = False
+    if crs is not None and image.hasGeospatialData:
+        try:
+            method = pixelAreaMethod(crs, transform)
+            measuring = True
+        except Exception as error:  # anything PROJ can raise
+            method = _countsOnly(error)
+    pixels = np.zeros(count, np.int64)
+    sums = np.zeros(count)
+    areaRows = max(1, _AREA_BLOCK_PIXELS // max(width, 1))
+    sumRows = max(1, min(areaRows, _BLOCK_PIXELS // max(width, 1)))
+    for top in range(0, height, areaRows):
+        bottom = min(top + areaRows, height)
+        areas: np.ndarray | None = None
+        if measuring and crs is not None:
+            try:
+                # the block's own grid: its first row is the image's top
+                shifted = transform * Affine.translation(0, top)
+                areas = imagePixelAreas(crs, shifted, width, bottom - top)
+            except Exception as error:  # anything PROJ can raise
+                measuring, method = False, _countsOnly(error)
+        for start in range(top, bottom, sumRows):
+            block = _classRows(image, start, min(sumRows, bottom - start))
+            valid = np.isfinite(block) & (block >= 0) & (block < count)
+            valid &= block == np.round(block)
+            index = block[valid].astype(np.int64)
+            pixels += np.bincount(index, minlength=count)
+            if areas is not None:
+                weights = areas[start - top : start - top + len(block)][valid]
+                sums += np.bincount(index, weights=weights, minlength=count)
+    if not measuring:
+        sums[:] = np.nan
+    described = describeCrs(crs, transform, width, height)
+    referenced = crs is not None and image.hasGeospatialData
+    km2 = sums / 1e6
+    total = int(pixels.sum())
+    rows = tuple(
+        ClassArea(
+            index=k,
+            name=names[k],
+            pixels=int(pixels[k]),
+            areaKm2=float(km2[k]),
+            fraction=float(pixels[k] / total) if total else 0.0,
+        )
+        for k in range(count)
+    )
+    return ClassAreas(
+        rows=rows,
+        method=method,
+        totalKm2=float(km2.sum()),
+        unclassifiedPixels=width * height - total,
+        crs=described.text,
+        crsDefinition=_definition(crs, described.authority),
+        transform=tuple(float(v) for v in tuple(transform)[:6]) if referenced else None,
+        crsUnits=described.units,
+    )
+
+
+def _definition(crs: CRS | None, authority: str | None) -> str:
+    """The CRS's authority code, or its full text (``crsText``); "" without
+    one or for one PROJ can't write."""
+    if crs is None:
+        return ""
+    if authority is not None:
+        return authority
+    try:
+        return crsText(crs)
+    except Exception as error:  # anything PROJ can raise
+        logger.warning("Class areas: the CRS can't be written", exc_info=error)
+        return ""
+
+
+def _number(value: float) -> str:
+    return "" if np.isnan(value) else repr(value)
+
+
+def _headerValue(text: str) -> str:
+    r"""``text`` on one ``#`` line: backslashes, newlines and carriage
+    returns escaped as ``\\``, ``\n`` and ``\r``."""
+    return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+
+
+def classAreasCsv(areas: ClassAreas, imageName: str) -> str:
+    """``areas`` as CSV: ``#`` lines naming the image, the method, Varda's
+    version, the coordinate system (its description and its code or full
+    text), the pixel grid and pixel size, the classified and unclassified
+    pixel counts and the classified area, then one row per class (blank
+    areas where there are none). Header values are escaped
+    (``_headerValue``) so each stays on its line."""
+    total = _number(areas.totalKm2) or "unavailable"
+    out = io.StringIO()
+    out.write(f"# image: {_headerValue(imageName)}\n")
+    out.write(f"# method: {_headerValue(areas.method)}\n")
+    out.write(f"# Varda version: {vardaVersion()}\n")
+    out.write(f"# coordinate system: {_headerValue(areas.crs)}\n")
+    if areas.crsDefinition:
+        definition = _headerValue(areas.crsDefinition)
+        out.write(f"# coordinate system definition: {definition}\n")
+    if areas.transform is not None:
+        a, b, c, d, e, f = areas.transform
+        out.write(
+            f"# pixel grid (affine a, b, c, d, e, f): "
+            f"{a!r}, {b!r}, {c!r}, {d!r}, {e!r}, {f!r}\n"
+        )
+        across, down = float(np.hypot(a, d)), float(np.hypot(b, e))
+        out.write(
+            f"# pixel size (map units): {across:.6g} × {down:.6g} {areas.crsUnits}\n"
+        )
+    out.write(
+        f"# classified pixels: {areas.classifiedPixels} (the fractions' denominator)\n"
+    )
+    out.write(f"# unclassified pixels: {areas.unclassifiedPixels}\n")
+    out.write(f"# classified area_km2: {total}\n")
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["class", "name", "pixels", "area_km2", "fraction"])
+    for row in areas.rows:
+        writer.writerow(
+            [row.index, row.name, row.pixels, _number(row.areaKm2), repr(row.fraction)]
+        )
+    return out.getvalue()
 
 
 class ClassMapAnalysis(Analysis):

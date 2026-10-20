@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -36,7 +36,7 @@ from varda.image_loading.crism_geometry_chooser import chooseGeometryButton
 from varda.common.ui import FlowLayout
 from varda.plotting.plot import VardaPlotWidget
 from varda.rois.add_column_dialog import AddColumnDialog
-from varda.rois.roi_calculations import CalculatedColumns
+from varda.rois.roi_calculations import AreaTask, CalculatedColumns
 from varda.rois.mask_roi_dialog import NewClassFromMaskDialog
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_drawing_state import ROIDrawingState
@@ -44,6 +44,7 @@ from varda.rois.roi_drawing_widgets import ROIClassPicker, ROIShapePicker
 from varda.rois.roi_table_model import ROITableModel
 from varda.rois.roi_table_view import ROITableView
 from varda.spectral_libraries.spectrum import SpectrumOrigin
+from varda.utilities.background import runInBackground
 from varda.vector_import import ImportPlan, Target, addToROIs
 from varda.vector_import_dialog import VectorImporter
 
@@ -85,7 +86,10 @@ class ROIManagerWidget(QWidget):
 
         # Model / View
         self._images = images
-        self.calculatedColumns = CalculatedColumns(collection)
+        # pixel areas for area-weighted columns are computed in the background
+        self.calculatedColumns = CalculatedColumns(
+            collection, runner=self._computeInBackground
+        )
         self._model = ROITableModel(
             collection, parent=self, calculated=self.calculatedColumns
         )
@@ -198,6 +202,18 @@ class ROIManagerWidget(QWidget):
         form.addRow("Shape:", ROIShapePicker(state))
         form.addRow(ROIClassPicker(state))
         return box
+
+    def _computeInBackground(
+        self, task: AreaTask, onDone: Callable[[np.ndarray | None], None]
+    ) -> None:
+        """The calculated columns' runner: a failure counts as no areas."""
+
+        def failed(_error: Exception) -> None:
+            onDone(None)
+
+        runInBackground(
+            task, onDone, failed, description="Computing pixel areas", owner=self
+        )
 
     @property
     def table(self) -> ROITableView:

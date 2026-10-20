@@ -9,6 +9,8 @@ compares any class map with ground-truth ROIs (see
 tools (Density Slice, Majority/Minority Filter, Sieve Classes, Clump
 Classes), described in
 [Image processing tools](image-processing.md#class-maps-classification).
+**Image Properties** gives each class's ground area (see
+[Class areas](#class-areas)).
 
 | Classifier | Learns from | Needs |
 | --- | --- | --- |
@@ -276,6 +278,90 @@ result's description ("did not converge: N pixels changed cluster in the
 last of M iterations") and in the log; raise **Iterations** and run it
 again.
 
+## Class areas
+
+For a class map (from any classifier, K-Means, a density slice or the class
+map tools), **Image Properties** (right-click the image in the image list)
+has a **Classes** group: one row per class with its number, name, pixel
+count, ground area in km² and share of the classified pixels (%), the
+totals, and the method sentence. It is measured in the background
+("Computing…" until it's done) and again when you change the image's
+coordinate system there. **Copy as CSV** and **Export CSV…** give the same
+table with these header lines:
+
+```
+# image: scene MLP classes
+# method: exact per row (geodesic polygon, edges densified to 16 points) on sphere R = 3396.19 km
+# Varda version: …
+# coordinate system: Mars, sphere R = 3396.19 km, Equirectangular, center lat 0°, 1000 m/px
+# coordinate system definition: IAU_2015:49910
+# pixel grid (affine a, b, c, d, e, f): 1000.0, 0.0, 586746.9752330622, 0.0, -1000.0, 5000.0
+# pixel size (map units): 1000 × 1000 m
+# classified pixels: 99 (the fractions' denominator)
+# unclassified pixels: 21
+# classified area_km2: 98.99…
+class,name,pixels,area_km2,fraction
+```
+
+`fraction` is 0–1 (the table shows it as %); areas are written at full
+precision, and blank where there are none. The coordinate system is the
+image's when the areas were measured: its description, then its authority
+code or, without one, its full WKT on one line (PROJJSON for a
+west-positive label CRS, which WKT can't hold). The pixel grid is the
+image's affine transform (x = a·col + b·row + c, y = d·col + e·row + f, in
+the coordinate system's units), and the pixel size its two sides in those
+units; both are left out for an image without map coordinates. A newline,
+carriage return or backslash in a header value (the image name, say) is
+written as `\n`, `\r` or `\\`, so each value stays on its line.
+
+**Method.** A class's area is the sum of the ground areas of its pixels,
+each pixel's area computed on the coordinate system's **own** surface (the
+sphere or ellipsoid it names, given in the method sentence) by the methods
+in [Pixel areas](coordinate-systems.md#pixel-areas): exact per row for
+north-up cylindrical and geographic grids, otherwise the map pixel area
+over PROJ's areal scale at the pixel center (Snyder, 1987, ch. 4). Varda
+reads the class map in blocks of rows and evaluates the pixel areas for at
+most 8,000,000 pixels at a time; off the exact-per-row case, a block of
+more than 4,000,000 pixels is evaluated on a grid of every second pixel and
+interpolated between (the "Whole images" rule of Pixel areas, applied per
+block), an error below 10⁻⁶ of each area.
+
+- **Whole pixels.** A pixel counts whole for its class: the area is that of
+  the class's pixels, not of a boundary through them, so a class's edges
+  are uncertain by up to half a pixel along their length.
+- **Unclassified pixels** (NaN, the no-data value, and class values that
+  aren't a whole number from 0 to the number of classes − 1) are left out
+  of the counts, the areas and the fractions, and counted in the
+  "unclassified pixels" line. % and `fraction` are of the classified pixels
+  only.
+- **Pixels without an area.** Near the edge of a projection's valid area a
+  pixel PROJ can't invert has no area; its class's area and the total are
+  then blank rather than an undercount.
+- **No map coordinates.** An image without a coordinate system and pixel
+  grid, or with one Varda can't measure on (a coordinate system on no
+  body), gets pixel counts and fractions only, and the method sentence says
+  why ("pixel counts only: the image has no map coordinates").
+
+**Uncertainty.** The areas are exact to the terms in
+[Pixel areas](coordinate-systems.md#pixel-areas) (about 10⁻⁷ of the area or
+less for pixels up to 1°, or 1 km on Mars), far below the two that matter:
+
+- **Classification error dominates.** Pixels in the wrong class move area
+  from one class to another. Measure the map's accuracy
+  ([Measuring accuracy](#measuring-accuracy)) and, to report areas,
+  correct them with the confusion matrix and a probability sample of
+  reference data (Olofsson et al., 2014; see [Accuracy](#accuracy)). The
+  areas here are the map's areas, not estimates of the true ones.
+- **Georeferencing.** An error in the image's pixel size scales every area
+  by its square (1% in pixel size is 2% in area); an offset moves the
+  pixels to other latitudes, which changes their areas only where pixel
+  areas vary with latitude. The body model (the surface named in the method
+  sentence, rather than the body's IAU reference ellipsoid) is not included
+  either.
+
+State the method sentence, the classified and unclassified pixel counts,
+and the accuracy assessment with the areas.
+
 ## Measuring accuracy
 
 A class map's accuracy is measured on **reference** pixels whose true class
@@ -425,6 +511,8 @@ for what applies to every process.
 - For K-Means: the number of clusters found, how you named them, the
   iterations run and whether it converged (the `kmeans` metadata).
 - Any clean-up with the class map tools (filter size, minimum group size).
+- For class areas, the method sentence and pixel counts from the CSV (see
+  [Class areas](#class-areas)), with the accuracy-corrected estimates.
 
 Settings the dialogs don't show:
 
@@ -511,6 +599,10 @@ Report… → Save CSV…**), and state:
   Stehman, S. V., Woodcock, C. E., & Wulder, M. A. (2014). Good practices for
   estimating area and assessing accuracy of land change. *Remote Sensing of
   Environment*, 148, 42–57.
+- Pixel areas (areal scale): Snyder, J. P. (1987). *Map Projections: A
+  Working Manual*. U.S. Geological Survey Professional Paper 1395; and
+  Karney, C. F. F. (2013). Algorithms for geodesics. *Journal of Geodesy*,
+  87(1), 43–55. See [Pixel areas](coordinate-systems.md#pixel-areas).
 - Maximum likelihood and Mahalanobis distance classification: Richards,
   J. A., & Jia, X. (2006). *Remote Sensing Digital Image Analysis: An
   Introduction* (4th ed.). Springer.

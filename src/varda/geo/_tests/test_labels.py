@@ -74,6 +74,8 @@ PDS4_LABEL = """<?xml version="1.0" encoding="UTF-8"?>
         <cart:Geodetic_Model>
           <cart:latitude_type>Planetographic</cart:latitude_type>
           <cart:longitude_direction>Positive West</cart:longitude_direction>
+          <cart:a_axis_radius unit="km">1737.4</cart:a_axis_radius>
+          <cart:c_axis_radius>1737400</cart:c_axis_radius>
         </cart:Geodetic_Model>
       </cart:Cartography>
     </Discipline_Area>
@@ -148,6 +150,38 @@ def test_pds4_metadata() -> None:
     assert hints.longitudeDomain == "-180..180"
     assert hints.projectionGroup["LONGITUDE_DIRECTION"] == "Positive West"
     assert hints.source == "PDS4 label"
+
+
+def test_pds4_keeps_each_cart_unit() -> None:
+    group = labelHints(None, {"xml:PDS4": {"xml:PDS4": PDS4_LABEL}}).projectionGroup
+    assert group["A_AXIS_RADIUS"] == "1737.4"
+    assert group["A_AXIS_RADIUS_UNIT"] == "km"
+    assert group["WEST_BOUNDING_COORDINATE_UNIT"] == "deg"
+    assert "C_AXIS_RADIUS_UNIT" not in group  # no unit attribute: none kept
+
+
+def test_pds3_and_isis_keep_units_beside_values(tmp_path: Path) -> None:
+    label = tmp_path / "x.lbl"
+    label.write_text(
+        "PDS_VERSION_ID = PDS3\nOBJECT = IMAGE_MAP_PROJECTION\n"
+        '  A_AXIS_RADIUS = "3376.2" <KM>\n  MAP_SCALE = 0.25 <METERS/PIXEL>\n'
+        "  CENTER_LATITUDE = 90.0\n"
+        "END_OBJECT = IMAGE_MAP_PROJECTION\nEND\n"
+    )
+    group = labelHints(str(label)).projectionGroup
+    assert group["A_AXIS_RADIUS"] == "3376.2"
+    assert group["A_AXIS_RADIUS_UNIT"] == "KM"
+    assert group["MAP_SCALE"] == "0.25"
+    assert group["MAP_SCALE_UNIT"] == "METERS/PIXEL"
+    assert "CENTER_LATITUDE_UNIT" not in group
+    isis = {
+        "IsisCube": {
+            "Mapping": {"PixelResolution": {"value": 18.0, "unit": "meters/pixel"}}
+        }
+    }
+    hints = labelHints(None, {"json:ISIS3": {"json:ISIS3": json.dumps(isis)}})
+    assert hints.projectionGroup["PIXELRESOLUTION"] == "18.0"
+    assert hints.projectionGroup["PIXELRESOLUTION_UNIT"] == "meters/pixel"
 
 
 def test_unknown_target_is_kept_as_written(tmp_path: Path) -> None:

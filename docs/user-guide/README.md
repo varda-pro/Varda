@@ -16,6 +16,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Importing vector data](importing-vector-data.md): ROIs, points and lines from shapefiles, GeoPackages, GeoJSON, KML and CSV; coordinate systems and accuracy
 - [Finding data](finding-data.md): searching PDS ODE, STAC and footprint catalogs, and downloading products
 - [Image processing tools](image-processing.md): spatial filters, texture, color, class map tools, terrain and geometry
+- [Reprojecting images](reprojecting.md): Reproject Image onto a recommended projection, another image's grid or a coordinate system, with quality bands and what to report
 - [Spectral libraries](spectral-libraries.md): the bundled libraries, building your own from image spectra, loading, exporting, and what's recorded with each spectrum
 - [Spectral analysis](spectral-analysis.md): continuum removal, spectral derivatives and slopes
 - [Classification](classification.md): MLP, CNN and ViT classifiers, maximum likelihood, Mahalanobis distance, k-means, hold-out validation and accuracy assessment

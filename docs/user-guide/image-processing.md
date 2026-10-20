@@ -209,7 +209,12 @@ out of the resampling; image pixels outside the source, or with no source
 data under them, are no data. The result's description says what was done
 ("ctx_dem resampled from 6.0 m to 18.0 m pixels (average)", "reprojected
 and resampled" across map projections), and its metadata keeps the source,
-the method, both pixel sizes and both coordinate systems. If you need
+the method, both pixel sizes and both coordinate systems. Between a sphere
+and an ellipsoid of one body (or two spheres), positions keep their
+planetocentric longitude and latitude, and the metadata's
+`coordinateOperation` names the PROJ pipeline used (`PROJ` when PROJ's own
+operation is exact); see [Rasters between surfaces of one
+body](coordinate-systems.md#rasters-between-surfaces-of-one-body). If you need
 another method (cubic, a mode filter, a different target grid), resample
 the input yourself first (e.g. GDAL's `gdalwarp`, or Varda's Resample) and
 choose that image: an image on the same grid is never resampled again.
@@ -229,10 +234,12 @@ one convention covers it; the rest is no data.
 
 **Same grid only** (the same size, map projection and pixel positions):
 Image Arithmetic's second image, Band Math's other images (`i3_b1`), PCA/
-MNF weights, ROI zonal-statistic columns, overlays in the image workspaces
-and drapes in 3D Terrain. These combine or compare values pixel for pixel,
-and silently resampling science data first would change them. Resample an
-image yourself when you mean to.
+MNF weights, ROI zonal-statistic columns and drapes in 3D Terrain. These
+combine or compare values pixel for pixel, and silently resampling science
+data first would change them. Resample an image yourself when you mean to.
+Overlays in the image workspaces aren't on this list: one in another
+projection is reprojected for display only (see
+[Overlays](viewing-and-measuring.md#overlays)).
 
 ### Shadow Mask
 
@@ -452,6 +459,11 @@ units × 1000 (Z Factor)").
   The pixel counts are rounded, so the actual factors along rows and
   columns can differ slightly from the one you typed; the result's
   description records them (and the σ used).
+- **Reproject Image:** puts the image on another map projection (the one
+  Varda recommends for the scene, another image's grid, or a coordinate
+  system you type) with GDAL's warper, plus a quality image (source pixel
+  distance, valid) and a `reprojection` record. See
+  [Reprojecting images](reprojecting.md).
 - **Rotate / Flip:** quarter turns and mirrors.
 - **Subset:** keeps a range of rows and columns and a list of bands. Its
   preview shows the image with a box: drag it over the part to keep, or

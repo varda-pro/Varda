@@ -6,6 +6,7 @@ entities.py: data structures used throughout Varda
 from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
+import math
 
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from datetime import datetime
@@ -44,8 +45,36 @@ if TYPE_CHECKING:
 # Metadata the user can edit in Varda (Image Properties), per band or single
 EDITABLE_PER_BAND = ("wavelengths", "bandNames", "fwhm", "bbl")
 # "crs": a coordinate system (WKT, or any text PROJ reads) used instead of the
-# file's; None is the file's own, kept so a session remembers the choice
-EDITABLE_SINGLE = ("nodata", "wavelengthUnits", "description", "crs")
+# file's; None is the file's own, kept so a session remembers the choice.
+# "transform": the pixel-to-map affine (a, b, c, d, e, f) used instead of the
+# file's (e.g. one corrected from the label); None is the file's own
+EDITABLE_SINGLE = ("nodata", "wavelengthUnits", "description", "crs", "transform")
+
+
+TRANSFORM_ERROR = "A transform needs six finite numbers with a nonzero determinant"
+
+
+def _parsedTransform(value: object) -> Affine | None:
+    """The ``transform`` override ``value`` (six numbers ``a, b, c, d, e, f``,
+    a list or a tuple) as an Affine; ``None`` for none. Raises ValueError for
+    anything else, a non-finite number or a zero determinant (``a·e − b·d``)."""
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 6:
+        raise ValueError(TRANSFORM_ERROR)
+    numbers: list[float] = []
+    for n in value:
+        if isinstance(n, bool) or not isinstance(
+            n, (int, float, np.integer, np.floating)
+        ):
+            raise ValueError(TRANSFORM_ERROR)
+        numbers.append(float(n))
+    if not all(math.isfinite(n) for n in numbers):
+        raise ValueError(TRANSFORM_ERROR)
+    a, b, c, d, e, f = numbers
+    if a * e - b * d == 0:
+        raise ValueError(TRANSFORM_ERROR)
+    return Affine(a, b, c, d, e, f)
 
 
 class VardaRaster:
@@ -63,6 +92,7 @@ class VardaRaster:
         self._name = name
         self._overrides: dict = {}
         self._overrideCrs: CRS | None = None  # the "crs" override, parsed once
+        self._overrideTransform: Affine | None = None  # the "transform" override
         # Set by loading (image_loading.crs_check): the coordinate-system
         # health check, and the facts the image's own label states
         self.crsHealth: CrsHealth | None = None
@@ -88,7 +118,9 @@ class VardaRaster:
                     f"not {len(value)}."
                 )
         overrideCrs = self._parsedCrs(overrides.get("crs"))
+        overrideTransform = _parsedTransform(overrides.get("transform"))
         self._overrides = dict(overrides)
+        self._overrideTransform = overrideTransform
         self._overrideCrs = overrideCrs
         if name:
             self._name = name
@@ -191,11 +223,13 @@ class VardaRaster:
 
     def pixelToGeo(self, col: int, row: int) -> tuple[float, float]:
         """CRS coordinates of the center of pixel (``col``, ``row``)."""
-        return self._dataSource.pixelToGeo(col, row)
+        x, y = self.transform * (col + 0.5, row + 0.5)
+        return float(x), float(y)
 
     def geoToPixel(self, x: float, y: float) -> tuple[int, int]:
         """The (col, row) of the pixel containing CRS point (``x``, ``y``)."""
-        return self._dataSource.geoToPixel(x, y)
+        col, row = ~self.transform * (x, y)
+        return math.floor(col), math.floor(row)
 
     def imageToGeo(self, points: npt.ArrayLike) -> np.ndarray:
         """Continuous image coordinates (x = column, y = row; whole numbers on
@@ -302,6 +336,10 @@ class VardaRaster:
 
     @property
     def transform(self) -> Affine:
+        """The pixel-to-map affine: the ``transform`` override when set, else
+        the file's (``dataSource.transform``)."""
+        if self._overrideTransform is not None:
+            return self._overrideTransform
         return self._dataSource.transform
 
     @property
