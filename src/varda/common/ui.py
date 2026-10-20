@@ -33,7 +33,14 @@ from PyQt6.QtWidgets import (
     QAbstractScrollArea,
     QApplication,
 )
-from PyQt6.QtGui import QColor, QMouseEvent, QPaintEvent, QPalette, QResizeEvent
+from PyQt6.QtGui import (
+    QColor,
+    QMouseEvent,
+    QPaintEvent,
+    QPalette,
+    QPixmap,
+    QResizeEvent,
+)
 import PyQt6Ads as ads
 
 
@@ -918,3 +925,45 @@ def openOwnedDialog(dialog: QDialog) -> QDialog:
     dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.open()
     return dialog
+
+
+class ScaledPixmapLabel(QLabel):
+    """A label showing a picture as large as it fits, keeping its shape, and
+    sharp on high-density screens: it keeps the full-size picture and scales
+    it to the label's size in device pixels whenever the label resizes (a
+    plain ``QLabel`` shows the pixmap it was given, blurred when stretched).
+    Text set with ``setText`` replaces the picture."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full: QPixmap | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # the picture follows the label's size, never the other way round
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+
+    def setFullPixmap(self, pixmap: QPixmap) -> None:
+        self._full = pixmap
+        self._rescale()
+
+    def fullPixmap(self) -> QPixmap | None:
+        return self._full
+
+    def setText(self, a0: str | None) -> None:
+        self._full = None
+        super().setText(a0)
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        super().resizeEvent(a0)
+        self._rescale()
+
+    def _rescale(self) -> None:
+        if self._full is None or self._full.isNull():
+            return
+        ratio = self.devicePixelRatioF()
+        scaled = self._full.scaled(
+            self.size() * ratio,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        scaled.setDevicePixelRatio(ratio)
+        super().setPixmap(scaled)

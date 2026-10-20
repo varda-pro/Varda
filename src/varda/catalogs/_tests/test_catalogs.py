@@ -8,6 +8,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import pytest
+from urllib.parse import parse_qs, urlparse
 import shapely
 
 from varda.catalogs import ode, stac
@@ -118,6 +119,13 @@ def test_ode_search_sends_the_filters_and_reads_products(monkeypatch):
     assert product.properties["Incidence (°)"] == pytest.approx(55.6443, abs=1e-3)
     assert product.start.year == 2007
     assert "query=thumbnail" in product.thumbnail
+    # the preview is ODE's large browse image (its thumbnails are ~32 px tall)
+    preview = parse_qs(urlparse(product.preview).query)
+    assert preview == {
+        "query": ["lgbrowse"],
+        "target": ["mars"],
+        "pdsid": ["hrl000040ff_07_if183j_mtr3"],
+    }
     assert page.total == 2 and page.nextPage is None
 
 
@@ -215,6 +223,21 @@ def test_stac_search_posts_the_query_and_follows_pages(monkeypatch):
     catalog.search(SearchQuery(collection, page=page.nextPage), _progress)
     url, _, body = http.calls[-1]
     assert body["next"] and url == page.nextPage["href"]
+
+
+def test_stac_previews_are_the_largest_picture(monkeypatch):
+    catalog, _ = _stac(monkeypatch)
+    page = _fixture("stac_search_ctx.json")
+    item = page["features"][0]
+    # the CTX items' overview is a GeoTIFF, which the preview can't show
+    plain = catalog._product(item, "x#y")
+    assert plain.preview == plain.thumbnail
+    item["assets"]["browse"] = {
+        "href": "https://example.test/browse.png",
+        "type": "image/png",
+        "roles": ["overview"],
+    }
+    assert catalog._product(item, "x#y").preview == "https://example.test/browse.png"
 
 
 def test_stac_files_come_from_the_assets(monkeypatch):

@@ -113,6 +113,11 @@ def _number(value):
         return value
 
 
+def _imageUrl(query: str, target: str, pdsid: str, **extra: str) -> str:
+    """ODE's thumbnail or browse image of a product."""
+    return f"{ODE_URL}?{urlencode({'query': query, 'target': target, 'pdsid': pdsid, **extra})}"
+
+
 class OdeCatalog(Catalog):
     catalogId = "ode"
     name = "PDS Orbital Data Explorer (ODE)"
@@ -215,18 +220,10 @@ class OdeCatalog(Catalog):
         except shapely.errors.ShapelyError:
             footprint = shapely.Point()
         target = self._ids(collection)["target"]
-        thumbnail = (
-            ODE_URL
-            + "?"
-            + urlencode(
-                {
-                    "query": "thumbnail",
-                    "target": target,
-                    "pdsid": p["pdsid"],
-                    "results": "opm",
-                }
-            )
-        )
+        thumbnail = _imageUrl("thumbnail", target, p["pdsid"], results="opm")
+        # ODE's thumbnails are about 32 px tall; its large browse image (the
+        # normal one when there is none larger) is the sharpest
+        preview = _imageUrl("lgbrowse", target, p["pdsid"])
         return Product(
             p["pdsid"],
             p.get("Product_title") or p["pdsid"],
@@ -240,6 +237,7 @@ class OdeCatalog(Catalog):
                 if p.get(name) not in (None, "")
             },
             thumbnail,
+            preview,
         )
 
     def files(self, product: Product) -> list[RemoteFile]:

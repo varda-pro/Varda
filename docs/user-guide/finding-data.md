@@ -73,8 +73,9 @@ their longitude and latitude). A body Varda doesn't know keeps its name and
 is drawn at Earth's mean radius, so a polar view's meters are nominal.
 
 **Basemap** shows the body's global imagery (see below) or an open georeferenced image of the same body
-under the footprints; **Names** labels features with their IAU names; **Go
-to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
+under the footprints; **Names** labels features with their IAU names;
+**Previews** draws the selected products' browse images over their
+footprints (see [Previews](#previews)); **Go to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
 traverse, a geologic map); **Whole Body** zooms out.
 
 Click a footprint to select it, Shift-click to add, Ctrl-click (Cmd-click on
@@ -82,8 +83,41 @@ a Mac) to remove, and Shift-drag to add every footprint in a box. The
 **Results** table lists each product with its catalog's metadata, sortable by
 column: for ODE, observation type, incidence, emission and phase angles,
 solar longitude, map resolution (px/°) and comment, rounded to four
-decimal places. **Preview** shows the selected product's thumbnail and details.
-**Show only selected** narrows the table to the selection.
+decimal places. **Preview** shows the selected product's browse image and
+details. **Show only selected** narrows the table to the selection.
+
+### Previews
+
+**Preview** shows the catalog's largest browse image of the selected
+product, as large as the panel and at the screen's full resolution: for ODE,
+its large browse image (`query=lgbrowse`; ODE's thumbnails are about 32
+pixels tall); for a STAC catalog, an overview or visual asset that is a PNG,
+JPEG or GIF, else the item's thumbnail. A product with none shows its
+thumbnail, or says "No preview." Browse images are fetched when you select a
+product and kept while the workspace is open (the latest 256 MB of them, at
+most 2048 pixels on a side); files over 25 MB aren't fetched.
+
+With **Previews** checked, the map draws the browse images of the selected
+products (the first 12) over their footprints, clipped to them. A browse
+image is drawn only when it is a north-up map of the footprint's longitude
+and latitude box, as ODE's and USGS's browse images of CTX, HiRISE and
+THEMIS VIS are. Two checks decide it:
+
+1. **Shape:** its width over height is the box's, in degrees (simple
+   cylindrical) or in ground lengths at a latitude within the box
+   (equirectangular), within 5 %.
+2. **Overlap:** laid over the box, its picture (what isn't black or white
+   fill) covers the footprint: an intersection over union of at least 0.85,
+   measured at 512 pixels on the longer side. Varda's measurements gave 0.96
+   to 0.99 for CTX, HiRISE and THEMIS VIS, and 0.25 to 0.72 for browse
+   images that aren't maps of the footprint (THEMIS IR strips in sensor
+   geometry, CRISM MTRDR figures).
+
+Anything else (a strip in sensor geometry, a figure with plots) stays in the
+Preview panel, which then says it isn't drawn on the map. Footprints across
+±180° or reaching a pole aren't drawn either, since a longitude-latitude box
+can't place them. In a polar view the image is reprojected (nearest
+neighbor).
 
 ### Basemaps, names and Go to
 
@@ -254,6 +288,12 @@ date, the version or the search. To keep that record:
   finding data, not for locating it: use the georeferencing of the
   downloaded product, and its stated accuracy (see [Reporting results from
   Varda](reporting-results.md#precision-is-not-accuracy)).
+- **Previews are pictures, not data.** A browse image is the catalog's
+  rendering (stretched, often with a color composite of its own) and is
+  placed on the map by the footprint's box, so it is only as accurate as
+  the footprint: the overlap check above means it lines up with the
+  footprint to within a few percent of the footprint's size. Don't measure
+  brightness or position from it; download the product.
 - **Viewing geometry** in the results (angles, solar longitude) is the
   catalog's, rounded for display. Quote the product's label for exact
   values.

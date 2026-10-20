@@ -5,7 +5,7 @@ from PyQt6.QtCore import QSettings
 
 from varda.catalogs import basemaps
 from varda.catalogs.catalog import CatalogError
-from varda.workspaces.find_data import imagery
+from varda.workspaces.find_data import imagery, preview_images
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -34,4 +34,6 @@ def offlineTiles(tmp_path, monkeypatch):
         raise CatalogError("trek.nasa.gov couldn't be reached.")
 
     monkeypatch.setattr(basemaps, "fetchBytes", offline)
+    # nor a catalog's browse images (a test may patch this too)
+    monkeypatch.setattr(preview_images, "fetchBytes", offline)
     monkeypatch.setattr(imagery, "cacheFolder", lambda: tmp_path / "tiles")

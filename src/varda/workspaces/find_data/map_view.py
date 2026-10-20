@@ -1,9 +1,10 @@
 """The find-data map: footprints over a graticule, a basemap image (with
-sharper tiles over it as you zoom), the names of features and vector
-overlays, in equirectangular or polar stereographic (``projection``), with a
-box to search in. Click selects the footprints under the pointer, Shift adds
-to the selection, Cmd (Ctrl) removes from it, and Shift-drag adds every
-footprint a box touches."""
+sharper tiles over it as you zoom), products' browse images over their
+footprints (``previews``), the names of features and vector overlays, in
+equirectangular or polar stereographic (``projection``), with a box to
+search in. Click selects the footprints under the pointer, Shift adds to the
+selection, Cmd (Ctrl) removes from it, and Shift-drag adds every footprint a
+box touches."""
 
 from __future__ import annotations
 
@@ -108,6 +109,7 @@ class FootprintMap(QWidget):
         self._selectedProducts: list[Product] = []
         self._overlayLayers: list[list[shapely.Geometry]] = []
         self._overlays: list[pg.GraphicsObject] = []
+        self._previews: dict[str, pg.ImageItem] = {}  # by product id
         self._labels: list[pg.TextItem] = []
         self._gazetteer: Gazetteer | None = None
         self._namesShown = True
@@ -182,6 +184,7 @@ class FootprintMap(QWidget):
         self.projector = Projector(projection, body)
         self.basemapItem.clear()
         self.tilesItem.clear()
+        self.keepPreviews(set())
         self._namePositions = None
         self._showAxes()
         self.setFootprints(self._products)
@@ -308,6 +311,29 @@ class FootprintMap(QWidget):
         x0, y0, x1, y1 = bounds
         self.tilesItem.setImage(rgba[::-1], autoLevels=False)
         self.tilesItem.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+    def keepPreviews(self, productIds: set[str]) -> None:
+        """Remove the browse images of products not in ``productIds``."""
+        for productId in set(self._previews) - productIds:
+            self.plot.removeItem(self._previews.pop(productId))
+
+    def setPreview(self, productId: str, rgba: np.ndarray, bounds: Bounds) -> None:
+        """A product's browse image over its footprint: RGBA (rows north to
+        south, clear outside the footprint) covering map ``bounds``."""
+        item = self._previews.get(productId)
+        if item is None:
+            # over the basemap and its tiles, under the graticule and outlines
+            item = pg.ImageItem(axisOrder="row-major")
+            item.setZValue(-8)
+            self.plot.addItem(item)
+            self._previews[productId] = item
+        x0, y0, x1, y1 = bounds
+        item.setImage(rgba[::-1], autoLevels=False)
+        item.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+    def previewIds(self) -> list[str]:
+        """The products whose browse images are on the map."""
+        return list(self._previews)
 
     def setCredit(self, text: str) -> None:
         self.credit.setText(text)
