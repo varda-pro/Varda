@@ -210,10 +210,12 @@ class ImageViewport(QWidget):
         self._readoutOverlay = _PixelReadoutOverlay(self)
         self._legendOverlay = _LegendOverlay(self, self._gv)
         self._legendOverlay.linkActivated.connect(self.sigLegendLink)
-        self._gv.scene().sigMouseMoved.connect(self._onHover)
+        scene = self._gv.scene()
+        assert isinstance(scene, pg.GraphicsScene)
+        scene.sigMouseMoved.connect(self._onHover)
         # A click that was not a drag (pyqtgraph tells them apart) reaches the
         # tools as CLICK: a plain press is left to the view, which pans with it
-        self._gv.scene().sigMouseClicked.connect(self._onSceneClicked)
+        scene.sigMouseClicked.connect(self._onSceneClicked)
         self._gv.viewport().installEventFilter(self)
 
     def overlayImage(self, overlayImageRenderer: ImageRenderer):
@@ -477,8 +479,9 @@ class ImageViewport(QWidget):
         return super().eventFilter(obj, event)
 
     def _onSceneClicked(self, event) -> None:
-        """Deliver a click on the image (not a double-click) to the tools."""
-        if event.double():
+        """Deliver a click on the image (not a double-click) to the tools,
+        unless an item on the image (an ROI or line handle) took it."""
+        if event.double() or event.isAccepted():
             return
         if not self._imageItem.sceneBoundingRect().contains(event.scenePos()):
             return

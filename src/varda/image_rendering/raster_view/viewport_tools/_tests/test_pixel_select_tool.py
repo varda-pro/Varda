@@ -2,6 +2,7 @@
 
 import pytest
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import QGraphicsRectItem
 
 from varda.common.keys import controlClick
 from varda.image_rendering.image_renderer import ImageRenderer
@@ -78,3 +79,20 @@ def test_turning_it_on_shows_how_to_use_it(viewport):
     tool = PixelSelectTool(viewport)
     assert tool._textOverlay is not None
     tool.deactivate()
+
+
+class _ClickTaker(QGraphicsRectItem):
+    """Stands in for an ROI or line handle that takes its clicks."""
+
+    def mouseClickEvent(self, event):
+        event.accept()
+
+
+def test_a_click_an_item_on_the_image_takes_selects_nothing(qtbot, viewport, selected):
+    handle = _ClickTaker(0, 0, 60, 40)  # covers the whole image
+    handle.setZValue(10)
+    viewport._vb.addItem(handle)
+    widget, center = _surface(viewport)
+    qtbot.mouseClick(widget, LEFT, NONE, center)
+    qtbot.wait(20)
+    assert selected == []
