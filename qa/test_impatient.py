@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QLabel, QPushButton
 
 from qa import journeys
 from qa.data import QaData
@@ -15,6 +15,7 @@ from qa.harness import QaRun
 pytestmark = [pytest.mark.qa, pytest.mark.qt_no_exception_capture]
 
 NO_MODIFIER = Qt.KeyboardModifier.NoModifier
+CTRL = Qt.KeyboardModifier.ControlModifier  # ⌘ on macOS
 
 
 def test_first_success_without_reading_anything(qaRun: QaRun, qaData: QaData) -> None:
@@ -29,6 +30,17 @@ def test_first_success_without_reading_anything(qaRun: QaRun, qaData: QaData) ->
             )
         ]
         run.log("start hints", hints=hints)
+        emptyKeys = [
+            b.text()
+            for b in run.mainWindow.findChildren(QPushButton)
+            if b.isVisible() and "()" in b.text()
+        ]
+        if emptyKeys:
+            run.finding(
+                "annoyed",
+                f"A start button shows an empty shortcut: {emptyKeys[0]!r}",
+                widget=run.mainWindow,
+            )
         if not hints:
             run.finding(
                 "confused",
@@ -51,20 +63,30 @@ def test_first_success_without_reading_anything(qaRun: QaRun, qaData: QaData) ->
         run.finding("blocked", "Gave up: double-clicking the image showed nothing")
         return
 
-    with run.step("pixel spectrum, plain click", "Pixel Select, then click the image"):
-        # Doesn't read the tool tip: turns the tool on and just clicks
-        if not journeys.lookAtSpectrum(run, workspace, NO_MODIFIER):
+    with run.step("what to do next", "Read the status bar"):
+        statusBar = workspace.statusBar()
+        message = statusBar.currentMessage() if statusBar is not None else ""
+        run.log("status bar", message=message)
+        if "Pixel Select" not in message or "click" not in message.lower():
             run.finding(
                 "confused",
-                "With Pixel Select on, clicking the image does nothing; it needs "
-                "Ctrl+Click, which only the tool tip says",
+                f"The status bar doesn't say how to see a spectrum: {message!r}",
                 widget=workspace,
-                reproduce="Turn on Pixel Select, click the image without Ctrl",
             )
-    with run.step("pixel spectrum", "Pixel Select, Ctrl+Click the image"):
-        plotted = journeys.lookAtSpectrum(run, workspace)
+
+    with run.step("pixel spectrum, plain click", "Pixel Select, then click the image"):
+        # Doesn't read the tool tip: turns the tool on and just clicks
+        plotted = journeys.lookAtSpectrum(run, workspace, NO_MODIFIER)
         if not plotted:
-            run.finding("blocked", "Ctrl+Click plotted no spectrum", widget=workspace)
+            run.finding(
+                "confused",
+                "With Pixel Select on, clicking the image does nothing",
+                widget=workspace,
+                reproduce="Turn on Pixel Select, click the image",
+            )
+    with run.step("pixel spectrum, Ctrl/⌘+click", "Pixel Select, Ctrl/⌘+click"):
+        if not journeys.lookAtSpectrum(run, workspace, CTRL) and not plotted:
+            run.finding("blocked", "No click plotted a spectrum", widget=workspace)
 
     with run.step("run analysis", " > ".join(journeys.PCA_MENU)):
         result = journeys.runAnalysis(run, image)

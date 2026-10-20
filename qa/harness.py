@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import platform
 import re
 import sys
@@ -160,6 +161,13 @@ def writeFindings(outDir: Path, findings: list[Finding]) -> Path:
     return path
 
 
+def ensureFindings(outDir: Path) -> None:
+    """Write an empty ``findings.json`` if no finding made one, so a clean run
+    has a report and a missing file means the run never finished."""
+    if not (outDir / FINDINGS_FILE).exists():
+        writeFindings(outDir, [])
+
+
 def addFinding(outDir: Path, found: Finding) -> None:
     writeFindings(outDir, [*readFindings(outDir), found])
 
@@ -174,6 +182,9 @@ class Network:
     as on a plane."""
 
     hosts: list[str] = []
+    # host -> where the first connection to it came from (innermost last), so
+    # a finding can name the caller (release QA #9 took a search to explain)
+    callers: dict[str, list[str]] = {}
     offline = False
     _installed = False
 
@@ -194,8 +205,21 @@ class Network:
         if host in ("127.0.0.1", "::1", "localhost"):
             return
         cls.hosts.append(host)
+        cls.callers.setdefault(host, _callers())
         if cls.offline:
             raise OSError(f"QA: offline (refused a connection to {host})")
+
+
+def _callers(limit: int = 8) -> list[str]:
+    """The Python frames that led to a connection: Varda's and its
+    libraries', not the standard library's socket plumbing or this hook."""
+    frames = [
+        f"{Path(frame.filename).name}:{frame.lineno} {frame.name}"
+        for frame in traceback.extract_stack()
+        if ("site-packages" in frame.filename or "varda" in frame.filename)
+        and "qa" + os.sep + "harness" not in frame.filename
+    ]
+    return frames[-limit:]
 
 
 class _Records(logging.Handler):
@@ -252,6 +276,8 @@ class QaRun:
         libraries and sessions are neither used nor touched."""
         QStandardPaths.setTestModeEnabled(True)
         Network.install()
+        Network.hosts.clear()
+        Network.callers.clear()
         self._patchOutsideWorld()
         with self.step("launch"):
             started = time.monotonic()

@@ -153,7 +153,9 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
         # Standalone, the box stays checked and the button does nothing.
         self.activeCheckBox = QCheckBox("Receives pixel clicks")
         self.activeCheckBox.setChecked(True)
-        self.activeCheckBox.setToolTip("Ctrl+click pixel selections are plotted here")
+        self.activeCheckBox.setToolTip(
+            "Pixels you click with Pixel Select are plotted here"
+        )
         self.newPlotButton = QPushButton("New Pixel Plot")
         self.newPlotButton.setToolTip(
             "Open another plot, e.g. to collect spectra from a different region"
@@ -246,9 +248,19 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
         self._applyMode()
 
         width, height = self.pixelConfig.window()
+        # A pixel already plotted is highlighted, not drawn a second time
+        plotted = {
+            origin: curve
+            for curve, origin in self.pixelOrigins.items()
+            if curve in self.pixelCurves
+        }
         curves = []
         for image in inBounds:
             origin = PixelOrigin(image, x, y, width, height)
+            if origin in plotted:
+                curves.append(plotted[origin])
+                self.selectPlot(plotted[origin])
+                continue
             single = width == height == 1
             where = f"({x}, {y})" if single else f"{width}×{height} at ({x}, {y})"
             kind = "Pixel" if single else "Region"

@@ -116,6 +116,11 @@ class Analysis(ParameterGroup):
         "" when it can."""
         return ""
 
+    def inputSummary(self, image: VardaRaster) -> str:
+        """What the settings make the analysis read from ``image`` (e.g. which
+        bands), shown above Run; "" for nothing to say."""
+        return ""
+
     def createPreviewWidget(self, image: VardaRaster) -> QWidget | None:
         """An optional widget shown below the settings, e.g. a plot that helps
         choose them. Rebuilt whenever the image changes."""

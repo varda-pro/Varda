@@ -166,7 +166,8 @@ def test_the_bar_says_which_images_cant_be_overlaid(qtbot):
     widget = OverlayBar(ProjectImages([base, smaller]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    assert widget.notListed.text() == "(1 can't be overlaid)"
+    # Release QA #13: "(1 not on this grid)" was unexplained
+    assert widget.notListed.text() == "1 image can't be overlaid"
     assert "smaller (a different size" in widget.notListed.toolTip()
 
 
@@ -434,7 +435,7 @@ def test_an_image_of_another_body_is_not_offered(qtbot):
     widget = OverlayBar(ProjectImages([base, earth]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    assert widget.notListed.text() == "(1 can't be overlaid)"
+    assert widget.notListed.text() == "1 image can't be overlaid"
     tip = widget.notListed.toolTip()
     assert "Mars" in tip and "Earth" in tip
 
@@ -644,3 +645,11 @@ def test_the_reprojection_label_fits_a_laptop(qtbot):
     qtbot.wait(50)
     assert bar.reprojectedLabel.isVisible()
     assertNothingClipped(workspace)
+
+
+def test_several_images_off_the_grid_are_counted_plainly(qtbot):
+    base = _base()
+    others = [_raster(np.zeros((3, 8)), f"small {i}") for i in range(2)]
+    widget = OverlayBar(ProjectImages([base, *others]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.notListed.text() == "2 images can't be overlaid"

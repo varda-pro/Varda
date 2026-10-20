@@ -39,3 +39,8 @@ MENUBAR: list[tuple[str, str]] = [
     (MenuId.DEBUG, "Debug"),
     (MenuId.HELP, "Help"),
 ]
+
+
+def menuBar(debug: bool) -> list[tuple[str, str]]:
+    """The menu bar; the Debug menu only in development (``VARDA_DEBUG=1``)."""
+    return [entry for entry in MENUBAR if debug or entry[0] != MenuId.DEBUG]

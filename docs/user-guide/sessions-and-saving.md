@@ -1,8 +1,19 @@
 # Sessions and saving results
 
+## Opening images
+
+**File → Import Image(s)…** (⌘O on a Mac, Ctrl+O elsewhere), the buttons in
+the empty window, or dropping files on the window open images. Images chosen
+together join the Image List in the order you chose them, whichever finishes
+loading first. While any is still loading, a window says Varda is opening
+them. When a file can't be opened, the message says why in plain words (a
+folder, a file that doesn't exist or is empty, a damaged or incomplete file,
+an ENVI header with no bands, a format Varda doesn't read, no permission) and
+what to do; GDAL's own text is under **Show Details…**.
+
 ## Workspace tabs
 
-Workspaces open as tabs, which work like a web browser's: drag a tab to
+A new workspace comes to the front. Workspaces open as tabs, which work like a web browser's: drag a tab to
 reorder it, drag it out of the tab bar (or double-click it) to open it in a
 window of its own, and close it with its × or a middle click. Closing a
 workspace's own window puts it back in the tabs. Sessions reopen the
@@ -22,7 +33,7 @@ render settings and histogram), leaving the two images and the ratio plots.
 
 **File → Save Session…** (⌘S) writes a `.varda` file recording the open
 images (by path), the open workspaces and their ROIs. **File → Open Session…**
-(⌘O) loads the images and reopens the workspaces alongside whatever is already
+(⇧⌘O on a Mac, Ctrl+Shift+O elsewhere) loads the images and reopens the workspaces alongside whatever is already
 open. Images that exist only in memory (analysis results you have not
 exported) are left out, so export them first, or package the project.
 
@@ -148,10 +159,24 @@ none.
 
 ## Saving results
 
-Every Processing result joins the project's image list. Tick **Save result to
+Every Processing result joins the project's image list (unless its image
+was removed from the project while the analysis ran: then Varda says so and
+drops the result, whose record would point to an image no longer open; a
+result you chose to save to a file is still written). Tick **Save result to
 file** in the analysis dialog to also write it to disk (ENVI `.img`/`.hdr` or
 GeoTIFF), or export any image later with **File → Export Image…** or by
 right-clicking an image → **Export Image…**.
+
+In **Save as**, a name without a folder (`result.tif`) goes into the folder
+you last exported to, or else the image's own folder; the dialog then shows
+the full path, and the status bar says where the file was written. The
+suffix picks the format (`.img` or none for ENVI, `.tif` for GeoTIFF).
+Trailing dots and spaces are dropped. Names that some system can't store are
+refused before anything is written, so the file can be shared with any
+computer: the characters `< > : " | ? *` and the names Windows reserves
+(`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`). When writing
+fails (a folder that doesn't exist, no permission, a full disk) the message
+says what to do; the library's own text is under **Show Details…**.
 
 Every result records how it was made: the process, every setting, its
 inputs with how each of them was made, the Varda version, the time, the

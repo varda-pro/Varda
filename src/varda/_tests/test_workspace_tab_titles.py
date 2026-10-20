@@ -2,9 +2,10 @@
 
 import pytest
 from app_model import Application
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 
 from varda.common.di_types import ProjectImages
+from varda.common.keys import shortcutText
 from varda.maingui import MainGUI, elidedTabTitle
 from varda.utilities.debug import generate_random_image
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
@@ -77,3 +78,34 @@ def test_elided_tab_title_keeps_both_ends():
     assert len(short) <= 40
     assert short.startswith("EMIT_L2A_RFL_001") and short.endswith("_022_ortho.img")
     assert "…" in short
+
+
+def test_a_new_workspace_tab_comes_to_the_front(gui):
+    """Release QA #3: a new tab opened behind the current one."""
+    first, second = QWidget(), QWidget()
+    gui.addTab(first, "first")
+    gui.addTab(second, "second")
+
+    assert gui.currentWorkspace() is second
+
+
+def test_the_empty_window_says_how_to_start(gui, monkeypatch):
+    """Release QA #11: an empty window gave no hint of what to do first."""
+    assert gui.centralWidget().currentWidget() is gui.startPanel
+    text = gui.startPanel.findChild(QLabel, "startHint").text()
+    assert "drop" in text.lower()
+    button = gui.startPanel.findChild(QPushButton, "importButton")
+    assert button.text() == f"Import Image(s)…  ({shortcutText('Ctrl+O')})"
+    assert "()" not in button.text()
+    ran = []
+    monkeypatch.setattr(gui.app.commands, "execute_command", ran.append)
+    gui.startPanel.findChild(QPushButton, "importButton").click()
+    assert ran == ["varda.file.import_image"]
+
+
+def test_the_start_panel_gives_way_to_workspaces_and_comes_back(gui):
+    workspace = QWidget()
+    gui.addTab(workspace, "a")
+    assert gui.centralWidget().currentWidget() is gui.centralTabs
+    gui.closeWorkspace(workspace)
+    assert gui.centralWidget().currentWidget() is gui.startPanel

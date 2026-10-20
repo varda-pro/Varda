@@ -254,3 +254,70 @@ def test_mnf_records_no_noise_roi_for_a_neighbor_difference_estimate():
     assert analysis.noiseRoi.get() == ["dark"]  # a class to start from
     analysis.noiseEstimate.set(NoiseEstimate.VERTICAL)
     assert analysis.noiseRoi.get() == []
+
+
+# --- The wavelength range (release QA #6, #7) --------------------------------
+
+
+@pytest.mark.parametrize("kind", [PcaAnalysis, MnfAnalysis, IcaAnalysis])
+def test_the_same_from_and_to_never_means_every_band(kind):
+    """'from 1309 to 1309' ran on all 40 bands, silently."""
+    image = _image(bands=40)
+    analysis = kind()
+    analysis.prepareFor(image)
+    analysis.wavelengths.set(Vec2(1309.0, 1309.0))
+
+    reason = analysis.unavailableReason(image)
+    assert "at least two" in reason and "1309" in reason
+    with pytest.raises(ValueError, match="at least two"):
+        analysis.run(image, lambda p, m: None)
+
+
+def test_a_range_on_one_band_is_refused_too():
+    image = _image(bands=40)  # 1000, 1041.0, … nm
+    analysis = PcaAnalysis()
+    analysis.prepareFor(image)
+    analysis.wavelengths.set(Vec2(1041.0, 1041.0))
+    assert analysis.keptBands(image).tolist() == [1]
+    assert "1 usable band" in analysis.unavailableReason(image)
+
+
+def test_the_dialog_says_which_bands_will_be_used():
+    image = _image(bands=40)
+    analysis = PcaAnalysis()
+    analysis.prepareFor(image)
+    assert analysis.unavailableReason(image) == ""
+    assert analysis.inputSummary(image) == "Uses 40 of 40 bands, 1000–2600 nm."
+    analysis.wavelengths.set(Vec2(1100.0, 1500.0))
+    assert analysis.inputSummary(image) == "Uses 10 of 40 bands, 1123–1492 nm."
+
+
+def test_the_range_shows_the_images_unit_and_sensible_decimals():
+    image = _image(bands=40)
+    analysis = PcaAnalysis()
+    analysis.prepareFor(image)
+    assert analysis.wavelengths.suffix == " nm"
+    assert analysis.wavelengths.decimals == 0
+
+
+def test_rounding_the_range_for_display_never_drops_an_edge_band():
+    # Centers that a 1-decimal spin box rounds outwards and inwards
+    data = np.random.default_rng(0).normal(size=(10, 10, 4))
+    image = VardaRaster(
+        ArrayDataSource(data, wavelengths=np.array([500.06, 504.0, 508.0, 512.04])),
+        name="edges",
+    )
+    analysis = PcaAnalysis()
+    analysis.prepareFor(image)
+    shown = analysis.wavelengths.decimals
+    analysis.wavelengths.set(Vec2(round(500.06, shown), round(512.04, shown)))
+    assert analysis.keptBands(image).tolist() == [0, 1, 2, 3]
+
+
+def test_the_weight_settings_say_what_they_do():
+    """Release QA #12: 'Weights' and 'Weights Are: Weights (…)' said nothing."""
+    analysis = PcaAnalysis()
+    assert analysis.weights.name == "Weight Image"
+    assert analysis.weightKind.name == "Weight Image Holds"
+    assert "counts less" in analysis.weightKind.description
+    assert "larger counts more" in WeightKind.WEIGHTS.value

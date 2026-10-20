@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.keys import controlClick
 from varda.common.entities import Color, VardaRaster
 from varda.common.grid import sameGrid
 from varda.common.parameter_widgets import (
@@ -106,7 +107,8 @@ logger = logging.getLogger(__name__)
 
 LINK_LABELS = {Link.PIXEL: "Pixel match", Link.MAP: "Map link"}
 KEYS_HINT = (
-    "Ctrl/⌘+left-click: numerator box · Ctrl/⌘+right-click: denominator box "
+    f"{controlClick('left-click')}: numerator box · "
+    f"{controlClick('right-click')}: denominator box "
     "(on either view) · S: save the pair as ROIs · P: save the numerator pixel "
     "as a point (both ask for a class: Enter saves; Shift+S and Shift+P always "
     "ask) · Esc: clear"

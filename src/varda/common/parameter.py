@@ -231,8 +231,10 @@ class Vec2Parameter(Parameter[Vec2]):
         *,
         step: float | None = None,
         decimals: int | None = None,
+        suffix: str = "",
     ):
-        """``step``/``decimals`` configure both spin boxes (Qt defaults when None)."""
+        """``step``/``decimals`` configure both spin boxes (Qt defaults when
+        None); ``suffix`` follows each value, e.g. its unit (" nm")."""
         if default is None:
             default = Vec2.zero()
         super().__init__(name, default, description)
@@ -240,6 +242,7 @@ class Vec2Parameter(Parameter[Vec2]):
         self.valueNames = valueNames
         self.step = step
         self.decimals = decimals
+        self.suffix = suffix
 
     def copyFrom(self, source: Parameter[Vec2]) -> None:
         value = source.get()  # a copy: the widget edits its Vec2 in place
@@ -254,6 +257,7 @@ class Vec2Parameter(Parameter[Vec2]):
             self.description,
             step=self.step,
             decimals=self.decimals,
+            suffix=self.suffix,
         )
 
 

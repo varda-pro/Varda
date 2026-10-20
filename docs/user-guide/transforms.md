@@ -64,15 +64,24 @@ project keeps the same keys.
 
 PCA, MNF and ICA each choose what goes in:
 
-- **Wavelengths** (from, to) keeps the bands in that range, as the Spectral
-  Hourglass does; drop noisy ranges such as detector edges or water bands.
-  Bands marked bad in the image are always left out. Inverse Transform then
-  rebuilds just those bands.
-- **Weights** (optional; none by default) gives each value a weight from
+- **Wavelengths** (from, to; in the image's unit, or band numbers when it has
+  no wavelengths) keeps the bands whose centers fall in that range, as the
+  Spectral Hourglass does; drop noisy ranges such as detector edges or water
+  bands. Bands marked bad in the image are always left out. The range is
+  shown rounded so neighboring bands read differently, and compared at that
+  precision (half the last shown digit either side), so a band at an edge is
+  never dropped by the rounding. A range of one wavelength (the same from
+  and to) holds only the band centered there, if any; a transform needs at
+  least two bands, so the dialog then disables **Run** and says so (it never
+  falls back to every band). Above **Run** the dialog names how many bands
+  will go in and their range, and the result's provenance and its
+  `transform` metadata (`sourceWavelengths`) list the bands that were
+  actually used. Inverse Transform then rebuilds just those bands.
+- **Weight Image** (optional; none by default) gives each value a weight from
   another image on the same grid: per band (an image with the same bands)
   or per pixel (one band). Weights are never resampled; images that can't
-  be used are named under the dropdown, with why. **Weights Are** says whether that image holds
-  weights, such as the number of frames behind each value, or uncertainties
+  be used are named under the dropdown, with why. **Weight Image Holds** says whether that image holds
+  weights (larger counts more), such as the number of frames behind each value, or uncertainties
   σ (weighted 1/σ²).
 
 Without weights, a pixel's missing values (no-data or NaN) are filled by

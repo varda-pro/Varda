@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.spectral_axis import bandWavelengthLabels
 from varda.common.entities import VardaRaster
 from varda.common.parameter import Parameter, ParameterGroup, copyValues
 from varda.common.parameter_widgets import (
@@ -156,7 +157,11 @@ class BandParameterWidget(QWidget):
             "BandParameter.setImage() must be called before building its widget"
         )
         self.comboBox = QComboBox(self)
-        self.comboBox.addItems([str(w) for w in self.param.image.wavelengths])
+        image = self.param.image
+        labels = bandWavelengthLabels(image.bandModel)
+        self.comboBox.addItems(
+            labels if labels is not None else [str(w) for w in image.wavelengths]
+        )
         self.comboBox.setCurrentIndex(self.param.get())
         self.comboBox.currentIndexChanged.connect(self._onSelectionChanged)
 

@@ -32,6 +32,9 @@ class PointerAction(Enum):
     MOVE = auto()
     RELEASE = auto()
     DOUBLE_CLICK = auto()  # the second press of a double-click
+    # A press and release without a drag that no tool took the press of (so a
+    # plain drag can still pan): delivered after the release
+    CLICK = auto()
 
 
 @dataclass(frozen=True)

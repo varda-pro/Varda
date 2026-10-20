@@ -33,6 +33,7 @@ from qa.harness import (  # noqa: E402
     Finding,
     QaRun,
     addFinding,
+    ensureFindings,
     osName,
     readFindings,
 )
@@ -129,6 +130,7 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
         raise AssertionError(
             f"{nodeid} failed in its own process:\n{str(output)[-3000:]}"
         )
+    ensureFindings(out)
     return True
 
 

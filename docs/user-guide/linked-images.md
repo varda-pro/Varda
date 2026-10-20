@@ -34,13 +34,13 @@ match, and otherwise treated the same way.
 ## Reading every image at once
 
 - The views pan and zoom together.
-- **Ctrl+click** in any view puts the cursor (yellow) on every view, and the
+- With **Pixel Select** on, a **click** in any view puts the cursor (yellow) on every view, and the
   **Linked Spectra** panel plots each image's spectrum there, one plot per
   image so that each keeps its own units (a spectrum, a count, a flag); each
   plot pans and zooms on its own. Each image is read at the pixel the
   cursor falls in (not interpolated), and its plot's title gives that
   pixel's column and row (counted from 0). **Ctrl+drag**
-  updates the spectra as you go. Bad bands and no-data values show as gaps.
+  (⌘-drag on a Mac) updates the spectra as you go. Bad bands and no-data values show as gaps.
   **Export…** saves the spectra at the cursor as CSV, with columns `image`,
   `col` and `row` (the pixel read, counted from 0), `map_x` and `map_y`
   (the cursor's position in that image's CRS; empty without

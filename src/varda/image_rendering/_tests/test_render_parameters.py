@@ -12,6 +12,25 @@ def make_image(bands: int = 5) -> VardaRaster:
     return VardaRaster(dataSource=ArrayDataSource(data, wavelengths=wavelengths))
 
 
+def test_the_band_list_shows_rounded_wavelengths_with_their_unit(qtbot):
+    """Release QA #7: 'Band 2353.8461538461543', no unit."""
+    data = np.zeros((4, 4, 3), dtype=np.float32)
+    wavelengths = np.array([2340.7692307692305, 2347.3076923076924, 2353.8461538461543])
+    image = VardaRaster(
+        dataSource=ArrayDataSource(data, wavelengths=wavelengths, wavelengthUnits="nm")
+    )
+    p = BandParameter("Band", 0)
+    p.setImage(image)
+    widget = parameterWidget(p)
+    qtbot.addWidget(widget)
+    combo = widget.comboBox
+    assert [combo.itemText(i) for i in range(3)] == [
+        "2340.8 nm",
+        "2347.3 nm",
+        "2353.8 nm",
+    ]
+
+
 def test_band_parameter_set_get(qtbot):
     p = BandParameter("Band", 0)
     p.setImage(make_image(5))

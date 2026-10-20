@@ -56,6 +56,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra hypyrameter
 
+      - name: Fonts for the offscreen platform (Windows)
+        # Qt's offscreen platform finds no fonts on Windows by itself: every
+        # glyph is a box, so screenshots are unreadable and the layout audit
+        # measures box widths. Point it at the system's fonts.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo 'QT_QPA_FONTDIR=C:\Windows\Fonts' >> "$GITHUB_ENV"
+
       - name: Run the personas
         # A finding is a result, not a failure; a broken QA script still shows
         # here as a failed step, without failing the run

@@ -21,8 +21,22 @@ from varda.version import vardaVersion
 
 CITATION_PATH = Path(resource_path("CITATION.cff"))
 REPOSITORY_URL = "https://github.com/varda-pro/Varda"
-DOCUMENTATION_URL = f"{REPOSITORY_URL}/blob/main/docs/user-guide/README.md"
+GUIDE_FOLDER = Path(resource_path("docs/user-guide"))
 ISSUES_URL = f"{REPOSITORY_URL}/issues/new/choose"
+
+
+def documentationUrl(version: str | None = None) -> str:
+    """The online user guide of this version (its release tag), so the
+    methods text matches what is installed; main when the version is unknown."""
+    version = vardaVersion() if version is None else version
+    ref = "main" if version == "unknown" else f"v{version}"
+    return f"{REPOSITORY_URL}/blob/{ref}/docs/user-guide/README.md"
+
+
+def localGuide() -> Path | None:
+    """The user guide shipped with Varda (its README), if present."""
+    readme = GUIDE_FOLDER / "README.md"
+    return readme if readme.is_file() else None
 
 
 def _packageVersion(name: str) -> str | None:

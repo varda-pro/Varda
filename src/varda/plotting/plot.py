@@ -271,7 +271,7 @@ class ViewConfig(ParameterGroup):
     showDataPoints = BoolParameter(
         "Show Data Points",
         False,
-        "Mark each wavelength that has measured channel data; the line between "
+        "Mark each wavelength that has a measured band; the line between "
         "marks is only interpolation.",
     )
     dataPointSize = IntParameter(

@@ -41,7 +41,7 @@ class BandParametersAnalysis(Analysis):
         "Clamp reflectance to [-1, 1]",
         True,
         "Treat values outside [-1, 1] as missing, as HyPyRameter does for "
-        "reflectance cubes.",
+        "reflectance images.",
     )
 
     @classmethod

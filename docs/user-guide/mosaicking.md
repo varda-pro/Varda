@@ -58,7 +58,8 @@ it overlaps, and fits them:
    [Optional Features](optional-features.md#ames-stereo-pipeline-mosaicking)).
    With PyTorch installed (Optional Features), two more matchers run in its
    environment: **Learned features (LoFTR)**, which finds matches where
-   hand-crafted features struggle (its weights download once), and **SIFT**.
+   hand-crafted features struggle (its weights, 46 MB, download once: see
+   [Network use and privacy](network-and-privacy.md#loftrs-weights)), and **SIFT**.
 5. **Fit:** the tie points from every band are fitted together with the
    image's transform, robustly (RANSAC): points farther off than the
    **outlier threshold** (1 px of the moving image by default) are left out and shown in red.

@@ -85,7 +85,7 @@ image.
   ellipsoid), with longitudes 0–360 or −180–180. These are **reprojected
   for display** (below).
 
-The images left out are counted beside the list ("(2 can't be overlaid)"),
+The images left out are counted beside the list ("2 images can't be overlaid"),
 and its tooltip names each with the reason: "Mars and Earth are different
 bodies", "doesn't overlap this image", "not georeferenced, can't be placed
 on this image". Images of other bodies are always refused. An image that
@@ -146,8 +146,11 @@ CRS reads "° W", and a 0..360 image shows longitudes in [0, 360) followed by
 
 ## Pixel spectra
 
-Turn on **Pixel Select** under a view and Ctrl-click (Cmd-click on a Mac) a
-pixel to plot its spectrum. Under **Pixel Spectra** in the plot's sidebar,
+Turn on **Pixel Select** under a view and click a pixel to plot its
+spectrum; the **Pixel Spectra** tab comes to the front. A plain drag still
+pans the view; Ctrl-drag (⌘-drag on a Mac) plots the pixel under the pointer
+as it moves. Clicking a pixel already plotted highlights its curve instead of
+drawing it again. Under **Pixel Spectra** in the plot's sidebar,
 **Window Width** and **Window Height** (1 px each by default, up to 99) set
 a box around the click instead. A box plots the mean of its pixels, with a
 shaded band of ±1 standard deviation (see [ROI statistics](#roi-statistics)

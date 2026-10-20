@@ -102,7 +102,10 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         self._initUI()
         self._connectSignals()
 
-        self.setStatusMessage("General Image Analysis Workflow initialized")
+        self.setStatusMessage(
+            "Turn on Pixel Select under the image and click a pixel to see its "
+            "spectrum. Drag to pan, scroll to zoom."
+        )
 
     def _initComponents(self):
         """Initialize all workflow components"""
@@ -220,7 +223,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         # self.setCentralWidget(dockArea)
         # docks = []
 
-        self.rasterDock = VardaDockWidget("Raster Dock")
+        self.rasterDock = VardaDockWidget("Image View")
         # self.rasterDock.setFeature(
         #     ads.CDockWidget.DockWidgetFeature.DockWidgetClosable, False
         # )
