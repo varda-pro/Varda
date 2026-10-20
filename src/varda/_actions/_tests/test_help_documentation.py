@@ -24,7 +24,9 @@ def test_the_guide_ships_with_varda():
 
 
 def test_the_guide_window_reads_the_guide_and_follows_its_links(qtbot):
-    window = GuideWindow(localGuide())
+    readme = localGuide()
+    assert readme is not None
+    window = GuideWindow(readme)
     qtbot.addWidget(window)
     assert "Varda user guide" in window.browser.toPlainText()
 

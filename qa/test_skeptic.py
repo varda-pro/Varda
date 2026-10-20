@@ -208,7 +208,7 @@ def _checkWavelengthRange(run: QaRun) -> None:
     if not run.useMenu(*journeys.PCA_MENU, shot=False):
         return
     dialog = run.newDialog(RunAnalysisDialog)
-    if dialog is None:
+    if not isinstance(dialog, RunAnalysisDialog):
         return
     boxes = [b for b in dialog.findChildren(QDoubleSpinBox) if b.isVisible()]
     shown = [b.text() for b in boxes]

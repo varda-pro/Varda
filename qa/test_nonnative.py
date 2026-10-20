@@ -143,8 +143,9 @@ def test_only_what_the_ui_says(qaRun: QaRun, qaData: QaData) -> None:
                 widget=run.mainWindow,
             )
         said = list(run.statusMessages)
-        if outcome.viewed is not None and outcome.viewed.statusBar() is not None:
-            said.append(outcome.viewed.statusBar().currentMessage())
+        statusBar = outcome.viewed.statusBar() if outcome.viewed else None
+        if statusBar is not None:
+            said.append(statusBar.currentMessage())
         developerText = [m for m in said if re.search(r"initiali[sz]ed|Workflow", m)]
         if developerText:
             run.finding(

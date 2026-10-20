@@ -2,7 +2,6 @@
 
 import pytest
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtTest import QTest
 
 from varda.common.keys import controlClick
 from varda.image_rendering.image_renderer import ImageRenderer
@@ -41,29 +40,29 @@ def _surface(viewport):
     return widget, widget.rect().center()
 
 
-def test_a_plain_click_selects_the_pixel(viewport, selected):
+def test_a_plain_click_selects_the_pixel(qtbot, viewport, selected):
     widget, center = _surface(viewport)
-    QTest.mouseClick(widget, LEFT, NONE, center)
-    QTest.qWait(20)
+    qtbot.mouseClick(widget, LEFT, NONE, center)
+    qtbot.wait(20)
     assert len(selected) == 1
 
 
-def test_a_control_click_still_selects(viewport, selected):
+def test_a_control_click_still_selects(qtbot, viewport, selected):
     widget, center = _surface(viewport)
-    QTest.mouseClick(widget, LEFT, CTRL, center)
-    QTest.qWait(20)
+    qtbot.mouseClick(widget, LEFT, CTRL, center)
+    qtbot.wait(20)
     assert len(selected) == 1
 
 
-def test_a_plain_drag_pans_and_selects_nothing(viewport, selected):
+def test_a_plain_drag_pans_and_selects_nothing(qtbot, viewport, selected):
     widget, center = _surface(viewport)
     before = viewport._vb.viewRange()
-    QTest.mousePress(widget, LEFT, NONE, center)
+    qtbot.mousePress(widget, LEFT, NONE, center)
     for step in range(1, 6):
-        QTest.mouseMove(widget, center + QPoint(10 * step, 5 * step))
-        QTest.qWait(5)
-    QTest.mouseRelease(widget, LEFT, NONE, center + QPoint(50, 25))
-    QTest.qWait(20)
+        qtbot.mouseMove(widget, center + QPoint(10 * step, 5 * step))
+        qtbot.wait(5)
+    qtbot.mouseRelease(widget, LEFT, NONE, center + QPoint(50, 25))
+    qtbot.wait(20)
     assert selected == []
     assert viewport._vb.viewRange() != before
 
