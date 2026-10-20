@@ -8,6 +8,15 @@ can alter results.
 
 ### Added
 
+- **Class areas in Image Properties.** For a class map, a Classes group
+  lists each class's pixels, ground area (km², from each pixel's area on
+  the coordinate system's own surface) and share of the classified pixels,
+  with the totals and the method; it's measured in the background. **Copy
+  as CSV** and **Export CSV…** write the table with the method, Varda's
+  version, and the classified and unclassified pixel counts. Without map
+  coordinates it gives pixel counts. Class areas now read the class map in
+  blocks of rows (about half the memory), and any failure of PROJ falls
+  back to pixel counts with the reason. See Classification → Class areas.
 - **Reproject Image** (Processing → Geometry, after Resample). Puts an
   image on the projection Varda recommends for the scene (by Purpose:
   Measurement, Mosaic or Terrain), exactly on another image's grid, or on a

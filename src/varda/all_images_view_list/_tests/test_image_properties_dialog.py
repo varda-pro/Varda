@@ -6,7 +6,8 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QLabel, QTableWidget
 
 from varda.all_images_view_list.image_properties_dialog import (
     GOOD,
@@ -15,6 +16,7 @@ from varda.all_images_view_list.image_properties_dialog import (
     ImagePropertiesDialog,
     parseNoData,
 )
+from varda.analysis.class_tools import classAreas, classRaster
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.geo._tests.fixtures import (
@@ -363,3 +365,125 @@ def test_a_label_mismatch_is_not_cut_off_on_a_laptop_screen(qtbot, tmp_path):
     dialog.applyButtons[0].click()  # the Undo layout too
     qtbot.wait(10)
     assertNothingClipped(dialog)
+
+
+def _cell(table: QTableWidget, row: int, column: int) -> str:
+    item = table.item(row, column)
+    assert item is not None
+    return item.text()
+
+
+def _classMap(referenced: bool = True) -> VardaRaster:
+    """A 3-class map on Mars's equirectangular sphere at 0°N (1 km pixels),
+    or the same classes without map coordinates."""
+    base = (
+        makeImage(
+            "IAU_2015:49910",
+            centerLonLat=(10.0, 0.0),
+            pixelSize=1000.0,
+            width=12,
+            height=10,
+        )
+        if referenced
+        else VardaRaster(ArrayDataSource(np.zeros((10, 12, 1), np.float32)), name="b")
+    )
+    classes = np.full((10, 12), np.nan)
+    classes[:4] = 0
+    classes[4:7, :8] = 1
+    classes[7:, 3:] = 2
+    return classRaster(
+        base,
+        classes,
+        ["water", "rock, bare", "dust"],
+        ["#0000ff", "#888888", "#ffaa00"],
+        name="classes",
+        description="test",
+    )
+
+
+def _measured(qtbot, image: VardaRaster) -> ImagePropertiesDialog:
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: dialog.classAreas is not None, timeout=10000)
+    return dialog
+
+
+def test_an_image_that_is_not_a_class_map_has_no_classes_group(qtbot):
+    dialog = ImagePropertiesDialog(_image())
+    qtbot.addWidget(dialog)
+    assert dialog.classesBox is None
+
+
+def test_a_class_map_shows_computing_then_each_class_area(qtbot):
+    image = _classMap()
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    assert _cell(dialog.classTable, 0, 0) == "Computing…"
+    assert not dialog.copyCsvButton.isEnabled()
+    qtbot.waitUntil(lambda: dialog.classAreas is not None, timeout=10000)
+    expected = classAreas(image)
+    table = dialog.classTable
+    assert table.rowCount() == 3
+    for row, area in enumerate(expected.rows):
+        assert _cell(table, row, 1) == area.name
+        assert _cell(table, row, 2) == f"{area.pixels:,}"
+        assert float(_cell(table, row, 3).replace(",", "")) == pytest.approx(
+            area.areaKm2, rel=1e-5
+        )
+    assert dialog.classAreas == expected
+    assert dialog.classMethod.text().startswith("exact per row")
+    assert "99 classified pixels" in dialog.classTotals.text()
+    assert "21 unclassified" in dialog.classTotals.text()
+    assert dialog.copyCsvButton.isEnabled()
+
+
+def test_copy_as_csv_puts_the_table_on_the_clipboard(qtbot):
+    dialog = _measured(qtbot, _classMap())
+    dialog.copyCsvButton.click()
+    clipboard = QGuiApplication.clipboard()
+    assert clipboard is not None
+    text = clipboard.text()
+    assert "class,name,pixels,area_km2,fraction" in text.splitlines()
+    assert '1,"rock, bare",24,' in text
+
+
+def test_export_csv_writes_the_file(qtbot, tmp_path):
+    dialog = _measured(qtbot, _classMap())
+    path = tmp_path / "areas.csv"
+    dialog.writeCsv(str(path))
+    assert "# image: classes" in path.read_text(encoding="utf-8").splitlines()
+
+
+def test_an_unreferenced_class_map_shows_pixel_counts(qtbot):
+    dialog = _measured(qtbot, _classMap(referenced=False))
+    table = dialog.classTable
+    assert [_cell(table, r, 2) for r in range(3)] == ["48", "24", "27"]
+    assert [_cell(table, r, 3) for r in range(3)] == ["–"] * 3
+    assert "no map coordinates" in dialog.classMethod.text()
+
+
+def test_a_new_crs_measures_the_classes_again(qtbot):
+    image = _classMap(referenced=False)
+    dialog = _measured(qtbot, image)
+    dialog.classAreas = None
+    image.setMetadataOverrides(
+        {"crs": CRS("IAU_2015:49910").to_wkt(), "transform": [1000, 0, 0, 0, -1000, 0]}
+    )
+    dialog.refreshCoordinateSystem()
+    qtbot.waitUntil(lambda: dialog.classAreas is not None, timeout=10000)
+    assert dialog.classAreas is not None
+    assert dialog.classAreas.totalKm2 == pytest.approx(99.0, rel=1e-3)
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (640, 500)])
+def test_the_classes_group_is_not_cut_off_on_a_laptop_screen(qtbot, size):
+    dialog = _measured(qtbot, _classMap())
+    dialog.resize(*size)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert (dialog.width(), dialog.height()) == size
+    assertNothingClipped(dialog)
+    table = dialog.classTable
+    viewport = table.viewport()
+    assert viewport is not None
+    assert viewport.height() >= 3 * table.rowHeight(0)  # every class row shows

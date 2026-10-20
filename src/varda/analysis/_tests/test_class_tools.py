@@ -1,5 +1,7 @@
 """Density slice and the class map clean-up tools."""
 
+import logging
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -18,10 +20,10 @@ from varda.analysis.class_tools import (
     classRaster,
     isClassMap,
 )
-from varda.common.entities import VardaRaster
-from varda.geo.measure import pixelAreaMethod, pixelAreas
 from varda.analysis import class_tools
+from varda.common.entities import VardaRaster
 from varda.geo._tests.fixtures import LRO_WAC_SOUTH_POLAR_PROJ, makeImage
+from varda.geo.measure import pixelAreaMethod, pixelAreas
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
 QUIET = lambda percent, message: None  # noqa: E731
@@ -222,6 +224,7 @@ def test_class_areas_in_blocks_match_off_the_row_only_path(monkeypatch):
     image = classRaster(base, classes, NAMES, COLORS, name="c", description="t")
     areas = _pixelAreas(image)
     monkeypatch.setattr(class_tools, "_BLOCK_PIXELS", 10)  # one row at a time
+    monkeypatch.setattr(class_tools, "_AREA_BLOCK_PIXELS", 20)  # two rows of areas
     result = classAreas(image)
     assert result.method.startswith("map pixel area over")
     for k, row in enumerate(result.rows):
@@ -246,3 +249,78 @@ def test_a_crs_varda_cannot_measure_on_falls_back_to_pixel_counts(monkeypatch):
     assert [row.pixels for row in result.rows] == [1, 1, 2]
     assert np.isnan(result.totalKm2)
     assert result.method == "pixel counts only: the CRS is on no body"
+
+
+def test_the_class_band_is_read_in_row_blocks(monkeypatch):
+    image = _mapped()
+    windows: list[tuple[int, int, int, int] | None] = []
+    getData = image.getData
+
+    def spy(bandIndices=None, window=None, masked=True):
+        windows.append(window)
+        return getData(bandIndices, window, masked)
+
+    monkeypatch.setattr(image, "getData", spy)
+    monkeypatch.setattr(class_tools, "_BLOCK_PIXELS", 36)  # three rows of 12
+    monkeypatch.setattr(class_tools, "_AREA_BLOCK_PIXELS", 48)  # four rows
+    result = classAreas(image)
+    # never the whole band; row blocks inside each block of areas
+    assert windows == [(0, 0, 3, 12), (3, 0, 1, 12), (4, 0, 3, 12)] + [
+        (7, 0, 1, 12),
+        (8, 0, 2, 12),
+    ]
+    assert [row.pixels for row in result.rows] == [48, 24, 27]
+
+
+def test_nan_pixel_areas_reach_the_class_and_the_total(monkeypatch):
+    image = _mapped()
+    real = class_tools.imagePixelAreas
+
+    def withHole(crs, transform, width, height):
+        areas = np.array(real(crs, transform, width, height))
+        areas[0, 0] = np.nan  # a class 0 pixel PROJ can't invert
+        return areas
+
+    monkeypatch.setattr(class_tools, "imagePixelAreas", withHole)
+    result = classAreas(image)
+    assert np.isnan(result.rows[0].areaKm2)
+    assert np.isfinite(result.rows[1].areaKm2) and np.isfinite(result.rows[2].areaKm2)
+    assert np.isnan(result.totalKm2)
+
+
+def test_non_integer_out_of_range_and_no_data_class_values_are_unclassified():
+    classes = np.array([[0, 1, 2, 1.5], [-1, 3, 7, 99], [2, np.nan, 0, 0]], np.float32)
+    source = ArrayDataSource(
+        classes[:, :, None],
+        bandNames=["Class"],
+        nodata=99.0,
+        extraMetadata={"classes": NAMES, "classColors": COLORS},
+    )
+    result = classAreas(VardaRaster(source, name="classes"))
+    assert [row.pixels for row in result.rows] == [3, 1, 2]
+    assert result.unclassifiedPixels == 6  # 1.5, -1, 3, 7, no-data and NaN
+    assert [row.fraction for row in result.rows] == pytest.approx([0.5, 1 / 6, 1 / 3])
+    np.testing.assert_array_equal(source.getData()[1, 3, 0], 99.0)  # not edited
+
+
+def test_any_proj_failure_falls_back_to_counts_and_is_logged(monkeypatch, caplog):
+    def broken(*args: object) -> np.ndarray:
+        raise RuntimeError("PROJ context gone")
+
+    monkeypatch.setattr(class_tools, "imagePixelAreas", broken)
+    with caplog.at_level(logging.WARNING, logger=class_tools.__name__):
+        result = classAreas(_mapped())
+    assert [row.pixels for row in result.rows] == [48, 24, 27]
+    assert all(np.isnan(row.areaKm2) for row in result.rows)
+    assert result.method == "pixel counts only: PROJ context gone"
+    assert "PROJ context gone" in caplog.text
+
+
+def test_class_areas_csv_records_the_fractions_denominator():
+    result = classAreas(_mapped())
+    lines = classAreasCsv(result, "scene.tif").splitlines()
+    assert "# classified pixels: 99 (the fractions' denominator)" in lines
+    assert "# unclassified pixels: 21" in lines
+    assert f"# classified area_km2: {result.totalKm2!r}" in lines
+    unreferenced = classAreasCsv(classAreas(_scene(np.zeros((2, 2)))), "x")
+    assert "# classified area_km2: unavailable" in unreferenced.splitlines()

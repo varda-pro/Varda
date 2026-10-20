@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 
 import numpy as np
+from affine import Affine
 from attrs import frozen
 from matplotlib import colormaps
 from matplotlib.colors import to_hex
-from pyproj.exceptions import ProjError
 from scipy import ndimage
 
 from varda.analysis.analysis import Analysis, ProgressCallback
@@ -30,6 +31,8 @@ from varda.common.parameter import (
 from varda.geo.measure import imagePixelAreas, pixelAreaMethod
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.version import vardaVersion
+
+logger = logging.getLogger(__name__)
 
 CATEGORY = "Classification"
 
@@ -64,6 +67,10 @@ def classRaster(
 UNREFERENCED_METHOD = "pixel counts only: the image has no map coordinates"
 # pixels summed at once by classAreas (bounds its temporaries)
 _BLOCK_PIXELS = 1_000_000
+# pixels whose ground areas classAreas holds at once (float64, 64 MB);
+# imagePixelAreas evaluates up to 4,000,000 of them exactly and interpolates
+# the rest
+_AREA_BLOCK_PIXELS = 8_000_000
 
 
 @frozen
@@ -84,42 +91,75 @@ class ClassAreas:
     rows: tuple[ClassArea, ...]
     method: str  # pixelAreaMethod's sentence, or why there are only counts
     totalKm2: float  # of all classified pixels; NaN as the areas
+    # NaN, no-data, non-integer and out-of-range class values
+    unclassifiedPixels: int
+
+    @property
+    def classifiedPixels(self) -> int:
+        """The fractions' denominator."""
+        return sum(row.pixels for row in self.rows)
+
+
+def _countsOnly(error: Exception) -> str:
+    logger.warning("Class areas: pixel counts only", exc_info=error)
+    return f"pixel counts only: {error}"
+
+
+def _classRows(image: VardaRaster, top: int, rows: int) -> np.ndarray:
+    """``rows`` rows of the Class band from ``top``, as float32 (class
+    numbers are small integers), NaN where they're no-data."""
+    data = image.getData(bandIndices=[0], window=(top, 0, rows, image.width))
+    band = np.ma.filled(np.ma.asarray(data, dtype=np.float32)[:, :, 0], np.nan)
+    if image.nodata is not None:  # not in place: band may be the source's
+        band = np.where(band == image.nodata, np.float32(np.nan), band)
+    return band
 
 
 def classAreas(image: VardaRaster) -> ClassAreas:
     """The pixel count, ground area and fraction of each class of a class
     map: each classified pixel's ground area (``geo.measure.imagePixelAreas``,
     on the CRS's own surface) summed per class. A pixel counts whole for its
-    class; NaN, non-integer and out-of-range class values are unclassified.
-    Without map coordinates (or a CRS Varda can't measure on) the areas are
-    NaN and ``method`` says why. Never raises for a class map."""
+    class; NaN, no-data, non-integer and out-of-range class values are
+    unclassified. Without map coordinates (or a CRS Varda can't measure on)
+    the areas are NaN and ``method`` says why. Reads the Class band in row
+    blocks and holds the areas of at most ``_AREA_BLOCK_PIXELS`` pixels at
+    once. Never raises for a class map but for a failed read."""
     names = [str(name) for name in image.extraMetadata.get("classes", [])]
     count = len(names)
-    classes = readBand(image, 0)
-    height, width = classes.shape
-    areas: np.ndarray | None = None
+    width, height = image.width, image.height
+    crs, transform = image.crs, image.transform
     method = UNREFERENCED_METHOD
-    crs = image.crs
+    measuring = False
     if crs is not None and image.hasGeospatialData:
         try:
-            areas = imagePixelAreas(crs, image.transform, width, height)
-            method = pixelAreaMethod(crs, image.transform)
-        except (ValueError, ProjError) as error:
-            areas, method = None, f"pixel counts only: {error}"
+            method = pixelAreaMethod(crs, transform)
+            measuring = True
+        except Exception as error:  # anything PROJ can raise
+            method = _countsOnly(error)
     pixels = np.zeros(count, np.int64)
     sums = np.zeros(count)
-    step = max(1, _BLOCK_PIXELS // max(width, 1))
-    for top in range(0, height, step):
-        block = classes[top : top + step]
-        valid = np.isfinite(block) & (block >= 0) & (block < count)
-        valid &= block == np.round(block)
-        index = block[valid].astype(np.int64)
-        pixels += np.bincount(index, minlength=count)
-        if areas is not None:
-            sums += np.bincount(
-                index, weights=areas[top : top + step][valid], minlength=count
-            )
-    if areas is None:
+    areaRows = max(1, _AREA_BLOCK_PIXELS // max(width, 1))
+    sumRows = max(1, min(areaRows, _BLOCK_PIXELS // max(width, 1)))
+    for top in range(0, height, areaRows):
+        bottom = min(top + areaRows, height)
+        areas: np.ndarray | None = None
+        if measuring and crs is not None:
+            try:
+                # the block's own grid: its first row is the image's top
+                shifted = transform * Affine.translation(0, top)
+                areas = imagePixelAreas(crs, shifted, width, bottom - top)
+            except Exception as error:  # anything PROJ can raise
+                measuring, method = False, _countsOnly(error)
+        for start in range(top, bottom, sumRows):
+            block = _classRows(image, start, min(sumRows, bottom - start))
+            valid = np.isfinite(block) & (block >= 0) & (block < count)
+            valid &= block == np.round(block)
+            index = block[valid].astype(np.int64)
+            pixels += np.bincount(index, minlength=count)
+            if areas is not None:
+                weights = areas[start - top : start - top + len(block)][valid]
+                sums += np.bincount(index, weights=weights, minlength=count)
+    if not measuring:
         sums[:] = np.nan
     km2 = sums / 1e6
     total = int(pixels.sum())
@@ -133,21 +173,38 @@ def classAreas(image: VardaRaster) -> ClassAreas:
         )
         for k in range(count)
     )
-    return ClassAreas(rows=rows, method=method, totalKm2=float(km2.sum()))
+    return ClassAreas(
+        rows=rows,
+        method=method,
+        totalKm2=float(km2.sum()),
+        unclassifiedPixels=width * height - total,
+    )
+
+
+def _number(value: float) -> str:
+    return "" if np.isnan(value) else repr(value)
 
 
 def classAreasCsv(areas: ClassAreas, imageName: str) -> str:
-    """``areas`` as CSV: ``#`` lines naming the image, the method and Varda's
-    version, then one row per class (blank areas where there are none)."""
+    """``areas`` as CSV: ``#`` lines naming the image, the method, Varda's
+    version, the classified and unclassified pixel counts and the classified
+    area, then one row per class (blank areas where there are none)."""
+    total = _number(areas.totalKm2) or "unavailable"
     out = io.StringIO()
     out.write(f"# image: {imageName}\n")
     out.write(f"# method: {areas.method}\n")
     out.write(f"# Varda version: {vardaVersion()}\n")
+    out.write(
+        f"# classified pixels: {areas.classifiedPixels} (the fractions' denominator)\n"
+    )
+    out.write(f"# unclassified pixels: {areas.unclassifiedPixels}\n")
+    out.write(f"# classified area_km2: {total}\n")
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(["class", "name", "pixels", "area_km2", "fraction"])
     for row in areas.rows:
-        area = "" if np.isnan(row.areaKm2) else repr(row.areaKm2)
-        writer.writerow([row.index, row.name, row.pixels, area, repr(row.fraction)])
+        writer.writerow(
+            [row.index, row.name, row.pixels, _number(row.areaKm2), repr(row.fraction)]
+        )
     return out.getvalue()
 
 

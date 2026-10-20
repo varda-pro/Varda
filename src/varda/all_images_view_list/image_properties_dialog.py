@@ -1,5 +1,6 @@
 """Image Properties: what an image is (file, format, size, map projection,
-with what the coordinate-system check found and the fixes for it) and the
+with what the coordinate-system check found and the fixes for it; for a
+class map, each class's pixels and ground area) and the
 metadata Varda reads from it, with the parts that matter for
 analysis editable: the name, the no-data value, the wavelengths and their
 unit, band names, FWHM, which bands are good, and the description.
@@ -16,12 +17,15 @@ from collections.abc import Sequence
 import numpy as np
 from pyproj import CRS
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -38,6 +42,12 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.all_images_view_list.set_crs_dialog import SetCrsDialog
+from varda.analysis.class_tools import (
+    ClassAreas,
+    classAreas,
+    classAreasCsv,
+    isClassMap,
+)
 from varda.common.entities import VardaRaster
 from varda.common.provenance import CRS_FIX_KEY
 from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
@@ -51,10 +61,14 @@ from varda.image_loading.crs_check import (
     undoCrsFix,
 )
 from varda.image_loading.envi_header import headerFor, saveToHeader
+from varda.utilities.background import runInBackground
 from varda.utilities.proj_lock import PROJ_LOCK
 
 UNITS = ["nm", "µm", "cm⁻¹", "Unknown"]
 NAME, WAVELENGTH, FWHM, GOOD = 1, 2, 3, 4  # table columns (0: the band number)
+CLASS_COLUMNS = ["Class", "Name", "Pixels", "Area (km²)", "%"]
+COMPUTING = "Computing…"
+CLASS_ROWS_SHOWN = 8  # more classes scroll inside the table
 
 
 def parseNoData(text: str) -> float | None:
@@ -187,6 +201,17 @@ class ImagePropertiesDialog(QDialog):
         self.crsBox = QGroupBox("Coordinate system")
         self._crsLayout = QVBoxLayout(self.crsBox)
         self._crsContent: QWidget | None = None
+        # the Classes group (class maps only), filled by measureClasses
+        self.classesBox: QGroupBox | None = None
+        self.classTable = QTableWidget(0, len(CLASS_COLUMNS))
+        self.classMethod = MutedLabel("")
+        self.classTotals = QLabel("")
+        self.copyCsvButton = QPushButton("Copy as CSV")
+        self.exportCsvButton = QPushButton("Export CSV…")
+        self.classAreas: ClassAreas | None = None
+        self._classRun = 0  # the latest measurement; older results are dropped
+        if isClassMap(image):
+            self.classesBox = self._classesGroup()
         self.refreshCoordinateSystem()
 
         self.nameEdit = QLineEdit(image.name)
@@ -293,6 +318,8 @@ class ImagePropertiesDialog(QDialog):
         panelLayout.setContentsMargins(0, 0, 0, 0)
         panelLayout.addWidget(aboutBox)
         panelLayout.addWidget(self.crsBox)
+        if self.classesBox is not None:
+            panelLayout.addWidget(self.classesBox)
         panelLayout.addLayout(edits)
         panelLayout.addWidget(bands, 1)
         panelLayout.addWidget(self.saveToFile)
@@ -315,6 +342,155 @@ class ImagePropertiesDialog(QDialog):
         self._crsContent = self._coordinateSystem(self.image)
         selectable(self._crsContent)
         self._crsLayout.addWidget(self._crsContent)
+        if self.classesBox is not None:  # the areas depend on the CRS
+            self.measureClasses()
+
+    def _classesGroup(self) -> QGroupBox:
+        """The Classes group: a row per class (pixels, ground area, share of
+        the classified pixels), the totals, how the areas were measured, and
+        Copy as CSV / Export CSV…."""
+        table = self.classTable
+        table.setHorizontalHeaderLabels(CLASS_COLUMNS)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        rowHeader = table.verticalHeader()
+        assert rowHeader is not None
+        rowHeader.setVisible(False)
+        columnHeader = table.horizontalHeader()
+        assert columnHeader is not None
+        columnHeader.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        columnHeader.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for label in (self.classMethod, self.classTotals):
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.copyCsvButton.setToolTip(
+            "Copy the table, with the method and totals, as CSV"
+        )
+        self.copyCsvButton.clicked.connect(self.copyCsv)
+        self.exportCsvButton.setToolTip("Save the table, with the method, as CSV")
+        self.exportCsvButton.clicked.connect(self.exportCsv)
+        box = QGroupBox("Classes")
+        layout = QVBoxLayout(box)
+        layout.addWidget(table)
+        layout.addWidget(self.classTotals)
+        layout.addWidget(self.classMethod)
+        layout.addLayout(
+            FlowLayout().withWidget(self.copyCsvButton).withWidget(self.exportCsvButton)
+        )
+        return box
+
+    def measureClasses(self) -> None:
+        """Measure each class's area in the background (the table says
+        "Computing…" until then)."""
+        self._classRun += 1
+        run, image = self._classRun, self.image
+        self.classAreas = None
+        table = self.classTable
+        table.clearSpans()
+        table.setRowCount(1)
+        table.setItem(0, 0, QTableWidgetItem(COMPUTING))
+        table.setSpan(0, 0, 1, len(CLASS_COLUMNS))
+        self._fitClassTable()
+        self.classTotals.setText("")
+        self.classMethod.setText("")
+        self._enableCsv(False)
+
+        def measure() -> tuple[int, ClassAreas]:
+            return run, classAreas(image)
+
+        runInBackground(
+            measure,
+            self._showClassAreas,
+            self._classAreasFailed,
+            description="Measuring class areas",
+            owner=self,
+        )
+
+    def _enableCsv(self, enabled: bool) -> None:
+        self.copyCsvButton.setEnabled(enabled)
+        self.exportCsvButton.setEnabled(enabled)
+
+    def _showClassAreas(self, result: tuple[int, ClassAreas]) -> None:
+        run, areas = result
+        if run != self._classRun:  # the CRS changed meanwhile
+            return
+        table = self.classTable
+        table.clearSpans()
+        table.setRowCount(len(areas.rows))
+        for r, row in enumerate(areas.rows):
+            values = [
+                str(row.index),
+                row.name,
+                f"{row.pixels:,}",
+                "–" if math.isnan(row.areaKm2) else f"{row.areaKm2:,.6g}",
+                f"{100 * row.fraction:.2f}",
+            ]
+            for column, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if column != 1:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    )
+                table.setItem(r, column, item)
+        self._fitClassTable()
+        area = "" if math.isnan(areas.totalKm2) else f", {areas.totalKm2:,.6g} km²"
+        self.classTotals.setText(
+            f"{areas.classifiedPixels:,} classified pixels{area} "
+            f"({areas.unclassifiedPixels:,} unclassified). "
+            "% is of the classified pixels; each pixel counts whole."
+        )
+        self.classMethod.setText(areas.method)
+        self.classAreas = areas
+        self._enableCsv(True)
+
+    def _fitClassTable(self) -> None:
+        """As tall as its rows, up to CLASS_ROWS_SHOWN (and a horizontal
+        scroll bar's height, in case the columns don't fit)."""
+        table = self.classTable
+        header, rows = table.horizontalHeader(), table.verticalHeader()
+        bar = table.horizontalScrollBar()
+        assert header is not None and rows is not None and bar is not None
+        shown = max(1, min(table.rowCount(), CLASS_ROWS_SHOWN))
+        table.setFixedHeight(
+            header.sizeHint().height()
+            + shown * rows.defaultSectionSize()
+            + bar.sizeHint().height()
+            + 2 * table.frameWidth()
+        )
+
+    def _classAreasFailed(self, error: Exception) -> None:
+        self.classTable.clearSpans()
+        self.classTable.setRowCount(0)
+        self.classMethod.setText(f"The classes couldn't be read: {error}")
+
+    def _csv(self) -> str:
+        assert self.classAreas is not None
+        return classAreasCsv(self.classAreas, self.image.name)
+
+    def copyCsv(self) -> None:
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None and self.classAreas is not None:
+            clipboard.setText(self._csv())
+
+    def exportCsv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Class Areas",
+            f"{self.image.name} class areas.csv",
+            "CSV files (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            self.writeCsv(path)
+        except OSError as error:
+            QMessageBox.warning(
+                self, self.windowTitle(), f"The CSV couldn't be saved: {error}"
+            )
+
+    def writeCsv(self, path: str) -> None:
+        """The class areas as CSV into ``path``. Raises OSError."""
+        with open(path, "w", encoding="utf-8", newline="") as file:
+            file.write(self._csv())
 
     def _coordinateSystem(self, image: VardaRaster) -> QWidget:
         """The image's coordinate system in words, what the check found
