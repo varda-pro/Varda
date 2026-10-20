@@ -50,10 +50,12 @@ from attrs import frozen
 from numpy.polynomial import legendre
 from scipy import ndimage
 
-from varda.analysis.spectral_library import LibrarySpectrum, loadUsgsLibrary, resampleTo
+from varda.analysis.spectral_library import resampleTo
 from varda.crism.labels import ArrayLayout, readLabel
 from varda.crism.observation import CrismObservation
 from varda.crism.readers import DdrBand, readDetectorFrame, readTrr3
+from varda.spectral_libraries.formats import loadUsgsLibrary
+from varda.spectral_libraries.spectrum import LibrarySpectrum
 
 _DATA = Path(__file__).parent / "data"
 _TRR3 = _DATA / "frs00031442_01_if168l_trr3.lbl"
