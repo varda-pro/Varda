@@ -12,17 +12,30 @@ Varda sends no usage statistics, crash reports or identifiers anywhere.
 | When | Where to | What is sent | What comes back |
 | --- | --- | --- | --- |
 | **Update check**, 5 s after Varda starts (unless turned off), and **Help → Check for Updates…** | `api.github.com` (the latest release of `varda-pro/Varda`) | an HTTPS request with the header `User-Agent: Varda/<version>` | the latest release's version and page |
-| **Find Data**: searching a catalog | the catalog you choose: the PDS Orbital Data Explorer (`oderest.rsl.wustl.edu`), a SpatioTemporal Asset Catalog (STAC, e.g. the USGS Astrogeology catalog on `amazonaws.com`, Element 84's Earth Search), or a footprint file's server | your search: the area, dates, collection and filters | footprints and product lists |
+| **Find Data**: searching a catalog | the catalog you choose: the PDS Orbital Data Explorer (`oderest.rsl.wustl.edu`), a SpatioTemporal Asset Catalog (STAC: the USGS Astrogeology catalog, `stac.astrogeology.usgs.gov`; Element 84's Earth Search, `earth-search.aws.element84.com`; or one you add), or the server of a footprint file you add | your search: the area, dates, collection and filters, with the header `User-Agent: Varda/<version> (https://github.com/varda-pro/Varda)` | footprints and product lists |
 | **Find Data**: downloading products | the product's server, as listed by the catalog | a request for that file | the file |
 | **Find Data**: the map's basemap | NASA's Solar System Treks (`trek.nasa.gov/tiles`) | requests for the map tiles in view | tiles; offline, the low-resolution basemap bundled with Varda is shown instead |
 | **Kindle a Feature** | the AI provider you choose: Anthropic (`api.anthropic.com`), OpenAI (`api.openai.com`), or a server you name (e.g. Ollama or LM Studio on your own computer, `127.0.0.1`) | your description of the feature, the plugin's files and check results, Varda's plugin guide, and your key | the AI's replies |
 | **Processing → Optional Features**: installing PyTorch | the Python Package Index and PyTorch's package server (`pypi.org`, `download.pytorch.org`), through the bundled `uv` | requests for the pinned packages | the packages |
+| **Mosaic workspace**: aligning with **Learned features (LoFTR)** for the first time | `cmp.felk.cvut.cz` (the LoFTR authors' pretrained "outdoor" weights, `loftr_outdoor.ckpt`, 46 MB, fetched by Kornia through PyTorch Hub) | a request for that file | the weights, kept in the PyTorch runtime's folder and never fetched again |
 | **Optional Features**: setting up the Ames Stereo Pipeline | GitHub (`github.com/NeoGeographyToolkit/StereoPipeline/releases`) | a request for the release file | the download |
 | **Help** menu links (Documentation online, Cite Varda's links, a release page) | opened in your web browser, not by Varda | what your browser sends | |
 
 Each row starts only from the action in its first column. Find Data, for
 example, contacts nothing until you open it, and the map asks for tiles only
 while it is shown.
+
+## LoFTR's weights
+
+The first alignment that uses **Learned features (LoFTR)** downloads the
+pretrained weights (46 MB) from
+`https://cmp.felk.cvut.cz/~mishkdmy/models/loftr_outdoor.ckpt` and keeps them
+at `runtimes/torch/hub/hub/checkpoints/loftr_outdoor.ckpt` in Varda's app-data
+folder (the PyTorch runtime's `TORCH_HOME` is `runtimes/torch/hub`). Every
+later alignment reads that copy. Offline, a LoFTR alignment can't run
+until the file is there. To avoid the download, use another matcher (phase
+correlation, ORB, SIFT or ASP), or put a copy of the file at that path
+before the first use, e.g. on a computer that will stay offline.
 
 ## Turning off the update check
 
