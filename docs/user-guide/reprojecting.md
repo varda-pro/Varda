@@ -30,8 +30,10 @@ whatever the projection (see
 
 When the target is the image's own CRS (Varda compares the definitions, not
 the names) and Resolution is 0 with the whole extent, or the target grid is
-the image's own grid, nothing is resampled. The values are copied unchanged
-and the description says "already on this grid; nothing resampled".
+the image's own grid, nothing is resampled. The values are copied (as
+32-bit floats, like every result, so float64 or large-integer values are
+rounded), the description says "already on this grid; nothing resampled",
+and the record says `"copied": true` with no kernel or operation.
 
 ## Targets
 
@@ -109,10 +111,11 @@ and the provenance record):
 |---|---|
 | `from.crs`, `from.description` | The source CRS (WKT, or PROJJSON when WKT would lose a west-positive axis), and its one-line description |
 | `to.crs`, `to.description` | The target CRS, likewise |
-| `method` | GDAL's resampling kernel (`nearest`, `bilinear`, `cubic`, `average`, `mode`) |
+| `copied` | `true` when the image was already on the target grid and its pixels were copied, not warped; `false` otherwise |
+| `method` | GDAL's resampling kernel (`nearest`, `bilinear`, `cubic`, `average`, `mode`), or `none (pixels copied)` for a copy |
 | `resolutionM` | Ground meters per output pixel at the center: the one asked for, the automatic one, or the other image's |
 | `grid` | The output grid: `transform` (a, b, c, d, e, f: pixel → map), `width`, `height` |
-| `coordinateOperation` | The PROJ pipeline GDAL's warper ran (with GDAL's x-first axis order), or `PROJ` when PROJ's own operation was used |
+| `coordinateOperation` | The PROJ pipeline GDAL's warper ran (with GDAL's x-first axis order), `PROJ` when PROJ's own operation was used, or `null` for a copy (no warp ran) |
 | `gdal`, `proj` | The GDAL version, and the PROJ version of the warper (and pyproj's, when they differ) |
 | `scaleChange` | `max` and `mean` of the output's ground pixel size over the source's at the same place, on a 9 × 9 grid of output pixels |
 
@@ -230,6 +233,11 @@ resolution, and the software versions, all in the record:
 > source, or without data under the kernel, are no data; the output's
 > ground pixel size relative to the source's ranged up to *[scaleChange.max]*
 > (mean *[scaleChange.mean]*).
+
+When the record says `"copied": true`, nothing was reprojected or
+resampled: don't report a kernel. Write instead "The image was already on
+*[to.description]* (*[authority code]*) at *[resolutionM]* m per pixel;
+Varda's Reproject Image copied its pixels unchanged (as 32-bit floats)."
 
 Give the CRS by its authority code when it has one; otherwise include the
 WKT from `to.crs` (Image Properties, **Show WKT**). If the CRS was

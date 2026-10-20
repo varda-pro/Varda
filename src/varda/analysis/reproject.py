@@ -247,13 +247,23 @@ class ReprojectAnalysis(Analysis):
         record = reprojectionRecord(
             crs, grid, GDAL_RESAMPLING[method], plan.resolutionM, scale=scale
         )
+        # a copy ran no warp: the record mustn't name a kernel or operation
+        record["copied"] = plan.copy
+        if plan.copy:
+            record["method"] = "none (pixels copied)"
+            record["coordinateOperation"] = None
         target = describeCrs(grid.crs).text
+        resolution = (
+            f"{plan.resolutionM:.6g} m/px"
+            if math.isfinite(plan.resolutionM)
+            else "the other image's resolution"
+        )
         if plan.copy:
             what = f"{image.name} already on this grid; nothing resampled ({target})"
         else:
             what = (
-                f"{image.name} reprojected to {target} at "
-                f"{plan.resolutionM:.6g} m/px ({method.value.lower()})"
+                f"{image.name} reprojected to {target} at {resolution} "
+                f"({method.value.lower()})"
             )
         metadata: dict = {**bandMetadata(image), "reprojection": record}
         for key in ("classes", "classColors"):

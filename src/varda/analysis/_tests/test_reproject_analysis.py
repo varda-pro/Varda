@@ -155,6 +155,10 @@ def test_equivalent_target_copies():
     assert np.array_equal(result.getData(), image.getData())
     assert result.transform == image.transform
     assert "nothing resampled" in result.description
+    record = result.extraMetadata["reprojection"]
+    assert record["copied"] is True
+    assert record["method"] == "none (pixels copied)"
+    assert record["coordinateOperation"] is None
 
 
 def test_quality_image():
@@ -209,9 +213,11 @@ def test_source_no_data():
 def test_provenance_keeps_reprojection(tmp_path):
     image = _ctx()
     analysis = _analysis(image)
+    analysis.target.value = ReprojectTarget.CRS
+    analysis.crsText.value = "+proj=eqc +lat_ts=0 +lon_0=77 +R=3396190 +units=m"
     result = analysis.run(image, _noProgress)
     record = result.extraMetadata["reprojection"]
-    assert record["method"] == "bilinear"
+    assert record["method"] == "bilinear" and record["copied"] is False
     path = writeRaster(result, tmp_path / "reprojected.tif")
     reread = VardaRaster(RasterioDataSource(str(path)), name="reprojected")
     assert reread.extraMetadata["reprojection"] == record
@@ -222,15 +228,16 @@ def test_unavailable_without_map_coordinates():
     assert "Image Properties" in ReprojectAnalysis().unavailableReason(image)
 
 
-@pytest.mark.parametrize("upsample", [1.0, 10.0])
+@pytest.mark.parametrize("upsample", [1.0, 3.0, 10.0])
 def test_memory_estimate_bounds_peak(upsample):
-    image = _ctx(width=40, height=40, bands=3)
+    # big enough that the size-dependent terms, not the fixed 8 MiB, dominate
+    image = _ctx(width=200, height=200, bands=10)
     assert image.crs is not None
     analysis = _analysis(image)
     analysis.target.value = ReprojectTarget.CRS
     analysis.crsText.value = "+proj=eqc +lat_ts=0 +lon_0=77 +R=3396190 +units=m"
     analysis.resolution.value = (
-        sourceResolution(image.crs, image.transform, 40, 40) / upsample
+        sourceResolution(image.crs, image.transform, 200, 200) / upsample
     )
     analysis.runAll(image, _noProgress)  # warm up: imports, PROJ caches
     tracemalloc.start()
