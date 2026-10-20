@@ -534,7 +534,9 @@ what it saves is ROIs and points.
   per-window table.
 - **ROI Manager**, **Points Manager** and **ROI Plots** sit folded on the right
   edge, and the render settings and histograms of both views on the bottom
-  edge: click their tabs to open them.
+  edge: click their tabs to open them. Right-click either view for its
+  image's **Render Settings** and **Histogram**, and **Panels** for every
+  panel of the workspace: one closed by mistake comes back from there.
 
 Each new pair replaces the curves, refits the Y ranges and shows the whole
 spectrum; the plots always show the same wavelength range, so zooming or

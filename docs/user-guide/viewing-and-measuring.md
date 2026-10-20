@@ -7,8 +7,11 @@ Everything else on this page reads the data as stored.
 ## Display stretches
 
 Each view shows either one band through a color map (**Mono**) or three
-bands as red, green and blue (**RGB**), set under **Render Settings**. A
-stretch maps each band's values to 0–1. Varda then clips to 0–1 (so
+bands as red, green and blue (**RGB**), set under **Render Settings**.
+Right-click a view for its image's **Render Settings** and **Histogram**,
+and **Panels** for every panel of the workspace (checked when open): a panel
+closed by mistake comes back from there. A stretch maps each band's
+values to 0–1. Varda then clips to 0–1 (so
 values outside saturate at black or full brightness), multiplies by 255 and
 truncates to 8 bits; in Mono, that 8-bit value picks one of 256 colors from
 the color map. No-data pixels are drawn as 0: black in RGB, the color

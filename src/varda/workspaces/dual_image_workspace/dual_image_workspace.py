@@ -444,9 +444,16 @@ class DualImageWorkspace(QMainWindow):
         self.viewportContextMenuController = ViewportContextMenuController(
             self.roiManagerWidget, parent=self
         )
-        for vp in self._allViewports():
-            vp.sigContextMenuRequested.connect(
-                self.viewportContextMenuController.onContextMenuRequested
+        # each pane's menu also offers its image's display docks (the overlay
+        # pane shows both images, so all four)
+        primary = [self.primarySettingsDock, self.primaryHistogramDock]
+        secondary = [self.secondarySettingsDock, self.secondaryHistogramDock]
+        if hasattr(self, "viewport2"):
+            self.viewportContextMenuController.attach(self.viewport1, primary)
+            self.viewportContextMenuController.attach(self.viewport2, secondary)
+        else:
+            self.viewportContextMenuController.attach(
+                self.viewport1, primary + secondary
             )
 
     def _allViewports(self) -> list[ImageViewport]:
