@@ -24,9 +24,17 @@ ABBREVIATION = re.compile(r"\b[A-Z][A-Z0-9/]*[A-Z0-9](?:s)?\b")
 KNOWN = {
     "OK", "CSV", "PDF", "PNG", "JPEG", "JPG", "URL", "AI", "ID", "3D", "2D",
     "RGB", "HTML", "JSON", "TIFF", "USB", "GB", "MB", "PC", "API",
+    "SVG", "KML", "ENVI",  # file formats, named as such
 }  # fmt: skip
+# Standard terms of the field that a planetary or remote-sensing scientist
+# knows and the guide defines (the 0.10 release QA reviewed and kept them)
+FIELD_TERMS = {
+    "CRISM", "I/F", "DEM", "OH", "CTX", "HSV", "CNN", "MLP", "RMS", "RX",
+    "ACE", "R2300", "PDS", "DTM", "USGS", "MICA",
+}  # fmt: skip
+# ("blandness" is a CRISM term of art: a spectrally bland denominator)
 IDIOMS = (
-    "nudge", "blandness", "tweak", "on the fly", "out of the box",
+    "nudge", "tweak", "on the fly", "out of the box",
     "under the hood", "kindle", "ballpark", "rule of thumb", "sanity check",
     "a breeze", "hop ", "grab",
 )  # fmt: skip
@@ -94,7 +102,14 @@ def test_only_what_the_ui_says(qaRun: QaRun, qaData: QaData) -> None:
         _abbreviations(run, corpus)
     with run.step("idioms"):
         for idiom in IDIOMS:
-            places = [w for w, t in corpus if re.search(rf"\b{idiom}", t, re.I)]
+            # A figure of speech is fine with its plain meaning beside it, in
+            # parentheses: "Kindle a Feature (Build a plugin with AI)"
+            places = [
+                w
+                for w, t in corpus
+                if re.search(rf"\b{idiom}", t, re.I)
+                and not re.search(rf"\b{idiom}[^()]*\(", t, re.I)
+            ]
             if places:
                 run.finding(
                     "confused",
@@ -103,8 +118,10 @@ def test_only_what_the_ui_says(qaRun: QaRun, qaData: QaData) -> None:
                 )
     with run.step("one thing, several names"):
         for group in SYNONYMS:
+            # "multi-layer perceptron" is a name, not a word for a band
+            texts = [re.sub(r"multi-layer", "", t, flags=re.I) for _, t in corpus]
             used = {
-                word: sum(bool(re.search(rf"\b{word}s?\b", t, re.I)) for _, t in corpus)
+                word: sum(bool(re.search(rf"\b{word}s?\b", t, re.I)) for t in texts)
                 for word in group
             }
             used = {w: n for w, n in used.items() if n}
@@ -115,6 +132,34 @@ def test_only_what_the_ui_says(qaRun: QaRun, qaData: QaData) -> None:
                     "The same kind of thing is called "
                     + ", ".join(f"{w!r} ({n}×)" for w, n in used.items())
                     + "; is it one thing or several?",
+                )
+
+    with run.step("developer menus and text", "Read the menu bar and status bar"):
+        menuBar = run.mainWindow.menuBar()
+        titles = [plain(a.text()) for a in menuBar.actions()] if menuBar else []
+        if "Debug" in titles:
+            run.finding(
+                "annoyed",
+                "A 'Debug' menu is in the menu bar",
+                widget=run.mainWindow,
+            )
+        said = list(run.statusMessages)
+        statusBar = outcome.viewed.statusBar() if outcome.viewed else None
+        if statusBar is not None:
+            said.append(statusBar.currentMessage())
+        developerText = [m for m in said if re.search(r"initiali[sz]ed|Workflow", m)]
+        if developerText:
+            run.finding(
+                "annoyed",
+                f"The status bar says {developerText[0]!r} (developer text)",
+            )
+        if outcome.viewed is not None:
+            note = outcome.viewed.overlayBar.notListed
+            if note.isVisible() and "can't" not in note.text():
+                run.finding(
+                    "confused",
+                    f"{note.text()!r} next to Overlay is unexplained",
+                    widget=outcome.viewed,
                 )
 
     with run.step("an error message", "File > Import Image(s) > corrupt.tif"):
@@ -136,14 +181,18 @@ def _abbreviations(run: QaRun, corpus: list[tuple[str, str]]) -> None:
     places: dict[str, list[str]] = defaultdict(list)
     counts: Counter[str] = Counter()
     for where, text in corpus:
-        for token in ABBREVIATION.findall(text):
-            word = (
-                token.rstrip("s") if token.endswith("s") and len(token) > 2 else token
-            )
-            if word in KNOWN or len(word) < 2:
-                continue
-            counts[word] += 1
-            places[word].append(where)
+        for found in ABBREVIATION.findall(text):
+            # "ENVI/CSV/USGS" is three; "I/F" is one
+            for token in [found] if found in FIELD_TERMS else found.split("/"):
+                word = (
+                    token.rstrip("s")
+                    if token.endswith("s") and len(token) > 2
+                    else token
+                )
+                if word in KNOWN or word in FIELD_TERMS or len(word) < 2:
+                    continue
+                counts[word] += 1
+                places[word].append(where)
     unexplained = [
         word
         for word in counts

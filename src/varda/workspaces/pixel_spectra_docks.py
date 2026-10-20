@@ -162,9 +162,12 @@ class PixelSpectraDocks(QObject):
         return DedicatedPlotSink(self, title)
 
     def showDock(self, plot: PixelSpectraPlotWidget) -> None:
+        """Re-show the plot's dock if closed and bring its tab to the front
+        (without taking keyboard focus), so a new spectrum is never hidden."""
         dock = self.dockFor(plot)
         if dock.isClosed():
             dock.toggleView(True)
+        dock.setAsCurrentTab()
 
     def setActive(self, plot: PixelSpectraPlotWidget) -> None:
         self._active = plot

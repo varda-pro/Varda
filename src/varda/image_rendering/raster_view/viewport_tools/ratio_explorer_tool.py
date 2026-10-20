@@ -10,6 +10,7 @@ import numpy as np
 from PyQt6.QtCore import QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 
+from varda.common.keys import controlClick
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
 from varda.image_rendering.raster_view.pointer_event import (
     KeyEvent,
@@ -61,8 +62,8 @@ class RatioExplorerTool(ViewportTool):
 
     toolName = "Ratio Explorer"
     toolDescription = (
-        "Ctrl/Cmd+left-click: numerator box, Ctrl/Cmd+right-click: denominator "
-        "box. S saves both as ROIs, P saves the numerator pixel as a point, Esc clears."
+        f"{controlClick('left-click')}: numerator box, "
+        f"{controlClick('right-click')}: denominator box. S saves both as ROIs, P saves the numerator pixel as a point, Esc clears."
     )
     toolCategory = "Selection"
 

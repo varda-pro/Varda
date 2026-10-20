@@ -28,7 +28,7 @@ class IovfAnalysis(Analysis):
         "Removes isolated spikes without smoothing the spectra (Phillips et al. "
         "2024): Grubbs outlier tests vote on every voxel of the noise left after "
         "a smooth reference spectrum, and voxels most windows flag are replaced "
-        "by their neighbors, round after round. Slow on large cubes."
+        "by their neighbors, round after round. Slow on large images."
     )
 
     windowRows = IntParameter(

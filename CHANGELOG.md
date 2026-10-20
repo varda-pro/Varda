@@ -119,6 +119,31 @@ can alter results.
 
 ### Changed
 
+- **Pixel Select takes a plain click.** With Pixel Select on, a click plots
+  the pixel's spectrum (a plain drag still pans; Ctrl-drag, ⌘-drag on a Mac,
+  follows the pointer), its tool sits first under each view, and the tool
+  row wraps instead of hiding tools behind a » button. Turning it on says
+  how to use it on the image, and the Pixel Spectra tab comes to the front
+  with each selection. Clicking a pixel already plotted highlights its curve
+  instead of drawing it again.
+- **Import Image(s) is Ctrl/⌘+O**, the standard Open shortcut; Open Session
+  moves to Shift+Ctrl/⌘+O. The empty window shows how to start.
+- **Key names follow the platform:** hints and tool tips say ⌘ on a Mac
+  (including the docking library's), Ctrl elsewhere.
+- **A new workspace tab comes to the front.**
+- **Help → Documentation opens the user guide shipped with this version**,
+  offline, in Varda; its online link points at this version's release tag,
+  not the main branch.
+- **Wavelengths read as wavelengths:** band lists and labels round band
+  centers to tell neighboring bands apart and give the image's unit
+  (`2353.8 nm`, not `2353.8461538461543`).
+- **Clearer words:** PCA/MNF/ICA's weights are **Weight Image** and **Weight
+  Image Holds**; menus and tips say *image* and *band*; Find Data spells out
+  STAC and ODE; Kindle a Feature says it builds a plugin with AI; the overlay
+  bar says why images can't be overlaid; the status bar says what to do next.
+  The guide has a glossary.
+- **The Debug menu shows only in development** (`VARDA_DEBUG=1`).
+
 - **A spectral plot's sidebar can be resized.** Drag the divider between a
   plot and its settings sidebar to make the sidebar narrower or wider; the
   width is remembered for each kind of plot and restored when the sidebar is
@@ -147,6 +172,34 @@ can alter results.
   the same results (see Installing → Memory).
 
 ### Fixed
+
+- **PCA, MNF and ICA no longer use every band when "from" and "to" are the
+  same wavelength** (a wrong result). Only an unset range means every band;
+  a range holding fewer than two bands disables Run and says why, and the
+  dialog says which bands will go in. The range is compared at the precision
+  it is shown with, so rounding never drops an edge band. Results made with
+  an equal from/to in 0.10.0 or earlier used all bands; their provenance
+  lists the bands actually used.
+- **No network connection on startup.** The File menu's icons were looked up
+  on `api.iconify.design` (a Cloudflare address) at every launch, even
+  offline; they are bundled now. The new guide page
+  [Network use and privacy](docs/user-guide/network-and-privacy.md) lists
+  every connection Varda makes.
+- **Opening a workspace no longer builds Matplotlib's font cache** (24 s on a
+  fresh install, and at every launch of the packaged app).
+- **Load and export errors say what to do**, in plain words (a folder, a
+  missing, empty, damaged or zero-band file, an unknown format, no
+  permission, a missing folder, a full disk); the library's text is under
+  Show Details.
+- **Export to a bare name** goes into the last export folder or the image's
+  folder (not the folder Varda started in), and the status bar gives the full
+  path. Names Windows forbids or reserves are refused before writing (Windows
+  said "failed: No error"), and a name ending in a dot no longer writes
+  `name..img`.
+- **Images opened together join the Image List in the order chosen**, and a
+  busy indicator shows for every load that takes a moment.
+- **A result whose image was removed while the analysis ran is dropped**,
+  with a message, instead of joining the project alone.
 
 - **Planetary coordinate systems work when conda (or another GDAL/PROJ
   installation) is active in your shell.** Such a shell exports its own

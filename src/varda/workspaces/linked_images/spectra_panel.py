@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.keys import controlClick
 from varda.common.entities import VardaRaster
 from varda.common.palette import classColor
 from varda.common.ui import MutedLabel
@@ -106,7 +107,8 @@ class LinkedSpectraPanel(QWidget):
         self.bitsButton.setMenu(bitsMenu)
         self.bitsButton.setVisible(bool(self.bitBoxes))
         self.hint = MutedLabel(
-            "Ctrl+click or Ctrl+drag in any view to read every image there."
+            f"Click or {controlClick('drag')} in any view (Pixel Select) to "
+            "read every image there."
         )
         self.hint.setWordWrap(True)
         export = QPushButton("Export…")

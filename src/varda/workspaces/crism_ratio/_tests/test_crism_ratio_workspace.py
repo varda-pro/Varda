@@ -11,6 +11,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtWidgets import QMessageBox
 from pyproj import CRS
 
+from varda.common.keys import controlClick
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.image_loading.crism_geometry import ColumnGeometry
@@ -491,8 +492,8 @@ def test_the_keys_hint_is_behind_the_question_mark(qtbot, pixelPair):
     workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
     hint = workspace.keysButton.toolTip()
     for keys in (
-        "Ctrl/⌘+left-click: numerator",
-        "Ctrl/⌘+right-click: denominator",
+        f"{controlClick('left-click')}: numerator",
+        f"{controlClick('right-click')}: denominator",
         "S: save the pair as ROIs",
         "P: save the numerator pixel as a point",
         "Esc: clear",

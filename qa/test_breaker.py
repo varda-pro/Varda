@@ -16,7 +16,13 @@ import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QDoubleSpinBox,
+    QLineEdit,
+    QWidget,
+)
 
 from qa import journeys
 from qa.data import QaData, realProducts
@@ -230,6 +236,9 @@ def test_junk_and_escape(qaRun: QaRun, qaData: QaData) -> None:
     with run.step("junk in the analysis settings", " > ".join(journeys.PCA_MENU)):
         _junkInSettings(run, image)
 
+    with run.step("one wavelength", "PCA with the same 'from' and 'to' wavelength"):
+        _oneWavelength(run, image)
+
 
 def test_junk_export_paths(qaRun: QaRun, qaData: QaData) -> None:
     run = qaRun
@@ -296,6 +305,58 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
         dialog.reject()
 
 
+def _oneWavelength(run: QaRun, image: VardaRaster) -> None:
+    """From and to the same wavelength: one band at most, so PCA must refuse,
+    never run on every band (release QA #6, a wrong result)."""
+    if not run.useMenu(*journeys.PCA_MENU, shot=False):
+        return
+    dialog = run.newDialog(RunAnalysisDialog)
+    if not isinstance(dialog, RunAnalysisDialog):
+        return
+    journeys.pickImage(run, dialog, image)
+    boxes = [b for b in dialog.findChildren(QDoubleSpinBox) if b.isVisible()][:2]
+    if len(boxes) < 2:
+        dialog.reject()
+        return
+    value = boxes[0].cleanText()
+    for box in boxes:
+        field = box.findChild(QLineEdit)
+        if field is None:
+            continue
+        box.setFocus()
+        field.selectAll()
+        keyClick(field, Qt.Key.Key_Delete)
+        typeText(field, value)
+        keyClick(field, Qt.Key.Key_Tab)
+    run.settle(0.3)
+    runButton = run.button(dialog, "Run")
+    run.qaShot(dialog, "one-wavelength", f"from {value} to {value}")
+    run.log(
+        "one wavelength",
+        value=value,
+        runEnabled=bool(runButton and runButton.isEnabled()),
+        status=dialog.statusLabel.text(),
+    )
+    if runButton is None or not runButton.isEnabled():
+        dialog.reject()
+        return
+    before = len(journeys.images(run))
+    run.click(runButton, "Run")
+    run.waitFor(
+        lambda: len(journeys.images(run)) > before, "PCA on one wavelength", 120, None
+    )
+    run.settle(0.3)
+    results = journeys.images(run)[before:]
+    if results and results[0].bandCount > 1:
+        run.finding(
+            "wrong result",
+            f"PCA from {value} to {value} ran on {results[0].bandCount} components: "
+            "the same 'from' and 'to' silently used every band",
+            widget=run.mainWindow,
+            reproduce="Processing > Transforms > PCA; set from and to to one value",
+        )
+
+
 def _junkPaths(run: QaRun, image: VardaRaster) -> None:
     cwd = Path.cwd()
     paths = [
@@ -305,9 +366,11 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
         str(run.folder / "UPPER CASE.TIF"),
         str(run.folder / "trailing dot."),
         "🙂",
+        # Names Windows forbids or reserves: refused everywhere, before writing
+        # (release QA #16: Windows said "failed: No error")
+        "CON.tif",
+        str(run.folder / "bad<>|?*.tif"),
     ]
-    if sys.platform == "win32":
-        paths += ["CON.tif", str(run.folder / "bad<>|?*.tif")]
     for typed in paths:
         if not run.useMenu("File", "Export Image", shot=False):
             return
@@ -317,7 +380,7 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
         journeys.pickImage(run, dialog, image)
         field = next(f for f in dialog.findChildren(QLineEdit) if f.placeholderText())
         run.typeInto(field, typed)
-        before = len(run.messages)
+        before, status = len(run.messages), len(run.statusMessages)
         exportButton = run.button(dialog, "Export")
         if exportButton is None or not exportButton.isEnabled():
             dialog.reject()
@@ -326,31 +389,63 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
         run.waitFor(lambda: not _busy(), f"exporting to {typed!r}", 30, None)
         run.settle(0.5)
         said = run.messagesSince(before)
-        written = _whereWritten(typed, cwd)
+        confirmed = run.statusMessages[status:]
+        resolved = Path(field.text()) if alive(field) else None
+        written = _whereWritten(typed, cwd, resolved)
         run.log(
             "export junk",
             typed=typed,
             written=str(written),
             said=[m.text for m in said],
+            status=confirmed,
         )
-        if written is not None and not Path(typed).is_absolute():
+        if alive(dialog) and dialog.isVisible():
+            dialog.reject()
+        reproduce = f"File > Export Image…, type {typed!r}, Export"
+        if written is not None and written.parent == cwd and cwd != run.folder:
             run.finding(
                 "confused",
                 f"Export to {typed!r} wrote {written}: a folder the user never chose",
-                reproduce=f"File > Export Image…, type {typed!r}, Export",
+                reproduce=reproduce,
             )
-            _remove(written)
         elif written is None and not said:
             run.finding(
                 "confused",
                 f"Export to {typed!r} wrote nothing and said nothing",
-                reproduce=f"File > Export Image…, type {typed!r}, Export",
+                reproduce=reproduce,
             )
+        if written is not None and ".." in written.name:
+            run.finding(
+                "annoyed",
+                f"Export to {typed!r} wrote {written.name!r} (a doubled dot)",
+                reproduce=reproduce,
+            )
+        if written is not None and not any(str(written) in m for m in confirmed):
+            run.finding(
+                "confused",
+                f"Export to {typed!r} doesn't say where the file went ({written})",
+                reproduce=reproduce,
+            )
+        for message in said:
+            if "No error" in message.text or LIBRARY_JARGON.search(message.text):
+                run.finding(
+                    "confused",
+                    f"Export to {typed!r} says {message.text[:160]!r}",
+                    shot=message.screenshot,
+                    reproduce=reproduce,
+                )
+        if written is not None:
+            _remove(written)
 
 
-def _whereWritten(typed: str, cwd: Path) -> Path | None:
+def _whereWritten(typed: str, cwd: Path, resolved: Path | None) -> Path | None:
+    """The file an export wrote: where the dialog said it would write, or
+    the working directory (where a bare name used to land)."""
     path = Path(typed) if Path(typed).is_absolute() else cwd / typed
-    for candidate in (path, path.with_suffix(".img"), Path(str(path) + ".img")):
+    candidates = [path, path.with_suffix(".img"), Path(str(path) + ".img")]
+    if resolved is not None:
+        candidates = [resolved, resolved.with_suffix(".img"), *candidates]
+    for candidate in candidates:
         if candidate.exists() and candidate.is_file():
             return candidate
     return None
@@ -390,16 +485,7 @@ def _removeWhileRunning(run: QaRun) -> None:
     # Straight away: close the workspace, and remove the image (Delete key)
     if workspace is not None:
         run.useMenu("Workspace", "Close Workspace", shot=False)
-    gui = run.app.maingui if run.app else None
-    if gui is not None:
-        listWidget = gui.imageList
-        for row in range(listWidget.count()):
-            entry = listWidget.item(row)
-            if entry is not None and entry.data(Qt.ItemDataRole.UserRole) is image:
-                listWidget.setCurrentRow(row)
-        run.answers.append("Yes")  # "Remove from Project?"
-        keyClick(listWidget, Qt.Key.Key_Delete)
-    run.settle(0.5)
+    journeys.removeImage(run, image)
     finished = run.waitFor(
         lambda: not _busy(),
         "PCA after its image was removed",
@@ -460,7 +546,7 @@ def _windows(run: QaRun, qaData: QaData) -> None:
 
 
 def _macos(run: QaRun, qaData: QaData) -> None:
-    with run.step("⌘ shortcuts (macOS)", "File menu: read the shortcuts; press ⌘N"):
+    with run.step("⌘ shortcuts (macOS)", "File menu: read the shortcuts; press ⌘O"):
         action = run.menuAction("File", "Import Image(s)")
         shown = (
             action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
@@ -470,15 +556,17 @@ def _macos(run: QaRun, qaData: QaData) -> None:
         run.log("shortcut shown", item="Import Image(s)", shortcut=shown)
         if "Ctrl" in shown:
             run.finding("confused", f"A Mac menu shows {shown!r} instead of ⌘")
+        elif not shown:
+            run.finding("annoyed", "Import Image(s) shows no shortcut in the menu")
         asked = len(run.fileDialogs)
         run.chooseFiles()  # Cancel the file dialog
         run.mainWindow.activateWindow()
-        keyClick(run.mainWindow, Qt.Key.Key_N, CTRL)  # ⌘N
+        keyClick(run.mainWindow, Qt.Key.Key_O, CTRL)  # ⌘O, where users look
         run.settle(0.3)
         if len(run.fileDialogs) == asked:
             run.finding(
                 "confused",
-                f"⌘N (shown as {shown!r}) doesn't open Import Image(s)",
+                f"⌘O (shown as {shown!r}) doesn't open Import Image(s)",
                 widget=run.mainWindow,
             )
             run.fileAnswers.clear()
@@ -491,18 +579,21 @@ def _macos(run: QaRun, qaData: QaData) -> None:
             return
         _, toolbar = journeys.mainViewport(workspace)
         tips = [a.toolTip() for a in toolbar.actions() if "Ctrl" in a.toolTip()]
-        # A Mac user reads "Ctrl+Click" and presses the Control key
-        if not journeys.lookAtSpectrum(run, workspace, META) and tips:
-            run.finding(
-                "confused",
-                f"The tool tip says {tips[0]!r}; on a Mac the Control key does "
-                "nothing (macOS treats Control-click as a right-click) and it "
-                "takes ⌘-click",
-                widget=workspace,
-                reproduce="macOS: Pixel Select, Control-click the image",
-            )
-        if not journeys.lookAtSpectrum(run, workspace, CTRL):
-            run.finding("blocked", "⌘-click plots no spectrum either", widget=workspace)
+        # A Mac user who reads "Ctrl" presses the Control key
+        if not journeys.lookAtSpectrum(run, workspace, META):
+            if tips:
+                run.finding(
+                    "confused",
+                    f"The tool tip says {tips[0]!r}; on a Mac the Control key "
+                    "does nothing (macOS treats Control-click as a right-click) "
+                    "and it takes ⌘-click",
+                    widget=workspace,
+                    reproduce="macOS: Pixel Select, Control-click the image",
+                )
+            if not journeys.lookAtSpectrum(run, workspace, CTRL):
+                run.finding(
+                    "blocked", "⌘-click plots no spectrum either", widget=workspace
+                )
     with run.step("Ctrl in the text (macOS)"):
         ctrlTexts = sorted(
             {
@@ -552,9 +643,17 @@ def _linux(run: QaRun, qaData: QaData) -> None:
 
 
 def _realKeyring() -> str:
-    """The backend keyring would pick on this machine (the tests themselves
-    use an in-memory one)."""
-    backends = sorted(keyring.backend.get_all_keyring(), key=lambda b: b.priority)
+    """The backend keyring would pick on this machine. The tests' in-memory
+    one (conftest.MemoryKeyring) is a KeyringBackend subclass too, so
+    keyring offers it: leave out backends defined in test code."""
+    backends = sorted(
+        (
+            b
+            for b in keyring.backend.get_all_keyring()
+            if not type(b).__module__.split(".")[-1].startswith(("conftest", "test_"))
+        ),
+        key=lambda b: b.priority,
+    )
     return (
         type(backends[-1]).__module__ + "." + type(backends[-1]).__name__
         if backends

@@ -29,6 +29,8 @@ from astropy.io import fits
 from shapely.geometry import Point
 from pyproj import Transformer
 from PyQt6.QtSvg import QSvgRenderer
+from varda.help_info import GUIDE_FOLDER, localGuide
+from varda.utilities.resources import resource_path
 from varda.terrain.scene import TerrainSettings, buildTerrain, pageHtml
 from varda.workspaces.terrain.terrain_view import TerrainView
 from PyQt6.QtWidgets import QApplication
@@ -64,6 +66,7 @@ def runSelfTest(app: VardaApplication) -> int:
             ("main window", lambda: _mainWindow(app)),
             ("version", _version),
             ("brand assets", _brandAssets),
+            ("user guide and menu icons", _guideAndMenuIcons),
             (
                 "spectral libraries",
                 lambda: _spectralLibraries(Path(folder) / "lib.sli"),
@@ -169,6 +172,18 @@ def _brandAssets() -> str:
     broken = [icon.name for icon in icons if not QSvgRenderer(str(icon)).isValid()]
     assert not broken, f"unreadable: {broken}"
     return f"{len(icons)} icons"
+
+
+def _guideAndMenuIcons() -> str:
+    """Help > Documentation reads the bundled guide offline, and the menus'
+    icons are files (never fetched)."""
+    readme = localGuide()
+    assert readme is not None, f"no user guide in {GUIDE_FOLDER}"
+    pages = sorted(readme.parent.glob("*.md"))
+    icons = sorted(Path(resource_path("resources/icons")).glob("*.svg"))
+    broken = [icon.name for icon in icons if not QSvgRenderer(str(icon)).isValid()]
+    assert icons and not broken, f"menu icons: {len(icons)}, unreadable: {broken}"
+    return f"{len(pages)} guide pages, {len(icons)} menu icons"
 
 
 def _spectralLibraries(path: Path) -> str:

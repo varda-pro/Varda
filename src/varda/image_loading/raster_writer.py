@@ -27,10 +27,74 @@ GEOTIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 SAVE_FILE_FILTER = "ENVI image (*.img *.hdr);;GeoTIFF (*.tif *.tiff)"
 
 
+# Not allowed in file names on Windows; refused everywhere, so an exported
+# file can be shared with any computer
+FORBIDDEN_CHARACTERS = '<>:"|?*'
+RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
+def safeFileName(name: str) -> str:
+    """``name`` as a file name any system can store: characters Windows
+    forbids, path separators and control characters become "_", trailing
+    dots and spaces go, and a name Windows reserves gets a "_" ("CON_").
+    Result names carry such characters ("scene [b1/b2]", "local RX 3/9")."""
+    unsafe = FORBIDDEN_CHARACTERS + "/\\"
+    safe = "".join("_" if c in unsafe or ord(c) < 32 else c for c in name)
+    safe = safe.rstrip(". ") or "image"
+    stem, dot, rest = safe.partition(".")
+    if stem.upper() in RESERVED_NAMES:
+        safe = f"{stem}_{dot}{rest}"
+    return safe
+
+
 def suggestedOutputPath(image: VardaRaster, stem: str | None = None) -> Path:
-    """An ENVI path next to the image's file (or in the home directory)."""
+    """An ENVI path next to the image's file (or in the home directory),
+    named after the image in a form export accepts (``safeFileName``)."""
     folder = Path(image.filePath).parent if image.filePath else Path.home()
-    return folder / f"{stem or image.name}.img"
+    return folder / f"{safeFileName(stem or image.name)}.img"
+
+
+def resolveOutputPath(text: str, folder: Path) -> Path:
+    """Where the typed ``text`` points: a bare or relative name goes into
+    ``folder`` (never the folder Varda happened to start in). Trailing dots
+    and spaces, which Windows drops, are removed. Raises ValueError, in
+    words for the user, for a name no system can take or a folder that
+    doesn't exist."""
+    typed = Path(text.strip())
+    name = typed.name.rstrip(". ")
+    if not name:
+        raise ValueError("Type a file name to export to.")
+    forbidden = sorted({c for c in name if c in FORBIDDEN_CHARACTERS or ord(c) < 32})
+    if forbidden:
+        shown = " ".join(c if ord(c) >= 32 else f"\\x{ord(c):02x}" for c in forbidden)
+        raise ValueError(
+            f"{shown} can't be used in file names (Windows forbids them). "
+            "Choose another name."
+        )
+    if name.split(".")[0].upper() in RESERVED_NAMES:
+        raise ValueError(
+            f"{name.split('.')[0]} is reserved by Windows for devices. "
+            "Choose another name."
+        )
+    target = typed.with_name(name)
+    suffix = target.suffix.lower()
+    if suffix and suffix not in ENVI_SUFFIXES | GEOTIFF_SUFFIXES:
+        raise ValueError(
+            f"{suffix} isn't a format Varda writes: end the name in .img (ENVI) "
+            "or .tif (GeoTIFF)."
+        )
+    if not target.is_absolute():
+        target = folder / target
+    if not target.parent.is_dir():
+        raise ValueError(
+            f"The folder {target.parent} doesn't exist. Choose another folder "
+            "with Browse…, or create it first."
+        )
+    return target
 
 
 # Files written beside a raster whose metadata holds a record under the key:
@@ -47,6 +111,8 @@ def writeRaster(image: VardaRaster, path: str | Path) -> Path:
     there is none). Returns the path of the data file written (for ENVI the
     ``.img``; its ``.hdr`` sits beside it)."""
     target = Path(path)
+    # "name." would become "name..img"; Windows drops trailing dots anyway
+    target = target.with_name(target.name.rstrip(". ") or target.name)
     suffix = target.suffix.lower()
     if suffix == "":
         target, suffix = target.with_suffix(".img"), ".img"

@@ -54,7 +54,7 @@ a file or a session. **Remove Key** deletes the chosen provider's key.
 
 ## Kindle a feature
 
-1. Open **Plugins → Kindle a Feature…**.
+1. Open **Plugins → Kindle a Feature (Build a plugin with AI)…**.
 2. Describe what Varda should do, for example:
    > A band depth map at 1.9 µm, against a straight-line continuum between
    > 1.8 and 2.1 µm.

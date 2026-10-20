@@ -252,10 +252,10 @@ class ROIManagerWidget(QWidget):
             self._lockColumnCheck.setToolTip(
                 "No CRISM detector columns for this image: no geometry file "
                 "with an IR Sample band beside it or its source, and it is "
-                "not an unprojected CRISM cube. Choose the IN file by hand."
+                "not an unprojected CRISM image. Choose the IN file by hand."
                 if crism
                 else "No sensor detector columns for this image (column lock "
-                "is for CRISM cubes)"
+                "is for CRISM images)"
             )
         else:
             self._lockColumnCheck.setToolTip(

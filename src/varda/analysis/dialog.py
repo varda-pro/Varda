@@ -104,7 +104,8 @@ class RunAnalysisDialog(QDialog):
         )
         outputBox.setContent(outputContent)
 
-        # Why Run is unavailable (e.g. the analysis needs ROIs and there are none)
+        # Why Run is unavailable (e.g. the analysis needs ROIs and there are
+        # none), or what the analysis will read
         self.statusLabel = QLabel()
         self.statusLabel.setWordWrap(True)
         self.runButton = ButtonBuilder("Run").onClick(self.accept)
@@ -123,13 +124,15 @@ class RunAnalysisDialog(QDialog):
             .withWidget(self.settingsBox)
             .withWidget(self.previewBox)
             .withWidget(outputBox)
-            .withWidget(self.statusLabel)
             .withStretch()
         )
         self.setLayout(
             VBoxBuilder()
             .withLayout(form)
             .withWidget(PanelScrollArea(body), 1)
+            # Beside Run, never scrolled out of view: why it's off, or what
+            # the settings make it read
+            .withWidget(self.statusLabel)
             .withLayout(
                 HBoxBuilder()
                 .withWidget(self.runButton)
@@ -228,4 +231,5 @@ class RunAnalysisDialog(QDialog):
         else:
             reason = ""
         self.runButton.setEnabled(not reason)
-        self.statusLabel.setText(reason)
+        summary = analysis.inputSummary(image) if image is not None else ""
+        self.statusLabel.setText(reason or summary)

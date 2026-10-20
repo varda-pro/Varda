@@ -15,9 +15,9 @@ DATA_ACTIONS: list[Action] = [
         id="varda.data.find_data",
         title="Find Data…",
         tooltip=(
-            "Search catalogs (STAC, PDS ODE, footprint files, or plugins') for "
-            "observations of a place, see their footprints on a map, and "
-            "download them"
+            "Search online catalogs (SpatioTemporal Asset Catalogs (STAC), the "
+            "PDS Orbital Data Explorer (ODE), footprint files, or plugins') for "
+            "images of a place, see their footprints on a map, and download them"
         ),
         callback=newFindDataWorkspace,
         menus=[MenuRule(id=MenuId.DATA, group=MenuGroup.DATA_FIND, order=0)],

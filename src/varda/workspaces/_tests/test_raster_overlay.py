@@ -155,7 +155,8 @@ def test_the_bar_says_which_images_arent_on_this_grid(qtbot):
     widget = OverlayBar(ProjectImages([base, smaller]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    assert widget.notListed.text() == "(1 not on this grid)"
+    # Release QA #13: "(1 not on this grid)" was unexplained
+    assert widget.notListed.text() == "1 image can't be overlaid: different pixel grid"
     assert "smaller (different pixel grid" in widget.notListed.toolTip()
 
 
@@ -344,3 +345,11 @@ def test_a_rename_shows_at_once(projectBar):
     result.setMetadataOverrides({}, name="renamed")  # no list refresh
     assert widget.imageBox.itemText(1) == "renamed"
     assert redraws == []
+
+
+def test_several_images_off_the_grid_are_counted_plainly(qtbot):
+    base = _base()
+    others = [_raster(np.zeros((3, 8)), f"small {i}") for i in range(2)]
+    widget = OverlayBar(ProjectImages([base, *others]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.notListed.text() == "2 images can't be overlaid: different pixel grid"

@@ -19,3 +19,9 @@ def resource_path(relative: str) -> str:
         return str(Path(base) / relative)
     # Project root is three parents up from this file: utilities -> varda -> src -> root.
     return str(Path(__file__).resolve().parents[3] / relative)
+
+
+def bundledIcon(name: str) -> str:
+    """An app_model icon for ``resources/icons/<name>.svg``, as a file URL:
+    icons are bundled, never fetched (see resources/icons/README.md)."""
+    return Path(resource_path(f"resources/icons/{name}.svg")).as_uri()

@@ -332,7 +332,8 @@ PROCESSING_ACTIONS = processingActions(
         title="Factor Analysis Target Transformation…",
         tooltip=(
             "Which library spectra the image's factor space reproduces (FATT), "
-            "and where they fit (DAFA/TT)"
+            "and where they fit, by dynamic aperture factor analysis (DAFA) and "
+            "target transformation (TT)"
         ),
         callback=openFatt,
         enablement=EXPR_HAS_IMAGES,

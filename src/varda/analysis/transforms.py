@@ -44,6 +44,7 @@ from varda.common.parameter import (
     MultiChoiceParameter,
     Vec2Parameter,
 )
+from varda.common.spectral_axis import formatWavelength, wavelengthDecimals
 from varda.common.vec2 import Vec2
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
@@ -69,7 +70,7 @@ def _componentsParameter() -> IntParameter:
 
 
 class WeightKind(LabeledEnum):
-    WEIGHTS = "Weights (e.g. sample counts)"
+    WEIGHTS = "Weights: larger counts more (e.g. sample counts)"
     INVERSE_VARIANCE = "Uncertainties σ (weight 1/σ²)"
 
 
@@ -87,8 +88,9 @@ def _wavelengthsParameter() -> Vec2Parameter:
 
 def _weightsParameter() -> ImageParameter:
     return ImageParameter(
-        "Weights",
-        "Optional: an image on the same grid giving each value a weight, with "
+        "Weight Image",
+        "Optional: an image on the same grid that says how much each value "
+        "counts (e.g. how many frames went into it, or its uncertainty), with "
         "one band or the same bands (e.g. frames used, or uncertainties). "
         "Values with no weight (flagged, missing) move neither the components "
         "nor a pixel's scores.",
@@ -98,7 +100,15 @@ def _weightsParameter() -> ImageParameter:
 
 
 def _weightKindParameter() -> EnumParameter:
-    return EnumParameter("Weights Are", WeightKind)
+    return EnumParameter(
+        "Weight Image Holds",
+        WeightKind,
+        description=(
+            "What the weight image's values are: weights, where larger means a "
+            "value counts more, or uncertainties σ, where larger means it "
+            "counts less (each value is weighted 1/σ²)."
+        ),
+    )
 
 
 def transformMetadata(
@@ -161,6 +171,11 @@ class _ComponentAnalysis(Analysis):
         self.components.setRange((1, image.bandCount), value=image.bandCount)
         axis = self._bandAxis(image)
         lo, hi = float(axis.min()), float(axis.max())
+        spectral = image.bandModel.isSpectral
+        # Shown as the image's band centers read (its unit, rounded so each
+        # band reads differently); band numbers are whole
+        self.wavelengths.decimals = wavelengthDecimals(axis) if spectral else 0
+        self.wavelengths.suffix = f" {image.bandModel.label}" if spectral else ""
         self.wavelengths.range = (Vec2(lo, hi), Vec2(lo, hi))
         self.wavelengths.set(Vec2(lo, hi))
         current = self.weights.get()
@@ -184,19 +199,56 @@ class _ComponentAnalysis(Analysis):
         )
 
     def keptBands(self, image: VardaRaster) -> np.ndarray:
-        """The bands that go in: inside the wavelength range, not bad."""
+        """The bands that go in: inside the wavelength range, not bad. Only an
+        unset range (0 to 0, before the dialog prepares it) means every band;
+        a range of one wavelength holds the band(s) centered there. The range
+        is compared at the precision it is shown with, so rounding it for
+        display never drops an edge band."""
         axis = self._bandAxis(image)
         lo, hi = sorted((self.wavelengths.get().x, self.wavelengths.get().y))
-        keep = (axis >= lo) & (axis <= hi) if hi > lo else np.ones(axis.size, bool)
+        if lo == hi == 0:
+            keep = np.ones(axis.size, bool)
+        else:
+            decimals = self.wavelengths.decimals
+            slack = 0.5 * 10.0 ** -(2 if decimals is None else decimals)
+            keep = (axis >= lo - slack) & (axis <= hi + slack)
         return np.intersect1d(np.flatnonzero(keep), goodBands(image))
+
+    def _rangeText(self, image: VardaRaster, lo: float, hi: float) -> str:
+        if not image.bandModel.isSpectral:
+            return f"bands {lo:.0f}–{hi:.0f}"
+        decimals = wavelengthDecimals(self._bandAxis(image))
+        return (
+            f"{lo:.{decimals}f}–{formatWavelength(hi, image.bandModel.label, decimals)}"
+        )
+
+    def unavailableReason(self, image: VardaRaster) -> str:
+        count = self.keptBands(image).size
+        if count >= 2:
+            return ""
+        chosen = self.wavelengths.get()
+        lo, hi = sorted((chosen.x, chosen.y))
+        holds = "no usable band" if count == 0 else "1 usable band"
+        return (
+            f"{self._rangeText(image, lo, hi)} holds {holds}; "
+            f"{self.suffix or self.name} needs at least two. Widen the range."
+        )
+
+    def inputSummary(self, image: VardaRaster) -> str:
+        bands = self.keptBands(image)
+        if bands.size < 2:
+            return ""
+        axis = self._bandAxis(image)
+        return (
+            f"Uses {bands.size} of {image.bandCount} bands, "
+            f"{self._rangeText(image, axis[bands].min(), axis[bands].max())}."
+        )
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:
         self._image = image  # for transforms that need more than the cube
         bands = self.keptBands(image)
         if bands.size < 2:
-            raise ValueError(
-                "Fewer than two usable bands fall in the wavelength range."
-            )
+            raise ValueError(self.unavailableReason(image))
         weightsImage = self.weights.get()
         if (
             weightsImage is not None
@@ -330,7 +382,7 @@ class MnfAnalysis(_ComponentAnalysis):
     description = (
         "Like PCA but ordered by signal-to-noise: the noise covariance is "
         "estimated from differences between neighboring pixels and whitened "
-        "away first, so the leading components hold coherent scene structure."
+        "away first, so the leading components hold coherent image structure."
     )
     suffix = "MNF"
     components = _componentsParameter()
@@ -381,7 +433,7 @@ class MnfAnalysis(_ComponentAnalysis):
     def unavailableReason(self, image: VardaRaster) -> str:
         if self._usesRegion() and not self._noiseClasses():
             return "Draw an ROI over a uniform area and tick it as a noise ROI class."
-        return ""
+        return super().unavailableReason(image)
 
     def _noiseClasses(self) -> list[str]:
         rois = self.context.rois

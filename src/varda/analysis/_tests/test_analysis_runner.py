@@ -160,3 +160,34 @@ def test_more_than_the_machine_has_asks_cautiously(qtbot, machine):
         runner.run(HungryAnalysis(20 * GIB), generate_random_image((10, 10, 10)))
     ((_, text, cautious),) = asked
     assert cautious and "16 GB" in text
+
+
+def test_a_result_whose_image_was_removed_meanwhile_is_dropped(qtbot, monkeypatch):
+    """Release QA #17: removing the image mid-PCA still added 'big.img PCA'."""
+    told = []
+    monkeypatch.setattr(
+        "varda.analysis.runner.QMessageBox.information",
+        lambda parent, title, text: told.append(text),
+    )
+    images = ProjectImages()
+    image = generate_random_image((10, 10, 10))
+    images.append(image)
+
+    def runWhileTheUserRemovesIt(task, done, failed, description=""):
+        results = task()
+        images.remove(image)  # the user removes it while the analysis runs
+        done(results)
+
+    monkeypatch.setattr(
+        "varda.analysis.runner.runInBackground", runWhileTheUserRemovesIt
+    )
+    runner = AnalysisRunner(images)
+    discarded = []
+    runner.sigDiscarded.connect(discarded.append)
+
+    runner.run(DoublingAnalysis(), image)
+
+    assert discarded == [image]
+    assert list(images) == []
+    (text,) = told
+    assert image.name in text and "removed" in text

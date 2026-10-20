@@ -109,7 +109,7 @@ WORKSPACE_ACTIONS: list[Action] = [
         title="New Spectral Hourglass Workspace…",
         tooltip=(
             "Find endmembers (MNF, pixel purity, n-D visualizer), identify them "
-            "against a spectral library, and map them across the scene"
+            "against a spectral library, and map them across the image"
         ),
         callback=newSpectralHourglassWorkspace,
         enablement=EXPR_HAS_IMAGES,
@@ -119,8 +119,8 @@ WORKSPACE_ACTIONS: list[Action] = [
         id="varda.workspace.new_mosaic",
         title="New Mosaic Workspace…",
         tooltip=(
-            "Combine overlapping images into one: align them (nudge or tie "
-            "points), order them, and export the mosaic"
+            "Combine overlapping images into one: align them (move them by hand, "
+            "or match tie points), order them, and export the mosaic"
         ),
         callback=newMosaicWorkspace,
         enablement=EXPR_HAS_IMAGES,

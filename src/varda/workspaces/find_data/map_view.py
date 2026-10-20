@@ -15,6 +15,7 @@ import shapely
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsRectItem, QLabel, QVBoxLayout, QWidget
 
+from varda.common.keys import controlClick
 from varda.catalogs.catalog import Product
 from varda.catalogs.gazetteer import Gazetteer, selectLabels
 from varda.common.ui import MutedLabel
@@ -149,7 +150,7 @@ class FootprintMap(QWidget):
         self.viewBox.sigRangeChanged.connect(lambda *_: self._namesTimer.start())
         self.pointer = QLabel()
         self.pointer.setToolTip(
-            "Click selects footprints; Shift-click adds, Cmd-click (Ctrl-click) "
+            f"Click selects footprints; Shift-click adds, {controlClick()} "
             "removes; Shift-drag adds every footprint in a box."
         )
         # who made the imagery and the names shown

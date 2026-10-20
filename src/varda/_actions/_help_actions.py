@@ -3,9 +3,11 @@ the documentation, the issue tracker and checking for updates."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app_model.types import Action, MenuRule
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QGuiApplication
+from PyQt6.QtGui import QDesktopServices, QGuiApplication, QTextDocument
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -13,15 +15,18 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTextBrowser,
     QVBoxLayout,
+    QWidget,
 )
 
 from varda._actions._menu_ids import MenuGroup, MenuId
 from varda.help_info import (
-    DOCUMENTATION_URL,
     ISSUES_URL,
     REPOSITORY_URL,
     citation,
+    documentationUrl,
+    localGuide,
     systemInfo,
 )
 from varda.maingui import MainGUI
@@ -87,8 +92,46 @@ def copySystemInfo(mainGui: MainGUI) -> None:
         statusBar.showMessage("System info copied to the clipboard", 4000)
 
 
-def openDocumentation() -> None:
-    QDesktopServices.openUrl(QUrl(DOCUMENTATION_URL))
+class GuideWindow(QDialog):
+    """The user guide shipped with this Varda, readable offline: Markdown
+    pages whose links lead from page to page; web links open in the browser."""
+
+    def __init__(self, readme: Path, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Varda {vardaVersion()} User Guide")
+        self.browser = QTextBrowser(self)
+        self.browser.setOpenExternalLinks(True)
+        self.browser.setSearchPaths([str(readme.parent)])
+        self.browser.setSource(
+            QUrl.fromLocalFile(str(readme)),
+            QTextDocument.ResourceType.MarkdownResource,
+        )
+        back = QPushButton("Back")
+        back.clicked.connect(self.browser.backward)
+        self.browser.backwardAvailable.connect(back.setEnabled)
+        back.setEnabled(False)
+        url = documentationUrl()
+        self.onlineLink = QLabel(f'Online, for this version: <a href="{url}">{url}</a>')
+        self.onlineLink.setOpenExternalLinks(True)
+        self.onlineLink.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(back, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.browser, 1)
+        layout.addWidget(self.onlineLink)
+        self.setMinimumSize(360, 300)
+        self.resize(820, 700)
+
+
+def openDocumentation(mainGui: MainGUI) -> None:
+    """The guide shipped with this version; online (this version's tag) when
+    it isn't shipped."""
+    readme = localGuide()
+    if readme is None:
+        QDesktopServices.openUrl(QUrl(documentationUrl()))
+        return
+    window = GuideWindow(readme, mainGui)
+    window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    window.show()
 
 
 def reportIssue() -> None:

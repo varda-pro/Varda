@@ -7,6 +7,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from PyQt6.QtGui import QColor
 
+from varda.common.keys import controlClick
 from varda.image_rendering.raster_view.viewport_tools.viewport_tool import ViewportTool
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
 from varda.image_rendering.raster_view.pointer_event import PointerAction, PointerEvent
@@ -19,7 +20,9 @@ if TYPE_CHECKING:
 
 
 class PixelSelectTool(ViewportTool):
-    """Click+Ctrl to select a pixel; emits its image coords upon mouse release.
+    """Click a pixel to select it (a plain drag still pans the view); Ctrl-drag
+    (⌘-drag on a Mac) follows the pointer. Emits the pixel's image coords upon
+    mouse release.
 
     The tool only reports the selection; the owning workspace decides what to
     do with it (e.g. plot the spectrum in its Pixel Spectra dock). When the
@@ -33,7 +36,11 @@ class PixelSelectTool(ViewportTool):
 
     # Tool metadata
     toolName = "Pixel Select"
-    toolDescription = "Select individual pixels (Ctrl+Click)"
+    # Short: it is shown on the view, which can be small
+    toolDescription = (
+        f"Click a pixel to plot its spectrum; {controlClick('drag')} follows "
+        "the pointer"
+    )
     toolCategory = "Selection"
 
     def __init__(self, viewport: ImageViewport, parent=None):
@@ -52,9 +59,11 @@ class PixelSelectTool(ViewportTool):
         super().activate()
         if self._crosshair is None:
             self._crosshair = self.viewport.addCrosshair()
+        self.showText(f"{self.toolName}: {self.toolDescription}", timeout=6000)
 
     def deactivate(self):
         super().deactivate()
+        self.hideText()
         if self._crosshair is not None:
             self._crosshair.remove()
             self._crosshair = None
@@ -67,6 +76,12 @@ class PixelSelectTool(ViewportTool):
 
     @override
     def onPointerEvent(self, event: PointerEvent) -> bool:
+        if event.action == PointerAction.CLICK:
+            # A plain click (its press was left to the view, to pan with)
+            if event.button != Qt.MouseButton.LeftButton:
+                return False
+            self._updateCrosshair(event)
+            return True
         if event.action == PointerAction.PRESS:
             if (
                 event.button == Qt.MouseButton.LeftButton

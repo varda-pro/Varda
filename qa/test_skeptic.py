@@ -11,11 +11,21 @@ from pathlib import Path
 
 import pytest
 import rasterio
-from PyQt6.QtWidgets import QComboBox, QPlainTextEdit, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QLabel,
+    QPlainTextEdit,
+    QTextBrowser,
+    QWidget,
+)
 
 from qa import journeys
 from qa.data import QaData
 from qa.harness import Network, QaRun
+from varda.analysis.dialog import RunAnalysisDialog
+from varda.version import vardaVersion
 
 pytestmark = [pytest.mark.qa, pytest.mark.qt_no_exception_capture]
 
@@ -46,6 +56,36 @@ def test_trust_before_use(qaRun: QaRun, qaData: QaData) -> None:
                     "there is no copy of the guide in the app to read offline",
                     reproduce="Disconnect from the network; Help > Documentation",
                 )
+            guide = next(
+                (
+                    w
+                    for w in QApplication.topLevelWidgets()
+                    if w.isVisible() and "User Guide" in w.windowTitle()
+                ),
+                None,
+            )
+            if guide is not None:
+                run.qaShot(guide, "user-guide", guide.windowTitle())
+                text = "\n".join(
+                    b.toPlainText() for b in guide.findChildren(QTextBrowser)
+                )
+                links = " ".join(label.text() for label in guide.findChildren(QLabel))
+                version = vardaVersion()
+                if f"/v{version}/" not in links:
+                    run.finding(
+                        "confused",
+                        f"The guide's online link isn't this version's (v{version})",
+                        widget=guide,
+                    )
+                if "Network use and privacy" not in text:
+                    run.finding(
+                        "confused",
+                        "The guide's contents don't list 'Network use and privacy'",
+                        widget=guide,
+                    )
+                guide.close()
+            elif not online:
+                run.finding("confused", "Help > Documentation showed nothing")
 
     with run.step("cite", "Help > Cite Varda…"):
         if run.useMenu("Help", "Cite Varda"):
@@ -79,6 +119,7 @@ def test_trust_before_use(qaRun: QaRun, qaData: QaData) -> None:
             "the update check (and how to turn it off)": r"Check for updates when Varda starts",
             "where AI keys are kept": r"keychain",
             "basemap tiles and catalogs": r"basemap|tiles",
+            "every connection Varda makes": r"Every connection Varda makes",
         }.items():
             if not re.search(pattern, guide, re.I):
                 run.finding("confused", f"The user guide doesn't explain {topic}")
@@ -88,16 +129,21 @@ def test_trust_before_use(qaRun: QaRun, qaData: QaData) -> None:
     with run.step("network during first success"):
         contacted = sorted(set(Network.hosts))
         run.log("network", hosts=contacted)
-        if contacted:
+        for host in contacted:
+            caller = " ← ".join(reversed(Network.callers.get(host, [])[-4:]))
             run.finding(
                 "confused",
-                f"Opening, viewing, analyzing and exporting contacted {contacted} "
-                "without saying so",
+                f"Opening, viewing, analyzing and exporting contacted {host} "
+                f"without saying so (from {caller or 'unknown'})",
             )
 
     if outcome.viewed is not None:
         with run.step("band names and units", "Render Settings > Band"):
             _checkBandLabels(run, outcome.viewed)
+
+    if outcome.opened is not None:
+        with run.step("wavelength range", " > ".join(journeys.PCA_MENU)):
+            _checkWavelengthRange(run)
 
     if outcome.exported is not None:
         with run.step("provenance in the export", "Read the exported GeoTIFF's tags"):
@@ -146,6 +192,40 @@ def _checkBandLabels(run: QaRun, workspace: QWidget) -> None:
                 reproduce="Open a cube; look at Render Settings > Band",
             )
             return
+        if re.fullmatch(r"-?\d+(\.\d+)?", text):
+            run.finding(
+                "confused",
+                f"A band is labeled {text!r}: a wavelength without its unit",
+                widget=workspace,
+                reproduce="Open a cube; look at Render Settings > Band",
+            )
+            return
+
+
+def _checkWavelengthRange(run: QaRun) -> None:
+    """The PCA dialog's wavelength range: in the image's unit, and saying
+    which bands go in (release QA #6, #7)."""
+    if not run.useMenu(*journeys.PCA_MENU, shot=False):
+        return
+    dialog = run.newDialog(RunAnalysisDialog)
+    if not isinstance(dialog, RunAnalysisDialog):
+        return
+    boxes = [b for b in dialog.findChildren(QDoubleSpinBox) if b.isVisible()]
+    shown = [b.text() for b in boxes]
+    run.log("wavelength range", shown=shown, status=dialog.statusLabel.text())
+    if boxes and not any(b.suffix().strip() for b in boxes):
+        run.finding(
+            "confused",
+            f"The PCA wavelength range shows {shown[:2]} with no unit",
+            widget=dialog,
+        )
+    if "bands" not in dialog.statusLabel.text():
+        run.finding(
+            "confused",
+            "The PCA dialog doesn't say which bands will go in",
+            widget=dialog,
+        )
+    dialog.reject()
 
 
 def _checkProvenance(run: QaRun, path: Path) -> None:

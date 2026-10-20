@@ -20,6 +20,7 @@ from attrs import define, field, frozen
 from rasterio.crs import CRS as RasterioCRS
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
+from varda.common.spectral_axis import bandWavelengthLabels
 from varda.common.entities import VardaRaster
 from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -194,8 +195,9 @@ def bandLabel(image: VardaRaster, band: int) -> str:
     """A band as people name it: its number (1-based), with its wavelength
     or its name when it has one."""
     centers = image.bandModel.centers
-    if centers is not None and np.isfinite(centers[band]):
-        return f"band {band + 1} ({centers[band]:.6g} nm)"
+    labels = bandWavelengthLabels(image.bandModel)
+    if centers is not None and labels is not None and np.isfinite(centers[band]):
+        return f"band {band + 1} ({labels[band]})"
     label = f"band {band + 1}"
     names = list(image.bandNames or [])
     name = str(names[band]) if band < len(names) else ""

@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.common.spectral_axis import bandWavelengthLabels
 from varda.common.entities import VardaRaster
 from varda.common.ui import MutedLabel
 from varda.geo.bodies import surfaceText
@@ -46,6 +47,9 @@ def bandLabel(image: VardaRaster, band: int) -> str:
     names = list(image.bandNames or [])
     if band < len(names) and names[band]:
         return str(names[band])
+    labels = bandWavelengthLabels(image.bandModel)
+    if labels is not None and band < len(labels):
+        return f"Band {band + 1} ({labels[band]})"
     wavelengths = image.wavelengths
     if wavelengths is not None and band < len(wavelengths):
         return f"Band {band + 1} ({wavelengths[band]})"

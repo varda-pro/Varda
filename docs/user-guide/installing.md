@@ -86,6 +86,9 @@ To check that an installation works, run `uv run varda --self-test` (or
 `Varda --self-test` for a downloaded build). It opens, reads and writes test
 images, renders one and runs two analyses, then reports each check.
 
+Developers can show the **Debug** menu (test helpers such as a dummy image)
+by starting Varda with the environment variable `VARDA_DEBUG=1`.
+
 ## Troubleshooting
 
 ### Planetary coordinate systems fail with conda or another GIS installed

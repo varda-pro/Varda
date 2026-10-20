@@ -5,6 +5,7 @@ Detailed guides to Varda's features. For an overview, see the
 
 - [Reporting results from Varda](reporting-results.md): citing Varda and its methods, what results record, precision vs. accuracy
 - [Installing Varda](installing.md): downloading a release, running from source, optional extras
+- [Network use and privacy](network-and-privacy.md): every connection Varda makes, when, and what it sends; turning off the update check; where AI keys are kept
 - [Sessions and saving results](sessions-and-saving.md): saving and restoring your work, autosave, exporting images
 - [3D Terrain](3d-terrain.md): DEMs in 3D with draped images, figures and interactive web pages
 - [Linked Images](linked-images.md): any number of images linked by pixel or map location, with every image's spectrum and profile at once
@@ -28,3 +29,16 @@ Detailed guides to Varda's features. For an overview, see the
 - [Kindle a Feature](kindle-a-feature.md): describe a feature and have your AI build it as a plugin
 
 Something missing or unclear? [Open an issue](https://github.com/varda-pro/Varda/issues/new/choose).
+
+## Words used in Varda
+
+- **Image**: any raster Varda opens or makes, with one or many bands. Other
+  software may call it a raster, a scene or (with many bands) a cube; Varda
+  keeps "cube" only in names from the field, such as CRISM *ratio cubes* and
+  ISIS *cube* files (`.cub`).
+- **Band**: one layer of an image (one wavelength, or one product such as a
+  class map). Other software may call it a channel or a layer. In the
+  classifiers' guide, a network *layer* and the *channels* of a convolution
+  are the networks' own terms.
+- **Pixel**: one position in an image; its values across the bands are its
+  **spectrum**.

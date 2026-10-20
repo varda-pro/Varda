@@ -289,6 +289,7 @@ class Vec2ParameterWidget(QWidget):
         spinBox.setRange(range.x, range.y)
         if self.param.step is not None:
             spinBox.setSingleStep(self.param.step)
+        spinBox.setSuffix(self.param.suffix)
         spinBox.setValue(value)
         return spinBox
 
