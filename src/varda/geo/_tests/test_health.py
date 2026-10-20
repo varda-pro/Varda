@@ -23,6 +23,7 @@ from varda.geo._tests.fixtures import (
     WGS84,
     makeImage,
 )
+from varda.geo import health
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import (
     CrsHealth,
@@ -681,3 +682,40 @@ def test_the_bounds_check_runs_on_a_label_crs_varda_applied():
     label = labelled(group, latitudeType="planetocentric", longitudeDirection="west")
     health = checkCrs(None, Affine.identity(), 64, 64, label)
     assert codes(health) == ["no-crs", "lon-bounds-westward"]
+
+
+def test_the_bounds_check_skips_transverse_mercator():
+    # bounds that flag the equirectangular map fit no cylindrical reading here
+    crs = "+proj=tmerc +lat_0=0 +lon_0=-100 +k=1 +R=3396190 +units=m +no_defs"
+    health = checkCrs(crs, GDAL_WEST_TRANSFORM, 64, 64, bounded("100.708", "100.169"))
+    assert "lon-bounds-westward" not in codes(health)
+
+
+def test_the_bounds_check_skips_a_global_map():
+    # 359.6° wide from 1.687°E to 1.287°E (wrapped, 0.4° apart): only the
+    # mirrored reading fits these bounds, but a global map can't tell
+    crs = "+proj=eqc +lat_ts=0 +lon_0=0 +R=3396190 +units=m +no_defs"
+    width = 6400
+    meters = math.radians(359.6) * 3396190 / width
+    transform = Affine(meters, 0, 100_000, 0, -meters, 0)
+    group = {**bounded("-1.687", "-1.287", "east").projectionGroup}
+    label = labelled(group, latitudeType="planetocentric", longitudeDirection="east")
+    result = checkCrs(crs, transform, width, 32, label)
+    assert "lon-bounds-westward" not in codes(result)
+    assert health._GLOBAL_SPAN_DEG < 359.6
+
+
+def test_a_failing_bounds_check_skips_only_itself(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    def broken(*args: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(health, "_westwardBounds", broken)
+    label = labelled(
+        WEST_GROUP, latitudeType="planetographic", longitudeDirection="west"
+    )
+    result = checkCrs(GDAL_WEST_PROJ, GDAL_WEST_TRANSFORM, 64, 64, label)
+    assert "unreadable-crs" not in codes(result)
+    assert "label-crs-mismatch" in codes(result)
+    assert "Skipped the label longitude range check" in caplog.text

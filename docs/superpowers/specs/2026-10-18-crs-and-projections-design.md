@@ -1311,6 +1311,23 @@ grid may differ from its inputs'.
 | A CRS (after any Earth fix) that isn't `sameCrs` with the label's | `label-crs-mismatch` PROBLEM, message "Its label describes {label CRS text}, but its CRS is {CRS text}." | Offered (Apply), never automatic: GDAL may be right |
 | A CRS `sameCrs` with the label's, or a label without a buildable CRS | nothing new | — |
 
+`sameCrs` compares a projected CRS's own axes, not its base CRS's longitude
+direction, so a west label and GDAL's east reading with the same `lon_0` are
+the same map (no `label-crs-mismatch`); `lon-direction-mismatch` reports the
+direction. ISIS's `CenterLatitudeRadius`, when present, is the local radius
+used (it's what ISIS projected with; the formula otherwise).
+
+**Map x eastward, per file (decided in Task 8).** `lon-bounds-westward`
+PROBLEM, no fix, from the image's own label only: for cylindrical methods
+(Equidistant Cylindrical, Mercator variants A/B; not transverse or oblique),
+the longitudes of the image's left and right edges at its middle row, read
+eastward and mirrored about the central meridian (x′ = 2·x₀ − x), against
+the label's range (PDS3 `WESTERNMOST`/`EASTERNMOST_LONGITUDE`, ISIS
+`MinimumLongitude`/`MaximumLongitude`, PDS4 `west`/`east_bounding_coordinate`)
+as an unordered pair mod 360, within max(3 px, 0.0001°). Raised only when the
+mirrored reading fits and the eastward one doesn't; skipped when the edges
+span 359° or more. Advisory: if it fails, only it is skipped (logged).
+
 The existing `lon-direction-mismatch` and `latitude-type-mismatch` stay.
 They say why the two differ. The `earth-crs-on-body` fix is unchanged: it
 runs first, and the label comparison is of the fixed CRS.

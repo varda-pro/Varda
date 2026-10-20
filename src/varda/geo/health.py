@@ -15,6 +15,7 @@ of the CRS and the label is right."""
 
 from __future__ import annotations
 
+import logging
 import math
 from enum import Enum
 
@@ -32,6 +33,8 @@ from varda.geo.labels import LabelHints
 from varda.geo.transform import geodeticLonLat, transformPoints
 from varda.utilities.proj_lock import PROJ_LOCK
 
+logger = logging.getLogger(__name__)
+
 SET_CRS = "Set coordinate system…"
 DISTORTION_SUGGESTION = (
     "Measurements are geodesic and unaffected; shapes and slopes on this map "
@@ -41,9 +44,23 @@ DISTORTION_SUGGESTION = (
 _NO_LABEL = LabelHints.empty()
 LABEL_FIX_HEADLINE = "No coordinate system in its file; built from its label."
 PROVENANCE_SOURCE = "Varda provenance"
-# The projections whose longitude depends on map x alone, for the check of
-# the label's longitude range
-_CYLINDRICAL = ("equidistant cylindrical", "mercator")
+# The projections (PROJ's method names) whose longitude depends on map x
+# alone, for the check of the label's longitude range
+_CYLINDRICAL = frozenset(
+    {
+        "Equidistant Cylindrical",
+        "Equidistant Cylindrical (Spherical)",
+        "Mercator (variant A)",
+        "Mercator (variant B)",
+        "Mercator (Spherical)",
+    }
+)
+# A span of edge longitudes this wide (degrees) is global: its edges can't
+# tell east from west
+_GLOBAL_SPAN_DEG = 359.0
+# How far (pixels, else degrees) a label's longitude bound may be from an edge
+BOUNDS_TOLERANCE_PX = 3.0
+BOUNDS_TOLERANCE_DEG = 1e-4
 
 type Transform = tuple[float, float, float, float, float, float]
 
@@ -159,7 +176,7 @@ def _check(
         issues.append(_unknownBody(body))
     issues.extend(_conventions(used, hints))
     if label is not None and used.kind == "projected":
-        westward = _westwardBounds(effective, transform, width, height, hints)
+        westward = _westwardCheck(effective, transform, width, height, hints)
         if westward is not None:
             issues.append(westward)
     distortion = None
@@ -293,6 +310,22 @@ def _labelMismatch(
     )
 
 
+def _westwardCheck(
+    crs: CRS | str,
+    transform: Affine,
+    width: int,
+    height: int,
+    hints: LabelHints,
+) -> CrsIssue | None:
+    """``_westwardBounds``, which is advisory: when it fails, only it is
+    skipped (and logged), never the rest of the check."""
+    try:
+        return _westwardBounds(crs, transform, width, height, hints)
+    except Exception:
+        logger.warning("Skipped the label longitude range check", exc_info=True)
+        return None
+
+
 def _westwardBounds(
     crs: CRS | str,
     transform: Affine,
@@ -317,8 +350,7 @@ def _westwardBounds(
         operation = parsed.coordinate_operation
         if operation is None:
             return None
-        method = operation.method_name.lower()
-        if not any(name in method for name in _CYLINDRICAL):
+        if operation.method_name not in _CYLINDRICAL:
             return None
         falseEasting = next(
             (float(p.value) for p in operation.params if p.name == "False easting"),
@@ -327,15 +359,20 @@ def _westwardBounds(
         lonLat = geodeticLonLat(parsed)
     left, y = transform * (0, height / 2)
     right, _ = transform * (width, height / 2)
+    step, _ = transform * (1, height / 2)
     mirrored = (2 * falseEasting - left, 2 * falseEasting - right)
-    lons, _ = transformPoints(parsed, lonLat, [left, right, *mirrored], [y] * 4)
+    xs = [left, right, *mirrored, step]
+    lons, _ = transformPoints(parsed, lonLat, xs, [y] * len(xs))
     if not all(math.isfinite(lon) for lon in lons):
         return None
-    span = abs(_wrapped(lons[1] - lons[0]))
-    if span >= 359 or span == 0:
+    # the edges' span from one pixel's (unwrapped, so a global image is seen)
+    pixel = abs(_wrapped(lons[4] - lons[0]))
+    span = pixel * width
+    if span == 0 or span >= _GLOBAL_SPAN_DEG:
         return None
-    # the label may give pixel edges or centers, rounded
-    tolerance = max(1.5 * span / width, 0.01 * span, 1e-4)
+    # the label may give pixel edges, pixel centers or its valid data's
+    # extent, rounded: CRISM FRT000107A7's are 1.5 px inside its edges
+    tolerance = max(BOUNDS_TOLERANCE_PX * pixel, BOUNDS_TOLERANCE_DEG)
     east = hints.longitudeDirection != "west"
     first, second = (b if east else -b for b in bounds)  # east-positive
 

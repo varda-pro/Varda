@@ -141,6 +141,8 @@ PIXEL_SIZE_X: _Keys = (("MAP_SCALE",), ("PIXELRESOLUTION",), ("PIXEL_RESOLUTION_
 PIXEL_SIZE_Y: _Keys = (("MAP_SCALE",), ("PIXELRESOLUTION",), ("PIXEL_RESOLUTION_Y",))
 LINE_OFFSET: _Keys = (("LINE_PROJECTION_OFFSET",), (), ())
 SAMPLE_OFFSET: _Keys = (("SAMPLE_PROJECTION_OFFSET",), (), ())
+# ISIS writes the local radius its Equirectangular used (m)
+LOCAL_RADIUS: _Keys = ((), ("CENTERLATITUDERADIUS",), ())
 CORNER_X: _Keys = ((), ("UPPERLEFTCORNERX",), ("UPPERLEFT_CORNER_X",))
 CORNER_Y: _Keys = ((), ("UPPERLEFTCORNERY",), ("UPPERLEFT_CORNER_Y",))
 
@@ -380,6 +382,8 @@ def _surface(
         # whatever its type (ISIS Equirectangular.cpp, SetGround)
         phi = math.radians(latitude)
         radius = a * c / math.hypot(c * math.cos(phi), a * math.sin(phi))
+        # ISIS's own value when it wrote one (the same formula, its precision)
+        radius = group.length(LOCAL_RADIUS) or radius
         if latitudeType == "planetographic":
             # PROJ's eqc on an ellipsoid is x = a·cos φ₀·Δλ, y = a·φ (φ
             # geodetic), so the body's ellipsoid scaled to a = r gives ISIS's

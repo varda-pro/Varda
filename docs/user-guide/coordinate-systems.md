@@ -657,7 +657,7 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 | `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
 | `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
 | `label-crs-mismatch` | Problem | The CRS (after any `earth-crs-on-body` fix) isn't the same (`sameCrs`, [What "the same" means](#what-the-same-means)) as the CRS its own label's map projection group describes | "Its label describes Mars, ellipsoid a = 3395.58, c = 3375.60 km, Equirectangular, center lat 10°, lon_0 -100°, but its CRS is Mars, sphere R = 3396.19 km, Equirectangular, center lat 10°, lon_0 100°, 508 m/px (east–west), 500 m/px (north–south)." | **Offered, never automatic** (Apply uses the label's CRS; the file's transform is kept): GDAL may be right, and the label may be the one in error. The suggestion names any convention Varda assumed. The `lon-direction-mismatch` and `latitude-type-mismatch` findings say why the two differ |
-| `lon-bounds-westward` | Problem | The label's longitude range (PDS3 `WESTERNMOST_LONGITUDE`/`EASTERNMOST_LONGITUDE`, ISIS `MinimumLongitude`/`MaximumLongitude`, PDS4 `west_bounding_coordinate`/`east_bounding_coordinate`) fits the image's left and right edges only if its samples run **westward**, and not as Varda reads them, eastward. Checked for cylindrical projections (equirectangular, Mercator) only | "Its label's longitude range (100.169° to 100.708° west) fits its map only if its samples run westward; Varda reads them eastward." | Nothing is changed. Check a known feature: the image may be mirrored about its center meridian ([Conventions](#conventions)) |
+| `lon-bounds-westward` | Problem | The label's longitude range (PDS3 `WESTERNMOST_LONGITUDE`/`EASTERNMOST_LONGITUDE`, ISIS `MinimumLongitude`/`MaximumLongitude`, PDS4 `west_bounding_coordinate`/`east_bounding_coordinate`) fits the image's left and right edges only if its samples run **westward**, and not as Varda reads them, eastward. Checked for cylindrical projections (equirectangular, Mercator; not transverse or oblique Mercator) only, and not for maps 359° or more wide. A bound fits an edge within 3 pixels (at least 0.0001°): labels give pixel edges, pixel centers or the valid data's extent (CRISM FRT000107A7's are 1.5 px inside). The edges are read at the middle row | "Its label's longitude range (100.169° to 100.708° west) fits its map only if its samples run westward; Varda reads them eastward." | Nothing is changed. Check a known feature: the image may be mirrored about its center meridian ([Conventions](#conventions)) |
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
 | `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
 | `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject for figures and terrain (Reproject Image comes in a later version) |
@@ -746,7 +746,9 @@ result's grid may differ from its inputs'.
 `CENTER_LATITUDE`, `CENTER_LONGITUDE`, `MAP_SCALE`,
 `LINE_PROJECTION_OFFSET` and `SAMPLE_PROJECTION_OFFSET`. ISIS:
 `EquatorialRadius`, `PolarRadius`, `CenterLatitude`, `CenterLongitude`,
-`PixelResolution`, `UpperLeftCornerX` and `UpperLeftCornerY`. PDS4: the
+`PixelResolution`, `UpperLeftCornerX` and `UpperLeftCornerY`, and for
+Equirectangular `CenterLatitudeRadius` when ISIS wrote it (the local radius
+it projected with; else Varda computes it, below). PDS4: the
 `cart:` radii, the projection's center parameters,
 `pixel_resolution_x`/`_y` and `upperleft_corner_x`/`_y`. Each length is in
 the unit written beside it (`<KM>`, `<METERS/PIXEL>`, PDS4's `unit`
@@ -779,6 +781,15 @@ in ISIS: x = r·cos φ₀·(λ − λ₀), y = r·φ, with φ in the label's own
 latitude type), which is why both equirectangular rows use r. A product
 made by other software from a PDS3 label may instead use a; the two differ
 by r/a in scale, which is why these rows are offered rather than applied.
+
+**Comparing with GDAL's CRS.** `label-crs-mismatch` uses `sameCrs`
+([What "the same" means](#what-the-same-means)), which compares a projected
+CRS's own axes (easting, northing), not the longitude axis of the
+geographic CRS it is based on. A west-positive label's CRS and GDAL's
+east-positive reading of it with the same `lon_0` (e.g. a label centered on
+0°) are therefore the same map and give no `label-crs-mismatch`: every
+pixel is at the same place. Only the readout's longitude direction differs,
+and `lon-direction-mismatch` reports that.
 
 **Longitude.** For a west-positive label (PDS3 `WEST`, ISIS
 `PositiveWest`, PDS4 "Positive West"), the CRS's `lon_0` is the

@@ -466,3 +466,22 @@ def test_planetographic_equirectangular_uses_the_local_radius() -> None:
     (x,), (y,) = transformPoints(crs.geodetic_crs, crs, [1.0], [30.0])
     assert x == pytest.approx(r * math.cos(phi) * math.radians(1), abs=1e-6)
     assert y == pytest.approx(r * math.radians(30), abs=1e-6)
+
+
+def test_isis_center_latitude_radius_is_used_when_written() -> None:
+    result = _built(
+        _isis(
+            {
+                "PROJECTIONNAME": "Equirectangular",
+                "EQUATORIALRADIUS": "3396190.0",
+                "POLARRADIUS": "3376200.0",
+                "LATITUDETYPE": "Planetocentric",
+                "CENTERLATITUDE": "15.0",
+                "CENTERLONGITUDE": "0.0",
+                "CENTERLATITUDERADIUS": "3394839.0",
+            }
+        )
+    )
+    crs = _crs(result)
+    assert crs.ellipsoid is not None
+    assert crs.ellipsoid.semi_major_metre == pytest.approx(3394839.0)
