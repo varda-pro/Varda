@@ -189,3 +189,10 @@ def test_an_empty_name_is_refused(tmp_path):
 def test_a_missing_folder_is_named(tmp_path):
     with pytest.raises(ValueError, match="doesn't exist"):
         resolveOutputPath(str(tmp_path / "no such folder" / "x.tif"), tmp_path)
+
+
+def test_a_format_varda_cant_write_is_named_before_writing(tmp_path):
+    with pytest.raises(ValueError, match=r"\.xyz isn't a format Varda writes"):
+        resolveOutputPath("wrong extension.xyz", tmp_path)
+    # a dot inside a name without a known suffix is not a format
+    assert resolveOutputPath("scene v2.tif", tmp_path).name == "scene v2.tif"

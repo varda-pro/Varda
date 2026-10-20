@@ -91,7 +91,7 @@ def explainOpenError(path: str, error: BaseException) -> PlainError:
         )
     else:
         message = (
-            f"Varda could not open {name}: {raw}. Check that it is a complete "
+            f"Varda could not open {name}: {raw.rstrip('.')}. Check that it is a complete "
             "image file; Copy System Info (Help menu) and the log help a bug report."
         )
     return PlainError(message, raw)
@@ -118,7 +118,7 @@ def explainWriteError(path: str, error: BaseException) -> PlainError:
         )
     else:
         message = (
-            f"Varda could not write {target.name}: {raw}. Try another folder or "
+            f"Varda could not write {target.name}: {raw.rstrip('.')}. Try another folder or "
             "name with Browse…."
         )
     return PlainError(message, raw)

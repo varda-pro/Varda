@@ -66,6 +66,12 @@ def resolveOutputPath(text: str, folder: Path) -> Path:
             "Choose another name."
         )
     target = typed.with_name(name)
+    suffix = target.suffix.lower()
+    if suffix and suffix not in ENVI_SUFFIXES | GEOTIFF_SUFFIXES:
+        raise ValueError(
+            f"{suffix} isn't a format Varda writes: end the name in .img (ENVI) "
+            "or .tif (GeoTIFF)."
+        )
     if not target.is_absolute():
         target = folder / target
     if not target.parent.is_dir():
