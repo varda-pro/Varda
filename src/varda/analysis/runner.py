@@ -60,6 +60,8 @@ class AnalysisRunner(QObject):
     sigProgress = pyqtSignal(int, str)
     sigFinished = pyqtSignal(object)  # the resulting VardaRaster (the first)
     sigFailed = pyqtSignal(object)  # the exception
+    # The source image left the project while it ran, so the result was dropped
+    sigDiscarded = pyqtSignal(object)  # the source VardaRaster
 
     def __init__(self, images: ProjectImages, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,6 +75,9 @@ class AnalysisRunner(QObject):
         analysis that may not fit in the free memory asks first."""
         if not self._memoryAllows(analysis, image):
             return
+        listed = (
+            image in self._images
+        )  # a result outlives its image only if never listed
         # No cancel button: analyses run to completion
         dialog = BusyDialog(
             f"Running {analysis.name} on {image.name}…",
@@ -104,6 +109,17 @@ class AnalysisRunner(QObject):
 
         def onFinished(results: list[VardaRaster]) -> None:
             dialog.close()
+            if listed and image not in self._images:
+                saved = f" It was saved to {outputPath}." if outputPath else ""
+                QMessageBox.information(
+                    self._parentWidget,
+                    "Result not added",
+                    f"{image.name} was removed from the project while "
+                    f"{analysis.name} ran, so its result was not added (its "
+                    f"record would point to an image no longer open).{saved}",
+                )
+                self.sigDiscarded.emit(image)
+                return
             for result in results:
                 self._images.append(result)
             self.sigFinished.emit(results[0])

@@ -145,7 +145,10 @@ none.
 
 ## Saving results
 
-Every Processing result joins the project's image list. Tick **Save result to
+Every Processing result joins the project's image list (unless its image
+was removed from the project while the analysis ran: then Varda says so and
+drops the result, whose record would point to an image no longer open; a
+result you chose to save to a file is still written). Tick **Save result to
 file** in the analysis dialog to also write it to disk (ENVI `.img`/`.hdr` or
 GeoTIFF), or export any image later with **File → Export Image…** or by
 right-clicking an image → **Export Image…**.

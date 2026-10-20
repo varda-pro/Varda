@@ -73,3 +73,13 @@ def test_a_crop_box_adds_a_cropped_image_to_the_project(qtbot):
     cropped = project[1]
     assert (cropped.width, cropped.height, cropped.bandCount) == (8, 5, 10)
     assert "crop" in cropped.name
+
+
+def test_the_status_bar_says_what_to_do_next(qtbot):
+    """Release QA #22: it said 'General Image Analysis Workflow initialized'."""
+    image = generate_random_image((20, 20, 10))
+    workflow = GeneralImageAnalysisWorkflow(GeneralImageAnalysisConfig([image]))
+    qtbot.addWidget(workflow)
+    message = workflow.statusBar().currentMessage()
+    assert "Pixel Select" in message and "spectrum" in message
+    assert "initialized" not in message
