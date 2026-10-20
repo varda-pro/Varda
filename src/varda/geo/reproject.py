@@ -43,7 +43,7 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject
 
 from varda.geo.bodies import latitudeType
-from varda.geo.describe import describeCrs
+from varda.geo.describe import crsText, describeCrs
 from varda.geo.distortion import arealScaleAtPixels
 from varda.geo.equivalence import canTransform
 from varda.geo.measure import groundSpacing
@@ -191,9 +191,7 @@ def gridFor(
             f"{resolution:,.12g} m, more than {MAX_OUTPUT_PIXELS:,}. Use a resolution "
             f"of at least {coarser:,.12g} m."
         )
-    return TargetGrid(
-        _crsText(dstCrs), (size, 0.0, west, 0.0, -size, north), cols, rows
-    )
+    return TargetGrid(crsText(dstCrs), (size, 0.0, west, 0.0, -size, north), cols, rows)
 
 
 def imageGrid(crs: CRS | str, transform: Affine, width: int, height: int) -> TargetGrid:
@@ -201,7 +199,7 @@ def imageGrid(crs: CRS | str, transform: Affine, width: int, height: int) -> Tar
     when WKT would lose an axis direction): to put another image on it, or
     to keep an image's grid."""
     t = transform
-    return TargetGrid(_crsText(crs), (t.a, t.b, t.c, t.d, t.e, t.f), width, height)
+    return TargetGrid(crsText(crs), (t.a, t.b, t.c, t.d, t.e, t.f), width, height)
 
 
 def _target(crs: CRS | str) -> _Target:
@@ -367,23 +365,6 @@ def _roundUp(value: float) -> float:
     return math.ceil(value / step) * step
 
 
-def _crsText(crs: CRS | str) -> str:
-    """The CRS as WKT, or as PROJJSON when WKT would lose an axis direction
-    (a west-positive base CRS). Holds PROJ_LOCK."""
-    with PROJ_LOCK:
-        parsed = CRS.from_user_input(crs)
-        wkt = parsed.to_wkt()
-        if wkt and _directions(CRS.from_wkt(wkt)) == _directions(parsed):
-            return wkt
-        return parsed.to_json()
-
-
-def _directions(crs: CRS) -> list[str]:
-    geodetic = crs.geodetic_crs
-    base = geodetic.axis_info if geodetic is not None else []
-    return [axis.direction for axis in (*crs.axis_info, *base)]
-
-
 # --- the warp ---------------------------------------------------------------------
 
 
@@ -408,7 +389,9 @@ def reprojectBand(
     reproject(
         source=np.ascontiguousarray(band, dtype=np.float64),
         destination=out,
-        src_transform=Affine.translation(-shift, 0.0) * srcTransform,
+        src_transform=warp.sourceTransform(
+            Affine.translation(-shift, 0.0) * srcTransform
+        ),
         src_crs=warp.srcCrs,
         src_nodata=np.nan,
         dst_transform=grid.affine,
@@ -555,7 +538,7 @@ def reprojectionRecord(
     if gdalProj and gdalProj != proj:
         proj = f"{gdalProj} (GDAL warper); {proj} (pyproj)"
     return {
-        "from": {"crs": _crsText(srcCrs), "description": describeCrs(srcCrs).text},
+        "from": {"crs": crsText(srcCrs), "description": describeCrs(srcCrs).text},
         "to": {"crs": grid.crs, "description": describeCrs(grid.crs).text},
         "method": method.name,
         "resolutionM": _plain(resolutionM),

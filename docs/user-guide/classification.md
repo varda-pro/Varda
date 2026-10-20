@@ -293,6 +293,10 @@ table with these header lines:
 # image: scene MLP classes
 # method: exact per row (geodesic polygon, edges densified to 16 points) on sphere R = 3396.19 km
 # Varda version: …
+# coordinate system: Mars, sphere R = 3396.19 km, Equirectangular, center lat 0°, 1000 m/px
+# coordinate system definition: IAU_2015:49910
+# pixel grid (affine a, b, c, d, e, f): 1000.0, 0.0, 586746.9752330622, 0.0, -1000.0, 5000.0
+# pixel size (map units): 1000 × 1000 m
 # classified pixels: 99 (the fractions' denominator)
 # unclassified pixels: 21
 # classified area_km2: 98.99…
@@ -300,7 +304,15 @@ class,name,pixels,area_km2,fraction
 ```
 
 `fraction` is 0–1 (the table shows it as %); areas are written at full
-precision, and blank where there are none.
+precision, and blank where there are none. The coordinate system is the
+image's when the areas were measured: its description, then its authority
+code or, without one, its full WKT on one line (PROJJSON for a
+west-positive label CRS, which WKT can't hold). The pixel grid is the
+image's affine transform (x = a·col + b·row + c, y = d·col + e·row + f, in
+the coordinate system's units), and the pixel size its two sides in those
+units; both are left out for an image without map coordinates. A newline,
+carriage return or backslash in a header value (the image name, say) is
+written as `\n`, `\r` or `\\`, so each value stays on its line.
 
 **Method.** A class's area is the sum of the ground areas of its pixels,
 each pixel's area computed on the coordinate system's **own** surface (the

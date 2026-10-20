@@ -326,7 +326,16 @@ WGS 84's, and without this rule NAD27 → WGS 84 lost its datum shift (about
 200 m). Varda decides this from the two CRSs, not from PROJ's name for
 its operation: between PROJ strings with `+lon_wrap` or `+over`, PROJ calls
 the same latitude-keeping operation "Transformation from unknown to
-unknown", and points and rasters take the route above there too. Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
+unknown", and points and rasters take the route above there too. Where
+PROJ can't build an operation at all (between the planetocentric
+`IAU_2015:49902` and a PROJ string with `+lon_wrap` or `+over`, which PROJ
+9.5.1 refuses as "not supported on spherical planetocentric"), Varda takes
+the same route. A west-positive geographic source (`IAU_2015:49901`) is
+given to GDAL as its east-positive twin, with x negated, and the pipeline
+starts by negating it back: given the west-positive CRS itself, GDAL 3.9.3
+returned no data wherever the west longitude plus the latitude passed
+about 180° (east longitudes 135–180° at 45°N, and any image across ±180°).
+Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
 Mask…), display overlays and Reproject Image all place rasters this way,
 and a resampled input's provenance metadata records the operation
 (`coordinateOperation`: the pipeline, or `PROJ` for PROJ's own). The

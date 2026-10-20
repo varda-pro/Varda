@@ -166,6 +166,25 @@ def describeCrs(
         )
 
 
+def crsText(crs: CRS | str) -> str:
+    """The CRS as one line of WKT, or as PROJJSON when WKT would lose an
+    axis direction (a west-positive base CRS): what an output records so the
+    CRS can be read back exactly. Raises CRSError for text that isn't a CRS.
+    Holds PROJ_LOCK."""
+    with PROJ_LOCK:
+        parsed = CRS.from_user_input(crs)
+        wkt = parsed.to_wkt()
+        if wkt and _directions(CRS.from_wkt(wkt)) == _directions(parsed):
+            return wkt
+        return parsed.to_json()
+
+
+def _directions(crs: CRS) -> list[str]:
+    geodetic = crs.geodetic_crs
+    base = geodetic.axis_info if geodetic is not None else []
+    return [axis.direction for axis in (*crs.axis_info, *base)]
+
+
 def _bare(kind: str, projection: str, units: str) -> CrsDescription:
     """No CRS, or one Varda can't read: no body, surface or conventions."""
     return CrsDescription(

@@ -14,6 +14,7 @@ import numpy as np
 from affine import Affine
 from attrs import frozen
 from matplotlib import colormaps
+from pyproj import CRS
 from matplotlib.colors import to_hex
 from scipy import ndimage
 
@@ -28,6 +29,7 @@ from varda.common.parameter import (
     FloatParameter,
     IntParameter,
 )
+from varda.geo.describe import NO_CRS_TEXT, crsText, describeCrs
 from varda.geo.measure import imagePixelAreas, pixelAreaMethod
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.version import vardaVersion
@@ -93,6 +95,15 @@ class ClassAreas:
     totalKm2: float  # of all classified pixels; NaN as the areas
     # NaN, no-data, non-integer and out-of-range class values
     unclassifiedPixels: int
+    # the image's coordinate system when measured (describeCrs's text) and
+    # its definition: the authority code, or WKT (PROJJSON when WKT would
+    # lose an axis direction); "" without one
+    crs: str = NO_CRS_TEXT
+    crsDefinition: str = ""
+    # the pixel grid: the affine transform (a, b, c, d, e, f); None without
+    # map coordinates
+    transform: tuple[float, ...] | None = None
+    crsUnits: str = ""  # the transform's units ("m", "°")
 
     @property
     def classifiedPixels(self) -> int:
@@ -161,6 +172,8 @@ def classAreas(image: VardaRaster) -> ClassAreas:
                 sums += np.bincount(index, weights=weights, minlength=count)
     if not measuring:
         sums[:] = np.nan
+    described = describeCrs(crs, transform, width, height)
+    referenced = crs is not None and image.hasGeospatialData
     km2 = sums / 1e6
     total = int(pixels.sum())
     rows = tuple(
@@ -178,22 +191,63 @@ def classAreas(image: VardaRaster) -> ClassAreas:
         method=method,
         totalKm2=float(km2.sum()),
         unclassifiedPixels=width * height - total,
+        crs=described.text,
+        crsDefinition=_definition(crs, described.authority),
+        transform=tuple(float(v) for v in tuple(transform)[:6]) if referenced else None,
+        crsUnits=described.units,
     )
+
+
+def _definition(crs: CRS | None, authority: str | None) -> str:
+    """The CRS's authority code, or its full text (``crsText``); "" without
+    one or for one PROJ can't write."""
+    if crs is None:
+        return ""
+    if authority is not None:
+        return authority
+    try:
+        return crsText(crs)
+    except Exception as error:  # anything PROJ can raise
+        logger.warning("Class areas: the CRS can't be written", exc_info=error)
+        return ""
 
 
 def _number(value: float) -> str:
     return "" if np.isnan(value) else repr(value)
 
 
+def _headerValue(text: str) -> str:
+    r"""``text`` on one ``#`` line: backslashes, newlines and carriage
+    returns escaped as ``\\``, ``\n`` and ``\r``."""
+    return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+
+
 def classAreasCsv(areas: ClassAreas, imageName: str) -> str:
     """``areas`` as CSV: ``#`` lines naming the image, the method, Varda's
-    version, the classified and unclassified pixel counts and the classified
-    area, then one row per class (blank areas where there are none)."""
+    version, the coordinate system (its description and its code or full
+    text), the pixel grid and pixel size, the classified and unclassified
+    pixel counts and the classified area, then one row per class (blank
+    areas where there are none). Header values are escaped
+    (``_headerValue``) so each stays on its line."""
     total = _number(areas.totalKm2) or "unavailable"
     out = io.StringIO()
-    out.write(f"# image: {imageName}\n")
-    out.write(f"# method: {areas.method}\n")
+    out.write(f"# image: {_headerValue(imageName)}\n")
+    out.write(f"# method: {_headerValue(areas.method)}\n")
     out.write(f"# Varda version: {vardaVersion()}\n")
+    out.write(f"# coordinate system: {_headerValue(areas.crs)}\n")
+    if areas.crsDefinition:
+        definition = _headerValue(areas.crsDefinition)
+        out.write(f"# coordinate system definition: {definition}\n")
+    if areas.transform is not None:
+        a, b, c, d, e, f = areas.transform
+        out.write(
+            f"# pixel grid (affine a, b, c, d, e, f): "
+            f"{a!r}, {b!r}, {c!r}, {d!r}, {e!r}, {f!r}\n"
+        )
+        across, down = float(np.hypot(a, d)), float(np.hypot(b, e))
+        out.write(
+            f"# pixel size (map units): {across:.6g} × {down:.6g} {areas.crsUnits}\n"
+        )
     out.write(
         f"# classified pixels: {areas.classifiedPixels} (the fractions' denominator)\n"
     )

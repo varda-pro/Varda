@@ -14,7 +14,10 @@ can alter results.
   with the totals and the method; it's measured in the background. **Copy
   as CSV** and **Export CSV…** write the table with the method, Varda's
   version, and the classified and unclassified pixel counts. Without map
-  coordinates it gives pixel counts. Class areas now read the class map in
+  coordinates it gives pixel counts. The CSV also records the image's
+  coordinate system (its description and its code or WKT) and pixel grid
+  (affine transform and pixel size), and escapes newlines in the image name
+  so the header stays intact. Class areas now read the class map in
   blocks of rows (about half the memory), and any failure of PROJ falls
   back to pixel counts with the reason. See Classification → Class areas.
 - **Reproject Image** (Processing → Geometry, after Resample). Puts an
@@ -232,7 +235,12 @@ can alter results.
   saved points, lines) between a sphere and a PROJ-string ellipsoid with
   `+lon_wrap` or `+over` were also kept at the latitude's number; they too
   now keep their planetocentric positions. The resampling record names the
-  operation (`coordinateOperation`). See
+  operation (`coordinateOperation`). A west-positive geographic image
+  (`IAU_2015:49901`) east of about 135°E at 45°N, or across ±180°, placed
+  or reprojected onto any grid came out empty (GDAL lost it); it is now
+  placed in full. `IAU_2015:49902` with a `+lon_wrap` or `+over` PROJ
+  string raised a PROJ error in points, placement and the overlay bar; it
+  now takes Varda's own route. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#rasters-between-surfaces-of-one-body).
 - **Planetary coordinate systems work when conda (or another GDAL/PROJ
   installation) is active in your shell.** Such a shell exports its own

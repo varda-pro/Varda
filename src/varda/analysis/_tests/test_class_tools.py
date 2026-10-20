@@ -22,7 +22,13 @@ from varda.analysis.class_tools import (
 )
 from varda.analysis import class_tools
 from varda.common.entities import VardaRaster
-from varda.geo._tests.fixtures import LRO_WAC_SOUTH_POLAR_PROJ, makeImage
+from varda.geo._tests.fixtures import (
+    CTX_DEM_PROJ,
+    LRO_WAC_SOUTH_POLAR_PROJ,
+    makeImage,
+)
+from varda.geo.describe import NO_CRS_TEXT, describeCrs
+from varda.geo.equivalence import sameCrs
 from varda.geo.measure import pixelAreaMethod, pixelAreas
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
@@ -324,3 +330,44 @@ def test_class_areas_csv_records_the_fractions_denominator():
     assert f"# classified area_km2: {result.totalKm2!r}" in lines
     unreferenced = classAreasCsv(classAreas(_scene(np.zeros((2, 2)))), "x")
     assert "# classified area_km2: unavailable" in unreferenced.splitlines()
+
+
+def test_class_areas_csv_records_the_coordinate_system_and_pixel_grid():
+    image = _mapped()
+    lines = classAreasCsv(classAreas(image), "scene.tif").splitlines()
+    assert image.crs is not None
+    described = describeCrs(image.crs, image.transform, image.width, image.height)
+    assert f"# coordinate system: {described.text}" in lines
+    assert "# coordinate system definition: IAU_2015:49910" in lines
+    grid = ", ".join(repr(float(v)) for v in tuple(image.transform)[:6])
+    assert f"# pixel grid (affine a, b, c, d, e, f): {grid}" in lines
+    assert "np.float64" not in grid
+    assert "# pixel size (map units): 1000 × 1000 m" in lines
+
+
+def test_class_areas_csv_writes_a_coordinate_system_without_a_code_in_full():
+    base = makeImage(CTX_DEM_PROJ, centerLonLat=(77.5, 18.4), pixelSize=20.0)
+    image = classRaster(
+        base,
+        np.zeros((base.height, base.width)),
+        NAMES,
+        COLORS,
+        name="c",
+        description="",
+    )
+    lines = classAreasCsv(classAreas(image), "c").splitlines()
+    (definition,) = [
+        line for line in lines if line.startswith("# coordinate system definition: ")
+    ]
+    text = definition.removeprefix("# coordinate system definition: ")
+    assert sameCrs(text, image.crs)
+
+
+def test_class_areas_csv_unreferenced_and_odd_names_keep_the_header_intact():
+    areas = classAreas(_scene(np.zeros((2, 2))))
+    lines = classAreasCsv(areas, "two\nlines\r\\name").splitlines()
+    assert lines[0] == "# image: two\\nlines\\r\\\\name"
+    assert f"# coordinate system: {NO_CRS_TEXT}" in lines
+    header = [line for line in lines if line.startswith("#")]
+    assert lines[len(header)] == "class,name,pixels,area_km2,fraction"
+    assert not any(line.startswith("# pixel grid") for line in lines)

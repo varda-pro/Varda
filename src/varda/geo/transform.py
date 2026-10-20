@@ -21,7 +21,7 @@ import numpy.typing as npt
 from affine import Affine
 from attrs import frozen
 from pyproj import CRS, Transformer
-from pyproj.exceptions import CRSError
+from pyproj.exceptions import CRSError, ProjError
 
 from varda.geo.bodies import latitudeType
 from varda.geo.equivalence import canTransform, sameCrs
@@ -150,11 +150,19 @@ class GdalWarp:
     # GDAL warper options: the COORDINATE_OPERATION pipeline when PROJ's own
     # operation isn't exact; empty otherwise
     options: dict[str, str]
+    # the source is a west-positive geographic CRS, given to GDAL as its
+    # east-positive twin: its x (longitude) is negated (``sourceTransform``)
+    srcNegated: bool = False
 
     @property
     def operation(self) -> str:
         """The pipeline GDAL runs (in x-first axis order), or "PROJ"."""
         return self.options.get("COORDINATE_OPERATION", "PROJ")
+
+    def sourceTransform(self, transform: Affine) -> Affine:
+        """The source's pixel-to-map transform for GDAL, in ``srcCrs``'s
+        units: x negated for a west-positive geographic source."""
+        return Affine.scale(-1.0, 1.0) * transform if self.srcNegated else transform
 
 
 def gdalWarp(src: CRS | str, dst: CRS | str) -> GdalWarp:
@@ -165,34 +173,64 @@ def gdalWarp(src: CRS | str, dst: CRS | str) -> GdalWarp:
     and ``IAU_2015:49902``), so such a CRS is given to GDAL with its axes
     swapped (and no authority code, from which GDAL would restore the
     order), and the pipeline (``warpOperation``) gets axis swaps at its
-    ends. Raises ValueError as ``warpOperation`` does. Holds PROJ_LOCK."""
+    ends.
+
+    GDAL's warper loses a west-positive geographic source (e.g.
+    ``IAU_2015:49901``) wherever its west longitude plus its latitude passes
+    about 180° (east 135–180° at 45°N, and across ±180°), so such a source
+    is given to GDAL as its east-positive twin, with x negated
+    (``GdalWarp.sourceTransform``) and the pipeline starting with the
+    negation's inverse. Raises ValueError as ``warpOperation`` does. Holds
+    PROJ_LOCK."""
     reason = canTransform(src, dst)
     if reason is not None:
         raise ValueError(reason)
     with PROJ_LOCK:
         srcKey, dstKey = _key(src), _key(dst)
-        srcWkt, srcSwapped = _xFirst(srcKey)
-        dstWkt, dstSwapped = _xFirst(dstKey)
+        srcWkt, srcSwapped, srcNegated = _xFirst(srcKey, eastward=True)
+        dstWkt, dstSwapped, _ = _xFirst(dstKey)
         steps = None if sameCrs(src, dst) else _warpSteps(srcKey, dstKey)
     if steps is None:
-        return GdalWarp(srcWkt, dstWkt, {})
+        return GdalWarp(srcWkt, dstWkt, {}, srcNegated)
     swap = ["proj=axisswap order=2,1"]
-    steps = [*(swap if srcSwapped else []), *steps, *(swap if dstSwapped else [])]
-    return GdalWarp(srcWkt, dstWkt, {"COORDINATE_OPERATION": _pipeline(steps)})
+    negate = ["proj=axisswap order=-1,2"]  # GDAL's east x → the CRS's west x
+    steps = [
+        *(negate if srcNegated else []),
+        *(swap if srcSwapped else []),
+        *steps,
+        *(swap if dstSwapped else []),
+    ]
+    return GdalWarp(
+        srcWkt, dstWkt, {"COORDINATE_OPERATION": _pipeline(steps)}, srcNegated
+    )
 
 
 @lru_cache(maxsize=64)
-def _xFirst(key: str) -> tuple[str, bool]:
-    """The CRS as WKT with its x axis first, and whether its axes were
-    swapped. The caller holds PROJ_LOCK."""
+def _xFirst(key: str, eastward: bool = False) -> tuple[str, bool, bool]:
+    """The CRS as WKT with its x axis first, whether its axes were swapped,
+    and (with ``eastward``) whether a west-positive geographic CRS's
+    longitude axis was turned east (so x must be negated). The caller holds
+    PROJ_LOCK."""
     crs = CRS.from_user_input(key)
-    if not _latitudeFirst(crs):
-        return crs.to_wkt(), False
+    swapped = _latitudeFirst(crs)
+    negated = (
+        eastward
+        and not crs.is_projected
+        and any(axis.direction == "west" for axis in crs.axis_info)
+    )
+    if not swapped and not negated:
+        return crs.to_wkt(), False, False
     definition = crs.to_json_dict()
     definition.pop("id", None)
     definition.pop("ids", None)
-    definition["coordinate_system"]["axis"].reverse()
-    return CRS.from_json_dict(definition).to_wkt(), True
+    axes = definition["coordinate_system"]["axis"]
+    if swapped:
+        axes.reverse()
+    if negated:
+        for axis in axes:
+            if axis["direction"] == "west":
+                axis["direction"] = "east"
+    return CRS.from_json_dict(definition).to_wkt(), swapped, negated
 
 
 def _pipeline(steps: Sequence[str]) -> str:
@@ -386,9 +424,16 @@ def _route(srcKey: str, dstKey: str) -> _Route:
     """The transformers for ``transformPoints`` (they take milliseconds to
     build), used only inside PROJ_LOCK; the caller holds it."""
     src, dst = CRS.from_user_input(srcKey), CRS.from_user_input(dstKey)
-    direct = Transformer.from_crs(src, dst)
-    if not _sameSurface(src, dst) and not _datumShift(src, dst, direct):
+    try:
+        direct = Transformer.from_crs(src, dst)
+    except ProjError:
+        # PROJ can't build one between a spherical planetocentric CRS
+        # (IAU_2015:49902) and a PROJ string with +lon_wrap or +over
+        # ("exportToPROJString() not supported"); each side builds alone
         direct = None
+    if direct is not None and not _sameSurface(src, dst):
+        if not _datumShift(src, dst, direct):
+            direct = None
     elif _centricOnEllipsoid(src) or _centricOnEllipsoid(dst):
         # PROJ's own operation is exact for points, but GDAL's warper reads
         # a planetocentric latitude's numbers as geodetic (0.34° off at 45°

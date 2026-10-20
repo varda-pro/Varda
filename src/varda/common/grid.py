@@ -329,7 +329,9 @@ def onGridOf(
     reproject(
         source=np.ascontiguousarray(data),
         destination=out,
-        src_transform=sourceTransform * Affine.translation(window[1], window[0]),
+        src_transform=warp.sourceTransform(
+            sourceTransform * Affine.translation(window[1], window[0])
+        ),
         src_crs=warp.srcCrs,
         src_nodata=np.nan,
         dst_transform=target.transform,
