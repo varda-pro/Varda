@@ -36,9 +36,10 @@ class PixelSelectTool(ViewportTool):
 
     # Tool metadata
     toolName = "Pixel Select"
+    # Short: it is shown on the view, which can be small
     toolDescription = (
-        f"Click a pixel to plot its spectrum; {controlClick('drag')} to follow "
-        "the pointer. A plain drag pans."
+        f"Click a pixel to plot its spectrum; {controlClick('drag')} follows "
+        "the pointer"
     )
     toolCategory = "Selection"
 
