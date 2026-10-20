@@ -556,6 +556,8 @@ def _macos(run: QaRun, qaData: QaData) -> None:
         run.log("shortcut shown", item="Import Image(s)", shortcut=shown)
         if "Ctrl" in shown:
             run.finding("confused", f"A Mac menu shows {shown!r} instead of ⌘")
+        elif not shown:
+            run.finding("annoyed", "Import Image(s) shows no shortcut in the menu")
         asked = len(run.fileDialogs)
         run.chooseFiles()  # Cancel the file dialog
         run.mainWindow.activateWindow()
