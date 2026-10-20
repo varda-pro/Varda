@@ -16,7 +16,7 @@ from attrs import frozen
 
 FORMATS = (
     "Varda reads ENVI (.img with its .hdr), GeoTIFF, PDS3 and PDS4 labels, "
-    "and the other raster formats GDAL supports."
+    "and most other raster formats."
 )
 
 
@@ -85,9 +85,15 @@ def explainOpenError(path: str, error: BaseException) -> PlainError:
             "Download or copy it again."
         )
     elif _has(raw, r"not recognized as (being in )?a supported file format"):
-        message = f"{name} isn't an image Varda can read. {FORMATS}"
+        message = (
+            f"{name} isn't an image Varda can read. {FORMATS} Choose a file in "
+            "one of these formats, or convert it first."
+        )
     else:
-        message = f"Varda could not open {name}: {raw}"
+        message = (
+            f"Varda could not open {name}: {raw}. Check that it is a complete "
+            "image file; Copy System Info (Help menu) and the log help a bug report."
+        )
     return PlainError(message, raw)
 
 
@@ -111,5 +117,8 @@ def explainWriteError(path: str, error: BaseException) -> PlainError:
             "choose another disk."
         )
     else:
-        message = f"Varda could not write {target.name}: {raw}"
+        message = (
+            f"Varda could not write {target.name}: {raw}. Try another folder or "
+            "name with Browse…."
+        )
     return PlainError(message, raw)

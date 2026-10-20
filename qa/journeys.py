@@ -17,16 +17,18 @@ from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QLineEdit,
-    QToolBar,
     QToolButton,
     QWidget,
 )
 
-from qa.harness import QaRun, mouseClick, plain
+from qa.harness import QaRun, keyClick, mouseClick, plain
 from varda.analysis.dialog import RunAnalysisDialog
 from varda.common.entities import VardaRaster
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
 from varda.image_loading.export_image_dialog import ExportImageDialog
+from varda.image_rendering.raster_view.viewport_tools.tool_manager import (
+    WrappingToolBar,
+)
 from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
 
 PCA_MENU = ("Processing", "Transforms", "Principal Component Analysis (PCA)")
@@ -98,14 +100,32 @@ def viewImage(run: QaRun, image: VardaRaster) -> GeneralImageAnalysisWorkflow | 
     viewport = listWidget.viewport()
     assert viewport is not None
     run.doubleClick(viewport, center)
-    found = run.waitFor(
-        lambda: isinstance(gui.currentWorkspace(), GeneralImageAnalysisWorkflow),
-        f"{image.name} to show",
-        timeout=20,
-    )
-    run.settle(0.5)
-    if not found:
+
+    def opened() -> GeneralImageAnalysisWorkflow | None:
+        found = [
+            w
+            for w in gui.childWindows
+            if isinstance(w, GeneralImageAnalysisWorkflow)
+            and w.config.image.value is image
+        ]
+        return found[-1] if found else None
+
+    if not run.waitFor(
+        lambda: opened() is not None, f"{image.name} to show", timeout=20
+    ):
         return None
+    run.settle(0.5)
+    # The workspace showing *this* image must be the one in front: a new tab
+    # behind the current one sends every click to the old image (release QA #3)
+    if gui.currentWorkspace() is not opened():
+        run.finding(
+            "confused",
+            f"The workspace for {image.name} opened behind the current tab",
+            widget=gui,
+            reproduce="Open two images; double-click the second in the Image List",
+        )
+        gui.centralTabs.setCurrentWidget(opened())  # the user finds the tab
+        run.settle(0.3)
     workspace = gui.currentWorkspace()
     assert isinstance(workspace, GeneralImageAnalysisWorkflow)
     run.qaShot(gui, "viewing", f"{image.name} open in a workspace")
@@ -114,7 +134,7 @@ def viewImage(run: QaRun, image: VardaRaster) -> GeneralImageAnalysisWorkflow | 
 
 def mainViewport(
     workspace: GeneralImageAnalysisWorkflow,
-) -> tuple[ImageViewport, QToolBar]:
+) -> tuple[ImageViewport, WrappingToolBar]:
     """The image view the user works in, and its tool bar."""
     return (
         workspace.tripleRasterView.viewport1,
@@ -122,11 +142,17 @@ def mainViewport(
     )
 
 
-def revealToolButton(run: QaRun, toolbar: QToolBar, action: QAction) -> QWidget | None:
+def revealToolButton(
+    run: QaRun, toolbar: WrappingToolBar, action: QAction
+) -> QWidget | None:
     """The tool bar button for ``action``; when the tool bar is too narrow
     to show it, open the » overflow first (a finding: the user must find it)."""
     button = toolbar.widgetForAction(action)
-    if button is not None and button.isVisible():
+    if (
+        button is not None
+        and button.isVisible()
+        and toolbar.rect().contains(button.geometry())
+    ):
         return button
     overflow = toolbar.findChild(QToolButton, "qt_toolbar_ext_button")
     run.finding(
@@ -161,10 +187,10 @@ def imageCenter(viewport: ImageViewport) -> tuple[QWidget, QPoint]:
 def lookAtSpectrum(
     run: QaRun,
     workspace: GeneralImageAnalysisWorkflow,
-    modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.ControlModifier,
+    modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
 ) -> bool:
-    """Turn on Pixel Select in the tool bar and click the image as its
-    tooltip says (Ctrl+Click). True when a spectrum appeared."""
+    """Turn on Pixel Select in the tool bar and click the image (as its hint
+    says: a plain click). True when a spectrum appeared."""
     viewport, toolbar = mainViewport(workspace)
     action = next(
         (a for a in toolbar.actions() if plain(a.text()) == "Pixel Select"), None
@@ -201,12 +227,39 @@ def lookAtSpectrum(
             "The spectrum is plotted in the Pixel Spectra tab, which stays hidden "
             "behind another tab: clicking the image seems to do nothing",
             widget=workspace,
-            reproduce="Pixel Select, Ctrl+Click the image; look at the plots",
+            reproduce="Pixel Select, click the image; look at the plots",
         )
         run.click(workspace.pixelPlotDock.tabWidget(), "Pixel Spectra tab")
         run.settle(0.3)
     run.qaShot(workspace, "spectrum", "after clicking the image with Pixel Select")
     return plotted
+
+
+def clickSamePixelAgain(run: QaRun, workspace: GeneralImageAnalysisWorkflow) -> int:
+    """Click the middle of the image again (Pixel Select still on): how many
+    curves that added. A pixel already plotted should add none (release QA
+    #19: a second, identical curve and legend entry)."""
+    viewport, _ = mainViewport(workspace)
+    before = len(workspace.pixelPlotWidget.pixelCurves)
+    target, point = imageCenter(viewport)
+    mouseClick(target, Qt.KeyboardModifier.NoModifier, point)
+    run.settle(0.5)
+    return len(workspace.pixelPlotWidget.pixelCurves) - before
+
+
+def removeImage(run: QaRun, image: VardaRaster) -> None:
+    """Select the image in the Image List and press Delete (answering Yes)."""
+    gui = run.app.maingui if run.app else None
+    if gui is None:
+        return
+    listWidget = gui.imageList
+    for row in range(listWidget.count()):
+        entry = listWidget.item(row)
+        if entry is not None and entry.data(Qt.ItemDataRole.UserRole) is image:
+            listWidget.setCurrentRow(row)
+    run.answers.append("Yes")  # "Remove from Project?"
+    keyClick(listWidget, Qt.Key.Key_Delete)
+    run.settle(0.5)
 
 
 def runAnalysis(
@@ -298,12 +351,12 @@ def firstSuccess(run: QaRun, path: Path, exportTo: Path) -> Outcome:
         if outcome.viewed is None:
             run.finding("blocked", "Double-clicking the image showed nothing")
     if outcome.viewed is not None:
-        with run.step("pixel spectrum", "Pixel Select tool, Ctrl+Click the image"):
+        with run.step("pixel spectrum", "Pixel Select tool, click the image"):
             outcome.spectrum = lookAtSpectrum(run, outcome.viewed)
             if not outcome.spectrum:
                 run.finding(
                     "blocked",
-                    "Ctrl+Click with Pixel Select plotted no spectrum",
+                    "A click with Pixel Select plotted no spectrum",
                     widget=outcome.viewed,
                 )
     with run.step("run analysis", " > ".join(PCA_MENU)):

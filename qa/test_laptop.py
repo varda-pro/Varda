@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -62,6 +63,19 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
 
     outcome = journeys.firstSuccess(run, qaData.cube, run.folder / "pca.img")
 
+    if outcome.viewed is not None and outcome.spectrum:
+        with run.step("the same pixel again", "Click the same pixel a second time"):
+            added = journeys.clickSamePixelAgain(run, outcome.viewed)
+            run.log("curves added by a repeat click", count=added)
+            if added:
+                run.finding(
+                    "annoyed",
+                    "Selecting the same pixel again adds a second, identical curve "
+                    "and legend entry",
+                    widget=outcome.viewed,
+                    reproduce="Pixel Select, click one pixel twice",
+                )
+
     if outcome.viewed is not None:
         for width, height in SIZES:
             with run.step(f"workspace at {width}×{height}"):
@@ -112,6 +126,17 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
             )
         run.log("dozen opened", seconds=round(time.monotonic() - started, 2))
         run.settle(0.5)
+        listed = [i.name for i in journeys.images(run)[before:]]
+        chosen = [tile.stem for tile in tiles]
+        run.log("dozen order", listed=listed, chosen=chosen)
+        if listed != chosen[: len(listed)]:
+            run.finding(
+                "annoyed",
+                "Images opened together are listed in the order they finished "
+                f"loading, not the order chosen ({', '.join(listed[:4])}…)",
+                widget=run.mainWindow,
+                reproduce="File > Import Image(s), pick tile_00 … tile_11",
+            )
         run.qaShot(run.mainWindow, "a-dozen-images")
         audit(run, run.mainWindow, "the window with 14 images open")
 
@@ -127,11 +152,29 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
             run.log("large cube shown", seconds=round(time.monotonic() - started, 2))
             if workspace is not None:
                 journeys.lookAtSpectrum(run, workspace)
-        large.unlink(missing_ok=True)
-        large.with_suffix(".hdr").unlink(missing_ok=True)
+                run.mainWindow.closeWorkspace(workspace)
+            # Windows locks an open file: remove it from the project first
+            journeys.removeImage(run, image)
+        for part in (large, large.with_suffix(".hdr"), Path(f"{large}.aux.xml")):
+            try:
+                part.unlink(missing_ok=True)
+            except PermissionError as error:
+                run.log("large cube still in use", file=str(part), error=str(error))
 
     with run.step("offline"):
-        run.log("connections refused", hosts=sorted(set(Network.hosts)))
+        hosts = sorted(set(Network.hosts))
+        run.log(
+            "connections refused",
+            hosts=hosts,
+            callers={h: Network.callers.get(h, []) for h in hosts},
+        )
+        for host in hosts:
+            caller = " ← ".join(reversed(Network.callers.get(host, [])[-4:]))
+            run.finding(
+                "confused",
+                f"Offline, Varda still tried a connection to {host} that no step "
+                f"explains (from {caller or 'unknown'})",
+            )
 
     if sys.platform.startswith("linux"):
         with run.step("fonts (Linux)", "Look at the window's text"):

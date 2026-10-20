@@ -410,8 +410,8 @@ class CnnClassificationAnalysis(_PatchClassificationAnalysis):
     name = "Train CNN on ROIs"
     description = (
         "Trains a small convolutional network on spatial-spectral patches "
-        "around the pixels of each ROI (bands as channels) and classifies "
-        "every pixel from its neighborhood."
+        "around the pixels of each ROI (every band an input of the network) "
+        "and classifies every pixel from its neighborhood."
     )
     suffix = "CNN classes"
 
