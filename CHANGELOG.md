@@ -4,6 +4,19 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Added
+
+- **Find Data: sharp previews, and previews on the map.** The Preview panel
+  shows the catalog's largest browse image (ODE's large browse image, not
+  its 32-pixel thumbnail; a STAC overview when it is a picture) at the
+  panel's size and the screen's full resolution, so it is no longer
+  blurry. With **Previews** checked, the selected products' browse images
+  are drawn over their footprints when they are north-up maps of them
+  (CTX, HiRISE, THEMIS VIS); others stay in the panel, which says so. See
+  [Finding data](docs/user-guide/finding-data.md#previews).
+
 ## 0.11.0 (2026-10-20)
 
 ### Added

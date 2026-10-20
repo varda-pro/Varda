@@ -4,7 +4,7 @@ the catalogs (``varda.catalogs``, and plugins' ``registerCatalogs``) do."""
 
 from __future__ import annotations
 
-from collections.abc import MutableSequence
+from collections.abc import Callable, MutableSequence
 from datetime import datetime, time, timezone
 
 import geopandas as gpd
@@ -18,7 +18,6 @@ from PyQt6.QtCore import (
     QStringListModel,
     Qt,
 )
-from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -57,7 +56,6 @@ from varda.catalogs.gazetteer import (
     loadGazetteer,
     search,
 )
-from varda.catalogs.http import fetchBytes
 from varda.catalogs.registry import availableCatalogs
 from varda.catalogs.stac import StacCatalog
 from varda.common.entities import VardaRaster
@@ -68,6 +66,7 @@ from varda.common.ui import (
     FlowLayout,
     HBoxBuilder,
     MutedLabel,
+    ScaledPixmapLabel,
     VardaDockWidget,
     WrapperWidget,
 )
@@ -90,12 +89,27 @@ from varda.workspaces.find_data.collection_picker import CollectionCombo
 from varda.workspaces.find_data.downloads_panel import DownloadsPanel
 from varda.workspaces.find_data.map_view import ADD, REMOVE, FootprintMap
 from varda.workspaces.find_data.imagery import ImageryStreamer
+from varda.workspaces.find_data.preview_images import (
+    PictureCache,
+    loadPicture,
+    toPixmap,
+)
+from varda.workspaces.find_data.previews import (
+    drape,
+    footprintBox,
+    isMapOfFootprint,
+)
 from varda.workspaces.find_data.projection import Bounds, MapProjection
 from varda.workspaces.find_data.results_model import SORT_ROLE, ResultsModel
 
 AREA_VIEW, AREA_BOX, AREA_IMAGE = "Map view", "Box on the map", "An image's footprint"
 DEFAULT_LIMIT = 100
-THUMBNAIL_SIZE, THUMBNAIL_MIN = 260, 160  # px: the largest, and the panel's least
+PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
+MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
+NOT_ON_MAP = (
+    "Not drawn on the map: its browse image isn't a north-up map of the "
+    "footprint (a strip in sensor geometry, or a figure)."
+)
 
 
 class SelectedFilter(QSortFilterProxyModel):
@@ -141,6 +155,9 @@ class FindDataWorkspace(QMainWindow):
         self.overlayPaths: list[str] = []
         self._pendingLayer: str | None = None  # a session's basemap layer id
         self._basemapRequest = 0  # the latest basemap drawing asked for
+        self._pictures = PictureCache()  # browse images, by URL
+        self._mapPreviewRequest = 0  # the latest drawing of previews on the map
+        self._notMapLike: set[str] = set()  # products whose image isn't a map
 
         self.map = FootprintMap()
         self.map.sigSelect.connect(self._onMapSelect)
@@ -285,6 +302,14 @@ class FindDataWorkspace(QMainWindow):
             "smaller ones as you zoom in"
         )
         self.namesCheck.toggled.connect(self._onNamesShown)
+        self.previewsCheck = QCheckBox("Previews")
+        self.previewsCheck.setChecked(True)
+        self.previewsCheck.setToolTip(
+            "Draw the selected products' browse images over their footprints "
+            f"(up to {MAX_MAP_PREVIEWS}), when the image is a north-up map of the "
+            "footprint, as for CTX, HiRISE and THEMIS VIS"
+        )
+        self.previewsCheck.toggled.connect(lambda _: self._showMapPreviews())
         self.goTo = QLineEdit()
         self.goTo.setPlaceholderText("Go to a feature…")
         self.goTo.setClearButtonEnabled(True)
@@ -328,6 +353,7 @@ class FindDataWorkspace(QMainWindow):
                 )
             )
             .withWidget(self.namesCheck)
+            .withWidget(self.previewsCheck)
             .withWidget(self.goTo)
             .withWidget(overlay)
             .withWidget(clear)
@@ -340,10 +366,11 @@ class FindDataWorkspace(QMainWindow):
         layout.addWidget(self.map, 1)
 
     def _buildPreview(self) -> None:
-        self.thumbnail = QLabel("Select a product to see it here.")
-        self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.thumbnail = ScaledPixmapLabel("Select a product to see it here.")
         self.thumbnail.setWordWrap(True)
-        self.thumbnail.setMinimumSize(THUMBNAIL_MIN, THUMBNAIL_MIN)
+        self.thumbnail.setMinimumSize(PREVIEW_MIN, PREVIEW_MIN)
+        self.mapNote = MutedLabel()
+        self.mapNote.setWordWrap(True)
         self.details = QLabel()
         self.details.setWordWrap(True)
         self.details.setTextInteractionFlags(
@@ -352,8 +379,9 @@ class FindDataWorkspace(QMainWindow):
         self.details.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.previewPanel = QWidget()
         layout = QVBoxLayout(self.previewPanel)
-        layout.addWidget(self.thumbnail)
-        layout.addWidget(self.details, 1)
+        layout.addWidget(self.thumbnail, 3)
+        layout.addWidget(self.mapNote)
+        layout.addWidget(self.details, 2)
 
     def _buildResultsPanel(self) -> None:
         add = QPushButton("Add to Downloads")
@@ -754,6 +782,8 @@ class FindDataWorkspace(QMainWindow):
     def _onSelection(self) -> None:
         products = self.selectedProducts()
         self.map.setSelected(products)
+        self._showMapPreviews()
+        self.mapNote.setText("")
         if len(products) != 1:
             self.thumbnail.setText(
                 "Select one product to see it here." if products else ""
@@ -770,34 +800,124 @@ class FindDataWorkspace(QMainWindow):
             lines.append(f"Start: {product.start:%Y-%m-%d %H:%M:%S}")
         lines += [f"{key}: {value}" for key, value in product.properties.items()]
         self.details.setText("<br>".join(lines))
-        self.thumbnail.setText(
-            "Loading the thumbnail…" if product.thumbnail else "No thumbnail."
+        self._showMapNote(product)
+        # the larger browse image, else the thumbnail
+        urls = list(dict.fromkeys(u for u in (product.preview, product.thumbnail) if u))
+        if not urls:
+            self.thumbnail.setText("No preview.")
+            return
+        self.thumbnail.setText("Loading the preview…")
+        self._withPicture(
+            urls,
+            lambda url, picture: self._showPicture(product, picture),
+            lambda error: self._noPicture(product),
         )
-        if product.thumbnail:
-            runInBackground(
-                lambda: fetchBytes(product.thumbnail),
-                lambda data: self._showThumbnail(product, data),
-                lambda error: self.thumbnail.setText("No thumbnail."),
-                description="Fetching a thumbnail",
-                owner=self,
+
+    def _withPicture(
+        self,
+        urls: list[str],
+        done: Callable[[str, np.ndarray], None],
+        failed: Callable[[Exception], None],
+    ) -> None:
+        """The first of ``urls`` that gives a picture, from the cache or
+        fetched in the background, to ``done`` (with its URL)."""
+        for url in urls:
+            picture = self._pictures.get(url)
+            if picture is not None:
+                done(url, picture)
+                return
+
+        def load() -> tuple[str, np.ndarray]:
+            for url in urls[:-1]:
+                try:
+                    return url, loadPicture(url)
+                except CatalogError:
+                    continue
+            return urls[-1], loadPicture(urls[-1])
+
+        def loaded(result: tuple[str, np.ndarray]) -> None:
+            self._pictures.put(*result)
+            done(*result)
+
+        runInBackground(
+            load, loaded, failed, description="Fetching a preview", owner=self
+        )
+
+    def _showPicture(self, product: Product, picture: np.ndarray) -> None:
+        if self.selectedProducts() == [product]:
+            self.thumbnail.setFullPixmap(toPixmap(picture))
+
+    def _noPicture(self, product: Product) -> None:
+        if self.selectedProducts() == [product]:
+            self.thumbnail.setText("No preview.")
+
+    def _showMapNote(self, product: Product) -> None:
+        self.mapNote.setText(NOT_ON_MAP if product.id in self._notMapLike else "")
+
+    # --- previews on the map ------------------------------------------------------------
+
+    def _showMapPreviews(self) -> None:
+        """Draw the selected products' browse images (the first
+        ``MAX_MAP_PREVIEWS``) over their footprints, those that are north-up
+        maps of them (``previews.isMapOfFootprint``); remove the others."""
+        self._mapPreviewRequest += 1
+        request = self._mapPreviewRequest
+        selected = self.selectedProducts() if self.previewsCheck.isChecked() else []
+        products = selected[:MAX_MAP_PREVIEWS]
+        self.map.keepPreviews({p.id for p in products})
+        shown = set(self.map.previewIds())
+        projector = self.map.projector
+        # pyproj objects stay on this thread: workers get plain values
+        frame = MapFrame.of(projector)
+        for product in products:
+            box = footprintBox(product.footprint)
+            if product.id in shown or not product.preview or box is None:
+                continue
+            bounds = projector.mapBounds(box)
+            if bounds is None:  # in the other hemisphere
+                continue
+            self._withPicture(
+                [product.preview],
+                lambda url, picture, p=product, b=bounds: self._drapePreview(
+                    request, p, picture, frame, b
+                ),
+                lambda error: None,  # the Preview panel says so
             )
 
-    def _showThumbnail(self, product: Product, data: bytes) -> None:
-        if self.selectedProducts() != [product]:
+    def _drapePreview(
+        self,
+        request: int,
+        product: Product,
+        picture: np.ndarray,
+        frame: MapFrame,
+        bounds: Bounds,
+    ) -> None:
+        if request != self._mapPreviewRequest:
             return
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(data):
-            self.thumbnail.setText("No thumbnail.")
-            return
-        side = max(min(THUMBNAIL_SIZE, self.thumbnail.width()), THUMBNAIL_MIN)
-        self.thumbnail.setPixmap(
-            pixmap.scaled(
-                side,
-                side,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+
+        def onMap() -> np.ndarray | None:
+            if not isMapOfFootprint(picture, product.footprint):
+                return None
+            return drape(picture, product.footprint, frame, bounds)
+
+        runInBackground(
+            onMap,
+            lambda rgba: self._placePreview(request, product, rgba, bounds),
+            lambda error: None,
+            description="Drawing a preview on the map",
+            owner=self,
         )
+
+    def _placePreview(
+        self, request: int, product: Product, rgba: np.ndarray | None, bounds: Bounds
+    ) -> None:
+        if rgba is None:
+            self._notMapLike.add(product.id)
+            if self.selectedProducts() == [product]:
+                self._showMapNote(product)
+            return
+        if request == self._mapPreviewRequest:
+            self.map.setPreview(product.id, rgba, bounds)
 
     def _zoomToSelection(self) -> None:
         products = self.selectedProducts()
@@ -811,6 +931,7 @@ class FindDataWorkspace(QMainWindow):
     def _onProjection(self) -> None:
         self.map.setProjection(self.projectionBox.currentData(), self.body())
         self._onBasemap()
+        self._showMapPreviews()  # the map drops them when it changes projection
 
     def _onBasemap(self) -> None:
         # a newer choice drops the result of any drawing still under way
@@ -946,6 +1067,7 @@ class FindDataWorkspace(QMainWindow):
             if isinstance(layer := self.basemapBox.currentData(), BasemapLayer)
             else "",
             "names": self.namesCheck.isChecked(),
+            "previews": self.previewsCheck.isChecked(),
         }
 
     def restoreSessionState(self, state: dict) -> None:
@@ -972,3 +1094,4 @@ class FindDataWorkspace(QMainWindow):
         for path in state.get("overlays", []):
             self.addOverlay(path)
         self.namesCheck.setChecked(state.get("names", True))
+        self.previewsCheck.setChecked(state.get("previews", True))

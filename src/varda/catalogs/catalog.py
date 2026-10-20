@@ -62,6 +62,9 @@ class Product:
     end: datetime | None = None
     properties: dict = field(factory=dict)  # flat, displayable values
     thumbnail: str = ""  # a URL
+    # a URL: a larger browse image (PNG, JPEG or GIF) for the Preview panel
+    # and the map; the thumbnail when the catalog has none larger
+    preview: str = ""
 
 
 @frozen

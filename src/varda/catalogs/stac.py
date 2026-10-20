@@ -30,6 +30,7 @@ from varda.common.parameter import FloatParameter
 from varda.geo.bodies import bodyNamed
 
 BROWSE_ROLES = {"thumbnail", "overview", "visual"}
+PICTURE_TYPES = {"image/png", "image/jpeg", "image/gif"}
 MAX_PROPERTY_LENGTH = 80  # longer text (WKT, JSON) isn't shown in the table
 
 
@@ -168,14 +169,24 @@ class StacCatalog(Catalog):
             and not (isinstance(value, str) and len(value) > MAX_PROPERTY_LENGTH)
             and key not in ("datetime", "start_datetime", "end_datetime")
         }
+        assets = [
+            a
+            for a in item.get("assets", {}).values()
+            if a.get("href", "").startswith("http")
+        ]
         thumbnail = next(
+            (a["href"] for a in assets if "thumbnail" in a.get("roles", [])), ""
+        )
+        # an overview or visual asset is larger than the thumbnail, when it is
+        # a picture (not a GeoTIFF, which the preview can't show)
+        preview = next(
             (
                 a["href"]
-                for a in item.get("assets", {}).values()
-                if "thumbnail" in a.get("roles", [])
-                and a.get("href", "").startswith("http")
+                for a in assets
+                if {"overview", "visual"} & set(a.get("roles", []))
+                and a.get("type", "").split(";")[0].strip() in PICTURE_TYPES
             ),
-            "",
+            thumbnail,
         )
         geometry = item.get("geometry")
         return Product(
@@ -187,6 +198,7 @@ class StacCatalog(Catalog):
             _time(properties.get("end_datetime")),
             shown,
             thumbnail,
+            preview,
         )
 
     def files(self, product: Product) -> list[RemoteFile]:

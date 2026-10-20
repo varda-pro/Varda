@@ -2,8 +2,10 @@
 basemap, overlays and sessions."""
 
 import io
+import sys
 from datetime import datetime, timezone
 
+import attrs
 import geopandas as gpd
 import numpy as np
 import pytest
@@ -13,14 +15,26 @@ from PIL import Image
 
 from varda.catalogs import basemaps, registry
 from varda.catalogs.basemaps import BasemapLayer
-from varda.catalogs.catalog import Catalog, Collection, Product, SearchPage
+from varda.catalogs.catalog import (
+    Catalog,
+    CatalogError,
+    Collection,
+    Product,
+    SearchPage,
+)
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
 from varda.common.parameter import FloatParameter
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from PyQt6.QtCore import QDate, QRectF
 
-from varda.workspaces.find_data.find_data_workspace import AREA_BOX, FindDataWorkspace
+from varda.workspaces.find_data import preview_images
+from varda.workspaces.find_data._tests.test_previews import mapOf
+from varda.workspaces.find_data.find_data_workspace import (
+    AREA_BOX,
+    NOT_ON_MAP,
+    FindDataWorkspace,
+)
 from varda.workspaces.find_data.map_view import ADD, REMOVE, REPLACE
 from varda.workspaces.find_data.projection import MapProjection
 
@@ -498,3 +512,115 @@ def test_go_to_a_feature_in_the_other_hemisphere_says_so(workspace):
     assert not workspace.goToFeature("Hellas Planitia")  # about 42°S
     assert workspace.map.mapView() == view
     assert "other hemisphere" in workspace.status.currentMessage()
+
+
+# --- previews -------------------------------------------------------------------------
+
+
+def _png(rgba: np.ndarray) -> bytes:
+    buffer = io.BytesIO()
+    Image.fromarray(rgba).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def browseImages(monkeypatch):
+    """The products have browse images (from ``pictures``, by URL); a URL
+    not there fails as an unreachable one does."""
+    pictures: dict[str, bytes] = {}
+
+    def fetch(url: str, *args, **kwargs) -> bytes:
+        if url not in pictures:
+            raise CatalogError("example.test couldn't be reached.")
+        return pictures[url]
+
+    monkeypatch.setattr(preview_images, "fetchBytes", fetch)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "PRODUCTS",
+        [
+            attrs.evolve(
+                p,
+                thumbnail=f"https://example.test/{p.id}_small.jpg",
+                preview=f"https://example.test/{p.id}.png",
+            )
+            for p in PRODUCTS
+        ],
+    )
+    return pictures
+
+
+def _select(workspace, qtbot, productId):
+    workspace.map.zoomTo((76.5, 17.5, 78.5, 19.0), padding=0)
+    workspace.areaBox.setCurrentText(AREA_BOX)
+    workspace.map.setArea((76.5, 17.5, 78.5, 19.0))
+    workspace.catalog().maxIncidence.set(90.0)
+    _search(workspace, qtbot)
+    if workspace.moreButton.isEnabled():
+        workspace.moreButton.click()
+        qtbot.waitUntil(lambda: workspace.results.rowCount() == 2, timeout=5000)
+    workspace.selectProducts([productId])
+
+
+def test_the_preview_is_the_large_browse_image_drawn_sharp(
+    workspace, qtbot, browseImages
+):
+    footprint = PRODUCTS[0].footprint
+    browseImages["https://example.test/obs_a.png"] = _png(mapOf(footprint, 600, 600))
+    _select(workspace, qtbot, "obs_a")
+    label = workspace.thumbnail
+    qtbot.waitUntil(lambda: label.fullPixmap() is not None, timeout=5000)
+    full = label.fullPixmap()
+    assert (full.width(), full.height()) == (600, 600)
+    shown = label.pixmap()
+    assert shown.devicePixelRatio() == pytest.approx(label.devicePixelRatioF())
+    # it fills the label at the screen's density, rather than being stretched
+    side = min(label.width(), label.height()) * label.devicePixelRatioF()
+    assert max(shown.width(), shown.height()) == pytest.approx(side, abs=1)
+
+
+def test_a_map_like_preview_is_drawn_over_its_footprint(workspace, qtbot, browseImages):
+    footprint = PRODUCTS[0].footprint
+    browseImages["https://example.test/obs_a.png"] = _png(mapOf(footprint, 600, 600))
+    _select(workspace, qtbot, "obs_a")
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    assert workspace.mapNote.text() == ""
+    workspace.previewsCheck.setChecked(False)
+    assert workspace.map.previewIds() == []
+    assert workspace.sessionState()["previews"] is False
+    workspace.previewsCheck.setChecked(True)
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    # a polar view draws it again, reprojected (obs_a is north of the equator)
+    workspace.projectionBox.setCurrentIndex(
+        workspace.projectionBox.findData(MapProjection.NORTH_POLAR)
+    )
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    workspace.selectProducts([])
+    assert workspace.map.previewIds() == []
+
+
+def test_a_preview_that_isnt_a_map_stays_in_the_panel(workspace, qtbot, browseImages):
+    # a figure: white page, plots, no map of the footprint
+    figure = np.full((500, 400, 4), 255, np.uint8)
+    figure[50:150, 50:350, :3] = 30
+    browseImages["https://example.test/obs_b.png"] = _png(figure)
+    _select(workspace, qtbot, "obs_b")
+    qtbot.waitUntil(lambda: workspace.mapNote.text() == NOT_ON_MAP, timeout=5000)
+    assert workspace.thumbnail.fullPixmap() is not None
+    assert workspace.map.previewIds() == []
+
+
+def test_without_a_browse_image_the_thumbnail_is_shown(workspace, qtbot, browseImages):
+    browseImages["https://example.test/obs_a_small.jpg"] = _png(
+        np.full((32, 30, 4), 128, np.uint8)
+    )
+    _select(workspace, qtbot, "obs_a")
+    label = workspace.thumbnail
+    qtbot.waitUntil(lambda: label.fullPixmap() is not None, timeout=5000)
+    assert label.fullPixmap().width() == 30
+    assert workspace.map.previewIds() == []
+
+
+def test_with_no_picture_at_all_it_says_so(workspace, qtbot, browseImages):
+    _select(workspace, qtbot, "obs_a")
+    qtbot.waitUntil(lambda: workspace.thumbnail.text() == "No preview.", timeout=5000)
