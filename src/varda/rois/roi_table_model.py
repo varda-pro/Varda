@@ -23,6 +23,39 @@ def _formatValue(value) -> str:
     return str(value)
 
 
+def _isNumber(value) -> bool:
+    return isinstance(value, int | float | np.integer | np.floating) and not isinstance(
+        value, bool | np.bool_
+    )
+
+
+def _editText(value) -> str:
+    """A cell's value as its editor shows it: numbers in full (``repr``, so
+    an unchanged edit keeps them exactly), a missing (NaN) number empty."""
+    if _isNumber(value):
+        number = float(value)
+        return (
+            ""
+            if np.isnan(number)
+            else repr(int(value) if isinstance(value, int | np.integer) else number)
+        )
+    return "" if value is None else str(value)
+
+
+def _parsedLike(old, text):
+    """An edit of a number stays a number (empty is missing, NaN); text that
+    isn't a number goes in as text, as it does in a text column."""
+    if not _isNumber(old) or not isinstance(text, str):
+        return text
+    stripped = text.strip()
+    if not stripped:
+        return np.nan
+    try:
+        return float(stripped)
+    except ValueError:
+        return text
+
+
 class ROITableModel(QAbstractTableModel):
     """Table model exposing ROIs from an ROICollection.
 
@@ -139,9 +172,15 @@ class ROITableModel(QAbstractTableModel):
             font.setBold(True)
             return font
 
+        # what an editor starts from: the value itself, so a double-click
+        # edits it rather than starting from nothing
         if role == Qt.ItemDataRole.EditRole:
             if col == 1:
                 return roi.name
+            dyn_col = self._dynamicColumns()
+            if col >= len(_FIXED_COLUMNS) and col - len(_FIXED_COLUMNS) < len(dyn_col):
+                key = dyn_col[col - len(_FIXED_COLUMNS)]
+                return _editText(roi.properties.get(key, ""))
 
         return QVariant()
 
@@ -207,7 +246,9 @@ class ROITableModel(QAbstractTableModel):
         elif col >= len(_FIXED_COLUMNS):
             dyn_col = self._dynamicColumns()
             key = dyn_col[col - len(_FIXED_COLUMNS)]
-            self._collection.setProperty(roi.fid, key, value)
+            self._collection.setProperty(
+                roi.fid, key, _parsedLike(roi.properties.get(key), value)
+            )
         else:
             return False
 

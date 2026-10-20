@@ -7,6 +7,8 @@ never squashed into a strip."""
 
 from __future__ import annotations
 
+import functools
+
 from collections.abc import Sequence
 
 import numpy as np
@@ -167,6 +169,17 @@ class RatioPlots(QObject):
         self._syncingX = False
         for plot in self._plots:
             plot.viewBox.sigXRangeChanged.connect(self._followX)
+        # A wavelength window you zoom or pan to stays while you click new
+        # pairs (Y refits inside it); Fit to Data, or zooming out to the whole
+        # spectrum, goes back to showing the whole spectrum for each pair.
+        self.zoomX: tuple[float, float] | None = None
+        self._fullX: tuple[float, float] | None = None  # the current spectrum's
+        self._refitting = False  # the plots refit themselves, not you
+        for plot in self._plots:
+            plot.viewBox.sigRangeChangedManually.connect(
+                functools.partial(self._onUserRange, plot)
+            )
+            plot.sigFitToData.connect(self._onFitToData)
 
         self.numeratorBox = AspectBox(self.numeratorPlot)
         self.numeratorBox.hide()
@@ -211,6 +224,32 @@ class RatioPlots(QObject):
             self._drawSpectra(*self._curves(self._components))
             for plot in (self.spectraPlot, self.numeratorPlot):
                 plot.viewBox.setXRange(*xRange, padding=0)
+
+    def _onUserRange(self, plot: VardaPlotWidget, *_mask) -> None:
+        x0, x1 = (float(v) for v in plot.viewBox.viewRange()[0])
+        full = self._fullX
+        whole = full is not None and x0 <= full[0] and x1 >= full[1]
+        self.zoomX = None if whole else (x0, x1)
+
+    def _onFitToData(self) -> None:
+        if not self._refitting:
+            self.zoomX = None
+
+    def _showWindow(self, x0: float, x1: float) -> None:
+        """Every plot on ``x0``-``x1``, its Y fitted to the curves there."""
+        for plot in self._plots:
+            plot.viewBox.setXRange(x0, x1, padding=0)
+            ys = [
+                y[(x >= x0) & (x <= x1) & np.isfinite(y)]
+                for x, y in (
+                    (np.asarray(d[0], float), np.asarray(d[1], float))
+                    for d in (curve.data() for curve in plot.plots)
+                    if d[0] is not None and d[1] is not None
+                )
+            ]
+            values = np.concatenate(ys) if ys else np.empty(0)
+            if values.size:
+                plot.viewBox.setYRange(values.min(), values.max(), padding=0.05)
 
     def _followX(self, source: pg.ViewBox, xRange) -> None:
         if self._syncingX:
@@ -279,23 +318,33 @@ class RatioPlots(QObject):
     def showComponents(self, c: RatioComponents) -> None:
         self._components = c
         x, good, nm = self._curves(c)
-        self._drawSpectra(x, good, nm)
         ratio = np.where(good, np.asarray(c.ratio, np.float64), np.nan)
-        self._replace(
-            self.ratioPlot,
-            x,
-            [(ratio, RATIO_COLOR, None)],
-            SpectralUnit.NANOMETRE if nm is not None else None,
-        )
+        self._refitting = True
+        try:
+            self._drawSpectra(x, good, nm)
+            self._replace(
+                self.ratioPlot,
+                x,
+                [(ratio, RATIO_COLOR, None)],
+                SpectralUnit.NANOMETRE if nm is not None else None,
+            )
+        finally:
+            self._refitting = False
         self._denominatorCurve = (
             (nm[good], np.asarray(c.denominator, np.float64)[good])
             if nm is not None
             else None
         )
-        # the spectrum's own range, whatever library curves the Ratio plot has
+        # the spectrum's own range, whatever library curves the Ratio plot
+        # has, or the window you zoomed to
         finite = good & np.isfinite(x)
-        if finite.any():
-            self.spectraPlot.viewBox.setXRange(x[finite].min(), x[finite].max())
+        self._fullX = (
+            (float(x[finite].min()), float(x[finite].max())) if finite.any() else None
+        )
+        if self.zoomX is not None:
+            self._showWindow(*self.zoomX)
+        elif self._fullX is not None:
+            self.spectraPlot.viewBox.setXRange(*self._fullX)
         if nm is None:
             self.readout.setUnavailable(NEEDS_WAVELENGTHS)
         else:

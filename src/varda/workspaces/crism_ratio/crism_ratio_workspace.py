@@ -76,6 +76,9 @@ from varda.image_loading.crism_geometry_chooser import (
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
+from varda.image_rendering.raster_view.roi_display_controller import (
+    ROIDisplayController,
+)
 from varda.image_rendering.raster_view.viewport_context_menu_controller import (
     ViewportContextMenuController,
 )
@@ -173,6 +176,23 @@ class _StripScrollArea(PanelScrollArea):
         return max(needed, panel.minimumSizeHint().height()) + 2 * self.frameWidth()
 
 
+class _LinkedRoiView:
+    """The browse view as the ROI display sees it: the ROIs are in I/F cube
+    pixels, and reach the browse view through the link (``toView``)."""
+
+    def __init__(
+        self, view: ImageViewport, toView: Callable[[np.ndarray], np.ndarray]
+    ) -> None:
+        self.sigImageChanged = view.sigImageChanged
+        self._view, self._toView = view, toView
+
+    def pixelToLocalCoords(self, pixelCoords: np.ndarray) -> np.ndarray:
+        return self._view.pixelToLocalCoords(self._toView(pixelCoords))
+
+    def addROIOverlay(self, points, color):
+        return self._view.addROIOverlay(points, color)
+
+
 class _NoSpectrumPlots:
     """The ratio plots show the spectra; nothing goes to a pixel plot."""
 
@@ -232,6 +252,24 @@ class CrismRatioWorkspace(QMainWindow):
         self.pointManager = PointManagerWidget(
             self.pointCollection, parent=self, image=data
         )
+        # saved ROIs drawn on both views (the browse one through the link)
+        self.roiDisplay = ROIDisplayController(self.roiCollection, parent=self)
+        self.roiManager.sigSelectionChanged.connect(self.roiDisplay.highlightROI)
+        self._roiViews = {
+            "data": self.dataView,
+            "browse": _LinkedRoiView(
+                self.browseView,
+                lambda polygon: dataToView(self.browse, self.data, self.link, polygon),
+            ),
+        }
+        self.showRoisCheck = QCheckBox("Show ROIs")
+        self.showRoisCheck.setToolTip(
+            "Draw the saved ROIs (each pair's numerator and denominator boxes) "
+            "on both images, in their class colors; the ROI Manager hides or "
+            "shows them one by one"
+        )
+        self.showRoisCheck.toggled.connect(self._showRois)
+        self.showRoisCheck.setChecked(True)
 
         self.config = RatioExplorerConfig()
         self.plots = RatioPlots(self)
@@ -269,6 +307,13 @@ class CrismRatioWorkspace(QMainWindow):
             manager.select(RatioExplorerTool)
 
     # --- construction --------------------------------------------------------------
+
+    def _showRois(self, shown: bool) -> None:
+        for viewId, view in self._roiViews.items():
+            if shown:
+                self.roiDisplay.registerViewport(viewId, view)
+            else:
+                self.roiDisplay.unregisterViewport(viewId)
 
     def _initLock(self) -> None:
         self.columnSource = ""
@@ -484,6 +529,7 @@ class CrismRatioWorkspace(QMainWindow):
             _row(self.lockCheck),
             self.chooseGeometryButton,
             _row(self.joinCheck, self.joinStatus),
+            _row(self.showRoisCheck),
             self.keysButton,
         ):
             row.addWidget(widget)
@@ -843,6 +889,7 @@ class CrismRatioWorkspace(QMainWindow):
             ],
             "lockColumn": self.lockCheck.isChecked(),
             "joinCorrection": self.joinCheck.isChecked(),
+            "showRois": self.showRoisCheck.isChecked(),
             "blandness": self.plots.readout.currentCheckName(),
             "blandnessLimits": self.plots.readout.limitOverrides(),
             "blandnessExcludeCo2": self.plots.readout.co2Check.isChecked(),
@@ -867,6 +914,7 @@ class CrismRatioWorkspace(QMainWindow):
             self.lockCheck.setChecked(bool(state.get("lockColumn", True)))
         if self.joinCheck.isEnabled():
             self.joinCheck.setChecked(bool(state.get("joinCorrection", False)))
+        self.showRoisCheck.setChecked(bool(state.get("showRois", True)))
         self.plots.readout.checkCombo.setCurrentText(
             state.get("blandness", self.plots.readout.currentCheckName())
         )

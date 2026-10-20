@@ -844,3 +844,40 @@ def test_the_browse_views_menu_offers_the_browse_images_docks(qtbot, pixelPair):
     menu, actions, _ = _menuActions(workspace, workspace.browseView)
     assert {"Browse Render Settings", "Browse Histogram"} <= set(actions)
     assert "I/F Render Settings" not in actions
+
+
+# --- saved ROIs on the images ----------------------------------------------------------
+
+
+def _overlays(workspace, viewId) -> dict:
+    return workspace.roiDisplay._items.get(viewId, {})
+
+
+def test_saved_rois_are_drawn_on_both_images(qtbot, spectralPair):
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
+    assert workspace.showRoisCheck.isChecked()  # on by default
+    _pair(workspace)
+    key(workspace, Qt.Key.Key_S)
+    accept(qtbot, workspace)
+    fids = list(workspace.roiCollection.fids)
+    assert len(fids) == 2  # the numerator and its denominator
+    for viewId in ("data", "browse"):
+        assert set(_overlays(workspace, viewId)) == set(fids)
+
+    workspace.showRoisCheck.setChecked(False)
+    assert not _overlays(workspace, "data") and not _overlays(workspace, "browse")
+    assert workspace.sessionState()["showRois"] is False
+    workspace.showRoisCheck.setChecked(True)
+    assert set(_overlays(workspace, "data")) == set(fids)
+
+    # removing one in the ROI Manager removes its outline
+    workspace.roiCollection.removeROI(fids[1])
+    assert set(_overlays(workspace, "browse")) == {fids[0]}
+
+
+def test_on_a_coarser_browse_grid_the_rois_go_through_the_map(qtbot, mapPair):
+    browse, data = mapPair  # browse pixels are twice the I/F pixels
+    workspace = build(qtbot, browse, data, Link.MAP)
+    polygon = np.array([[4.0, 6.0], [10.0, 6.0], [10.0, 12.0], [4.0, 12.0]])
+    mapped = workspace._roiViews["browse"]._toView(polygon)
+    np.testing.assert_allclose(mapped, polygon / 2, atol=1e-6)

@@ -331,3 +331,46 @@ def test_the_plot_sidebars_start_folded(qtbot):
     panel = makePlots(qtbot)
     for plot in (panel.spectraPlot, panel.numeratorPlot, panel.ratioPlot):
         assert not plot.isSidebarVisible()
+
+
+def _zoomByHand(plot, x0: float, x1: float) -> None:
+    """What a scroll or a box zoom does: a new range, said to be the user's."""
+    plot.viewBox.setXRange(x0, x1, padding=0)
+    plot.viewBox.sigRangeChangedManually.emit([True, False])
+
+
+def _xRange(plot) -> tuple[float, float]:
+    return tuple(float(v) for v in plot.viewBox.viewRange()[0])
+
+
+def test_a_wavelength_window_you_zoom_to_stays_for_the_next_pair(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3, slope=0.2))
+    _zoomByHand(plots.ratioPlot, 1400.0, 1800.0)
+    plots.showComponents(components(0.6, slope=-0.4))  # another pair
+    for plot in (plots.spectraPlot, plots.ratioPlot):
+        assert _xRange(plot) == pytest.approx((1400.0, 1800.0))
+    # Y fits the new ratio inside the window, not the old one or the whole
+    ratio = 2.0 * (1 - 0.4 * (WAVELENGTHS - 1000) / 1000)
+    inside = ratio[(WAVELENGTHS >= 1400) & (WAVELENGTHS <= 1800)]
+    y0, y1 = plots.ratioPlot.viewBox.viewRange()[1]
+    assert y0 <= inside.min() and y1 >= inside.max()
+    assert y1 - y0 < 1.2 * (inside.max() - inside.min())
+
+
+def test_fit_to_data_goes_back_to_the_whole_spectrum(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3))
+    _zoomByHand(plots.spectraPlot, 1400.0, 1800.0)
+    plots.ratioPlot.fitToData()
+    assert plots.zoomX is None
+    plots.showComponents(components(0.4))
+    x0, x1 = _xRange(plots.spectraPlot)
+    assert x0 <= WAVELENGTHS[0] + 1 and x1 >= WAVELENGTHS[-1] - 1
+
+
+def test_zooming_out_to_the_whole_spectrum_is_not_a_window(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3))
+    _zoomByHand(plots.ratioPlot, 900.0, 2600.0)
+    assert plots.zoomX is None

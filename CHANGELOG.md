@@ -8,6 +8,10 @@ can alter results.
 
 ### Added
 
+- **CRISM Ratio: saved ROIs on the images.** **Show ROIs** (on by default,
+  in Ratio Controls) outlines the saved ROIs in their class colors on the
+  I/F and browse views, the browse one through the link; selecting one in
+  the ROI Manager highlights it.
 - **CRISM: scale the VNIR bands to the IR at the 1 µm detector join.** A
   joined cube's spectra often step where the S and L detectors meet (a
   median 1.9 % in FRT00005850's MTRDR). **Scale VNIR to IR at 1 µm**, in the
@@ -29,6 +33,13 @@ can alter results.
 
 ### Fixed
 
+- **Editing an ROI table cell no longer starts from nothing.** A
+  double-click on a description or any added column opened an empty editor,
+  so the text was lost; the editor now holds the cell's value (numbers in
+  full, and they stay numbers).
+- **CRISM Ratio: the plots keep the wavelength range you zoomed to** while
+  you click new pairs, instead of going back to the whole spectrum each
+  time (Fit to Data goes back).
 - **A closed panel can be opened again.** Closing a workspace's Render
   Settings, Histogram or another panel left no way back. Right-click an image
   view: its image's Render Settings and Histogram are at the bottom of the
