@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import lru_cache
+import re
 
 import numpy as np
 import numpy.typing as npt
@@ -72,9 +73,11 @@ def transformPoints(
     reason = canTransform(src, dst)
     if reason is not None:
         raise ValueError(reason)
-    if sameCrs(src, dst):
-        return x, y
     assert src is not None and dst is not None  # canTransform said why not
+    with PROJ_LOCK:
+        lonWrap = _lonWrap(_key(dst))
+    if sameCrs(src, dst):
+        return _wrapLongitudes(x, lonWrap), y
     with PROJ_LOCK:
         route = _route(_key(src), _key(dst))
         native = (y, x) if route.src.latitudeFirst else (x, y)
@@ -93,7 +96,17 @@ def transformPoints(
                 lat = _tanScaled(lat, 1 / route.dst.ratio)  # → geodetic
             out = route.dst.plain.transform(lon.tolist(), lat.tolist())
     first, second = (np.asarray(v, dtype=np.float64) for v in out)
-    return (second, first) if route.dst.latitudeFirst else (first, second)
+    x, y = (second, first) if route.dst.latitudeFirst else (first, second)
+    return _wrapLongitudes(x, lonWrap), y
+
+
+def _wrapLongitudes(x: np.ndarray, center: float | None) -> np.ndarray:
+    """Longitudes in degrees into ``center`` ± 180° (a ``+lon_wrap``
+    CRS's own range), which equivalence and the explicit steps would
+    otherwise leave in −180..180; unchanged when ``center`` is None."""
+    if center is None:
+        return x
+    return (x - center + 180.0) % 360.0 - 180.0 + center
 
 
 def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
@@ -431,10 +444,13 @@ def _route(srcKey: str, dstKey: str) -> _Route:
         # (IAU_2015:49902) and a PROJ string with +lon_wrap or +over
         # ("exportToPROJString() not supported"); each side builds alone
         direct = None
-    if direct is not None and not _sameSurface(src, dst):
-        if not _datumShift(src, dst, direct):
-            direct = None
-    elif _centricOnEllipsoid(src) or _centricOnEllipsoid(dst):
+    if (
+        direct is not None
+        and not _sameSurface(src, dst)
+        and not _datumShift(src, dst, direct)
+    ):
+        direct = None
+    if direct is not None and (_centricOnEllipsoid(src) or _centricOnEllipsoid(dst)):
         # PROJ's own operation is exact for points, but GDAL's warper reads
         # a planetocentric latitude's numbers as geodetic (0.34° off at 45°
         # on Mars), so the latitude always goes through the explicit steps
@@ -466,6 +482,18 @@ def _side(crs: CRS, plain: Transformer) -> _Side:
         centric and _subtype(crs) != "spherical",
         _latitudeFirst(crs),
     )
+
+
+@lru_cache(maxsize=64)
+def _lonWrap(key: str) -> float | None:
+    """The ``+lon_wrap`` center of a geographic CRS in degrees (from its
+    PROJ string, or a WKT REMARK holding one); None otherwise. The caller
+    holds PROJ_LOCK."""
+    crs = CRS.from_user_input(key)
+    if crs.is_projected or crs.is_geocentric:
+        return None
+    found = re.search(r"\+lon_wrap=([-+0-9.eE]+)", f"{crs.srs} {crs.to_wkt()}")
+    return float(found.group(1)) if found else None
 
 
 def _centricOnEllipsoid(crs: CRS) -> bool:

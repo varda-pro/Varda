@@ -204,6 +204,15 @@ def test_ocentric_ellipsoid_and_wrapped_crs_transform_points(other):
     np.testing.assert_allclose(there, want, atol=1e-6)
     back = transformPoints(other, OCENTRIC, *want)
     np.testing.assert_allclose(back, (lons, lats), atol=1e-9)
+    if "lon_wrap=180" in other:  # longitudes in the CRS's own 0–360
+        assert ((there[0] >= 0) & (there[0] < 360)).all()
+
+
+@pytest.mark.parametrize("src", [OCENTRIC, SPHERE, "+proj=longlat +R=3396190 +no_defs"])
+def test_points_onto_a_0_360_crs_keep_its_convention(src):
+    """Links and ROIs onto a 0–360 product land on it (−100° is 260°)."""
+    x, _ = transformPoints(src, WRAPPED[1], [-100.0, 10.0], [30.0, -60.0])
+    np.testing.assert_allclose(x, [260.0, 10.0], atol=1e-9)
 
 
 @pytest.mark.parametrize("other", WRAPPED)
