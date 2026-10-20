@@ -322,3 +322,22 @@ def test_0_360_source_on_planetocentric_ellipsoid():
     assert np.isfinite(out).mean() > 0.9
     distance = sourcePixelDistance(_crs(image), image.transform, 64, 64, grid)
     assert np.isfinite(distance).mean() > 0.9
+
+
+def test_earth_datum_shift_survives_the_grid():
+    """NAD27 → WGS 84 is a real transformation (about 200 m here). The grid's
+    WKT drops WGS 84's datum-ensemble id; the shift must survive it."""
+    values = np.zeros((100, 100))
+    values[50, 50] = 1.0
+    transform = Affine(0.001, 0, -100.05, 0, -0.001, 40.05)
+    grid = gridFor("EPSG:4267", transform, 100, 100, "EPSG:4326")
+    out = reprojectBand(values, "EPSG:4267", transform, grid, Resampling.nearest)
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    (x,), (y,) = transformPoints(
+        "EPSG:4267", "EPSG:4326", *(transform * (np.array([50.5]), np.array([50.5])))
+    )
+    col, row = ~grid.affine * (x, y)
+    # without the shift it landed 2 rows (about 200 m) north
+    assert abs(rows.mean() + 0.5 - row) <= 0.5
+    assert abs(cols.mean() + 0.5 - col) <= 0.5

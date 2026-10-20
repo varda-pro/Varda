@@ -320,7 +320,10 @@ stereographic onto the west-positive, planetographic `IAU_2015:49901`), and
 the 45°N pixel above lands on its own row. When both CRSs share one
 surface (radii equal to 1 mm), or PROJ knows a real transformation between
 two registered datums (Earth's datum shifts), GDAL's own operation is used
-unchanged. Varda decides this from the two CRSs, not from PROJ's name for
+unchanged. A datum counts as registered when it, or its geodetic CRS,
+carries an authority code: WKT drops the id of a datum ensemble such as
+WGS 84's, and without this rule NAD27 → WGS 84 lost its datum shift (about
+200 m). Varda decides this from the two CRSs, not from PROJ's name for
 its operation: between PROJ strings with `+lon_wrap` or `+over`, PROJ calls
 the same latitude-keeping operation "Transformation from unknown to
 unknown", and points and rasters take the route above there too. Masks, DEMs (Shadow Mask, FATT's Exclude, From Threshold or
@@ -664,7 +667,7 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 | `lon-bounds-westward` | Problem | The label's longitude range (PDS3 `WESTERNMOST_LONGITUDE`/`EASTERNMOST_LONGITUDE`, ISIS `MinimumLongitude`/`MaximumLongitude`, PDS4 `west_bounding_coordinate`/`east_bounding_coordinate`) fits the image's left and right edges only if its samples run **westward**, and not as Varda reads them, eastward. Checked for cylindrical projections (equirectangular, Mercator; not transverse or oblique Mercator) only, and not for maps 359° or more wide. A bound fits an edge within 3 pixels (at least 0.0001°): labels give pixel edges, pixel centers or the valid data's extent (CRISM FRT000107A7's are 1.5 px inside). The edges are read at the middle row | "Its label's longitude range (100.169° to 100.708° west) fits its map only if its samples run westward; Varda reads them eastward." | Nothing is changed. Check a known feature: the image may be mirrored about its center meridian ([Conventions](#conventions)) |
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
 | `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
-| `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject for figures and terrain (Reproject Image comes in a later version) |
+| `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject it (Processing → Geometry → Reproject Image, [Reprojecting images](reprojecting.md)) for figures and terrain |
 | `lon-0-360` | Info | The image's longitudes run 0..360 (a geographic image past 180°, or a projection centered at 180° or beyond) | "Its longitudes run from 0 to 360° (not −180 to 180°)." | Nothing to do: Varda reads both conventions and never rewrites them |
 
 Without a CRS or with an unreadable one, Varda reports that alone: the other

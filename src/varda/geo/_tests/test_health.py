@@ -41,8 +41,8 @@ GALE = (137.4, -4.6)
 MARS = LabelHints("Mars", None, None, None, {}, "PDS3 label x.lbl")
 DISTORTION_SUGGESTION = (
     "Measurements are geodesic and unaffected; shapes and slopes on this map "
-    "are distorted — reproject (Processing → Reproject Image, coming in a "
-    "later version) for figures and terrain"
+    "are distorted — reproject it (Processing → Geometry → Reproject Image) "
+    "for figures and terrain"
 )
 
 
