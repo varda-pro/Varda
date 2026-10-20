@@ -24,6 +24,7 @@ from varda.analysis.eigenvalue_dialog import EigenvaluePlotDialog
 from varda.analysis.fatt_dialog import FattDialog
 from varda.analysis.fatt_map import FattMapAnalysis
 from varda.analysis.registry import ANALYSES
+from varda.analysis.ratio_cube_analysis import CATEGORY as CRISM_CATEGORY
 from varda.analysis.runner import AnalysisRunner
 from varda.analysis.transforms import TRANSFORM_METADATA_KEY, InverseTransformAnalysis
 from varda.common.di_types import ProjectImages
@@ -323,11 +324,13 @@ SHAPE_GEOPHYSICS_ACTION_ID = "varda.processing.shape_geophysics"
 SHAPE_MODELS = "Shape Models"
 CRISM_PROCESS_ACTION_ID = "varda.processing.crism_process"
 CRISM_CALIBRATION_ACTION_ID = "varda.processing.crism_calibration"
-CRISM_MENU = categoryMenuId(MenuId.PROCESSING, "CRISM")
+CRISM_MENU = categoryMenuId(MenuId.PROCESSING, CRISM_CATEGORY)
+# Processing a TRR3 comes first, above the analyses of a processed cube
+CRISM_PROCESSING_GROUP = "0_processing"
 
+# The CRISM submenu comes from the Ratio Cube analysis's category (CRISM_CATEGORY)
 PROCESSING_SUBMENUS = processingSubmenus(MenuId.PROCESSING, ANALYSES) + [
-    submenuItem(MenuId.PROCESSING, SHAPE_MODELS, len(ANALYSES)),
-    submenuItem(MenuId.PROCESSING, "CRISM", 98),
+    submenuItem(MenuId.PROCESSING, SHAPE_MODELS, len(ANALYSES))
 ]
 PROCESSING_ACTIONS = processingActions(
     MenuId.PROCESSING, "varda.processing", ANALYSES, _menuCallback
@@ -417,14 +420,14 @@ PROCESSING_ACTIONS = processingActions(
             "atmosphere, spikes and spectral smile corrected"
         ),
         callback=openCrismProcess,
-        menus=[MenuRule(id=CRISM_MENU, order=0)],
+        menus=[MenuRule(id=CRISM_MENU, group=CRISM_PROCESSING_GROUP, order=0)],
     ),
     Action(
         id=CRISM_CALIBRATION_ACTION_ID,
         title="Get CRISM Calibration Files…",
         tooltip="See which calibration files an observation needs, and fetch the missing ones",
         callback=openCrismCalibration,
-        menus=[MenuRule(id=CRISM_MENU, order=1)],
+        menus=[MenuRule(id=CRISM_MENU, group=CRISM_PROCESSING_GROUP, order=1)],
     ),
     Action(
         id=OPTIONAL_FEATURES_ACTION_ID,

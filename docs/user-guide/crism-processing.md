@@ -123,6 +123,7 @@ Products go in the output folder, named like the MTRDR's (with `_vmtr`):
 | `…_in168l_vmtr` | Backplanes of the processing itself: source sample and line (0-based), β (the transmission's strength), its empirical σ, the atmospheric fit's RMS residual, the artifact amplitude, spike count, Leask count, effective looks. |
 | `…_vter` | Optional (sensor space): the same I/F before map projection. |
 | `.recipe.json`, `.provenance.json`, `.diagnostics.npz` | Sidecars: the recipe, the provenance, and the diagnostics behind it. |
+| `<image>.aux.xml` | Beside each image: Varda's provenance record (GDAL's sidecar, in the `VARDA` metadata domain), shown in Image Properties. Varda's CRISM tools follow it back to the TRR3 and DDR. Keep it with the image. |
 
 Invalid samples are 65535 in every product; no NaN is ever written. A run
 works in its own hidden `.work-…` folder in the output folder and moves its
@@ -134,6 +135,27 @@ share an output folder. If a previous product is open in another program
 the file and leaves the previous products as they were: close it and rerun.
 A `.work-…` folder left by a run that was killed is removed by a later run
 once it is a day old; you can delete one sooner when no run is going.
+
+## Using the products in Varda
+
+The dialog adds the map-projected I/F to the project; the other products
+open with **Import Image(s)**. Varda's CRISM tools treat them like an MTRDR:
+
+- **Column lock** in the CRISM Ratio workspace and **Processing → CRISM →
+  Ratio Cube** read the detector column from `…_in168l_vmtr` (its "Source
+  sample" band: the TRR3 column under each map pixel, in binned columns for
+  a binned observation), found beside the I/F. The **Shadow Mask** reads the
+  solar incidence from `…_de168l_vmtr`. See
+  [the geometry file](crism-ratio.md#the-geometry-file).
+- The sensor-space `_vter` I/F finds the TRR3's DDR through its provenance
+  (the DDR must still be beside the TRR3), and a whole observation's width is
+  ratioed by its image columns.
+- The map's coordinate system is the MTRDR's: a sphere of the IAU 2000
+  radius at the reference latitude. Varda's coordinate-system check
+  identifies it as Mars, and notes the distortion of an equirectangular grid
+  away from its standard parallel (about 1.7% at 18° N on a 15° grid), as it
+  does for an official MTRDR. Measure lengths and areas on the body (the
+  geodesic columns) rather than in map units.
 
 ## σ and provenance
 

@@ -31,11 +31,15 @@ The detector column of each pixel comes from one of two places, recorded as
   | TER3 `frt000107a7_07_if166j_ter3.img` | `frt000107a7_07_in166j_ter3.img` | `frt000107a7_07_de166l_ddr1.img` |
   | TRR3 `frt000107a7_07_if166l_trr3.img` (or `…s_trr3`) | none: the cube is in sensor space | `frt000107a7_07_de166l_ddr1.img` (no sample band) |
   | MRDR tile `…_mrral_…` / `…_vrral_…` | `…_mrrde_…` / `…_vrrde_…` | |
+  | Varda's [CRISM processing](crism-processing.md) `frs00031442_01_if168l_vmtr.img` | `frs00031442_01_in168l_vmtr.img` ("Source sample") | `frs00031442_01_de168l_vmtr.img` |
 
   The first companion that has an IR Sample band is used. Where it has
   "Target ID" and "Segment ID" bands (MRDR tiles), columns of different
   source strips are kept apart. A TRR3's DDR is in the DDR volume, not next
-  to the cube; it gives the incidence angle but no detector column.
+  to the cube; it gives the incidence angle but no detector column. Its
+  `.img` has no header of its own, so Varda reads it through the detached
+  PDS3 label beside it (`…_ddr1.lbl`) and takes the band names from that
+  label.
 - **The image columns of an unprojected cube.** A cube with no backplane
   that is confidently unprojected (no map projection, and 640, 320, 128 or 64
   columns, a CRISM detector at 1×, 2×, 5× or 10× binning) is in sensor space, so

@@ -22,6 +22,7 @@ from varda.crism.projection import (
     sphereRadius,
 )
 from varda.crism.readers import DdrBand, readDdr
+from varda.geo.health import Severity, checkCrs
 
 _MTRDR = {
     "FRT00005850": ("frt00005850_07_if167j_mtr3", "frt00005850_07_de167l_mtr1", 18.0),
@@ -425,3 +426,19 @@ def test_area_weights_memory_for_a_full_frt() -> None:
     assert size < 200e6
     glt = nearestNeighborGlt(grid, lat, lon)
     assert glt.sourceLine.nbytes + glt.sourceSample.nbytes < 50e6
+
+
+@pytest.mark.parametrize(
+    "centerLat, centerLon", [(18.3, 77.4), (-18.3, -45.0), (80.0, 123.0)]
+)
+def test_varda_geo_reads_the_grid_as_mars(centerLat: float, centerLon: float) -> None:
+    """Varda's coordinate-system check finds Mars in the products' CRS and
+    has nothing to fix or warn about (``varda.geo``), but the distortion of
+    an equirectangular grid away from its standard parallel, which an
+    official MTRDR has too."""
+    grid = mtrdrGrid(*_swath(centerLat, centerLon), 18.0)
+    health = checkCrs(grid.crsWkt(), grid.transform(), grid.width, grid.height)
+    assert health.body.body is not None and health.body.body.name == "Mars"
+    notes = {i.code for i in health.issues if i.severity != Severity.INFO}
+    assert notes <= {"high-distortion"}
+    assert all(issue.fix is None for issue in health.issues)

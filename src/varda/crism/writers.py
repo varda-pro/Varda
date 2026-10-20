@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import os
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
@@ -25,6 +26,7 @@ import rasterio
 from rasterio import shutil as rasterioShutil  # ty: ignore[unresolved-import]
 from attrs import frozen
 
+from varda.common.provenance import PROVENANCE_KEY, VARDA_NAMESPACE, fileTags
 from varda.crism.projection import MapGrid
 from varda.crism.smile import StandardVector
 from varda.utilities.proj_lock import PROJ_LOCK
@@ -301,6 +303,22 @@ def writeSidecars(
         np.savez_compressed(file, **dict(diagnostics))  # ty: ignore[invalid-argument-type]
     os.replace(part, diagnosticsPath)
     return recipePath, provenancePath, diagnosticsPath
+
+
+def writeVardaRecord(image: Path, record: Mapping[str, object]) -> Path:
+    """Write ``record`` as ``image``'s Varda provenance in ``<image>.aux.xml``
+    (GDAL's sidecar, in the ``VARDA`` metadata domain, where ``writeRaster``
+    keeps it beside an ENVI file), so Varda shows how the product was made and
+    its CRISM tools follow it back to the TRR3 and DDR."""
+    root = ET.Element("PAMDataset")
+    metadata = ET.SubElement(root, "Metadata", domain=VARDA_NAMESPACE)
+    for key, value in fileTags({PROVENANCE_KEY: jsonSafe(record)}).items():
+        ET.SubElement(metadata, "MDI", key=key).text = value
+    path = image.with_name(image.name + ".aux.xml")
+    part = _partOf(path)
+    ET.ElementTree(root).write(part, encoding="utf-8", xml_declaration=False)
+    os.replace(part, path)
+    return path
 
 
 def writeCog(enviImage: Path, target: Path) -> Path:

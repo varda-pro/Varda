@@ -85,7 +85,7 @@ import rasterio
 import scipy
 from attrs import frozen
 
-from varda.common.provenance import PROVENANCE_KEY
+from varda.common.provenance import PROVENANCE_KEY, SCHEMA_VERSION
 from varda.crism.atmosphere import (
     CONTINUUM_DEGREE,
     AtmosphereModel,
@@ -150,6 +150,7 @@ from varda.crism.writers import (
     sha256File,
     writeCog,
     writeSidecars,
+    writeVardaRecord,
 )
 from varda.version import vardaVersion
 
@@ -182,6 +183,10 @@ _MAP_ROWS = 64
 _BAND_BLOCK = 32
 _PLANES = ("beta", "betaSigma", "residualRms", "artifactAmplitude")
 _SIDECARS = (".recipe.json", ".provenance.json", ".diagnostics.npz")
+# The Varda record beside each image product (GDAL's sidecar)
+_RECORD_SUFFIX = ".aux.xml"
+PROCESS = "CRISM processing"
+PROCESS_ID = "crism_process"
 _AREA_IN_NAMES = {"Spike count": "Mean spike count", "Leask count": "Mean Leask count"}
 _GIT_TIMEOUT_S = 5
 
@@ -1540,25 +1545,50 @@ class _Run:
             self.outputs[f"{name}.tif"] = tif
         mapped = name in self.outputs
         history, sigmaSteps = self._history(mapped)
+        inputs = self._inputs()
+        systematic = self._systematic()
+        software = _software()
         provenance = {
             "vardaVersion": vardaVersion(),
-            "software": _software(),
+            "software": software,
             "created": self.created,
             "observation": self.observation.name,
             "counter": self.observation.counter,
-            "inputs": self._inputs(),
+            "inputs": inputs,
             "calibration": self._calibrationRecord(),
             "recipe": recipeToDict(self.recipe),
             "history": history,
             "sigma": {"kind": SIGMA_KIND, "steps": sigmaSteps},
             "steps": self.steps,
-            "systematic": self._systematic(),
+            "systematic": systematic,
             "wallTimes": self.wallTimes,
             "outputs": sorted(
                 [path.name for path in self.staging.iterdir() if path.is_file()]
+                + [f"{path.name}{_RECORD_SUFFIX}" for path in self.outputs.values()]
                 + [f"{name}{suffix}" for suffix in _SIDECARS]
             ),
         }
+        record = {
+            "schema": SCHEMA_VERSION,
+            "process": PROCESS,
+            "processId": PROCESS_ID,
+            "parameters": recipeToDict(self.recipe),
+            "inputs": [
+                {"name": entry["productId"], "path": str(entry["label"])}
+                for entry in inputs
+            ],
+            "vardaVersion": vardaVersion(),
+            "created": self.created,
+            "software": software,
+            "results": {
+                "history": history,
+                "sigma": {"kind": SIGMA_KIND, "steps": sigmaSteps},
+                "systematic": systematic,
+                "details": f"{name}.provenance.json",
+            },
+        }
+        for path in self.outputs.values():
+            writeVardaRecord(path, record)
         recipePath, provenancePath, diagnosticsPath = writeSidecars(
             self.staging / name, recipeToDict(self.recipe), provenance, self.diagnostics
         )
@@ -1588,8 +1618,10 @@ def _productFiles(names: Mapping[str, str]) -> set[str]:
     """Every file name a run can write for these product names."""
     stems = [names[key] for key in ("map", "geometry", "info", "sensor")]
     stems += [f"{names['map']}_sigma", f"{names['sensor']}_sigma"]
-    files = {f"{stem}{suffix}" for stem in stems for suffix in (".img", ".hdr")}
-    return files | {f"{names['map']}.tif"} | {names["map"] + s for s in _SIDECARS}
+    images = {f"{stem}.img" for stem in stems} | {f"{names['map']}.tif"}
+    files = images | {f"{stem}.hdr" for stem in stems}
+    files |= {f"{image}{_RECORD_SUFFIX}" for image in images}
+    return files | {names["map"] + s for s in _SIDECARS}
 
 
 def _publish(

@@ -65,6 +65,25 @@ can alter results.
   labeled approximate, and Reproject Image recommends no projection for
   measurement or terrain.
 
+- **CRISM processing** (Processing → CRISM → Process CRISM Observation…, or
+  `Varda --crism process`): turns a CRISM IR observation's TRR3 I/F into a
+  map-projected, MTRDR-consistent I/F on the MTRDR's own grid, with a σ file
+  (instrument noise, per band), the geometry (`_de`) and processing (`_in`)
+  backplanes, and a recipe and provenance record. Steps: photometry,
+  despike, atmospheric correction (fitted transmission with a shift and an
+  elevation prior, and learned instrument-artifact bases for their epoch),
+  optional destriping, smile and empirical shift correction, projection.
+  Calibration files (WA and atmospheric transmission) are found beside the
+  observation, in CAT's `aux_files` if you point to them, or fetched from the
+  PDS (bad-pixel maps are used when local), and a missing one is reported
+  before anything runs. The products work with the CRISM Ratio workspace,
+  Ratio Cube and Shadow Mask like an MTRDR: the IN and DE backplanes are
+  found beside the I/F, and each product's Varda provenance (in its
+  `.aux.xml`) names the TRR3 and DDR. Phase 1 is IR-only with no EGN; it is
+  not bit-for-bit CAT. See the
+  [guide](docs/user-guide/crism-processing.md) and the
+  [validation report](docs/superpowers/specs/crism/phase1-validation.md).
+
 ### Changed
 
 - Lengths and areas on irregular bodies (Eros, Phobos and the bodies above)
@@ -85,6 +104,11 @@ can alter results.
   view: its image's Render Settings and Histogram are at the bottom of the
   menu, and **Panels** lists every panel of the workspace, checked when open.
   In the CRISM Ratio, General Image Analysis and Dual workspaces.
+- **A TRR3's DDR is read for its geometry.** Its `.img` has a detached PDS3
+  label and no header, which GDAL can't open alone, so the Shadow Mask and
+  the CRISM geometry lookup never found a TRR3's incidence. Varda now reads
+  it through the `.lbl` beside it, with the label's band names. See
+  [CRISM ratio cubes](docs/user-guide/crism-ratio.md#ratio-cube).
 
 ## 0.11.0 (2026-10-20)
 
@@ -153,21 +177,6 @@ can alter results.
   now an Info finding worded as your choice, not a problem. Image
   Properties' OK no longer drops a corrected transform. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#reporting-a-crs-built-from-the-label).
-- **CRISM processing** (Processing → CRISM → Process CRISM Observation…, or
-  `Varda --crism process`): turns a CRISM IR observation's TRR3 I/F into a
-  map-projected, MTRDR-consistent I/F on the MTRDR's own grid, with a σ file
-  (instrument noise, per band), the geometry (`_de`) and processing (`_in`)
-  backplanes, and a recipe and provenance record. Steps: photometry,
-  despike, atmospheric correction (fitted transmission with a shift and an
-  elevation prior, and learned instrument-artifact bases for their epoch),
-  optional destriping, smile and empirical shift correction, projection.
-  Calibration files (WA and atmospheric transmission) are found beside the
-  observation, in CAT's `aux_files` if you point to them, or fetched from the
-  PDS (bad-pixel maps are used when local), and a missing one is reported
-  before anything runs. Phase 1 is IR-only with no EGN; it is not
-  bit-for-bit CAT. See the
-  [guide](docs/user-guide/crism-processing.md) and the
-  [validation report](docs/superpowers/specs/crism/phase1-validation.md).
 - **FITS images and ALTWG/SPC terrain cubes open.** `.fits`, `.fit`, `.fts`
   and `.fz` files are read with astropy. The image is the primary HDU or the
   first image extension, and each plane is a band. OSIRIS-REx ALTWG/SPC cubes

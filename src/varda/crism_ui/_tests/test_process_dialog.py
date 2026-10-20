@@ -185,9 +185,12 @@ def test_menu_actions_registered():
         assert [m.id for m in ids[actionId].menus or []] == ["varda/processing/crism"]
     assert ids[CRISM_PROCESS_ACTION_ID].title == "Process CRISM Observation…"
     assert ids[CRISM_CALIBRATION_ACTION_ID].title == "Get CRISM Calibration Files…"
-    assert ("varda/processing", "CRISM") in [
-        (parent, item.title) for parent, item in PROCESSING_SUBMENUS
-    ]
+    # one CRISM submenu, shared with the Ratio Cube analysis
+    assert [(parent, item.title) for parent, item in PROCESSING_SUBMENUS].count(
+        ("varda/processing", "CRISM")
+    ) == 1
+    ratioCube = ids["varda.processing.ratio_cube"]
+    assert [m.id for m in ratioCube.menus or []] == ["varda/processing/crism"]
 
 
 def test_cat_aux_folder_setting(tmp_path):
