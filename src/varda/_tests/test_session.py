@@ -5,7 +5,6 @@ import json
 import numpy as np
 from affine import Affine
 import pytest
-from pyproj import CRS
 
 from varda import session
 from shapely.geometry import box
@@ -19,6 +18,8 @@ from varda.geo._tests.fixtures import (
     HIRISE_LABEL_TRANSFORM,
     HIRISE_POLAR_PROJ,
     WEST_LABEL_GROUP,
+    readWithoutCrs,
+    westAxis,
     writePds3,
     writeWgs84,
 )
@@ -26,7 +27,6 @@ from varda.geo.equivalence import sameCrs
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.common.provenance import PROVENANCE_KEY
 from varda.image_loading.crs_check import applyCrsFix, chooseCrs, undoCrsFix
-from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
 from varda.rois.roi_collection import ROICollection
@@ -331,25 +331,8 @@ def test_a_corrected_transform_survives_a_session(qtbot, tmp_path):
 # --- a CRS built from the label (and its pixel grid) ---
 
 
-def _noCrsInFiles(monkeypatch) -> None:
-    """Files open with no CRS and the identity transform, as a product GDAL
-    can't georeference (GDAL 3.9.3 reads the HiRISE label itself)."""
-    for name in ("crs", "rawCrsText"):
-        monkeypatch.setattr(RasterioDataSource, name, property(lambda self: None))
-    monkeypatch.setattr(
-        RasterioDataSource, "transform", property(lambda self: Affine.identity())
-    )
-
-
-def _westAxis(crs: CRS | str) -> bool:
-    geodetic = CRS.from_user_input(crs).geodetic_crs
-    return geodetic is not None and any(
-        axis.direction == "west" for axis in geodetic.axis_info
-    )
-
-
 def test_a_label_crs_and_grid_survive_a_session(qtbot, tmp_path, monkeypatch):
-    _noCrsInFiles(monkeypatch)
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     record = dict(image.extraMetadata["crsFix"])
     state = _saveAndRead(image, tmp_path)
@@ -370,7 +353,7 @@ def test_a_label_crs_and_grid_survive_a_session(qtbot, tmp_path, monkeypatch):
 
 
 def test_a_session_without_a_crs_keeps_the_label_grid(qtbot, tmp_path, monkeypatch):
-    _noCrsInFiles(monkeypatch)
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     state = SessionState(
         (image.filePath,), (), {image.filePath: {"name": "x", "overrides": {}}}
@@ -382,7 +365,7 @@ def test_a_session_without_a_crs_keeps_the_label_grid(qtbot, tmp_path, monkeypat
 
 
 def test_an_undone_label_fix_survives_a_session(qtbot, tmp_path, monkeypatch):
-    _noCrsInFiles(monkeypatch)
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     undoCrsFix(image)
     record = dict(image.extraMetadata["crsFix"])
@@ -405,13 +388,13 @@ def test_a_west_label_crs_survives_a_session_as_projjson(qtbot, tmp_path):
     record = dict(image.extraMetadata["crsFix"])
     state = _saveAndRead(image, tmp_path)
     saved = state.metadata[image.filePath]["overrides"]["crs"]
-    assert saved.lstrip().startswith("{") and _westAxis(saved)  # PROJJSON
+    assert saved.lstrip().startswith("{") and westAxis(saved)  # PROJJSON
     assert str(state.metadata[image.filePath]["crsFix"]["to"]).startswith("{")
 
     again = loadRaster(str(image.filePath))
     _restore(qtbot, state, again)
 
-    assert again.crs is not None and _westAxis(again.crs)
+    assert again.crs is not None and westAxis(again.crs)
     assert sameCrs(again.crs, fix.wkt)
     assert again.extraMetadata["crsFix"] == record
     assert again.crsHealth is not None
@@ -421,7 +404,7 @@ def test_a_west_label_crs_survives_a_session_as_projjson(qtbot, tmp_path):
 
 
 def test_a_label_fix_goes_into_exports_and_provenance(tmp_path, monkeypatch):
-    _noCrsInFiles(monkeypatch)
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     record = dict(image.extraMetadata["crsFix"])
     where = image.pixelToLatLon(3, 4)
@@ -446,7 +429,7 @@ def test_a_label_fix_goes_into_exports_and_provenance(tmp_path, monkeypatch):
 def test_a_session_crs_proj_cant_read_keeps_the_label_grid(
     qtbot, tmp_path, monkeypatch
 ):
-    _noCrsInFiles(monkeypatch)
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     state = SessionState(
         (image.filePath,),

@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from affine import Affine
 from pyproj import CRS
@@ -13,6 +14,7 @@ from pyproj import CRS
 from varda.common.entities import VardaRaster
 from varda.geo.transform import transformPoints
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.utilities.proj_lock import PROJ_LOCK
 
 # A real CRISM MTRDR (FRT000107A7_07_IF166J_MTR3) as GDAL's PDS3 driver reads
@@ -222,3 +224,25 @@ def writePds3(folder: Path, group: dict[str, str], name: str = "x") -> Path:
         "END\n"
     )
     return label
+
+
+def readWithoutCrs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Files open with no CRS and the identity transform: GDAL 3.9.3 builds
+    the HiRISE label's CRS itself, so this stands in for a product it can't
+    georeference. ``monkeypatch.undo()`` reads files as GDAL does again."""
+    for name in ("crs", "rawCrsText"):
+        monkeypatch.setattr(RasterioDataSource, name, property(lambda self: None))
+    monkeypatch.setattr(
+        RasterioDataSource, "transform", property(lambda self: Affine.identity())
+    )
+
+
+def westAxis(crs: CRS | str | None) -> bool:
+    """Whether ``crs``'s geodetic longitude axis points west."""
+    if crs is None:
+        return False
+    with PROJ_LOCK:
+        geodetic = CRS.from_user_input(crs).geodetic_crs
+        return geodetic is not None and any(
+            axis.direction == "west" for axis in geodetic.axis_info
+        )

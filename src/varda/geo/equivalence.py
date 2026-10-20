@@ -5,8 +5,10 @@ PROJ's ``equals`` compares names, so GDAL's ``D_MARS`` WKT and
 ``IAU_2015:49910`` differ to PROJ though they describe one projection on
 one sphere. Varda also calls two CRSs the same (EQUIVALENT) when their
 geometry matches with every name ignored: the conversion method and its
-parameters (angles to 1e-9°, lengths to 1e-6 m, scale factors to 1e-12),
-the ellipsoid's a and b
+parameters (angles to 1e-9°, lengths to 1e-6 m, scale factors to 1e-12;
+Polar Stereographic variant B, given by its standard parallel, compared as
+the same map in variant A, given by its scale factor at the pole), the
+ellipsoid's a and b
 (to 1e-3 m), the prime meridian, and the axes' directions and units.
 
 CRSs that aren't the same are compared by body (``identifyBody``): on one
@@ -206,11 +208,53 @@ def _equivalent(a: CRS, b: CRS, ignoreAxisOrder: bool) -> bool:
     if conversionA is None or conversionB is None:
         return conversionA is None and conversionB is None
     spheres = a.ellipsoid.inverse_flattening == 0 == b.ellipsoid.inverse_flattening
-    if _method(conversionA.method_name, spheres) != _method(
-        conversionB.method_name, spheres
-    ):
+    methodA, parametersA = _variantA(conversionA, a.ellipsoid)
+    methodB, parametersB = _variantA(conversionB, b.ellipsoid)
+    if _method(methodA, spheres) != _method(methodB, spheres):
         return False
-    return _sameParameters(_parameters(conversionA), _parameters(conversionB))
+    return _sameParameters(parametersA, parametersB)
+
+
+def _variantA(
+    conversion: CoordinateOperation, ellipsoid: Ellipsoid
+) -> tuple[str, dict[str, tuple[str, float | str]]]:
+    """The conversion's method and parameters, with Polar Stereographic
+    variant B (a standard parallel φc) as the same map in variant A (a scale
+    factor k0 at the pole): k0 = (1 + sin|φc|)/2 on a sphere, and
+    k0 = mc·√((1+e)^(1+e)·(1−e)^(1−e)) / (2·tc) on an ellipsoid (Snyder 1987,
+    eqs. 21-32 to 21-35; EPSG Guidance Note 7-2, §3.5.2.1)."""
+    method, parameters = conversion.method_name, _parameters(conversion)
+    if method != "Polar Stereographic (variant B)":
+        return method, parameters
+    _, standard = parameters.get("Latitude of standard parallel", ("angular", 90.0))
+    _, origin = parameters.get("Longitude of origin", ("angular", 0.0))
+    if isinstance(standard, str) or isinstance(origin, str):
+        return method, parameters
+    phi = math.radians(abs(standard))
+    e = math.sqrt(
+        max(0.0, 1 - (ellipsoid.semi_minor_metre / ellipsoid.semi_major_metre) ** 2)
+    )
+    if abs(abs(standard) - 90.0) <= ANGLE_TOLERANCE_DEG:
+        k0 = 1.0
+    elif e == 0.0:
+        k0 = (1 + math.sin(phi)) / 2
+    else:
+        sinPhi = e * math.sin(phi)
+        tc = math.tan(math.pi / 4 - phi / 2) / ((1 - sinPhi) / (1 + sinPhi)) ** (e / 2)
+        mc = math.cos(phi) / math.sqrt(1 - sinPhi**2)
+        k0 = mc * math.sqrt((1 + e) ** (1 + e) * (1 - e) ** (1 - e)) / (2 * tc)
+    normalized = {
+        name: value
+        for name, value in parameters.items()
+        if name not in ("Latitude of standard parallel", "Longitude of origin")
+    }
+    normalized["Latitude of natural origin"] = (
+        "angular",
+        math.copysign(90.0, standard),
+    )
+    normalized["Longitude of natural origin"] = ("angular", origin)
+    normalized["Scale factor at natural origin"] = ("scale", k0)
+    return "Polar Stereographic (variant A)", normalized
 
 
 def _method(name: str, sphere: bool) -> str:

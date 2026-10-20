@@ -950,9 +950,12 @@ as, for example:
 - `from`: the CRS the file declared ("none" when it had none); `to`: the
   CRS used (an authority code, else WKT, else PROJJSON for a west-positive
   label).
-- `transform`: present only when Varda set the pixel grid (the file had
-  none). Without it, the file's own grid was used with the label's CRS;
-  Varda doesn't compare the two grids (see the limitations above).
+- `transform`: present whenever the image uses a pixel grid other than its
+  file's: the label's, set because the file had none. A CRS you set by
+  hand (**Set coordinate system…**) on such an image keeps that grid, and
+  its record has the same `transform`. Without it, the file's own grid was
+  used with the label's CRS; Varda doesn't compare the two grids (see the
+  limitations above).
 - `automatic: true`: complete label, nothing assumed. `automatic: false`:
   you applied it; if the finding named an assumption (e.g. ISIS's
   local-radius equirectangular), state it, since it is part of the method.

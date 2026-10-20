@@ -1,8 +1,10 @@
 """sameCrs, compatibility and canTransform: CRSs that are the same under
 other names are the same; different bodies are never combined."""
 
+import re
+
 import pytest
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_ENVI_WKT,
@@ -185,3 +187,46 @@ def test_describe_finds_iau_code(crs, code):
 
 def test_describe_finds_no_code_for_a_local_radius():
     assert describeCrs(CRISM_MTRDR_WKT).authority is None
+
+
+def _variantA(variantB: str, k0: float) -> str:
+    """``variantB`` with its standard parallel replaced by the scale ``k0``."""
+    return re.sub(r"\+lat_ts=\S+", f"+k={k0!r}", variantB)
+
+
+def _scaleAtPole(variantB: str) -> float:
+    """Variant B's k0, measured by PROJ: its x over variant A's with k0 = 1."""
+    geographic = CRS(variantB).geodetic_crs
+    assert geographic is not None
+    lat = 80.0 if "+lat_0=90" in variantB else -80.0
+    b = Transformer.from_crs(geographic, variantB, always_xy=True)
+    a = Transformer.from_crs(geographic, _variantA(variantB, 1.0), always_xy=True)
+    return b.transform(30.0, lat)[0] / a.transform(30.0, lat)[0]
+
+
+@pytest.mark.parametrize(
+    "variantB",
+    [
+        "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=10 +R=3376200 +units=m +no_defs",
+        "+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +a=3396190 +b=3376200 "
+        "+units=m +no_defs",
+    ],
+)
+def test_polar_stereographic_variants_b_and_a_are_equivalent(variantB):
+    k0 = _scaleAtPole(variantB)
+    variantA = _variantA(variantB, k0)
+    operationA = CRS(variantA).coordinate_operation
+    operationB = CRS(variantB).coordinate_operation
+    assert operationA is not None and operationB is not None
+    assert operationA.method_name == "Polar Stereographic (variant A)"
+    assert operationB.method_name == "Polar Stereographic (variant B)"
+    assert compatibility(variantA, variantB) == Compatibility.EQUIVALENT
+    assert not sameCrs(_variantA(variantB, k0 * 1.001), variantB)
+
+
+def test_gdals_polar_stereographic_from_a_label_is_the_proj_strings():
+    gdal = HIRISE_POLAR_PROJ.replace("+k=1", "+lat_ts=90")
+    operation = CRS(gdal).coordinate_operation
+    assert operation is not None
+    assert operation.method_name == "Polar Stereographic (variant B)"
+    assert sameCrs(gdal, HIRISE_POLAR_PROJ)

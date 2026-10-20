@@ -26,13 +26,14 @@ from varda.geo._tests.fixtures import (
     HIRISE_POLAR_PROJ,
     WEST_LABEL_GROUP,
     makeImage,
+    readWithoutCrs,
+    westAxis,
     writePds3,
     writeWgs84,
 )
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import flagged
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
 
@@ -295,24 +296,6 @@ def test_an_unreadable_crs_shows_its_text_and_the_error(qtbot):
 # --- CRSs built from the label ---
 
 
-@pytest.fixture
-def noCrsInFiles(monkeypatch):
-    """Files open with no CRS and the identity transform (GDAL 3.9.3 reads
-    the HiRISE label itself; this stands in for a product it can't)."""
-    for name in ("crs", "rawCrsText"):
-        monkeypatch.setattr(RasterioDataSource, name, property(lambda self: None))
-    monkeypatch.setattr(
-        RasterioDataSource, "transform", property(lambda self: Affine.identity())
-    )
-
-
-def _west(crs: CRS | None) -> bool:
-    geodetic = crs.geodetic_crs if crs is not None else None
-    return geodetic is not None and any(
-        axis.direction == "west" for axis in geodetic.axis_info
-    )
-
-
 def test_a_label_gdal_misread_is_applied_and_undone(qtbot, tmp_path):
     image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
     dialog = ImagePropertiesDialog(image)
@@ -322,19 +305,20 @@ def test_a_label_gdal_misread_is_applied_and_undone(qtbot, tmp_path):
     )
     assert dialog.undoButton is None and len(dialog.applyButtons) == 1
     dialog.applyButtons[0].click()
-    assert _west(image.crs)  # the label's CRS
+    assert westAxis(image.crs)  # the label's CRS
     assert image.extraMetadata["crsFix"]["source"] == "label"
     texts = _crsTexts(dialog)
     assert any(t.startswith("Fixed: Its label (PDS3 label x.lbl)") for t in texts)
     assert any(t.startswith("You applied this fix") for t in texts)
     assert dialog.undoButton is not None
     dialog.undoButton.click()
-    assert sameCrs(image.crs, GDAL_WEST_PROJ) and not _west(image.crs)  # GDAL's
+    assert sameCrs(image.crs, GDAL_WEST_PROJ) and not westAxis(image.crs)  # GDAL's
     assert image.extraMetadata["crsFix"]["undone"] is True
     assert dialog.undoButton is None and len(dialog.applyButtons) == 1
 
 
-def test_undo_of_a_label_fix_removes_its_grid_too(qtbot, tmp_path, noCrsInFiles):
+def test_undo_of_a_label_fix_removes_its_grid_too(qtbot, tmp_path, monkeypatch):
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     dialog = ImagePropertiesDialog(image)
     qtbot.addWidget(dialog)
@@ -355,7 +339,8 @@ def test_undo_of_a_label_fix_removes_its_grid_too(qtbot, tmp_path, noCrsInFiles)
     assert dialog.undoButton is not None
 
 
-def test_editing_keeps_a_corrected_transform(qtbot, tmp_path, noCrsInFiles):
+def test_editing_keeps_a_corrected_transform(qtbot, tmp_path, monkeypatch):
+    readWithoutCrs(monkeypatch)
     image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
     dialog = ImagePropertiesDialog(image)
     qtbot.addWidget(dialog)

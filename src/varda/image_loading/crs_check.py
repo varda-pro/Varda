@@ -116,7 +116,7 @@ def chooseCrs(
     instead of its file's, and with ``transform`` its pixel grid too
     (Affine's a, b, c, d, e, f), checked, and recorded as a ``crsFix`` that
     isn't automatic (the user's choice, with their ``reason``, and the
-    ``transform`` set). Raises ValueError, changing nothing, when PROJ
+    ``transform`` in use: this one, or a grid kept from an earlier fix). Raises ValueError, changing nothing, when PROJ
     can't read ``crs`` or the transform isn't one (``setMetadataOverrides``
     parses them first)."""
     declared = image.dataSource.crs
@@ -129,8 +129,9 @@ def chooseCrs(
         "reason": reason,
         "automatic": False,
     }
-    if transform is not None:
-        record["transform"] = list(transform)
+    inUse = image.metadataOverrides.get("transform")
+    if inUse is not None:
+        record["transform"] = list(inUse)
     image.dataSource.extraMetadata[CRS_FIX_KEY] = record
     return health
 
@@ -150,11 +151,15 @@ def applyCrsFix(image: VardaRaster, fix: CrsFix) -> CrsHealth:
 
 
 def undoCrsFix(image: VardaRaster) -> CrsHealth:
-    """Keep the file's own CRS and pixel grid instead of the fix in use
-    (both overrides removed; the fix is then offered again), with the fix's
-    ``crsFix`` record kept as ``undone``."""
+    """Keep the file's own CRS instead of the fix in use, and its own pixel
+    grid when the fix set one (the ``transform`` override its record names;
+    another, e.g. a session's corrected grid, stays). The fix is then
+    offered again, with its ``crsFix`` record kept as ``undone``."""
     record = image.dataSource.extraMetadata.get(CRS_FIX_KEY)
-    rest = {k: v for k, v in image.metadataOverrides.items() if k != "transform"}
+    grid = record.get("transform") if isinstance(record, dict) else None
+    overrides = image.metadataOverrides
+    fixGrid = grid is not None and _sameGrid(overrides.get("transform"), grid)
+    rest = {k: v for k, v in overrides.items() if k != "transform" or not fixGrid}
     image.setMetadataOverrides({**rest, "crs": None})
     health = checkImageCrs(image)
     if isinstance(record, dict):
@@ -256,7 +261,7 @@ def _inUse(overrides: dict, fix: CrsFix) -> bool:
     return _sameGrid(overrides.get("transform"), fix.transform)
 
 
-def _sameGrid(override: Sequence[float] | None, grid: Transform | None) -> bool:
+def _sameGrid(override: Sequence[float] | None, grid: Sequence[float] | None) -> bool:
     if override is None or grid is None:
         return override is None and grid is None
     return len(override) == len(grid) and all(
