@@ -67,10 +67,12 @@ logger = logging.getLogger(__name__)
 FITS_HEADER_KEY = "FITS header"
 FITS_KEY = "fits"
 
-# Float values at or below this are treated as fill in ALTWG/SPC cubes, as
-# well as NaN (the products' documented no-data, Map Format SIS §4.4.4): no
-# quantity in them comes near it, and older DTMs marked missing vertices with
-# large negative numbers (e.g. -1e38)
+# Varda's own heuristic, not from the SIS: in ALTWG/SPC cubes, float values at
+# or below this are treated as fill too. The SISs document only NaN as no-data
+# (Map Format SIS §4.4.4), but older DTMs marked missing vertices with large
+# negative numbers (e.g. -1e38), and no quantity in the products comes near
+# it. It is recorded in each image's metadata; users can set another no-data
+# value in Image Properties
 ALTWG_FILL_LIMIT = -1e30
 
 # Plane names (lower case, without units) from the Altimetry SIS's Table 6,
@@ -303,7 +305,12 @@ class FitsDataSource(DataSource):
             raise
         planes = math.prod(raw.shape[:-2])  # NAXIS3 (and any axes of 1 beyond)
         raw = raw.reshape(planes, *raw.shape[-2:])
-        self._raw: np.ndarray = raw  # (planes, NAXIS2, NAXIS1), as stored
+        # (planes, NAXIS2, NAXIS1), as stored: a view of the memory map, which
+        # close() drops so the file is released at once (Windows can't delete
+        # or overwrite a mapped file)
+        self._raw: np.ndarray | None = raw
+        self._shape: tuple[int, int, int] = (raw.shape[0], raw.shape[1], raw.shape[2])
+        self._mapped = _isMapped(raw)
         self._closed = False
         header = self._header
         self._scale = float(header.get("BSCALE", 1.0))
@@ -387,11 +394,17 @@ class FitsDataSource(DataSource):
         rows = slice(max(rowOff, 0), max(min(rowOff + height, self.height), 0))
         cols = slice(max(colOff, 0), max(min(colOff + width, self.width), 0))
         if bandIndices is None:
-            raw = self._raw[:, rows, cols]
+            raw = self._pixels()[:, rows, cols]
         else:
             planes = [int(i) for i in np.atleast_1d(np.asarray(bandIndices))]
-            raw = self._raw[planes, rows, cols]
+            raw = self._pixels()[planes, rows, cols]
         return np.moveaxis(self._toValues(raw, masked), 0, -1)
+
+    def _pixels(self) -> np.ndarray:
+        """The stored pixels; a clear error once the file is closed."""
+        if self._raw is None:
+            raise FitsError(f"{os.path.basename(self._filePath)} has been closed.")
+        return self._raw
 
     def readAllBands(self) -> np.ndarray:
         return self.getData()
@@ -402,7 +415,7 @@ class FitsDataSource(DataSource):
         key = key + (slice(None),) * (3 - len(key))
         rowKey, colKey, bandKey = key
         bands = np.arange(self.bandCount)[bandKey]
-        view = self._raw[:, rowKey, colKey]  # a view of the map: nothing read yet
+        view = self._pixels()[:, rowKey, colKey]  # a view of the map: nothing read yet
         values = self._toValues(np.asarray(view[np.atleast_1d(bands)]), True)
         if np.ndim(bands) == 0:
             return values[0]
@@ -416,15 +429,15 @@ class FitsDataSource(DataSource):
 
     @property
     def width(self) -> int:
-        return self._raw.shape[2]
+        return self._shape[2]
 
     @property
     def height(self) -> int:
-        return self._raw.shape[1]
+        return self._shape[1]
 
     @property
     def bandCount(self) -> int:
-        return self._raw.shape[0]
+        return self._shape[0]
 
     @property
     def dtype(self) -> np.dtype:
@@ -440,7 +453,7 @@ class FitsDataSource(DataSource):
     @property
     def isMemoryMapped(self) -> bool:
         """Whether pixels are read on demand from a memory map of the file."""
-        return _isMapped(self._raw)
+        return self._mapped and self._raw is not None
 
     @cached_property
     def _spectral(self) -> np.ndarray | None:
@@ -525,9 +538,19 @@ class FitsDataSource(DataSource):
     def extraMetadata(self) -> dict:
         return {
             **fileMetadata({}, (self.filePath,)),
-            FITS_HEADER_KEY: self._hdus[0].header.tostring(sep="\n", padding=False),
+            FITS_HEADER_KEY: self._headerText(),
             FITS_KEY: self._fitsRecord(),
         }
+
+    def _headerText(self) -> str:
+        """The primary header, then the image HDU's own (for an extension or
+        a compressed image: its BUNIT, PLANEn, TARGET...), one card a line."""
+        text = self._hdus[0].header.tostring(sep="\n", padding=False).rstrip()
+        if self._hduIndex == 0:
+            return text
+        name = self._hdus[self._hduIndex].name
+        image = self._header.tostring(sep="\n", padding=False).rstrip()
+        return f"{text}\n\n# HDU {self._hduIndex} ({name}), the image\n{image}"
 
     def _fitsRecord(self) -> dict:
         """What Varda read and how: the HDU, planes and units, no-data rule,
@@ -631,6 +654,12 @@ class FitsDataSource(DataSource):
         if getattr(self, "_closed", True):  # also when __init__ failed
             return
         self._closed = True
+        for cached in ("extraMetadata", "description", "defaultBands", "bandNames"):
+            getattr(self, cached)  # read from the headers while they are open
+        self._raw = None  # the last view of the map, so astropy can close it
+        hdu = self._hdus[self._hduIndex]
+        if "data" in hdu.__dict__:
+            del hdu.data
         self._hdus.close()
 
     def __del__(self):

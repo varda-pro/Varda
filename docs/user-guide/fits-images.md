@@ -15,7 +15,9 @@ FITS is read with `astropy.io.fits` (Astropy Collaboration 2022), not GDAL.
   it uses the first image extension (e.g. an empty primary followed by a
   `SCI` extension). The image may have two axes (one band) or three (a
   cube). Axes beyond the third must have length 1. **Image Properties >
-  FITS header** shows the full primary header, and the metadata records
+  FITS header** shows the full primary header and, for an extension or a
+  compressed image, that HDU's own header too (its `BUNIT`, `PLANEn`,
+  `TARGET`...). The metadata records
   which HDU was read and the indices of any other image extensions.
 - **Axes.** FITS stores `NAXIS1` fastest: `NAXIS1` is x (columns), `NAXIS2`
   is y (rows) and `NAXIS3` is the band. Varda's pixel (x, y) is the FITS pixel
@@ -71,14 +73,19 @@ Each plane along `NAXIS3` is one band.
     §4.4.4);
   - stored values equal to `BLANK` in integer images (the image's no-data
     value is then `BZERO + BSCALE × BLANK`);
-  - in ALTWG/SPC cubes only, values at or below −1 × 10³⁰. Some older
-    DTMs mark missing vertices with large negative numbers such as −1 × 10³⁸,
-    and no quantity in these products comes near that.
+  - in ALTWG/SPC cubes only, values at or below −1 × 10³⁰. **This is
+    Varda's own heuristic, not part of the SIS**, which documents only NaN as
+    no-data. Varda adds it because some older DTMs mark missing vertices with
+    large negative numbers such as −1 × 10³⁸, and no quantity in these
+    products comes near that.
 
   The rule applied to an image is recorded in its metadata
-  (`fits.noData`). A value at or below −1 × 10³⁰ in an ALTWG cube therefore
-  can't be told apart from fill. If your product documents a different fill
-  value, set it as the no-data value in **Image Properties**.
+  (`fits.noData`). Because of the heuristic, a value at or below −1 × 10³⁰ in
+  an ALTWG cube can't be told apart from fill. **You can change the rule in
+  Image Properties.** Setting a no-data value there replaces Varda's rule
+  (BLANK and the −1 × 10³⁰ heuristic) with that value; NaN always stays
+  no-data. Enter `nan` to keep only the SIS's NaN. The edit is kept in
+  sessions.
 
 ## Georeferencing: none is invented
 

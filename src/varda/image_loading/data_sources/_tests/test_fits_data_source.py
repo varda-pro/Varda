@@ -4,11 +4,13 @@ The ALTWG-like cube follows the OSIRIS-REx Altimetry SIS (UA-SIS-9.4.4-307,
 §5.2.1.2): PLANEn names with units in the comment's brackets, TARGET,
 lat/lon/radius/X/Y/Z first."""
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.io.fits.file import _File
 
 from varda.common.di_types import ProjectImages
 from varda.image_loading.data_sources.cached_data_source import CachedDataSource
@@ -275,3 +277,43 @@ def test_a_dtm_without_a_crs_is_not_flagged(tmp_path):
     image = loadRaster(str(writeAltwg(tmp_path / "a.fits")))
     assert image.crs is None
     assert image.crsHealth is not None and image.crsHealth.issues == ()
+
+
+def test_close_releases_the_memory_map_and_the_file(tmp_path, monkeypatch):
+    """After close() astropy can close the map (no array of ours holds it),
+    so the file can be deleted and replaced, on Windows too."""
+    closedMaps: list[bool] = []
+    original = _File._maybe_close_mmap
+
+    def spy(self, refcount_delta=0):
+        had = self._mmap is not None
+        original(self, refcount_delta)
+        closedMaps.append(had and self._mmap is None)
+
+    monkeypatch.setattr(_File, "_maybe_close_mmap", spy)
+    path = writeAltwg(tmp_path / "a.fits")
+    source = FitsDataSource(str(path))
+    assert source.getData([4], window=(2, 3, 1, 1))[0, 0, 0] == 423
+    source.close()
+    assert any(closedMaps), "the memory map is still referenced"
+    assert not source.isMemoryMapped
+    with pytest.raises(FitsError, match="closed"):
+        source.getData()
+    assert source.width == COLUMNS and source.bandNames[8] == "Elevation (m)"
+
+    os.remove(path)
+    fits.PrimaryHDU(np.full((2, 2), 7.0, dtype=np.float32)).writeto(path)
+    again = FitsDataSource(str(path))
+    assert again.readAllBands()[0, 0, 0] == 7.0
+    again.close()
+
+
+def test_an_extensions_own_header_is_shown(tmp_path):
+    image = fits.ImageHDU(np.zeros((3, 3), dtype=np.float32), name="SCI")
+    image.header["BUNIT"] = "DN"
+    primary = fits.PrimaryHDU()
+    primary.header["TELESCOP"] = "Test"
+    fits.HDUList([primary, image]).writeto(tmp_path / "e.fits")
+    text = FitsDataSource(str(tmp_path / "e.fits")).extraMetadata[FITS_HEADER_KEY]
+    assert "TELESCOP= 'Test" in text
+    assert "# HDU 1 (SCI), the image" in text and "BUNIT   = 'DN" in text
