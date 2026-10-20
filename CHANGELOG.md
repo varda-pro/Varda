@@ -20,6 +20,18 @@ can alter results.
   image as it is. Images of other bodies are refused, and the bar counts
   the images it can't overlay, with why in its tooltip. See
   [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#overlays).
+- **CRSs built from planetary labels in the coordinate-system check.** When
+  an image has no CRS, Varda builds one (and, if the file has none, its
+  pixel grid) from its own PDS3, ISIS or PDS4 map projection group: used
+  automatically when the label needs no assumed convention, otherwise
+  offered with the assumption named (e.g. ISIS's local-radius
+  equirectangular). A label whose CRS differs from the one GDAL built (GDAL
+  3.9.3 reads west-positive PDS3 labels as east, and planetographic
+  ellipsoids as spheres) gets the new `label-crs-mismatch` problem, its
+  label's CRS offered, never applied on its own. A label whose longitude
+  range fits the image only with samples running westward gets
+  `lon-bounds-westward`. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#crss-built-from-the-label).
 - **ROI areas and perimeters on the body.** Add Column's Geometry measures
   now include **Area on the body (km²)** and **Perimeter on the body (km)**:
   geodesic (Karney, 2013) on the coordinate system's own surface, with the

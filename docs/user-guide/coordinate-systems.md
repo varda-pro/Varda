@@ -135,9 +135,9 @@ authority, whose codes are those used in OGC services for planetary data
   MAP_SCALE (PDS3 Standards Reference), ISIS's convention (its projections
   negate the longitude difference for `PositiveWest` before computing x),
   and what GDAL reads. A product that numbered its samples westward
-  instead would appear mirrored about its central meridian. To check one,
-  compare the longitudes of its first and last samples with the label's
-  `WESTERNMOST_LONGITUDE` and `EASTERNMOST_LONGITUDE`.
+  instead would appear mirrored about its central meridian. Varda checks
+  this for each image whose label gives its longitude range: see
+  `lon-bounds-westward` under [The checks](#the-checks).
 - **0..360 vs −180..180.** Both are correct; they name the same places.
   Varda reports **0..360** when a geographic image's longitudes go past 180°
   (e.g. a MOLA MEGDR from 0° to 360°) or a projection's central meridian is
@@ -655,23 +655,28 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 
 | Code | Severity | When | Example message | What happens |
 |---|---|---|---|---|
-| `no-crs` | Problem | The image has map coordinates (a transform that isn't the identity), or its label describes a map projection, but there is no CRS | "Its map coordinates have no coordinate system, so Varda treats it as unreferenced." | Nothing is changed. Use **Set coordinate system…** |
+| `no-crs` | Problem | The image has map coordinates (a transform that isn't the identity), or its label describes a map projection, but there is no CRS | "Its map coordinates have no coordinate system, so Varda treats it as unreferenced." When Varda used its label's: "Its file has no coordinate system; Varda built it from its label's map projection." | With a label projection group, see [CRSs built from the label](#crss-built-from-the-label): **used automatically** when complete and nothing is assumed; **offered** (Apply) when Varda had to assume a convention, naming it; when no CRS can be built, the suggestion lists what the label lacks. Otherwise nothing is changed; use **Set coordinate system…** |
 | `unreadable-crs` | Problem | The file has CRS text that PROJ can't read | "Its coordinate system can't be read, so Varda treats it as unreferenced." | Nothing is changed. Image Properties shows the text; use **Set coordinate system…** |
 | `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know (e.g. "Its CRS says Earth, but its label says Bennu."): nothing is changed; use **Set coordinate system…**. A target that names no body is no evidence and gives no finding: `SKY`, `N/A`, `NA`, `NONE`, `NULL`, `UNK`, `UNKNOWN`, `CALIBRATION`, `CALIBRATION TARGET`, `CAL`, `DARK`, `DARK CURRENT`, `FLAT`, `FLAT FIELD`, `BIAS`, `STAR`, `STARS`, `SPACE`, `DEEP SPACE` and `TEST`, in any case |
 | `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
 | `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
+| `label-crs-mismatch` | Problem | The CRS (after any `earth-crs-on-body` fix) isn't the same (`sameCrs`, [What "the same" means](#what-the-same-means)) as the CRS its own label's map projection group describes | "Its label describes Mars, ellipsoid a = 3395.58, c = 3375.60 km, Equirectangular, center lat 10°, lon_0 -100°, but its CRS is Mars, sphere R = 3396.19 km, Equirectangular, center lat 10°, lon_0 100°, 508 m/px (east–west), 500 m/px (north–south)." | **Offered, never automatic** (Apply uses the label's CRS; the file's transform is kept): GDAL may be right, and the label may be the one in error. The suggestion names any convention Varda assumed. The `lon-direction-mismatch` and `latitude-type-mismatch` findings say why the two differ |
+| `lon-bounds-westward` | Problem | The label's longitude range (PDS3 `WESTERNMOST_LONGITUDE`/`EASTERNMOST_LONGITUDE`, ISIS `MinimumLongitude`/`MaximumLongitude`, PDS4 `west_bounding_coordinate`/`east_bounding_coordinate`) fits the image's left and right edges only if its samples run **westward**, and not as Varda reads them, eastward. Checked for cylindrical projections (equirectangular, Mercator; not transverse or oblique Mercator) only, and not for maps 359° or more wide. A bound fits an edge within 3 pixels (at least 0.0001°): labels give pixel edges, pixel centers or the valid data's extent (CRISM FRT000107A7's are 1.5 px inside). The edges are read at the middle row | "Its label's longitude range (100.169° to 100.708° west) fits its map only if its samples run westward; Varda reads them eastward." | Nothing is changed. Check a known feature: the image may be mirrored about its center meridian ([Conventions](#conventions)) |
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
 | `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
 | `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject for figures and terrain (Reproject Image comes in a later version) |
 | `lon-0-360` | Info | The image's longitudes run 0..360 (a geographic image past 180°, or a projection centered at 180° or beyond) | "Its longitudes run from 0 to 360° (not −180 to 180°)." | Nothing to do: Varda reads both conventions and never rewrites them |
 
 Without a CRS or with an unreadable one, Varda reports that alone: the other
-checks need a CRS. An image with neither map coordinates nor a label
+checks need a CRS. When Varda used a CRS built from the label, the other
+checks are of that CRS and its grid. An image with neither map coordinates nor a label
 projection is simply unreferenced and gets no finding.
 
 ### The one automatic fix, and why only that one
 
-Varda changes a coordinate system on its own in exactly one case: the CRS
+Apart from giving an image with no CRS the one its label describes
+([CRSs built from the label](#crss-built-from-the-label)), Varda changes a
+coordinate system on its own in exactly one case: the CRS
 is **Earth's and geographic** (plain degrees, e.g. `EPSG:4326`) and the
 label's target is **another body Varda knows**. Varda then reads the
 coordinates as degrees on that body's IAU 2015 sphere (e.g.
@@ -712,6 +717,129 @@ offers the fix again; the other checks are then of the file's CRS, the one
 in use. Sessions keep the corrected CRS
 (see
 [Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
+
+### CRSs built from the label
+
+GDAL builds an image's CRS from its PDS3, ISIS or PDS4 label. Sometimes it
+builds none (a projection or keyword it doesn't handle, no radii), and
+sometimes the wrong one: GDAL 3.9.3's PDS3 driver reads
+`POSITIVE_LONGITUDE_DIRECTION = WEST` with `CENTER_LONGITUDE = 100` as 100°
+east, and a `PLANETOGRAPHIC` label with A ≠ C as a sphere of radius A.
+Varda builds its own CRS from the label's map projection group (PDS3's
+`IMAGE_MAP_PROJECTION`, ISIS's `Mapping`, PDS4's `cart:` classes) and
+compares the two. This uses the image's **own label** only: label facts
+from Varda's provenance never build a CRS or raise a label finding, since a
+result's grid may differ from its inputs'.
+
+**Projections.** Names are matched ignoring case, spaces and underscores.
+
+| Label | PROJ |
+|---|---|
+| EQUIRECTANGULAR (ISIS `Equirectangular`) | `+proj=eqc +lat_ts=CENTER_LATITUDE +lat_0=0 +lon_0=CENTER_LONGITUDE` |
+| SIMPLE CYLINDRICAL | `+proj=eqc +lat_ts=0 +lat_0=0 +lon_0` (as GDAL does) |
+| POLAR STEREOGRAPHIC | `+proj=stere +lat_0=±90` (the sign of CENTER_LATITUDE) `+lon_0`; `+k=1` (or the label's scale factor) when \|CENTER_LATITUDE\| = 90, else `+lat_ts=CENTER_LATITUDE` (true scale there) |
+| SINUSOIDAL | `+proj=sinu +lon_0` |
+| ORTHOGRAPHIC | `+proj=ortho +lat_0 +lon_0` |
+| TRANSVERSE MERCATOR | `+proj=tmerc +lat_0 +lon_0 +k=SCALE_FACTOR` (1 when absent) |
+| MERCATOR | `+proj=merc +lat_ts=CENTER_LATITUDE +lon_0` |
+| LAMBERT CONFORMAL (CONIC) | `+proj=lcc +lat_1 +lat_2` (the standard parallels) `+lat_0 +lon_0` |
+| LAMBERT AZIMUTHAL EQUAL AREA | `+proj=laea +lat_0 +lon_0` |
+| anything else (OBLIQUE CYLINDRICAL, POINT PERSPECTIVE, …) | none: the `no-crs` suggestion names it |
+
+**Keys and units.** PDS3: `A_AXIS_RADIUS` and `C_AXIS_RADIUS`,
+`CENTER_LATITUDE`, `CENTER_LONGITUDE`, `MAP_SCALE`,
+`LINE_PROJECTION_OFFSET` and `SAMPLE_PROJECTION_OFFSET`. ISIS:
+`EquatorialRadius`, `PolarRadius`, `CenterLatitude`, `CenterLongitude`,
+`PixelResolution`, `UpperLeftCornerX` and `UpperLeftCornerY`, and for
+Equirectangular `CenterLatitudeRadius` when ISIS wrote it (the local radius
+it projected with; else Varda computes it, below). PDS4: the
+`cart:` radii, the projection's center parameters,
+`pixel_resolution_x`/`_y` and `upperleft_corner_x`/`_y`. Each length is in
+the unit written beside it (`<KM>`, `<METERS/PIXEL>`, PDS4's `unit`
+attribute); without one, PDS3 radii and `MAP_SCALE` are kilometers (PDS3
+Standards Reference) and ISIS and PDS4 lengths are meters. A value that
+isn't a number ("N/A", "UNK") counts as missing.
+
+**Surface.** a is the equatorial radius and c the polar radius from the
+label (`B_AXIS_RADIUS` is ignored). A PROJ projection string can't hold a
+planetocentric latitude on a flattened ellipsoid, nor ISIS's local-radius
+equirectangular, so some labels need a convention Varda has to
+**assume**:
+
+| Label | Surface | Assumed? |
+|---|---|---|
+| a = c (to 1 m), or only one radius | the sphere of that radius | no |
+| a ≠ c, planetographic (not Equirectangular off the equator) | the ellipsoid (a, c); its geodetic latitude is planetographic | no |
+| a ≠ c, Equirectangular with center latitude φ₀ ≠ 0, planetocentric | the sphere of the local radius at φ₀, r = a·c / √((c cos φ₀)² + (a sin φ₀)²). For a = 3396.19, c = 3376.20 km and φ₀ = 15° that's 3394.8398 km, a CRISM MTRDR's sphere exactly | yes: ISIS's convention |
+| a ≠ c, Equirectangular with φ₀ ≠ 0, planetographic | the body's ellipsoid scaled to a = r (c × r/a), so the map's numbers are ISIS's: x = r·cos φ₀·Δλ, y = r·φ with φ planetographic. Positions are exact under ISIS's convention; lengths measured on this surface are short by r/a (0.04% at 15° on Mars) | yes: ISIS's convention |
+| a ≠ c, planetocentric, Polar Stereographic | the sphere R = c (as GDAL does) | yes |
+| a ≠ c, planetocentric, any other projection | the sphere R = a (as GDAL does) | yes |
+| a ≠ c, no latitude type stated | read as planetocentric (the IAU's default) | yes |
+| a triaxial label (b ≠ a) | as above, with b ignored | yes |
+| no radii | the target's IAU 2015 sphere (Archinal et al., 2018) | yes |
+| no radii and no target Varda knows | none: the `no-crs` suggestion names the radii | — |
+
+ISIS's Equirectangular projects with the local radius at the center
+latitude whatever the label's latitude type (`Equirectangular::SetGround`
+in ISIS: x = r·cos φ₀·(λ − λ₀), y = r·φ, with φ in the label's own
+latitude type), which is why both equirectangular rows use r. A product
+made by other software from a PDS3 label may instead use a; the two differ
+by r/a in scale, which is why these rows are offered rather than applied.
+
+**Comparing with GDAL's CRS.** `label-crs-mismatch` uses `sameCrs`
+([What "the same" means](#what-the-same-means)), which compares a projected
+CRS's own axes (easting, northing), not the longitude axis of the
+geographic CRS it is based on. A west-positive label's CRS and GDAL's
+east-positive reading of it with the same `lon_0` (e.g. a label centered on
+0°) are therefore the same map and give no `label-crs-mismatch`: every
+pixel is at the same place. Only the readout's longitude direction differs,
+and `lon-direction-mismatch` reports that.
+
+**Longitude.** For a west-positive label (PDS3 `WEST`, ISIS
+`PositiveWest`, PDS4 "Positive West"), the CRS's `lon_0` is the
+east-positive equivalent of the center longitude (100°W → −100°), and its
+longitude axis points west, so readouts show °W as the label does. Map x
+still increases eastward ([Conventions](#conventions)). Such a CRS is kept
+and recorded as PROJJSON: WKT has no place for the west longitude axis of a
+projected CRS's base.
+
+**Pixel grid.** Built only when the file has no transform (GDAL gave the
+identity):
+
+- PDS3: s = `MAP_SCALE` in meters; the upper-left corner is
+  x₀ = −(`SAMPLE_PROJECTION_OFFSET` + 0.5)·s, y₀ = (`LINE_PROJECTION_OFFSET`
+  + 0.5)·s, with pixels s × −s (the PDS3 standard's 1-based pixel centers;
+  GDAL 3.9.3 builds the same from the same label).
+- ISIS: (`PixelResolution`, 0, `UpperLeftCornerX`, 0, −`PixelResolution`,
+  `UpperLeftCornerY`).
+- PDS4: the same from `upperleft_corner_x`/`_y` and
+  `pixel_resolution_x`/`_y`.
+
+**When Varda uses it.**
+
+| Situation | Finding | What happens |
+|---|---|---|
+| No CRS; the label's CRS needs nothing assumed, and there is a pixel grid (the file's, or the label's) | `no-crs` | **Used automatically**, with the label's grid when the file has none. Reason, e.g. "Its file has no coordinate system; built from its PDS3 label x.lbl map projection group (POLAR STEREOGRAPHIC, sphere R = 3376.20 km)". The image list's tooltip and the status bar say "No coordinate system in its file; built from its label." |
+| No CRS; a CRS built with an assumption, or without a pixel grid | `no-crs` | **Offered** (Apply). The suggestion names each assumption (or the missing grid keys) |
+| No CRS; no CRS can be built | `no-crs` | Nothing is changed. The suggestion lists what the label lacks, then **Set coordinate system…** |
+| A CRS that isn't the same as the label's | `label-crs-mismatch` | **Offered**, never automatic: GDAL may be right |
+| A CRS the same as the label's, or a label without a buildable CRS | none | — |
+
+The automatic fix is recorded as `crsFix` like the Earth fix, with
+`"from": "none"`, `"source": "label"` and, when Varda set the pixel grid,
+`"transform"` (Affine's a, b, c, d, e, f: pixel width, row rotation,
+upper-left x, column rotation, pixel height (negative), upper-left y, in
+the CRS's units).
+
+**Limitations.**
+
+- When GDAL gave a transform, Varda keeps it and doesn't compare it with
+  the label's: GDAL's PDS driver has its own offset options, and the CRS
+  comparison doesn't cover the grid.
+- Only the projections in the table are built. Others, and labels missing
+  a key the projection needs, get no CRS from Varda.
+- Every assumption above is stated in the finding; when one applies, check
+  the producer's documentation (or a known feature) before applying.
 
 ### Setting or correcting a coordinate system
 
@@ -873,6 +1001,13 @@ projection, not the accuracy of the image's georeferencing.
 - McEwen, A. S., et al. (2010). The High Resolution Imaging Science
   Experiment (HiRISE) during MRO's Primary Science Phase (PSP). *Icarus*,
   205, 2–37. https://doi.org/10.1016/j.icarus.2009.04.023
+- GDAL contributors. GDAL documentation: the PDS, PDS4 and ISIS3 raster
+  drivers. https://gdal.org
+- PDS (2009). *Planetary Data System Standards Reference*, version 3.8,
+  chapter "Cartographic Standards" and the `IMAGE_MAP_PROJECTION` object.
+- USGS Astrogeology. ISIS documentation and source: the `Mapping` group and
+  the `Equirectangular` and `TProjection` classes.
+  https://github.com/DOI-USGS/ISIS3
 - PROJ contributors. PROJ documentation: the `IAU_2015` authority and CRS
   identification. https://proj.org
 - Seidelmann, P. K., et al. (2002). Report of the IAU/IAG Working Group on
