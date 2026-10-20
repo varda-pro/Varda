@@ -126,7 +126,7 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
             )
         run.log("dozen opened", seconds=round(time.monotonic() - started, 2))
         run.settle(0.5)
-        listed = [i.name for i in journeys.images(run)[before:]]
+        listed = [Path(i.name).stem for i in journeys.images(run)[before:]]
         chosen = [tile.stem for tile in tiles]
         run.log("dozen order", listed=listed, chosen=chosen)
         if listed != chosen[: len(listed)]:

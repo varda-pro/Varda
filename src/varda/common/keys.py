@@ -8,6 +8,7 @@ writing "Ctrl" or "Ctrl/Cmd".
 
 import sys
 
+from PyQt6.QtCore import QObject, QTranslator
 from PyQt6.QtGui import QKeySequence
 
 _NATIVE = QKeySequence.SequenceFormat.NativeText
@@ -29,3 +30,29 @@ def controlClick(action: str = "click") -> str:
     Mac, as Apple writes it, "Ctrl+click" elsewhere."""
     joiner = "-" if sys.platform == "darwin" else "+"
     return f"{controlKey()}{joiner}{action}"
+
+
+class NativeKeyTranslator(QTranslator):
+    """Shows this platform's key name in libraries' UI text, which says
+    "Ctrl" everywhere (e.g. the docking library's "Pin Active Tab (Press Ctrl
+    to Pin Group)", where the key is ⌘ on a Mac). Installed on the
+    application; text without "Ctrl", and every text off a Mac, is left to
+    other translators."""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._key = controlKey()
+
+    def translate(
+        self,
+        context: str | None,
+        sourceText: str | None,
+        disambiguation: str | None = None,
+        n: int = -1,
+    ) -> str:
+        if self._key == "Ctrl" or not sourceText or "Ctrl" not in sourceText:
+            return ""
+        return sourceText.replace("Ctrl", self._key)
+
+    def isEmpty(self) -> bool:
+        return False

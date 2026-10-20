@@ -223,7 +223,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         # self.setCentralWidget(dockArea)
         # docks = []
 
-        self.rasterDock = VardaDockWidget("Raster Dock")
+        self.rasterDock = VardaDockWidget("Image View")
         # self.rasterDock.setFeature(
         #     ads.CDockWidget.DockWidgetFeature.DockWidgetClosable, False
         # )

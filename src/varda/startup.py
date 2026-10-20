@@ -8,6 +8,7 @@ from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtWidgets import QApplication
 
 import varda
+from varda.common.keys import NativeKeyTranslator
 from varda._actions._menu_ids import menuBar
 from varda.workspaces.terrain.terrain_view import TerrainView
 from varda._actions._file_actions import cleanOldExtractions, importImagePaths
@@ -35,6 +36,8 @@ def createVarda(q_app: QApplication, checkForUpdates: bool = True) -> VardaAppli
     while this runs on the GUI thread, so it repaints between stages."""
     varda.log._initializeFullLogging()
     q_app.processEvents()
+    # Libraries' "Ctrl" (e.g. the docks' pin button) reads ⌘ on a Mac
+    q_app.installTranslator(NativeKeyTranslator(q_app))
 
     # Every library list draws from one store: bundled, yours, and loaded files
     setDefaultStore(LibraryStore(defaultLibrariesFolder()))

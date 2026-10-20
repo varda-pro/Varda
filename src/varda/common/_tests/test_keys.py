@@ -4,7 +4,12 @@ import sys
 
 import pytest
 
-from varda.common.keys import controlClick, controlKey, shortcutText
+from varda.common.keys import (
+    NativeKeyTranslator,
+    controlClick,
+    controlKey,
+    shortcutText,
+)
 
 MAC = sys.platform == "darwin"
 
@@ -23,3 +28,21 @@ def test_elsewhere_the_control_key_is_ctrl():
     assert controlClick() == "Ctrl+click"
     assert controlClick("right-click") == "Ctrl+right-click"
     assert shortcutText("Ctrl+Z") == "Ctrl+Z"
+
+
+ADS_PIN = "Pin Active Tab (Press Ctrl to Pin Group)"
+
+
+@pytest.mark.skipif(not MAC, reason="macOS key names")
+def test_library_text_names_the_command_key_on_a_mac(qapp):
+    """Release QA #5: the docking library's pin button said Ctrl on a Mac."""
+    translator = NativeKeyTranslator(qapp)
+    assert translator.translate("ads::CDockAreaTitleBar", ADS_PIN) == (
+        "Pin Active Tab (Press ⌘ to Pin Group)"
+    )
+    assert translator.translate("ads::CDockAreaTitleBar", "Close Tab") == ""
+
+
+@pytest.mark.skipif(MAC, reason="Windows and Linux key names")
+def test_library_text_is_left_alone_elsewhere(qapp):
+    assert NativeKeyTranslator(qapp).translate("ads::CDockAreaTitleBar", ADS_PIN) == ""

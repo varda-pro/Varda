@@ -153,7 +153,7 @@ class OverlayBar(QWidget):
 
         self.imageBox = ElidingComboBox()
         self.imageBox.setToolTip(
-            "Lay another image of this scene (e.g. a classification) over the view"
+            "Lay another image of the same area (e.g. a classification) over the view"
         )
         # long names are elided, with the full name in the tooltip
         self.layerBox = ElidingComboBox()

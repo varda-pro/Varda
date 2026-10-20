@@ -24,12 +24,13 @@ ABBREVIATION = re.compile(r"\b[A-Z][A-Z0-9/]*[A-Z0-9](?:s)?\b")
 KNOWN = {
     "OK", "CSV", "PDF", "PNG", "JPEG", "JPG", "URL", "AI", "ID", "3D", "2D",
     "RGB", "HTML", "JSON", "TIFF", "USB", "GB", "MB", "PC", "API",
+    "SVG", "KML", "ENVI",  # file formats, named as such
 }  # fmt: skip
 # Standard terms of the field that a planetary or remote-sensing scientist
 # knows and the guide defines (the 0.10 release QA reviewed and kept them)
 FIELD_TERMS = {
     "CRISM", "I/F", "DEM", "OH", "CTX", "HSV", "CNN", "MLP", "RMS", "RX",
-    "ACE", "R2300", "PDS",
+    "ACE", "R2300", "PDS", "DTM", "USGS", "MICA",
 }  # fmt: skip
 # ("blandness" is a CRISM term of art: a spectrally bland denominator)
 IDIOMS = (
@@ -180,14 +181,18 @@ def _abbreviations(run: QaRun, corpus: list[tuple[str, str]]) -> None:
     places: dict[str, list[str]] = defaultdict(list)
     counts: Counter[str] = Counter()
     for where, text in corpus:
-        for token in ABBREVIATION.findall(text):
-            word = (
-                token.rstrip("s") if token.endswith("s") and len(token) > 2 else token
-            )
-            if word in KNOWN or word in FIELD_TERMS or len(word) < 2:
-                continue
-            counts[word] += 1
-            places[word].append(where)
+        for found in ABBREVIATION.findall(text):
+            # "ENVI/CSV/USGS" is three; "I/F" is one
+            for token in [found] if found in FIELD_TERMS else found.split("/"):
+                word = (
+                    token.rstrip("s")
+                    if token.endswith("s") and len(token) > 2
+                    else token
+                )
+                if word in KNOWN or word in FIELD_TERMS or len(word) < 2:
+                    continue
+                counts[word] += 1
+                places[word].append(where)
     unexplained = [
         word
         for word in counts

@@ -69,7 +69,10 @@ PLUGIN_ACTIONS: list[Action] = [
     Action(
         id="varda.plugins.ai_settings",
         title="AI Assistant Settings…",
-        tooltip="The AI provider, API key and model Kindle a Feature uses",
+        tooltip=(
+            "The AI provider, API key and model used to build plugins "
+            "(Kindle a Feature)"
+        ),
         callback=aiSettings,
         menus=[MenuRule(id=MenuId.PLUGINS, group=MenuGroup.PLUGINS_KINDLE, order=2)],
     ),
