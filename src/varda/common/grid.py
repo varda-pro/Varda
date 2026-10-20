@@ -16,13 +16,13 @@ from pyproj import CRS
 from rasterio.enums import Resampling
 from rasterio.errors import RasterioError
 from rasterio.transform import array_bounds
-from rasterio.warp import reproject, transform_bounds
+from rasterio.warp import reproject
 from rasterio.windows import from_bounds
 
 from varda.common.entities import VardaRaster
 from varda.geo.describe import describeCrs
 from varda.geo.equivalence import Compatibility, canTransform, compatibility, sameCrs
-from varda.geo.transform import warpOperation, warpOptions
+from varda.geo.transform import gdalWarp, isGeographic, transformBounds
 
 # source pixels read beyond the target's footprint, so the resampling
 # kernels at its edge have their neighbors
@@ -201,10 +201,12 @@ def _footprintIn(
     image: VardaRaster, crs: CRS | None
 ) -> tuple[float, float, float, float]:
     """``image``'s bounds (west, south, east, north) in ``crs``."""
-    bounds = _bounds(image)
     if crs is None or sameCrs(crs, image.crs):
-        return bounds
-    return transform_bounds(image.crs, crs, *bounds, densify_pts=21)
+        return _bounds(image)
+    assert image.crs is not None  # placementProblem checked both
+    # not rasterio's transform_bounds, which reads the IAU_2015 ellipsoids
+    # latitude first and keeps no planetocentric positions
+    return transformBounds(image.crs, crs, image.transform, image.width, image.height)
 
 
 def _longitudeShift(source: VardaRaster, target: VardaRaster) -> float | None:
@@ -216,7 +218,7 @@ def _longitudeShift(source: VardaRaster, target: VardaRaster) -> float | None:
     left, bottom, right, top = _bounds(source)
     if south >= top or north <= bottom:
         return None
-    geographic = describeCrs(source.crs).units == "°"
+    geographic = source.crs is not None and isGeographic(source.crs)
     for shift in (0.0, 360.0, -360.0) if geographic else (0.0,):
         if west + shift < right and east + shift > left:
             return shift
@@ -303,7 +305,7 @@ def onGridOf(
     as float64 (rows, cols, bands): read as they are when the grids are the
     same, otherwise reprojected and resampled by map location with
     ``resampling`` (GDAL's warper; between surfaces of one body, positions
-    keep their planetocentric coordinates, ``warpOptions``). No data in the source (its no-data value
+    keep their planetocentric coordinates, ``gdalWarp``). No data in the source (its no-data value
     or masked pixels) is left out of the resampling; target pixels outside
     the source, or with no source data under them, are NaN."""
     if sameGrid(source, target):
@@ -321,19 +323,20 @@ def onGridOf(
         return out.transpose(1, 2, 0)
     assert source.crs is not None and target.crs is not None  # placementProblem
     data = _readFloat(source, bands, window).transpose(2, 0, 1)
+    warp = gdalWarp(source.crs, target.crs)
     # the source's longitudes, written in the target's convention
     sourceTransform = Affine.translation(-shift, 0.0) * source.transform
     reproject(
         source=np.ascontiguousarray(data),
         destination=out,
         src_transform=sourceTransform * Affine.translation(window[1], window[0]),
-        src_crs=source.crs,
+        src_crs=warp.srcCrs,
         src_nodata=np.nan,
         dst_transform=target.transform,
-        dst_crs=target.crs,
+        dst_crs=warp.dstCrs,
         dst_nodata=np.nan,
         resampling=resampling,
-        **warpOptions(source.crs, target.crs),
+        **warp.options,
     )
     return out.transpose(1, 2, 0)
 
@@ -358,7 +361,7 @@ def resamplingRecord(
 ) -> dict | None:
     """The resampling, for a result's provenance metadata (None on the same
     grid). Call it after ``onGridOf`` succeeded: for images that can't be
-    placed it raises ValueError (``warpOperation``)."""
+    placed it raises ValueError (``gdalWarp``)."""
     if sameGrid(source, target):
         return None
     assert source.crs is not None and target.crs is not None
@@ -371,6 +374,6 @@ def resamplingRecord(
         "toPixelSize": pixelSizeText(target),
         "fromCrs": source.crs.to_string(),
         "toCrs": target.crs.to_string(),
-        # the PROJ pipeline between surfaces of one body, or PROJ's own
-        "coordinateOperation": warpOperation(source.crs, target.crs) or "PROJ",
+        # the PROJ pipeline GDAL ran (x-first axes), or PROJ's own
+        "coordinateOperation": gdalWarp(source.crs, target.crs).operation,
     }

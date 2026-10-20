@@ -23,7 +23,7 @@ The output grid (``gridFor``):
   anything is allocated, naming a coarser resolution that fits.
 
 The warp (``reprojectBand``) is GDAL's warper through
-``rasterio.warp.reproject``, with ``geo.transform.warpOptions``: between
+``rasterio.warp.reproject``, with ``geo.transform.gdalWarp``: between
 surfaces of one body positions keep their planetocentric longitude and
 latitude (§4.3.1), and registered datum shifts keep PROJ's own operation.
 GDAL runs outside ``PROJ_LOCK``; the pyproj work holds it."""
@@ -50,16 +50,20 @@ from varda.geo.measure import groundSpacing
 from varda.geo.recommend import Footprint, footprintLonLat
 from varda.geo.transform import (
     eastLonLat,
+    gdalWarp,
+    isGeographic,
+    longitudePeriod,
     ographicLatitude,
+    transformBounds,
     transformPoints,
-    warpOperation,
-    warpOptions,
 )
 from varda.utilities.proj_lock import PROJ_LOCK
 
 MAX_OUTPUT_PIXELS = 400_000_000
 # points per edge of an image's footprint
 _EDGE_POINTS = 21
+# output pixels moved at once by sourcePixelDistance (bounds its temporaries)
+_CHUNK_PIXELS = 262_144
 # samples per side of the output for scaleChange
 _SCALE_GRID = 9
 # longitudes this close (degrees) to a target's cut don't cross it
@@ -195,13 +199,15 @@ def gridFor(
 def _target(crs: CRS | str) -> _Target:
     with PROJ_LOCK:
         parsed = CRS.from_user_input(crs)
-        geographic = parsed.is_geographic
+        geographic = isGeographic(parsed)
         unit = parsed.axis_info[0].unit_conversion_factor if parsed.axis_info else 1.0
         operation = parsed.coordinate_operation
         method = operation.method_name.lower() if operation is not None else ""
         remarks = str(parsed.to_json_dict().get("remarks", ""))
     description = describeCrs(crs)
     if geographic:
+        # PROJ applies +lon_wrap to its own east-positive longitudes, before
+        # any axis direction, so lon0 is east here too
         wrap = _LON_WRAP.search(remarks)
         lon0 = float(wrap.group(1)) if wrap else 0.0
     else:
@@ -383,76 +389,27 @@ def reprojectBand(
     """One band (float64, rows × cols, NaN for no data) on ``grid``, as
     float32 (grid.height × grid.width), NaN outside the source or with no
     source data under it: GDAL's warper with ``method`` and
-    ``warpOptions`` (planetocentric positions kept between surfaces), run
-    outside PROJ_LOCK. A geographic source's longitudes are moved by a whole
+    ``gdalWarp`` (planetocentric positions kept between surfaces, x-first
+    axes for GDAL), run outside PROJ_LOCK. A geographic source's longitudes are moved by a whole
     turn when that puts it over the grid (0–360 sources on −180..180
     grids). Raises ValueError across bodies."""
-    options = warpOptions(srcCrs, grid.crs)
+    warp = gdalWarp(srcCrs, grid.crs)
     height, width = band.shape
     shift = _longitudeShift(srcCrs, srcTransform, width, height, grid)
-    srcWkt, srcSwapped = _xFirst(srcCrs)
-    dstWkt, dstSwapped = _xFirst(grid.crs)
-    operation = options.get("COORDINATE_OPERATION")
-    if operation is not None and (srcSwapped or dstSwapped):
-        # the pipeline works in the CRSs' own axis order; GDAL gets x first
-        swap = "+step +proj=axisswap +order=2,1"
-        head, steps = operation.split(" ", 1)
-        assert head == "+proj=pipeline"
-        options["COORDINATE_OPERATION"] = " ".join(
-            [head, *([swap] if srcSwapped else []), steps]
-            + ([swap] if dstSwapped else [])
-        )
     out = np.full((grid.height, grid.width), np.nan, dtype=np.float32)
     reproject(
         source=np.ascontiguousarray(band, dtype=np.float64),
         destination=out,
         src_transform=Affine.translation(-shift, 0.0) * srcTransform,
-        src_crs=srcWkt,
+        src_crs=warp.srcCrs,
         src_nodata=np.nan,
         dst_transform=grid.affine,
-        dst_crs=dstWkt,
+        dst_crs=warp.dstCrs,
         dst_nodata=np.nan,
         resampling=method,
-        **options,
+        **warp.options,
     )
     return out
-
-
-def _xFirst(crs: CRS | str) -> tuple[str, bool]:
-    """The CRS as WKT for GDAL with its x axis (easting or longitude, in its
-    own direction) first, and whether that swapped its axes. GDAL's
-    traditional GIS order leaves the IAU_2015 ellipsoids' latitude first
-    (e.g. ``IAU_2015:49901``), while Varda's transforms are x first. The
-    swapped CRS has no authority code, so GDAL can't restore the order.
-    Holds PROJ_LOCK."""
-    with PROJ_LOCK:
-        parsed = CRS.from_user_input(crs)
-        if not _latitudeFirst(parsed):
-            return parsed.to_wkt(), False
-        definition = parsed.to_json_dict()
-        definition.pop("id", None)
-        definition.pop("ids", None)
-        definition["coordinate_system"]["axis"].reverse()
-        return CRS.from_json_dict(definition).to_wkt(), True
-
-
-def _latitudeFirst(crs: CRS) -> bool:
-    axes = crs.axis_info
-    return (
-        len(axes) >= 2
-        and axes[0].direction in ("north", "south")
-        and axes[1].direction in ("east", "west")
-    )
-
-
-def _period(crs: CRS | str) -> float | None:
-    """A whole turn of longitude in a geographic CRS's x units; None for a
-    projected CRS."""
-    with PROJ_LOCK:
-        parsed = CRS.from_user_input(crs)
-        if not parsed.is_geographic:
-            return None
-        return 360.0 / math.degrees(parsed.axis_info[0].unit_conversion_factor)
 
 
 def _longitudeShift(
@@ -462,17 +419,15 @@ def _longitudeShift(
     from a geographic source's longitudes so it lies over ``grid`` (as
     ``common.grid.onGridOf`` does); 0 for a projected source or when no
     turn makes them overlap."""
-    period = _period(srcCrs)
+    period = longitudePeriod(srcCrs)
     if period is None:
         return 0.0
-    xs, ys = transformPoints(
-        grid.crs, srcCrs, *(grid.affine * _edgePixels(grid.width, grid.height))
-    )
-    xs = xs[np.isfinite(xs) & np.isfinite(ys)]
-    if xs.size == 0:
+    try:
+        west, _, east, _ = transformBounds(
+            grid.crs, srcCrs, grid.affine, grid.width, grid.height
+        )
+    except ValueError:
         return 0.0
-    xs = np.unwrap(xs, period=period)
-    west, east = float(xs.min()), float(xs.max())
     corners = srcTransform * (np.array([0.0, width]), np.array([0.0, height]))
     left, right = float(min(corners[0])), float(max(corners[0]))
     for shift in (0.0, period, -period):
@@ -487,7 +442,7 @@ def _intoSource(
     """Longitudes on a geographic source moved by whole turns to the
     representation nearest the source's center (x unchanged when
     projected)."""
-    period = _period(srcCrs)
+    period = longitudePeriod(srcCrs)
     if period is None:
         return xs
     center = (srcTransform * (width / 2, 0.0))[0]
@@ -509,13 +464,15 @@ def sourcePixelDistance(
     distance in source pixels from its center to the nearest source pixel
     center: the resampling's interpolation distance (0 on the source's own
     grid, up to √2/2). Each center is moved into the source with
-    ``transformPoints``, ``chunkRows`` rows at a time; NaN outside the
+    ``transformPoints``, ``chunkRows`` rows at a time (fewer for a wide
+    grid: at most 262,144 pixels per chunk); NaN outside the
     source."""
     out = np.full((grid.height, grid.width), np.nan, dtype=np.float32)
     inverse = ~srcTransform
     cols = np.arange(grid.width, dtype=np.float64) + 0.5
-    for first in range(0, grid.height, max(1, chunkRows)):
-        rows = np.arange(first, min(first + max(1, chunkRows), grid.height)) + 0.5
+    perChunk = max(1, min(chunkRows, _CHUNK_PIXELS // max(1, grid.width)))
+    for first in range(0, grid.height, perChunk):
+        rows = np.arange(first, min(first + perChunk, grid.height)) + 0.5
         c, r = np.meshgrid(cols, rows)
         xs, ys = transformPoints(
             grid.crs, srcCrs, *(grid.affine * (c.ravel(), r.ravel()))
@@ -579,11 +536,12 @@ def reprojectionRecord(
     """The ``reprojection`` metadata of a result (plain JSON values; NaN
     becomes None): ``from`` and ``to`` (each ``crs`` text and
     ``description``), ``method``, ``resolutionM``, ``grid`` (transform,
-    width, height), ``coordinateOperation`` (the PROJ pipeline between
-    surfaces, or "PROJ"), the ``gdal`` and ``proj`` versions, and
+    width, height), ``coordinateOperation`` (the PROJ pipeline GDAL's
+    warper ran, with GDAL's x-first axis order, or "PROJ" for PROJ's own), the ``gdal`` and ``proj`` versions, and
     ``scaleChange`` ``{max, mean}`` (``scale``, from ``scaleChange``).
     Raises ValueError across bodies."""
-    operation = warpOperation(srcCrs, grid.crs) or "PROJ"
+    # the pipeline as GDAL ran it (x-first axes), or "PROJ"
+    operation = gdalWarp(srcCrs, grid.crs).operation
     gdalProj = getattr(rasterio, "__proj_version__", None)
     proj = pyproj.__proj_version__
     if gdalProj and gdalProj != proj:

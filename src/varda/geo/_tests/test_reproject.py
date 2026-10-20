@@ -29,7 +29,7 @@ from varda.geo.reproject import (
     sourcePixelDistance,
     sourceResolution,
 )
-from varda.geo.transform import transformPoints
+from varda.geo.transform import isGeographic, transformPoints
 
 NORTH_POLAR = "IAU_2015:49930"
 MARS_EQC = "IAU_2015:49910"
@@ -252,3 +252,73 @@ def test_record_is_json():
     assert record["to"]["crs"] == grid.crs
     assert {"gdal", "proj", "from", "to", "resolutionM"} <= record.keys()
     assert record["scaleChange"]["max"] >= record["scaleChange"]["mean"] > 0
+
+
+def _markerSource(crs: str) -> tuple[np.ndarray, Affine]:
+    """100 × 100 pixels on ``crs`` (0.01 units when geographic, 500 m
+    otherwise) whose pixel (50, 50) is centered on the Mars marker."""
+    (x,), (y,) = transformPoints(
+        SPHERE_DEGREES, crs, [MARKER_LON_LAT[0]], [MARKER_LON_LAT[1]]
+    )
+    size = 0.01 if isGeographic(crs) else 500.0
+    values = np.zeros((100, 100))
+    values[50, 50] = 1.0
+    return values, Affine(size, 0, x - 50.5 * size, 0, -size, y + 50.5 * size)
+
+
+PLANETOCENTRIC_PAIRS = [
+    ("IAU_2015:49902", "IAU_2015:49912"),
+    ("IAU_2015:49902", "IAU_2015:49911"),
+    ("IAU_2015:49902", "IAU_2015:49901"),
+    (SPHERE_DEGREES, "IAU_2015:49902"),
+    ("IAU_2015:49902", "IAU_2015:49931"),  # west polar stereographic
+]
+
+
+@pytest.mark.parametrize(
+    ("src", "dst"),
+    PLANETOCENTRIC_PAIRS + [(dst, src) for src, dst in PLANETOCENTRIC_PAIRS],
+)
+def test_planetocentric_ellipsoid_marker(src, dst):
+    """GDAL's warper reads IAU_2015:49902's planetocentric latitude as
+    geodetic (20 km off at 45°N) unless it gets the explicit pipeline."""
+    values, transform = _markerSource(src)
+    grid = gridFor(src, transform, 100, 100, dst, resolution=500.0)
+    assert grid.width > 10 and grid.height > 10
+    out = reprojectBand(values, src, transform, grid, Resampling.nearest)
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
+    markerX, markerY = transform * (50.5, 50.5)
+    (x,), (y,) = transformPoints(src, grid.crs, [markerX], [markerY])
+    col, row = ~grid.affine * (x, y)
+    assert abs(rows.mean() + 0.5 - row) <= 0.5
+    assert abs(cols.mean() + 0.5 - col) <= 0.5
+    assert (
+        "geoc"
+        in reprojectionRecord(src, grid, Resampling.nearest, 500.0, scale=(1.0, 1.0))[
+            "coordinateOperation"
+        ]
+    )
+
+
+def test_planetocentric_ellipsoid_target_grid():
+    """IAU_2015:49902 is angles, though pyproj's is_geographic says no."""
+    transform = Affine(0.01, 0, 77.0, 0, -0.01, 45.5)
+    grid = gridFor(SPHERE_DEGREES, transform, 100, 100, "IAU_2015:49902")
+    assert 90 <= grid.width <= 130 and 90 <= grid.height <= 130
+    out = reprojectBand(
+        np.ones((100, 100)), SPHERE_DEGREES, transform, grid, Resampling.nearest
+    )
+    assert np.isfinite(out).mean() > 0.9
+
+
+def test_0_360_source_on_planetocentric_ellipsoid():
+    image = makeImage(MOLA_MEGDR_PROJ, centerLonLat=(200.0, 10.0), pixelSize=0.05)
+    grid = gridFor(_crs(image), image.transform, 64, 64, "IAU_2015:49902")
+    assert grid.transform[2] < 0  # on −180..180
+    out = reprojectBand(
+        np.ones((64, 64)), _crs(image), image.transform, grid, Resampling.nearest
+    )
+    assert np.isfinite(out).mean() > 0.9
+    distance = sourcePixelDistance(_crs(image), image.transform, 64, 64, grid)
+    assert np.isfinite(distance).mean() > 0.9

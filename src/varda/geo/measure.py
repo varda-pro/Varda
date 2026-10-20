@@ -46,7 +46,12 @@ from varda.geo.distortion import (
     arealScaleAtPixels,
     distortionOver,
 )
-from varda.geo.transform import ographicLatitude, planetocentricLonLat, transformPoints
+from varda.geo.transform import (
+    isGeographic,
+    ographicLatitude,
+    planetocentricLonLat,
+    transformPoints,
+)
 from varda.utilities.proj_lock import PROJ_LOCK
 
 # radii closer than this to the reference ellipsoid's are the same surface
@@ -559,7 +564,7 @@ def _layout(key: str) -> _Layout:
     except CRSError as error:
         raise ValueError(f"Unreadable coordinate system: {error}") from error
     unit = crs.axis_info[0].unit_conversion_factor if crs.axis_info else 1.0
-    if crs.is_geographic:
+    if isGeographic(crs):  # also PROJ's planetocentric ellipsoids
         centric = latitudeType(crs) == "planetocentric"
         return _Layout(True, True, unit, centric)
     operation = crs.coordinate_operation

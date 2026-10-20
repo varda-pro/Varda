@@ -13,7 +13,13 @@ from varda.geo._tests.fixtures import (
     WGS84,
 )
 from varda.geo.transform import _latitudeFirst as _crsLatitudeFirst
-from varda.geo.transform import transformPoints, warpOperation, warpOptions
+from varda.geo.transform import (
+    gdalWarp,
+    isGeographic,
+    transformPoints,
+    warpOperation,
+    warpOptions,
+)
 
 MARS_SPHERE = "+proj=longlat +R=3396190 +no_defs"
 
@@ -35,6 +41,10 @@ def _latitudeFirst(crs: str) -> bool:
         ("IAU_2015:49911", "IAU_2015:49910", -80, 80),
         (CRISM_MTRDR_WKT, "IAU_2015:49912", -80, 80),
         (HIRISE_POLAR_PROJ, "IAU_2015:49901", 60, 89),  # west, ographic, lat first
+        # one surface, but GDAL's warper reads 49902's planetocentric
+        # latitude as geodetic, so it gets the pipeline too
+        ("IAU_2015:49902", "IAU_2015:49912", -80, 80),
+        ("IAU_2015:49901", "IAU_2015:49902", -80, 80),
         # PROJ's "Transformation from unknown to unknown", not "ballpark"
         (CRISM_MTRDR_WKT, "+proj=eqc +a=3396190 +b=3376200 +over +units=m", -80, 80),
     ],
@@ -63,3 +73,18 @@ def test_no_pipeline_on_one_surface():
 def test_other_body_raises():
     with pytest.raises(ValueError, match="Earth.*Mars|Mars.*Earth"):
         warpOperation("IAU_2015:49910", WGS84)
+
+
+def test_gdal_gets_x_first_crss():
+    warp = gdalWarp("+proj=longlat +R=3396190 +no_defs", "IAU_2015:49901")
+    axes = CRS.from_wkt(warp.dstCrs).axis_info
+    assert [a.direction for a in axes] == ["west", "north"]
+    assert warp.operation.endswith("+step +proj=axisswap +order=2,1")
+    same = gdalWarp(CTX_DEM_PROJ, "IAU_2015:49910")
+    assert same.options == {} and same.operation == "PROJ"
+
+
+def test_planetocentric_ellipsoid_is_geographic():
+    assert not CRS.from_user_input("IAU_2015:49902").is_geographic
+    assert isGeographic("IAU_2015:49902") and isGeographic("IAU_2015:49901")
+    assert not isGeographic("IAU_2015:49912")
