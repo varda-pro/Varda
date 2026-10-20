@@ -161,6 +161,13 @@ def writeFindings(outDir: Path, findings: list[Finding]) -> Path:
     return path
 
 
+def ensureFindings(outDir: Path) -> None:
+    """Write an empty ``findings.json`` if no finding made one, so a clean run
+    has a report and a missing file means the run never finished."""
+    if not (outDir / FINDINGS_FILE).exists():
+        writeFindings(outDir, [])
+
+
 def addFinding(outDir: Path, found: Finding) -> None:
     writeFindings(outDir, [*readFindings(outDir), found])
 

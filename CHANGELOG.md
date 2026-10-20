@@ -173,6 +173,11 @@ can alter results.
 
 ### Fixed
 
+- **AI keys without a keychain.** Where no secure key store exists (Linux without
+  gnome-keyring or KWallet), the AI Assistant Settings now say so, a key still
+  works for the session, and it isn't saved between sessions. Installing
+  gnome-keyring, KWallet or `keyrings.alt` keeps it.
+
 - **PCA, MNF and ICA no longer use every band when "from" and "to" are the
   same wavelength** (a wrong result). Only an unset range means every band;
   a range holding fewer than two bands disables Run and says why, and the
