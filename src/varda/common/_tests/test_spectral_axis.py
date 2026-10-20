@@ -5,6 +5,9 @@ import numpy as np
 import pytest
 
 from varda.common.spectral_axis import (
+    bandWavelengthLabels,
+    formatWavelength,
+    wavelengthDecimals,
     BandModel,
     SpectralUnit,
     bandModelFor,
@@ -161,3 +164,31 @@ def test_coarse_visible_sampling_falls_back_to_distinct_false_colour():
     )
     bands = displayBands(model)
     assert bands is not None and len(set(bands.tolist())) == 3
+
+
+# --- Showing wavelengths (release QA #7) -------------------------------------
+
+
+def test_decimals_tell_neighboring_bands_apart():
+    assert wavelengthDecimals(np.linspace(1000, 2600, 40)) == 0  # 41 nm apart
+    assert wavelengthDecimals(np.linspace(1000, 2600, 400)) == 1  # 4 nm
+    assert wavelengthDecimals([2.3538, 2.3604, 2.3669]) == 4  # µm, 6.5 nm
+    assert wavelengthDecimals([500.0]) == 1  # one band: a sensible default
+    assert wavelengthDecimals([1e-9, 2e-9, 3e-9]) == 4  # never more than 4
+
+
+def test_a_wavelength_reads_with_its_unit():
+    assert formatWavelength(2353.8461538461543, "nm", 1) == "2353.8 nm"
+    assert formatWavelength(2.35384615, "µm", 3) == "2.354 µm"
+    assert formatWavelength(12.0, "", 0) == "12"
+
+
+def test_band_labels_use_the_images_own_unit():
+    model = bandModelFor(
+        [2.3538461, 2.3603, 2.3669], "micrometers", None, {}, bandCount=3
+    )
+    assert bandWavelengthLabels(model) == ["2.3538 µm", "2.3603 µm", "2.3669 µm"]
+
+
+def test_no_spectral_axis_has_no_wavelength_labels():
+    assert bandWavelengthLabels(BandModel.empty(3)) is None

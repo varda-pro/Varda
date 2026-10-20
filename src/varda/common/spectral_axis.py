@@ -120,6 +120,28 @@ def unitLabel(unit: SpectralUnit | None, declared: str = "") -> str:
     return unit.value if unit is not None else declared
 
 
+MAX_WAVELENGTH_DECIMALS = 4
+
+
+def wavelengthDecimals(values: npt.ArrayLike) -> int:
+    """Decimals that show band centers (in any unit) a step finer than the
+    spacing of neighboring bands, so every band reads differently without
+    float noise ("2353.8461538461543"): 0–4; 1 for a single band."""
+    centers = np.unique(np.asarray(values, dtype=np.float64))
+    centers = centers[np.isfinite(centers)]
+    spacing = np.diff(centers)
+    spacing = spacing[spacing > 0]
+    if spacing.size == 0:
+        return 1
+    decimals = int(np.ceil(-np.log10(spacing.min()))) + 1
+    return int(np.clip(decimals, 0, MAX_WAVELENGTH_DECIMALS))
+
+
+def formatWavelength(value: float, unit: str, decimals: int) -> str:
+    """A wavelength for people: rounded, with its unit ("2353.8 nm")."""
+    return f"{value:.{decimals}f} {unit}".strip()
+
+
 def parseEnviList(value) -> list[float] | None:
     """An ENVI ``{ a , b , c }`` list (or a sequence already) as floats."""
     if value is None:
@@ -250,6 +272,16 @@ def bandModelFor(
 TRUE_COLOUR_NM = (640.0, 550.0, 470.0)  # red, green, blue
 TRUE_COLOUR_TOLERANCE_NM = 50.0
 FALSE_COLOUR_FRACTIONS = (0.85, 0.5, 0.15)  # of the band range: long -> red
+
+
+def bandWavelengthLabels(model: BandModel) -> list[str] | None:
+    """Each band's center in the image's own unit, rounded to tell bands
+    apart ("2353.8 nm"); None without a spectral axis."""
+    if model.centers is None:
+        return None
+    native = model.native(model.centers)
+    decimals = wavelengthDecimals(native)
+    return [formatWavelength(value, model.label, decimals) for value in native]
 
 
 def displayBands(model: BandModel) -> np.ndarray | None:
