@@ -67,8 +67,8 @@ class RxAnalysis(Analysis):
     memoryFactor = 5.5
     category = CATEGORY
     description = (
-        "Squared Mahalanobis distance of each pixel from the scene's mean and "
-        "covariance: pixels unlike the rest of the scene score high."
+        "Squared Mahalanobis distance of each pixel from the image's mean and "
+        "covariance: pixels unlike the rest of the image score high."
     )
 
     def run(self, image: VardaRaster, reportProgress: ProgressCallback) -> VardaRaster:
@@ -94,7 +94,7 @@ class LocalRxAnalysis(Analysis):
     category = CATEGORY
     description = (
         "Distance of each pixel from the mean of its surroundings (an outer "
-        "window minus an inner guard window), with the scene's covariance: "
+        "window minus an inner guard window), with the image's covariance: "
         "finds small targets that differ from their neighborhood."
     )
 
@@ -212,7 +212,7 @@ class AceAnalysis(_TargetDetection):
     detectorLabel = "ACE"
     description = (
         "Adaptive coherence estimator: how closely each pixel's spectrum, "
-        "whitened by the scene's statistics, points the way of the target's "
+        "whitened by the image's statistics, points the way of the target's "
         "(0 to 1; insensitive to brightness)."
     )
     rois = _targetParameter()

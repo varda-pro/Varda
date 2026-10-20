@@ -384,7 +384,7 @@ class MnfAnalysis(_ComponentAnalysis):
     description = (
         "Like PCA but ordered by signal-to-noise: the noise covariance is "
         "estimated from differences between neighboring pixels and whitened "
-        "away first, so the leading components hold coherent scene structure."
+        "away first, so the leading components hold coherent image structure."
     )
     suffix = "MNF"
     components = _componentsParameter()

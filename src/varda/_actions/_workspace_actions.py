@@ -109,7 +109,7 @@ WORKSPACE_ACTIONS: list[Action] = [
         title="New Spectral Hourglass Workspace…",
         tooltip=(
             "Find endmembers (MNF, pixel purity, n-D visualizer), identify them "
-            "against a spectral library, and map them across the scene"
+            "against a spectral library, and map them across the image"
         ),
         callback=newSpectralHourglassWorkspace,
         enablement=EXPR_HAS_IMAGES,

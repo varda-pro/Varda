@@ -290,9 +290,9 @@ class SensorBandsAnalysis(Analysis):
     name = "Convolve to Sensor Bands"
     category = "Spectral Parameters"
     description = (
-        "The cube as another sensor would see it: each of that sensor's bands "
-        "is the mean of the cube's bands weighted by its spectral response "
-        "(e.g. CRISM reflectance as a CTX scene, to align to CTX). Built-in "
+        "The image as another sensor would see it: each of that sensor's bands "
+        "is the mean of the image's bands weighted by its spectral response "
+        "(e.g. CRISM reflectance as a CTX image, to align to CTX). Built-in "
         "sensors are approximations from published band edges or widths; for "
         "precise values, choose Custom bands and give the sensor's response "
         "file."
