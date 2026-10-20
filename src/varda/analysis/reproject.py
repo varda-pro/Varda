@@ -113,8 +113,8 @@ class ReprojectAnalysis(Analysis):
     # the estimate is computed from the output grid (estimateMemory)
     memoryFactor = 6.0
     description = (
-        "Put the image on another map projection with GDAL's warper: the "
-        "projection Varda recommends for the image, exactly another image's "
+        "Put the image on another map projection, resampled with the warper "
+        "of the Geospatial Data Abstraction Library (GDAL): the projection Varda recommends for the image, exactly another image's "
         "grid, or a coordinate system you type. Positions between surfaces "
         "of one body keep their planetocentric longitude and latitude. A "
         "companion quality image gives each output pixel's distance to the "
