@@ -13,10 +13,12 @@ the direction from the body's center)."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import lru_cache
 
 import numpy as np
 import numpy.typing as npt
+from affine import Affine
 from attrs import frozen
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
@@ -24,6 +26,9 @@ from pyproj.exceptions import CRSError
 from varda.geo.bodies import latitudeType
 from varda.geo.equivalence import canTransform, sameCrs
 from varda.utilities.proj_lock import PROJ_LOCK
+
+# points per image edge for transformBounds
+_EDGE_POINTS = 21
 
 
 def transformPoints(
@@ -96,8 +101,12 @@ def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
     ``transformPoints`` moves points, for GDAL's warper (its
     ``COORDINATE_OPERATION`` option), in the CRSs' own axis order; None when
     PROJ's own operation is exact (equivalent CRSs, one surface, or a real
-    transformation such as Earth's datum shifts). Between surfaces of one
-    body, where PROJ has only its ballpark, its steps are:
+    transformation such as Earth's datum shifts) and neither CRS has a
+    planetocentric latitude on a flattened ellipsoid (e.g.
+    ``IAU_2015:49902``: GDAL's warper reads its numbers as geodetic, about
+    20 km off at 45° on Mars, though PROJ's point operation is exact).
+    Between surfaces of one body, where PROJ has only its ballpark, and with
+    such a CRS on either side, its steps are:
 
     1. ``src`` → longitude east and geodetic latitude in degrees (PROJ's own
        steps, ``transformPoints``' step 1);
@@ -108,7 +117,8 @@ def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
     5. radians → degrees;
     6. → ``dst`` (PROJ's own steps).
 
-    On a sphere the geoc steps change nothing. Raises ValueError with
+    On a sphere the geoc steps change nothing. GDAL itself needs the CRSs
+    x first: use ``gdalWarp``, which adds the axis swaps. Raises ValueError with
     ``canTransform``'s reason (e.g. different bodies). Holds PROJ_LOCK; no
     Qt."""
     reason = canTransform(src, dst)
@@ -117,7 +127,8 @@ def warpOperation(src: CRS | str, dst: CRS | str) -> str | None:
     if sameCrs(src, dst):
         return None
     with PROJ_LOCK:
-        return _warpOperation(_key(src), _key(dst))
+        steps = _warpSteps(_key(src), _key(dst))
+    return None if steps is None else _pipeline(steps)
 
 
 def warpOptions(src: CRS | str, dst: CRS | str) -> dict[str, str]:
@@ -129,9 +140,72 @@ def warpOptions(src: CRS | str, dst: CRS | str) -> dict[str, str]:
     return {} if operation is None else {"COORDINATE_OPERATION": operation}
 
 
+@frozen(eq=False)
+class GdalWarp:
+    """What GDAL's warper gets to place a raster from one CRS on another as
+    ``transformPoints`` places points (``gdalWarp``)."""
+
+    srcCrs: str  # WKT, x axis (easting or longitude) first
+    dstCrs: str  # WKT, x axis first
+    # GDAL warper options: the COORDINATE_OPERATION pipeline when PROJ's own
+    # operation isn't exact; empty otherwise
+    options: dict[str, str]
+
+    @property
+    def operation(self) -> str:
+        """The pipeline GDAL runs (in x-first axis order), or "PROJ"."""
+        return self.options.get("COORDINATE_OPERATION", "PROJ")
+
+
+def gdalWarp(src: CRS | str, dst: CRS | str) -> GdalWarp:
+    """The CRSs and options for ``rasterio.warp.reproject`` (or
+    ``transform_bounds``) from ``src`` to ``dst``. Varda's x is always the
+    easting or longitude, but GDAL's traditional GIS axis order leaves some
+    CRSs latitude first (the IAU_2015 ellipsoids, e.g. ``IAU_2015:49901``
+    and ``IAU_2015:49902``), so such a CRS is given to GDAL with its axes
+    swapped (and no authority code, from which GDAL would restore the
+    order), and the pipeline (``warpOperation``) gets axis swaps at its
+    ends. Raises ValueError as ``warpOperation`` does. Holds PROJ_LOCK."""
+    reason = canTransform(src, dst)
+    if reason is not None:
+        raise ValueError(reason)
+    with PROJ_LOCK:
+        srcKey, dstKey = _key(src), _key(dst)
+        srcWkt, srcSwapped = _xFirst(srcKey)
+        dstWkt, dstSwapped = _xFirst(dstKey)
+        steps = None if sameCrs(src, dst) else _warpSteps(srcKey, dstKey)
+    if steps is None:
+        return GdalWarp(srcWkt, dstWkt, {})
+    swap = ["proj=axisswap order=2,1"]
+    steps = [*(swap if srcSwapped else []), *steps, *(swap if dstSwapped else [])]
+    return GdalWarp(srcWkt, dstWkt, {"COORDINATE_OPERATION": _pipeline(steps)})
+
+
 @lru_cache(maxsize=64)
-def _warpOperation(srcKey: str, dstKey: str) -> str | None:
-    """The caller holds PROJ_LOCK."""
+def _xFirst(key: str) -> tuple[str, bool]:
+    """The CRS as WKT with its x axis first, and whether its axes were
+    swapped. The caller holds PROJ_LOCK."""
+    crs = CRS.from_user_input(key)
+    if not _latitudeFirst(crs):
+        return crs.to_wkt(), False
+    definition = crs.to_json_dict()
+    definition.pop("id", None)
+    definition.pop("ids", None)
+    definition["coordinate_system"]["axis"].reverse()
+    return CRS.from_json_dict(definition).to_wkt(), True
+
+
+def _pipeline(steps: Sequence[str]) -> str:
+    return " ".join(
+        ["+proj=pipeline"]
+        + [" ".join(["+step", *(f"+{word}" for word in s.split())]) for s in steps]
+    )
+
+
+@lru_cache(maxsize=64)
+def _warpSteps(srcKey: str, dstKey: str) -> tuple[str, ...] | None:
+    """The steps of ``warpOperation``'s pipeline, or None. The caller holds
+    PROJ_LOCK."""
     route = _route(srcKey, dstKey)
     if route.direct is not None:
         return None
@@ -142,10 +216,59 @@ def _warpOperation(srcKey: str, dstKey: str) -> str | None:
                 f"{inverse}proj=geoc a={side.semiMajor!r} b={side.semiMinor!r}"
             )
     steps += ["proj=unitconvert xy_in=rad xy_out=deg", *_steps(route.dst.plain)]
-    return " ".join(
-        ["+proj=pipeline"]
-        + [" ".join(["+step", *(f"+{word}" for word in s.split())]) for s in steps]
+    return tuple(steps)
+
+
+def isGeographic(crs: CRS | str) -> bool:
+    """Angles on a body: a geographic CRS, or another geodetic one such as
+    PROJ's planetocentric ellipsoids (``IAU_2015:49902``, a spherical
+    coordinate system, which pyproj's ``is_geographic`` calls not
+    geographic), but not geocentric x, y, z. Holds PROJ_LOCK."""
+    with PROJ_LOCK:
+        parsed = crs if isinstance(crs, CRS) else CRS.from_user_input(crs)
+        return (
+            not parsed.is_projected
+            and parsed.geodetic_crs is not None
+            and not parsed.is_geocentric
+        )
+
+
+def transformBounds(
+    src: CRS | str, dst: CRS | str, transform: Affine, width: int, height: int
+) -> tuple[float, float, float, float]:
+    """The (west, south, east, north) bounds, in ``dst``'s x and y, of an
+    image of ``width`` × ``height`` pixels with ``transform`` on ``src``:
+    its edges, 21 points each, moved with ``transformPoints`` (so x is
+    always the easting or longitude). On a geographic ``dst`` the longitudes
+    are unwrapped along the edge, so a footprint across ±180° stays
+    contiguous (east may pass 180°). Raises ValueError across bodies or
+    when no edge point can be moved."""
+    t = np.linspace(0.0, 1.0, _EDGE_POINTS)
+    cols = np.concatenate(
+        [t * width, np.full_like(t, width), (1 - t) * width, np.zeros_like(t)]
     )
+    rows = np.concatenate(
+        [np.zeros_like(t), t * height, np.full_like(t, height), (1 - t) * height]
+    )
+    xs, ys = transformPoints(src, dst, *(transform * (cols, rows)))
+    finite = np.isfinite(xs) & np.isfinite(ys)
+    if not finite.any():
+        raise ValueError("No point of the image's edge can be moved.")
+    xs, ys = xs[finite], ys[finite]
+    period = longitudePeriod(dst)
+    if period is not None:
+        xs = np.unwrap(xs, period=period)
+    return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())
+
+
+def longitudePeriod(crs: CRS | str) -> float | None:
+    """A whole turn of longitude in a geographic CRS's (``isGeographic``)
+    angle unit; None for a projected CRS. Holds PROJ_LOCK."""
+    if not isGeographic(crs):
+        return None
+    with PROJ_LOCK:
+        parsed = crs if isinstance(crs, CRS) else CRS.from_user_input(crs)
+        return 360.0 / np.degrees(parsed.axis_info[0].unit_conversion_factor)
 
 
 def _steps(transformer: Transformer) -> list[str]:
@@ -266,6 +389,11 @@ def _route(srcKey: str, dstKey: str) -> _Route:
     direct = Transformer.from_crs(src, dst)
     if not _sameSurface(src, dst) and not _datumShift(src, dst, direct):
         direct = None
+    elif _centricOnEllipsoid(src) or _centricOnEllipsoid(dst):
+        # PROJ's own operation is exact for points, but GDAL's warper reads
+        # a planetocentric latitude's numbers as geodetic (0.34° off at 45°
+        # on Mars), so the latitude always goes through the explicit steps
+        direct = None
     return _Route(
         _source(srcKey), _side(dst, Transformer.from_crs(_plain(dst), dst)), direct
     )
@@ -292,6 +420,17 @@ def _side(crs: CRS, plain: Transformer) -> _Side:
         ellipsoid.semi_minor_metre,
         centric and _subtype(crs) != "spherical",
         _latitudeFirst(crs),
+    )
+
+
+def _centricOnEllipsoid(crs: CRS) -> bool:
+    """Planetocentric latitude on a flattened ellipsoid (where it differs
+    from geodetic latitude), e.g. ``IAU_2015:49902``."""
+    ellipsoid = crs.ellipsoid
+    return (
+        ellipsoid is not None
+        and abs(ellipsoid.semi_major_metre - ellipsoid.semi_minor_metre) > 1e-3
+        and latitudeType(crs) == "planetocentric"
     )
 
 

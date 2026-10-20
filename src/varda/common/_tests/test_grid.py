@@ -5,6 +5,7 @@ grid."""
 import numpy as np
 import pytest
 from affine import Affine
+from pyproj import CRS as ProjCrs
 from rasterio import CRS
 from rasterio.enums import Resampling
 from rasterio.warp import transform as warpTransform
@@ -311,4 +312,29 @@ def test_onGridOf_onto_a_lon_wrap_ellipsoid_keeps_planetocentric_latitude():
     rows, cols = np.nonzero(out == 1.0)
     assert rows.size > 0, "the marker fell off the grid"
     # PROJ's latitude-keeping operation put it 34 rows (0.34°) south
+    assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "IAU_2015:49901",  # latitude first, west-positive, planetographic
+        "IAU_2015:49902",  # latitude first, planetocentric (spherical CS)
+    ],
+)
+def test_mask_onto_a_latitude_first_grid(code):
+    """rasterio's transform_bounds and GDAL read these CRSs latitude first,
+    and GDAL's warper reads 49902's planetocentric latitude as geodetic."""
+    source, _ = _markerScene()
+    crs = ProjCrs.from_user_input(code)
+    (x,), (y,) = transformPoints(
+        SPHERE_DEGREES, crs, [MARKER_LON_LAT[0]], [MARKER_LON_LAT[1]]
+    )
+    transform = Affine(0.01, 0, x - 0.505, 0, -0.01, y + 0.505)
+    target = _raster(np.zeros((100, 100)), "lat first", transform, crs)
+    assert placementProblem(source, target) is None
+    out = onGridOf(source, target, Resampling.nearest)[..., 0]
+    assert np.isfinite(out).mean() > 0.9
+    rows, cols = np.nonzero(out == 1.0)
+    assert rows.size > 0, "the marker fell off the grid"
     assert abs(rows.mean() - 50) <= 0.5 and abs(cols.mean() - 50) <= 0.5
