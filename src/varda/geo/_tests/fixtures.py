@@ -167,3 +167,58 @@ def writeWgs84(folder: Path, label: str | None = MARS_LABEL, crs="EPSG:4326") ->
     if label is not None:
         path.with_suffix(".lbl").write_text(label)
     return path
+
+
+# A PDS3 IMAGE_MAP_PROJECTION group as HiRISE writes one: Mars's north polar
+# stereographic on the 3376.2 km sphere, 1 m pixels. Its CRS is
+# HIRISE_POLAR_PROJ, its transform HIRISE_LABEL_TRANSFORM.
+HIRISE_LABEL_GROUP = {
+    "MAP_PROJECTION_TYPE": '"POLAR STEREOGRAPHIC"',
+    "A_AXIS_RADIUS": "3376.2 <KM>",
+    "C_AXIS_RADIUS": "3376.2 <KM>",
+    "COORDINATE_SYSTEM_NAME": "PLANETOCENTRIC",
+    "POSITIVE_LONGITUDE_DIRECTION": "EAST",
+    "CENTER_LATITUDE": "90.0 <DEG>",
+    "CENTER_LONGITUDE": "0.0 <DEG>",
+    "MAP_SCALE": "0.001 <KM/PIXEL>",
+    "LINE_PROJECTION_OFFSET": "-120000.5 <PIXEL>",
+    "SAMPLE_PROJECTION_OFFSET": "40000.5 <PIXEL>",
+}
+HIRISE_LABEL_TRANSFORM = (1.0, 0.0, -40001.0, 0.0, -1.0, -120000.0)
+# The spec's label GDAL 3.9.3 misreads (§2): west-positive, planetographic,
+# a ≠ c. GDAL builds GDAL_WEST_PROJ (east, a sphere of A) with
+# GDAL_WEST_TRANSFORM.
+WEST_LABEL_GROUP = {
+    "MAP_PROJECTION_TYPE": "EQUIRECTANGULAR",
+    "A_AXIS_RADIUS": "3396.19 <KM>",
+    "C_AXIS_RADIUS": "3376.20 <KM>",
+    "COORDINATE_SYSTEM_NAME": "PLANETOGRAPHIC",
+    "POSITIVE_LONGITUDE_DIRECTION": "WEST",
+    "CENTER_LATITUDE": "10.0 <DEG>",
+    "CENTER_LONGITUDE": "100.0 <DEG>",
+    "MAP_SCALE": "0.5 <KM/PIXEL>",
+    "LINE_PROJECTION_OFFSET": "100.5 <PIXEL>",
+    "SAMPLE_PROJECTION_OFFSET": "-20.5 <PIXEL>",
+}
+GDAL_WEST_PROJ = "+proj=eqc +lat_ts=10 +lon_0=100 +R=3396190 +units=m +no_defs"
+GDAL_WEST_TRANSFORM = Affine(500, 0, 10_000, 0, -500, 50_500)
+
+
+def writePds3(folder: Path, group: dict[str, str], name: str = "x") -> Path:
+    """A 10 × 10 byte PDS3 image (``name``.img) of Mars and its detached
+    label (``name``.lbl, returned) with ``group`` as its
+    IMAGE_MAP_PROJECTION object."""
+    (folder / f"{name}.img").write_bytes(bytes(range(100)))
+    keys = "".join(f"  {key} = {value}\n" for key, value in group.items())
+    label = folder / f"{name}.lbl"
+    label.write_text(
+        "PDS_VERSION_ID = PDS3\n"
+        "RECORD_TYPE = FIXED_LENGTH\nRECORD_BYTES = 10\nFILE_RECORDS = 10\n"
+        f'^IMAGE = "{name}.img"\nTARGET_NAME = MARS\n'
+        "OBJECT = IMAGE\n  LINES = 10\n  LINE_SAMPLES = 10\n  BANDS = 1\n"
+        "  SAMPLE_TYPE = MSB_UNSIGNED_INTEGER\n  SAMPLE_BITS = 8\n"
+        "END_OBJECT = IMAGE\n"
+        f"OBJECT = IMAGE_MAP_PROJECTION\n{keys}END_OBJECT = IMAGE_MAP_PROJECTION\n"
+        "END\n"
+    )
+    return label

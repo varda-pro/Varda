@@ -4,13 +4,31 @@ label names) becomes the image's CRS override, recorded as ``crsFix``."""
 
 import numpy as np
 import pytest
+from affine import Affine
+from pyproj import CRS
 
 from varda.common.entities import VardaRaster
 from varda.common.provenance import inputRecord
-from varda.geo._tests.fixtures import writeWgs84
+from varda.geo._tests.fixtures import (
+    GDAL_WEST_PROJ,
+    GDAL_WEST_TRANSFORM,
+    HIRISE_LABEL_GROUP,
+    HIRISE_LABEL_TRANSFORM,
+    HIRISE_POLAR_PROJ,
+    WEST_LABEL_GROUP,
+    writePds3,
+    writeWgs84,
+)
 from varda.geo.equivalence import sameCrs
+from varda.geo.health import LABEL_FIX_HEADLINE, Severity, headline
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.image_loading.crs_check import checkImageCrs, chooseCrs, undoCrsFix
+from varda.image_loading.crs_check import (
+    applyCrsFix,
+    checkImageCrs,
+    chooseCrs,
+    undoCrsFix,
+)
+from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.image_loading.image_loading_service import loadRaster
 from varda.image_loading.raster_writer import writeRaster
 
@@ -185,3 +203,124 @@ def test_a_crs_chosen_for_an_image_without_one():
     chooseCrs(image, "IAU_2015:49900", "Same as other.tif")
     assert sameCrs(image.crs, "IAU_2015:49900")
     assert image.extraMetadata["crsFix"]["from"] == "none"
+
+
+# --- CRSs built from the label (spec §4.8) ---
+
+
+@pytest.fixture
+def unreadByGdal(monkeypatch):
+    """Files open with no CRS and the identity transform: GDAL 3.9.3 builds
+    the HiRISE label's CRS itself, so this stands in for a product it can't."""
+    for name in ("crs", "rawCrsText"):
+        monkeypatch.setattr(RasterioDataSource, name, property(lambda self: None))
+    monkeypatch.setattr(
+        RasterioDataSource, "transform", property(lambda self: Affine.identity())
+    )
+
+
+def _westAxis(crs: CRS | str) -> bool:
+    geodetic = CRS.from_user_input(crs).geodetic_crs
+    return geodetic is not None and any(
+        axis.direction == "west" for axis in geodetic.axis_info
+    )
+
+
+def test_an_image_without_a_crs_gets_its_labels(tmp_path, unreadByGdal):
+    image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
+    assert image.hasGeospatialData
+    assert sameCrs(image.crs, HIRISE_POLAR_PROJ)
+    assert tuple(image.transform)[:6] == pytest.approx(HIRISE_LABEL_TRANSFORM)
+    overrides = image.metadataOverrides
+    assert sameCrs(overrides["crs"], HIRISE_POLAR_PROJ)
+    assert overrides["transform"] == pytest.approx(list(HIRISE_LABEL_TRANSFORM))
+    record = image.extraMetadata["crsFix"]
+    assert record["from"] == "none" and record["source"] == "label"
+    assert record["automatic"] is True
+    assert record["transform"] == pytest.approx(list(HIRISE_LABEL_TRANSFORM))
+    assert headline(image.crsHealth) == LABEL_FIX_HEADLINE
+    # the pixel grid is the label's: pixel (0, 0) is 120 km from the pole
+    lat, lon = image.pixelToLatLon(0, 0) or (None, None)
+    assert lat is not None and 87 < lat < 88
+
+
+def test_a_label_fix_is_checked_again_unchanged(tmp_path, unreadByGdal):
+    image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
+    record = dict(image.extraMetadata["crsFix"])
+    health = checkImageCrs(image)  # e.g. after a session restored it
+    assert image.extraMetadata["crsFix"] == record
+    assert health.issues[0].code == "no-crs" and health.issues[0].fix is not None
+    assert health.issues[0].fix.automatic
+
+
+def test_undoing_a_label_fix_removes_both_overrides(tmp_path, unreadByGdal):
+    image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
+    record = dict(image.extraMetadata["crsFix"])
+    health = undoCrsFix(image)
+    assert image.metadataOverrides == {"crs": None}
+    assert not image.hasGeospatialData and image.transform.is_identity
+    assert image.extraMetadata["crsFix"] == {**record, "undone": True}
+    (issue,) = health.issues
+    assert issue.code == "no-crs" and issue.fix is not None
+    assert not issue.fix.automatic  # offered again, with the label's grid
+    assert issue.fix.transform == pytest.approx(HIRISE_LABEL_TRANSFORM)
+    checkImageCrs(image)  # a session restored as undone stays undone
+    assert image.extraMetadata["crsFix"]["undone"] is True
+    # and applied again by hand: both overrides, recorded as the user's
+    applyCrsFix(image, issue.fix)
+    assert sameCrs(image.crs, HIRISE_POLAR_PROJ)
+    assert tuple(image.transform)[:6] == pytest.approx(HIRISE_LABEL_TRANSFORM)
+    chosen = image.extraMetadata["crsFix"]
+    assert chosen["automatic"] is False and chosen["from"] == "none"
+    assert chosen["source"] == "label"
+    assert chosen["transform"] == pytest.approx(list(HIRISE_LABEL_TRANSFORM))
+    assert image.crsHealth is not None
+    assert image.crsHealth.issues[0].fix is not None
+    assert image.crsHealth.issues[0].fix.automatic  # in use: Undo offered
+
+
+def test_a_label_gdal_misread_can_be_applied_and_undone(tmp_path):
+    image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
+    assert image.crs is not None and sameCrs(image.crs, GDAL_WEST_PROJ)
+    health = image.crsHealth
+    assert health is not None
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.fix is not None and not issue.fix.automatic
+    assert "crsFix" not in image.extraMetadata
+    applied = applyCrsFix(image, issue.fix)
+    assert _westAxis(image.crs)  # the label's, longitude positive west
+    assert image.transform == GDAL_WEST_TRANSFORM  # GDAL's grid is kept
+    assert "transform" not in image.metadataOverrides
+    record = image.extraMetadata["crsFix"]
+    assert record["automatic"] is False and record["source"] == "label"
+    assert record["reason"] == issue.fix.reason and _westAxis(str(record["to"]))
+    used = next(i for i in applied.issues if i.code == "label-crs-mismatch")
+    assert used.fix is not None and used.fix.automatic  # in use: Undo offered
+    assert used.severity is Severity.INFO and used.message == issue.fix.reason
+    again = undoCrsFix(image)
+    assert sameCrs(image.crs, GDAL_WEST_PROJ) and not _westAxis(image.crs)
+    assert image.extraMetadata["crsFix"]["undone"] is True
+    offered = next(i for i in again.issues if i.code == "label-crs-mismatch")
+    assert offered.fix is not None and not offered.fix.automatic
+
+
+def test_a_west_label_crs_is_kept_as_projjson(tmp_path):
+    image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
+    health = image.crsHealth
+    assert health is not None
+    fix = next(i.fix for i in health.issues if i.code == "label-crs-mismatch")
+    assert fix is not None
+    applyCrsFix(image, fix)
+    saved = image.metadataOverrides["crs"]
+    assert saved.lstrip().startswith("{") and _westAxis(saved)
+    assert str(image.extraMetadata["crsFix"]["to"]).lstrip().startswith("{")
+
+
+def test_a_crs_set_by_hand_against_the_label_is_not_an_error(tmp_path):
+    image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
+    health = chooseCrs(image, "IAU_2015:49910", "Its producer's projection")
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.severity is Severity.INFO
+    assert issue.message.startswith("You chose Mars, ")
+    assert "; its label describes Mars, " in issue.message
+    assert issue.fix is not None and not issue.fix.automatic  # still offered

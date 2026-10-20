@@ -660,7 +660,7 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 | `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know (e.g. "Its CRS says Earth, but its label says Bennu."): nothing is changed; use **Set coordinate system…**. A target that names no body is no evidence and gives no finding: `SKY`, `N/A`, `NA`, `NONE`, `NULL`, `UNK`, `UNKNOWN`, `CALIBRATION`, `CALIBRATION TARGET`, `CAL`, `DARK`, `DARK CURRENT`, `FLAT`, `FLAT FIELD`, `BIAS`, `STAR`, `STARS`, `SPACE`, `DEEP SPACE` and `TEST`, in any case |
 | `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
 | `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
-| `label-crs-mismatch` | Problem | The CRS (after any `earth-crs-on-body` fix) isn't the same (`sameCrs`, [What "the same" means](#what-the-same-means)) as the CRS its own label's map projection group describes | "Its label describes Mars, ellipsoid a = 3395.58, c = 3375.60 km, Equirectangular, center lat 10°, lon_0 -100°, but its CRS is Mars, sphere R = 3396.19 km, Equirectangular, center lat 10°, lon_0 100°, 508 m/px (east–west), 500 m/px (north–south)." | **Offered, never automatic** (Apply uses the label's CRS; the file's transform is kept): GDAL may be right, and the label may be the one in error. The suggestion names any convention Varda assumed. The `lon-direction-mismatch` and `latitude-type-mismatch` findings say why the two differ |
+| `label-crs-mismatch` | Problem | The CRS (after any `earth-crs-on-body` fix) isn't the same (`sameCrs`, [What "the same" means](#what-the-same-means)) as the CRS its own label's map projection group describes | "Its label describes Mars, ellipsoid a = 3395.58, c = 3375.60 km, Equirectangular, center lat 10°, lon_0 -100°, but its CRS is Mars, sphere R = 3396.19 km, Equirectangular, center lat 10°, lon_0 100°, 508 m/px (east–west), 500 m/px (north–south)." | **Offered, never automatic** (Apply uses the label's CRS; the file's transform is kept): GDAL may be right, and the label may be the one in error. The suggestion names any convention Varda assumed. The `lon-direction-mismatch` and `latitude-type-mismatch` findings say why the two differ. Against a CRS you chose yourself (**Set coordinate system…**, or a session's), it is **Info**, worded as your choice: "You chose Mars, …; its label describes Mars, …." with the label's CRS still offered |
 | `lon-bounds-westward` | Problem | The label's longitude range (PDS3 `WESTERNMOST_LONGITUDE`/`EASTERNMOST_LONGITUDE`, ISIS `MinimumLongitude`/`MaximumLongitude`, PDS4 `west_bounding_coordinate`/`east_bounding_coordinate`) fits the image's left and right edges only if its samples run **westward**, and not as Varda reads them, eastward. Checked for cylindrical projections (equirectangular, Mercator; not transverse or oblique Mercator) only, and not for maps 359° or more wide. A bound fits an edge within 3 pixels (at least 0.0001°): labels give pixel edges, pixel centers or the valid data's extent (CRISM FRT000107A7's are 1.5 px inside). The edges are read at the middle row | "Its label's longitude range (100.169° to 100.708° west) fits its map only if its samples run westward; Varda reads them eastward." | Nothing is changed. Check a known feature: the image may be mirrored about its center meridian ([Conventions](#conventions)) |
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
 | `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
@@ -822,14 +822,27 @@ identity):
 | No CRS; the label's CRS needs nothing assumed, and there is a pixel grid (the file's, or the label's) | `no-crs` | **Used automatically**, with the label's grid when the file has none. Reason, e.g. "Its file has no coordinate system; built from its PDS3 label x.lbl map projection group (POLAR STEREOGRAPHIC, sphere R = 3376.20 km)". The image list's tooltip and the status bar say "No coordinate system in its file; built from its label." |
 | No CRS; a CRS built with an assumption, or without a pixel grid | `no-crs` | **Offered** (Apply). The suggestion names each assumption (or the missing grid keys) |
 | No CRS; no CRS can be built | `no-crs` | Nothing is changed. The suggestion lists what the label lacks, then **Set coordinate system…** |
-| A CRS that isn't the same as the label's | `label-crs-mismatch` | **Offered**, never automatic: GDAL may be right |
+| A CRS that isn't the same as the label's | `label-crs-mismatch` | **Offered**, never automatic: GDAL may be right. With **Apply**, the finding reads "Fixed: " and the fix's reason, as Info, with **Undo** (back to GDAL's CRS) |
+| A CRS you chose that isn't the same as the label's | `label-crs-mismatch` | **Info**, "You chose …; its label describes …."; the label's CRS is still offered. Not a problem: you decided |
 | A CRS the same as the label's, or a label without a buildable CRS | none | — |
 
 The automatic fix is recorded as `crsFix` like the Earth fix, with
 `"from": "none"`, `"source": "label"` and, when Varda set the pixel grid,
 `"transform"` (Affine's a, b, c, d, e, f: pixel width, row rotation,
 upper-left x, column rotation, pixel height (negative), upper-left y, in
-the CRS's units).
+the CRS's units). The CRS becomes the image's `crs` override and the grid
+its `transform` override; both are kept in sessions and written into
+exports.
+
+A label fix you apply (**Apply** on an offered `no-crs` or
+`label-crs-mismatch`) is recorded the same way with `automatic: false`,
+including `"source": "label"` and its `"transform"` when it sets the grid.
+**Undo** removes both the CRS and the grid, back to the file's own, and
+keeps the record with `undone: true`.
+
+A west-positive label's CRS keeps its west longitude axis: WKT can't hold
+it, so the override, the record's `to` and the session store it as
+PROJJSON (a JSON object, which PROJ reads like WKT).
 
 **Limitations.**
 
@@ -845,8 +858,9 @@ the CRS's units).
 
 Every change below applies at once (the Properties dialog's **Cancel**
 doesn't undo it), leaves the file and the pixels' map coordinates as they
-are, checks the image again, and is kept in sessions (`"crs"` in the
-image's `overrides`; see
+are, checks the image again, and is kept in sessions (`"crs"`, and
+`"transform"` for a pixel grid from the label, in the image's
+`overrides`; see
 [Sessions and saving](sessions-and-saving.md#corrected-coordinate-systems)).
 
 The change reaches workspaces already open on the image:
@@ -863,13 +877,19 @@ The change reaches workspaces already open on the image:
   of the two has a CRS), they keep their old positions and the Points
   Manager says so: delete them and save them again.
 
-- **Undo** (on the automatic fix): use the file's own CRS. The finding
+- **Undo** (on a fix in use): use the file's own CRS, and its own pixel
+  grid when the fix set one from the label. The finding
   stays, now saying "…; you chose to keep the file's CRS.", and offers the
   fix again with **Apply**; the dot stays too. The `crsFix` record is kept
   with `undone: true`, so results made from the image say the fix was
   undone.
-- **Apply** (on a fix offered): use the fix's CRS. The `crsFix` record is
-  the same as the automatic one but with `automatic: false`: you applied it.
+- **Apply** (on a fix offered): use the fix's CRS, and its pixel grid when
+  it has one (a label's, for a file with none). The `crsFix` record is the
+  same as the automatic one would be but with `automatic: false`: you
+  applied it. The finding then reads **Fixed**, with "You applied this
+  fix." and **Undo**. A fix that is never automatic (`label-crs-mismatch`,
+  or a label CRS that needs an assumption) reads "Fixed: " and its reason,
+  as Info.
 - **Set coordinate system…** opens a small dialog:
   - **Coordinate system**: any CRS PROJ reads: an authority code
     (`IAU_2015:49900`, `EPSG:4326`, `ESRI:104905`), WKT, or a PROJ string
@@ -911,6 +931,33 @@ The `crsFix` record in the provenance of any result gives these values.
 For a CRS you set yourself with **Apply** or **Set coordinate system…**
 (`automatic: false` in `crsFix`), report it the same way, with your reason.
 A record with `undone: true` means the file's own CRS was used instead.
+
+### Reporting a CRS built from the label
+
+A `crsFix` record with `"source": "label"` means the CRS (and, with
+`"transform"`, the pixel grid) came from the image's own label, not its
+file. Its `reason` names the label and its projection group, e.g. "Its
+file has no coordinate system; built from its PDS3 label x.lbl map
+projection group (POLAR STEREOGRAPHIC, sphere R = 3376.20 km)". Report it
+as, for example:
+
+> The PDS3 product had no coordinate system GDAL could read. Varda
+> (version …) built it from the label's IMAGE_MAP_PROJECTION group: polar
+> stereographic on a 3376.2 km sphere, centered on the north pole, 1 m
+> pixels, upper-left corner at x = −40001 m, y = −120000 m (the label's
+> SAMPLE_ and LINE_PROJECTION_OFFSET).
+
+- `from`: the CRS the file declared ("none" when it had none); `to`: the
+  CRS used (an authority code, else WKT, else PROJJSON for a west-positive
+  label).
+- `transform`: present only when Varda set the pixel grid (the file had
+  none). Without it, the file's own grid was used with the label's CRS;
+  Varda doesn't compare the two grids (see the limitations above).
+- `automatic: true`: complete label, nothing assumed. `automatic: false`:
+  you applied it; if the finding named an assumption (e.g. ISIS's
+  local-radius equirectangular), state it, since it is part of the method.
+- How to check it: the label's longitude range against the image's edges
+  (`lon-bounds-westward`), and a known feature's position.
 
 ### The distortion check
 

@@ -32,6 +32,18 @@ can alter results.
   range fits the image only with samples running westward gets
   `lon-bounds-westward`. See
   [Coordinate systems](docs/user-guide/coordinate-systems.md#crss-built-from-the-label).
+- **CRSs from planetary labels are applied at load, and can be applied and
+  undone in Image Properties.** An image whose file has no CRS and whose
+  label's map projection group needs nothing assumed opens with the
+  label's CRS and, when the file has none, its pixel grid (both kept in
+  sessions and exports, recorded as `crsFix` with `"source": "label"` and
+  the `"transform"`). **Apply** on an offered label CRS (including a
+  `label-crs-mismatch` against GDAL's) uses it, and **Undo** returns to the
+  file's CRS and grid. A west-positive label's CRS is stored as PROJJSON,
+  keeping its west axis. A CRS you chose that differs from the label's is
+  now an Info finding worded as your choice, not a problem. Image
+  Properties' OK no longer drops a corrected transform. See
+  [Coordinate systems](docs/user-guide/coordinate-systems.md#reporting-a-crs-built-from-the-label).
 - **ROI areas and perimeters on the body.** Add Column's Geometry measures
   now include **Area on the body (km²)** and **Perimeter on the body (km)**:
   geodesic (Karney, 2013) on the coordinate system's own surface, with the

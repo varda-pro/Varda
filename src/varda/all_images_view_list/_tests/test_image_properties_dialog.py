@@ -20,12 +20,19 @@ from varda.common.layout_audit import assertNothingClipped
 from varda.geo._tests.fixtures import (
     CRISM_MTRDR_ENVI_WKT,
     CRISM_MTRDR_WKT,
+    GDAL_WEST_PROJ,
+    HIRISE_LABEL_GROUP,
+    HIRISE_LABEL_TRANSFORM,
+    HIRISE_POLAR_PROJ,
+    WEST_LABEL_GROUP,
     makeImage,
+    writePds3,
     writeWgs84,
 )
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import flagged
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.data_sources.rasterio_data_source import RasterioDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
 
@@ -283,3 +290,91 @@ def test_an_unreadable_crs_shows_its_text_and_the_error(qtbot):
     chooser = dialog.setCrsDialog
     assert chooser is not None
     assert chooser.crsEdit.text() == BROKEN_WKT  # to correct by hand
+
+
+# --- CRSs built from the label ---
+
+
+@pytest.fixture
+def noCrsInFiles(monkeypatch):
+    """Files open with no CRS and the identity transform (GDAL 3.9.3 reads
+    the HiRISE label itself; this stands in for a product it can't)."""
+    for name in ("crs", "rawCrsText"):
+        monkeypatch.setattr(RasterioDataSource, name, property(lambda self: None))
+    monkeypatch.setattr(
+        RasterioDataSource, "transform", property(lambda self: Affine.identity())
+    )
+
+
+def _west(crs: CRS | None) -> bool:
+    geodetic = crs.geodetic_crs if crs is not None else None
+    return geodetic is not None and any(
+        axis.direction == "west" for axis in geodetic.axis_info
+    )
+
+
+def test_a_label_gdal_misread_is_applied_and_undone(qtbot, tmp_path):
+    image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    assert any(
+        t.startswith("Problem: Its label describes Mars") for t in _crsTexts(dialog)
+    )
+    assert dialog.undoButton is None and len(dialog.applyButtons) == 1
+    dialog.applyButtons[0].click()
+    assert _west(image.crs)  # the label's CRS
+    assert image.extraMetadata["crsFix"]["source"] == "label"
+    texts = _crsTexts(dialog)
+    assert any(t.startswith("Fixed: Its label (PDS3 label x.lbl)") for t in texts)
+    assert any(t.startswith("You applied this fix") for t in texts)
+    assert dialog.undoButton is not None
+    dialog.undoButton.click()
+    assert sameCrs(image.crs, GDAL_WEST_PROJ) and not _west(image.crs)  # GDAL's
+    assert image.extraMetadata["crsFix"]["undone"] is True
+    assert dialog.undoButton is None and len(dialog.applyButtons) == 1
+
+
+def test_undo_of_a_label_fix_removes_its_grid_too(qtbot, tmp_path, noCrsInFiles):
+    image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    texts = _crsTexts(dialog)
+    assert any(
+        t.startswith("Varda applied this fix when the image opened") for t in texts
+    )
+    assert dialog.undoButton is not None
+    dialog.undoButton.click()
+    assert image.metadataOverrides == {"crs": None}
+    assert not image.hasGeospatialData
+    assert image.extraMetadata["crsFix"]["undone"] is True
+    assert len(dialog.applyButtons) == 1
+    dialog.applyButtons[0].click()  # and back, as the user's
+    assert sameCrs(image.crs, HIRISE_POLAR_PROJ)
+    assert tuple(image.transform)[:6] == pytest.approx(HIRISE_LABEL_TRANSFORM)
+    assert image.extraMetadata["crsFix"]["automatic"] is False
+    assert dialog.undoButton is not None
+
+
+def test_editing_keeps_a_corrected_transform(qtbot, tmp_path, noCrsInFiles):
+    image = loadRaster(str(writePds3(tmp_path, HIRISE_LABEL_GROUP)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.noDataEdit.setText("-1")
+    dialog.accept()
+    overrides = image.metadataOverrides
+    assert overrides["nodata"] == -1.0
+    assert sameCrs(overrides["crs"], HIRISE_POLAR_PROJ)
+    assert overrides["transform"] == pytest.approx(list(HIRISE_LABEL_TRANSFORM))
+
+
+def test_a_label_mismatch_is_not_cut_off_on_a_laptop_screen(qtbot, tmp_path):
+    image = loadRaster(str(writePds3(tmp_path, WEST_LABEL_GROUP)))
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    dialog.resize(1280, 800)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)
+    dialog.applyButtons[0].click()  # the Undo layout too
+    qtbot.wait(10)
+    assertNothingClipped(dialog)

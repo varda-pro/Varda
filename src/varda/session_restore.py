@@ -116,17 +116,23 @@ class SessionRestorer(QObject):
 def _restoreEdits(image: VardaRaster, entry: dict) -> None:
     """Put the session's edits (``entry``) back on ``image``, with its
     ``crsFix`` record, and check its CRS again when the session chose
-    another than load did. A session CRS this PROJ can't read gives way to
-    the one chosen at load (and its record)."""
+    another (or another pixel grid) than load did. A session CRS or
+    transform this Varda can't read gives way to the ones chosen at load
+    (and their record)."""
     loaded = image.metadataOverrides.get("crs", _NO_CRS)
+    loadedGrid = image.metadataOverrides.get("transform", _NO_CRS)
     overrides = _restoredOverrides(image, entry.get("overrides", {}))
     try:
         image.setMetadataOverrides(overrides, entry.get("name"))
     except ValueError as error:
         logger.warning("Session edits of %s: %s", image.filePath, error)
-        overrides = {k: v for k, v in overrides.items() if k != "crs"}
+        overrides = {
+            k: v for k, v in overrides.items() if k not in ("crs", "transform")
+        }
         if loaded is not _NO_CRS:
             overrides["crs"] = loaded
+        if loadedGrid is not _NO_CRS:
+            overrides["transform"] = loadedGrid
         try:
             image.setMetadataOverrides(overrides, entry.get("name"))
         except ValueError as again:  # band counts that don't match, say
@@ -139,16 +145,21 @@ def _restoreEdits(image: VardaRaster, entry: dict) -> None:
         if isinstance(record, dict):  # kept by the check when it still applies
             image.dataSource.extraMetadata[CRS_FIX_KEY] = dict(record)
             loaded = _NO_CRS  # check again, below
-    if overrides.get("crs", _NO_CRS) != loaded or image.crsHealth is None:
+    if (
+        overrides.get("crs", _NO_CRS) != loaded
+        or overrides.get("transform", _NO_CRS) != loadedGrid
+        or image.crsHealth is None
+    ):
         checkImageCrs(image)
 
 
 def _restoredOverrides(image: VardaRaster, saved: dict) -> dict:
     """The session's edits in place of the image's. A session that doesn't
     say which CRS (one saved before Varda checked CRSs) keeps the CRS chosen
-    at load (the automatic fix); one that does wins, None (the file's own)
-    included."""
+    at load (the automatic fix), and the pixel grid that fix set; one that
+    does wins, None (the file's own) included."""
     current = image.metadataOverrides
     if "crs" in saved or "crs" not in current:
         return dict(saved)
-    return {**saved, "crs": current["crs"]}
+    grid = {"transform": current["transform"]} if "transform" in current else {}
+    return {**grid, **saved, "crs": current["crs"]}

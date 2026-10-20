@@ -44,7 +44,12 @@ from varda.common.spectral_axis import BBL_KEY, FWHM_KEY, parseEnviList
 from varda.common.ui import FlowLayout, MutedLabel, PanelScrollArea
 from varda.geo.describe import describeCrs, formatMeters
 from varda.geo.health import SET_CRS, CrsFix, CrsIssue
-from varda.image_loading.crs_check import checkImageCrs, chooseCrs, undoCrsFix
+from varda.image_loading.crs_check import (
+    applyCrsFix,
+    checkImageCrs,
+    chooseCrs,
+    undoCrsFix,
+)
 from varda.image_loading.envi_header import headerFor, saveToHeader
 from varda.utilities.proj_lock import PROJ_LOCK
 
@@ -131,7 +136,9 @@ class CrsIssueRow(QWidget):
             note.setToolTip(issue.fix.reason)  # the message says the rest
             layout.addWidget(note)
             self.button = QPushButton("Undo")
-            self.button.setToolTip("Use the file's own coordinate system")
+            self.button.setToolTip(
+                "Use the file's own coordinate system and pixel grid"
+            )
             self.button.clicked.connect(self.sigUndo)
         else:
             self.button = QPushButton("Apply")
@@ -392,12 +399,14 @@ class ImagePropertiesDialog(QDialog):
         self.wktToggle.setText("Hide WKT" if shown else "Show WKT")
 
     def applyFix(self, fix: CrsFix) -> None:
-        """Use the fix offered (applies at once), recorded as the user's."""
-        chooseCrs(self.image, fix.wkt, fix.reason)
+        """Use the fix offered (its CRS, and its pixel grid if any; applies at
+        once), recorded as the user's."""
+        applyCrsFix(self.image, fix)
         self.refreshCoordinateSystem()
 
     def undoFix(self) -> None:
-        """Keep the file's own CRS instead of the fix (applies at once)."""
+        """Keep the file's own CRS and grid instead of the fix (applies at
+        once)."""
         undoCrsFix(self.image)
         self.refreshCoordinateSystem()
 
@@ -502,8 +511,12 @@ class ImagePropertiesDialog(QDialog):
         except ValueError as error:
             QMessageBox.warning(self, self.windowTitle(), str(error))
             return
-        # a corrected CRS isn't edited here: keep it
-        kept = {k: v for k, v in self.image.metadataOverrides.items() if k == "crs"}
+        # a corrected CRS or pixel grid isn't edited here: keep it
+        kept = {
+            k: v
+            for k, v in self.image.metadataOverrides.items()
+            if k in ("crs", "transform")
+        }
         self.image.setMetadataOverrides({**overrides, **kept}, name or None)
         if self.saveToFile.isChecked() and self.image.filePath and overrides:
             try:
