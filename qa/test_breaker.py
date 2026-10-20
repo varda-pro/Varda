@@ -637,11 +637,12 @@ def _linux(run: QaRun, qaData: QaData) -> None:
             backend=backend,
             session=os.environ.get("DBUS_SESSION_BUS_ADDRESS"),
         )
-        if "fail" in backend.lower() or "null" in backend.lower():
-            run.finding(
-                "confused",
-                f"No keychain service: AI keys can't be saved (keyring: {backend})",
-            )
+        # With no keychain, Varda keeps a key for the session and says why
+        # in AI settings (#254); the backend is only logged
+        run.log(
+            "keychain",
+            present=not ("fail" in backend.lower() or "null" in backend.lower()),
+        )
 
 
 def _realKeyring() -> str:
