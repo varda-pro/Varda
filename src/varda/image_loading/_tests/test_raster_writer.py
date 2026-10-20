@@ -10,7 +10,11 @@ from pyproj import CRS
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import openDataSource
-from varda.image_loading.raster_writer import resolveOutputPath, writeRaster
+from varda.image_loading.raster_writer import (
+    resolveOutputPath,
+    suggestedOutputPath,
+    writeRaster,
+)
 from varda.utilities.debug import generate_random_image
 
 
@@ -196,3 +200,38 @@ def test_a_format_varda_cant_write_is_named_before_writing(tmp_path):
         resolveOutputPath("wrong extension.xyz", tmp_path)
     # a dot inside a name without a known suffix is not a format
     assert resolveOutputPath("scene v2.tif", tmp_path).name == "scene v2.tif"
+
+
+# --- Suggested export names (review of release QA #16) ----------------------
+
+
+def _named(tmp_path, name: str) -> VardaRaster:
+    """A file-backed image renamed as an analysis names its result."""
+    source = writeRaster(generate_random_image((20, 20, 10)), tmp_path / "src.img")
+    image = VardaRaster(openDataSource(str(source)), name=name)
+    return image
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "qa_cube [b1*2]",  # Band Math
+        "qa_cube [b1/b2]",  # Band Math, a ratio
+        "qa_cube local RX 3/9",  # RX's inner/outer windows
+        'a <b> c:d "e" f|g h?i back\\slash',
+        "CON",  # reserved by Windows
+        "nul.result",
+    ],
+)
+def test_the_suggested_path_is_one_export_accepts(tmp_path, name):
+    image = _named(tmp_path, name)
+    suggested = suggestedOutputPath(image)
+    assert suggested.parent == tmp_path  # no '/' made a folder
+    assert resolveOutputPath(str(suggested), tmp_path) == suggested
+
+
+def test_suggested_names_keep_what_they_can():
+    from_band_math = suggestedOutputPath(
+        VardaRaster(ArrayDataSource(np.zeros((2, 2, 1))), name="qa_cube [b1/b2]")
+    )
+    assert from_band_math.name == "qa_cube [b1_b2].img"

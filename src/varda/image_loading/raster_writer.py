@@ -27,12 +27,6 @@ GEOTIFF_SUFFIXES = frozenset({".tif", ".tiff"})
 SAVE_FILE_FILTER = "ENVI image (*.img *.hdr);;GeoTIFF (*.tif *.tiff)"
 
 
-def suggestedOutputPath(image: VardaRaster, stem: str | None = None) -> Path:
-    """An ENVI path next to the image's file (or in the home directory)."""
-    folder = Path(image.filePath).parent if image.filePath else Path.home()
-    return folder / f"{stem or image.name}.img"
-
-
 # Not allowed in file names on Windows; refused everywhere, so an exported
 # file can be shared with any computer
 FORBIDDEN_CHARACTERS = '<>:"|?*'
@@ -41,6 +35,27 @@ RESERVED_NAMES = frozenset(
     | {f"COM{i}" for i in range(1, 10)}
     | {f"LPT{i}" for i in range(1, 10)}
 )
+
+
+def safeFileName(name: str) -> str:
+    """``name`` as a file name any system can store: characters Windows
+    forbids, path separators and control characters become "_", trailing
+    dots and spaces go, and a name Windows reserves gets a "_" ("CON_").
+    Result names carry such characters ("scene [b1/b2]", "local RX 3/9")."""
+    unsafe = FORBIDDEN_CHARACTERS + "/\\"
+    safe = "".join("_" if c in unsafe or ord(c) < 32 else c for c in name)
+    safe = safe.rstrip(". ") or "image"
+    stem, dot, rest = safe.partition(".")
+    if stem.upper() in RESERVED_NAMES:
+        safe = f"{stem}_{dot}{rest}"
+    return safe
+
+
+def suggestedOutputPath(image: VardaRaster, stem: str | None = None) -> Path:
+    """An ENVI path next to the image's file (or in the home directory),
+    named after the image in a form export accepts (``safeFileName``)."""
+    folder = Path(image.filePath).parent if image.filePath else Path.home()
+    return folder / f"{safeFileName(stem or image.name)}.img"
 
 
 def resolveOutputPath(text: str, folder: Path) -> Path:
