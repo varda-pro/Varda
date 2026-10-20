@@ -5,6 +5,7 @@ from .rasterio_data_source import RasterioDataSource
 from .envi_data_source import ENVIDataSource
 from .pds_data_source import PdsLabelDataSource
 from .hdf5_data_source import HDF5DataSource
+from .fits_data_source import FitsDataSource
 from .in_memory_data_source import InMemoryDataSource
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "ENVIDataSource",
     "PdsLabelDataSource",
     "HDF5DataSource",
+    "FitsDataSource",
     "InMemoryDataSource",
 ]

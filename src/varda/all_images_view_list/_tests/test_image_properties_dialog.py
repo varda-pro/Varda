@@ -7,7 +7,7 @@ from affine import Affine
 from pyproj import CRS
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QLabel, QTableWidget
+from PyQt6.QtWidgets import QLabel, QPlainTextEdit, QTableWidget
 
 from varda.all_images_view_list.image_properties_dialog import (
     GOOD,
@@ -35,6 +35,7 @@ from varda.geo._tests.fixtures import (
 )
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import flagged
+from varda.image_loading.data_sources._tests.test_fits_data_source import writeAltwg
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
@@ -487,3 +488,19 @@ def test_the_classes_group_is_not_cut_off_on_a_laptop_screen(qtbot, size):
     viewport = table.viewport()
     assert viewport is not None
     assert viewport.height() >= 3 * table.rowHeight(0)  # every class row shows
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (640, 500), None])  # None: minimum
+def test_a_fits_image_shows_its_header(qtbot, tmp_path, size):
+    path = writeAltwg(tmp_path / "dtm.fits")
+    dialog = ImagePropertiesDialog(loadRaster(str(path)))
+    qtbot.addWidget(dialog)
+    shown = [box.toPlainText() for box in dialog.findChildren(QPlainTextEdit)]
+    assert any("PLANE9  = 'Elevation'" in text for text in shown)
+    if size is None:
+        hint = dialog.minimumSizeHint()
+        size = (hint.width(), hint.height())
+    dialog.resize(*size)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)

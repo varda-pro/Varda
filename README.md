@@ -42,7 +42,8 @@ https://github.com/user-attachments/assets/58862020-51f0-4161-bc46-391e288d789b
 
 ## What you can do with it
 
-- **View images:** ENVI, GeoTIFF and HDF5 cubes, shown in true color, false
+- **View images:** ENVI, GeoTIFF, HDF5 and FITS cubes (including ALTWG/SPC
+  small-body terrain cubes), shown in true color, false
   color or one band at a time, with adjustable stretches and color maps.
   Compare two images side by side in linked views, and overlay one on
   another.

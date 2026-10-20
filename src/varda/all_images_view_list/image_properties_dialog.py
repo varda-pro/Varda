@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import numpy as np
 from pyproj import CRS
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QFontDatabase, QGuiApplication
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -60,6 +60,7 @@ from varda.image_loading.crs_check import (
     chooseCrs,
     undoCrsFix,
 )
+from varda.image_loading.data_sources.fits_data_source import FITS_HEADER_KEY
 from varda.image_loading.envi_header import headerFor, saveToHeader
 from varda.utilities.background import runInBackground
 from varda.utilities.proj_lock import PROJ_LOCK
@@ -322,6 +323,9 @@ class ImagePropertiesDialog(QDialog):
             panelLayout.addWidget(self.classesBox)
         panelLayout.addLayout(edits)
         panelLayout.addWidget(bands, 1)
+        fitsHeader = image.extraMetadata.get(FITS_HEADER_KEY)
+        if isinstance(fitsHeader, str):
+            panelLayout.addWidget(self._fitsHeaderBox(fitsHeader))
         panelLayout.addWidget(self.saveToFile)
         panelLayout.addWidget(
             MutedLabel(
@@ -333,6 +337,19 @@ class ImagePropertiesDialog(QDialog):
         layout.addWidget(buttons)
         self.resize(640, 720)
         self._source = source
+
+    @staticmethod
+    def _fitsHeaderBox(text: str) -> QGroupBox:
+        """The file's primary FITS header, read-only, one card per line."""
+        view = QPlainTextEdit(text)
+        view.setReadOnly(True)
+        view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        view.setMinimumHeight(120)
+        view.setMaximumHeight(220)
+        box = QGroupBox("FITS header")
+        QVBoxLayout(box).addWidget(view)
+        return box
 
     def refreshCoordinateSystem(self) -> None:
         """(Re)build the Coordinate system group for the image's CRS now."""
