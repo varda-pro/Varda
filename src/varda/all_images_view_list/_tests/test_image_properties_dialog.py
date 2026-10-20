@@ -6,7 +6,7 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QLabel, QPlainTextEdit
 
 from varda.all_images_view_list.image_properties_dialog import (
     GOOD,
@@ -25,6 +25,7 @@ from varda.geo._tests.fixtures import (
 )
 from varda.geo.equivalence import sameCrs
 from varda.geo.health import flagged
+from varda.image_loading.data_sources._tests.test_fits_data_source import writeAltwg
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import loadRaster, openDataSource
 from varda.image_loading.raster_writer import writeRaster
@@ -283,3 +284,15 @@ def test_an_unreadable_crs_shows_its_text_and_the_error(qtbot):
     chooser = dialog.setCrsDialog
     assert chooser is not None
     assert chooser.crsEdit.text() == BROKEN_WKT  # to correct by hand
+
+
+def test_a_fits_image_shows_its_header(qtbot, tmp_path):
+    path = writeAltwg(tmp_path / "dtm.fits")
+    dialog = ImagePropertiesDialog(loadRaster(str(path)))
+    qtbot.addWidget(dialog)
+    shown = [box.toPlainText() for box in dialog.findChildren(QPlainTextEdit)]
+    assert any("PLANE9  = 'Elevation'" in text for text in shown)
+    dialog.resize(1280, 800)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assertNothingClipped(dialog)
