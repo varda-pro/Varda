@@ -230,10 +230,8 @@ class _ComponentAnalysis(Analysis):
         lo, hi = sorted((chosen.x, chosen.y))
         holds = "no usable band" if count == 0 else "1 usable band"
         return (
-            f"The range {self._rangeText(image, lo, hi)} holds {holds}; "
-            f"{self.suffix or self.name} needs at least two (bands marked bad are left "
-            "out). "
-            "Widen the range."
+            f"{self._rangeText(image, lo, hi)} holds {holds}; "
+            f"{self.suffix or self.name} needs at least two. Widen the range."
         )
 
     def inputSummary(self, image: VardaRaster) -> str:
