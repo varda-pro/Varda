@@ -61,7 +61,7 @@ def installFromZip(manager: VardaPluginManager, mainGui: MainGUI) -> None:
 PLUGIN_ACTIONS: list[Action] = [
     Action(
         id="varda.plugins.kindle",
-        title="Kindle a Feature…",
+        title="Kindle a Feature (Build a plugin with AI)…",
         tooltip="Describe a feature and have your AI build it as a plugin",
         callback=kindleFeature,
         menus=[MenuRule(id=MenuId.PLUGINS, group=MenuGroup.PLUGINS_KINDLE, order=1)],

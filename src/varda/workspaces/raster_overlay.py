@@ -23,7 +23,7 @@ from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtGui import QAction, QActionGroup, QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
-    QHBoxLayout,
+    QSizePolicy,
     QLabel,
     QMenu,
     QSlider,
@@ -36,7 +36,7 @@ from varda.common.grid import sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
 from varda.common.parameter_widgets import connectWhileAlive
-from varda.common.ui import ElidingComboBox, MutedLabel
+from varda.common.ui import ElidingComboBox, FlowLayout, MutedLabel
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.image_rendering.render_parameters import StretchParameter
@@ -188,8 +188,12 @@ class OverlayBar(QWidget):
         self.stretchActions = self._choices(menu, STRETCHES)
         self.colorsButton.setMenu(menu)
 
-        layout = QHBoxLayout(self)
+        # Wraps onto another row in a narrow view instead of clipping
+        layout = FlowLayout(self, margins=0)
         layout.setContentsMargins(4, 0, 4, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
         layout.addWidget(QLabel("Overlay:"))
         layout.addWidget(self.imageBox)
         layout.addWidget(self.notListed)
@@ -198,7 +202,6 @@ class OverlayBar(QWidget):
         layout.addWidget(self.opacityLabel)
         layout.addWidget(self.opacitySlider)
         layout.addWidget(self.legendButton)
-        layout.addStretch(1)
 
         self.imageBox.currentIndexChanged.connect(self._onImageChosen)
         self.layerBox.currentIndexChanged.connect(lambda _: self._apply())
@@ -271,7 +274,10 @@ class OverlayBar(QWidget):
         current = self.currentOverlay()
         choices = sameGridChoices(list(self.images), self.base)
         left = len(choices.excluded)
-        self.notListed.setText(f"({left} not on this grid)" if left else "")
+        images = "1 image" if left == 1 else f"{left} images"
+        self.notListed.setText(
+            f"{images} can't be overlaid: different pixel grid" if left else ""
+        )
         self.notListed.setToolTip(choices.note)
         self.notListed.setVisible(bool(left))
         listed = [(image, image.name) for image in choices.images]

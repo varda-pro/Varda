@@ -1,13 +1,14 @@
 """Builds the application behind the splash: logging, plugins, the main
 window and its wiring. ``varda.main`` imports this once the splash is up."""
 
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QStandardPaths
 from PyQt6.QtWidgets import QApplication
 
 import varda
-from varda._actions import MENUBAR
+from varda._actions._menu_ids import menuBar
 from varda.workspaces.terrain.terrain_view import TerrainView
 from varda._actions._file_actions import cleanOldExtractions, importImagePaths
 from varda.all_images_view_list.image_list_menu_controller import (
@@ -45,7 +46,8 @@ def createVarda(q_app: QApplication, checkForUpdates: bool = True) -> VardaAppli
 
     app.maingui = MainGUI(app=app)
     q_app.processEvents()
-    app.maingui.setModelMenuBar(MENUBAR)
+    # Debug is for development; set VARDA_DEBUG=1 to show it
+    app.maingui.setModelMenuBar(menuBar(debug=os.environ.get("VARDA_DEBUG") == "1"))
     imageListController = ImageListMenuController(app, parent=app.maingui)
     app.maingui.imageList.sigImagesActivated.connect(
         imageListController.onImagesActivated
