@@ -5,6 +5,7 @@ from app_model import Application
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 
 from varda.common.di_types import ProjectImages
+from varda.common.keys import shortcutText
 from varda.maingui import MainGUI, elidedTabTitle
 from varda.utilities.debug import generate_random_image
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
@@ -93,6 +94,9 @@ def test_the_empty_window_says_how_to_start(gui, monkeypatch):
     assert gui.centralWidget().currentWidget() is gui.startPanel
     text = gui.startPanel.findChild(QLabel, "startHint").text()
     assert "drop" in text.lower()
+    button = gui.startPanel.findChild(QPushButton, "importButton")
+    assert button.text() == f"Import Image(s)…  ({shortcutText('Ctrl+O')})"
+    assert "()" not in button.text()
     ran = []
     monkeypatch.setattr(gui.app.commands, "execute_command", ran.append)
     gui.startPanel.findChild(QPushButton, "importButton").click()

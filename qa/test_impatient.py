@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QLabel, QPushButton
 
 from qa import journeys
 from qa.data import QaData
@@ -30,6 +30,17 @@ def test_first_success_without_reading_anything(qaRun: QaRun, qaData: QaData) ->
             )
         ]
         run.log("start hints", hints=hints)
+        emptyKeys = [
+            b.text()
+            for b in run.mainWindow.findChildren(QPushButton)
+            if b.isVisible() and "()" in b.text()
+        ]
+        if emptyKeys:
+            run.finding(
+                "annoyed",
+                f"A start button shows an empty shortcut: {emptyKeys[0]!r}",
+                widget=run.mainWindow,
+            )
         if not hints:
             run.finding(
                 "confused",

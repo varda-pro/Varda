@@ -40,9 +40,23 @@ def test_library_text_names_the_command_key_on_a_mac(qapp):
     assert translator.translate("ads::CDockAreaTitleBar", ADS_PIN) == (
         "Pin Active Tab (Press ⌘ to Pin Group)"
     )
-    assert translator.translate("ads::CDockAreaTitleBar", "Close Tab") == ""
+    assert translator.translate("ads::CDockAreaTitleBar", "Close Tab") is None
 
 
 @pytest.mark.skipif(MAC, reason="Windows and Linux key names")
 def test_library_text_is_left_alone_elsewhere(qapp):
-    assert NativeKeyTranslator(qapp).translate("ads::CDockAreaTitleBar", ADS_PIN) == ""
+    assert (
+        NativeKeyTranslator(qapp).translate("ads::CDockAreaTitleBar", ADS_PIN) is None
+    )
+
+
+def test_shortcut_names_survive_the_translator(qapp):
+    """Qt names keys through the same translation system (context QShortcut):
+    translating "Ctrl" there emptied every shortcut's text."""
+    translator = NativeKeyTranslator(qapp)
+    qapp.installTranslator(translator)
+    try:
+        assert shortcutText("Ctrl+O") == ("⌘O" if MAC else "Ctrl+O")
+        assert shortcutText("Ctrl+Shift+O") == ("⇧⌘O" if MAC else "Ctrl+Shift+O")
+    finally:
+        qapp.removeTranslator(translator)

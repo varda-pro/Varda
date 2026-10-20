@@ -36,22 +36,31 @@ class NativeKeyTranslator(QTranslator):
     """Shows this platform's key name in libraries' UI text, which says
     "Ctrl" everywhere (e.g. the docking library's "Pin Active Tab (Press Ctrl
     to Pin Group)", where the key is ⌘ on a Mac). Installed on the
-    application; text without "Ctrl", and every text off a Mac, is left to
-    other translators."""
+    application; Qt's own key names (context QShortcut), text without "Ctrl",
+    and every text off a Mac are left to other translators."""
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._key = controlKey()
 
-    def translate(
+    # PyQt's stub says str, but only None tells Qt "no translation here"
+    def translate(  # ty: ignore[invalid-method-override]
         self,
         context: str | None,
         sourceText: str | None,
         disambiguation: str | None = None,
         n: int = -1,
-    ) -> str:
-        if self._key == "Ctrl" or not sourceText or "Ctrl" not in sourceText:
-            return ""
+    ) -> str | None:
+        # Only sentences: Qt names the keys themselves through this system
+        # too (context QShortcut), and a shortcut must keep parsing
+        if (
+            self._key == "Ctrl"
+            or context == "QShortcut"
+            or not sourceText
+            or "Ctrl" not in sourceText
+            or " " not in sourceText
+        ):
+            return None  # not ours ("" would be a translation: empty text)
         return sourceText.replace("Ctrl", self._key)
 
     def isEmpty(self) -> bool:
