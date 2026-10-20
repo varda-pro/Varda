@@ -1,8 +1,14 @@
 """The Run Analysis dialog picks an image and an analysis and shows its settings."""
 
+import numpy as np
+
 from varda.analysis.analysis import Analysis
 from varda.analysis.dialog import RunAnalysisDialog
+from varda.analysis.transforms import PcaAnalysis
+from varda.common.entities import VardaRaster
 from varda.common.parameter import IntParameter
+from varda.common.vec2 import Vec2
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.debug import generate_random_image
 
 
@@ -119,3 +125,24 @@ def test_accepting_emits_the_analysis_and_image(qtbot):
     assert isinstance(analysis, AlphaAnalysis)
     assert image is images[1]
     assert path is None  # saving to a file is off by default
+
+
+def test_pca_shows_the_bands_it_will_use_and_refuses_a_one_wavelength_range(qtbot):
+    """Release QA #6: equal from/to ran silently on every band."""
+    image = VardaRaster(
+        ArrayDataSource(
+            np.random.default_rng(0).normal(size=(10, 10, 40)),
+            wavelengths=np.linspace(1000.0, 2600.0, 40),
+            wavelengthUnits="nm",
+        ),
+        name="cube",
+    )
+    dialog = RunAnalysisDialog([image], [PcaAnalysis], analysis=PcaAnalysis)
+    qtbot.addWidget(dialog)
+    assert dialog.statusLabel.text() == "Uses 40 of 40 bands, 1000–2600 nm."
+    assert dialog.runButton.isEnabled()
+
+    dialog.selectedAnalysis().wavelengths.set(Vec2(1309.0, 1309.0))
+
+    assert not dialog.runButton.isEnabled()
+    assert "needs at least two" in dialog.statusLabel.text()

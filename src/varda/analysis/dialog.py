@@ -228,4 +228,5 @@ class RunAnalysisDialog(QDialog):
         else:
             reason = ""
         self.runButton.setEnabled(not reason)
-        self.statusLabel.setText(reason)
+        summary = analysis.inputSummary(image) if image is not None else ""
+        self.statusLabel.setText(reason or summary)
