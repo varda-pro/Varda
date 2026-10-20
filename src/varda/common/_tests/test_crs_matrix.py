@@ -264,7 +264,9 @@ PAST_ITS_CUT = {("pds3", "over"), ("over", "pds3")}
 @pytest.fixture(scope="module")
 def matrix(tmp_path_factory) -> dict[str, str]:
     folder = tmp_path_factory.mktemp("west")
-    west = labelCrs(labelHints(str(writePds3(folder, WEST_LABEL_GROUP)))).wkt
+    label = labelCrs(labelHints(str(writePds3(folder, WEST_LABEL_GROUP))))
+    assert label is not None
+    west = label.wkt
     assert west is not None
     return {**MATRIX, "westLabel": west}
 
