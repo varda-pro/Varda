@@ -646,3 +646,67 @@ def test_the_route_through_provenance_is_recorded(tmp_path):
     record = ratio.extraMetadata["ratioCube"]
     assert record["geometryRoute"] == f"from source {source}"
     assert f"(found: from source {source})" in ratio.description
+
+
+# --- the 1 µm detector join ----------------------------------------------------------
+
+JOINED_NM = np.concatenate(
+    [np.arange(905.5, 1011.0, 6.55), np.arange(1047.2, 1400, 6.55)]
+)
+
+
+def _joined(steps: np.ndarray) -> VardaRaster:
+    """A joined cube whose IR side sits ``steps[row]`` times its VNIR level."""
+    level = np.where(JOINED_NM > 1020, steps[:, None], 1.0)  # (rows, bands)
+    cube = 0.3 * np.broadcast_to(level[:, None, :], (ROWS, COLS, JOINED_NM.size))
+    source = ArrayDataSource(
+        np.ascontiguousarray(cube, np.float32),
+        wavelengths=JOINED_NM,
+        wavelengthUnits="nm",
+        filePath=PATH,
+    )
+    return VardaRaster(source, name="joined")
+
+
+def test_the_join_correction_scales_each_pixels_vnir_to_its_ir(geometry):
+    # half the rows step down 3 %, the other half not at all: uncorrected,
+    # every ratio steps at the join; corrected, none does
+    steps = np.where(np.arange(ROWS) < ROWS // 2, 0.97, 1.0)
+    image = _joined(steps)
+    vnir = JOINED_NM < 1020
+
+    def joinStep(cube: VardaRaster) -> np.ndarray:
+        data = cube.getData()
+        return data[:, :, ~vnir].mean(axis=2) / data[:, :, vnir].mean(axis=2)
+
+    plain, _ = _run(image, method=WHOLE)
+    assert np.abs(joinStep(plain) - 1).max() > 0.01
+    ratio, denominators = _run(image, method=WHOLE, joinCorrection=True)
+    assert np.allclose(joinStep(ratio), 1.0, atol=1e-5)
+
+    record = ratio.extraMetadata["ratioCube"]["joinCorrection"]
+    assert record["enabled"] is True
+    assert record["vnirEndNm"] == pytest.approx(JOINED_NM[vnir][-1])
+    assert record["factorP5"] == pytest.approx(0.97, abs=1e-5)
+    assert record["factorP95"] == pytest.approx(1.0, abs=1e-5)
+    assert record["unscaledPixels"] == 0
+    assert "scaled to its IR" in ratio.description
+    names = list(denominators.bandNames)
+    factor = denominators.getData()[:, :, names.index(ratio_cube_analysis.JOIN_FACTOR)]
+    assert np.allclose(factor[: ROWS // 2], 0.97, atol=1e-5)
+    assert np.allclose(factor[ROWS // 2 :], 1.0, atol=1e-5)
+    assert ratio_cube_analysis.JOIN_SIGMA in names
+
+
+def test_without_the_correction_the_record_says_so(geometry):
+    ratio, denominators = _run(_joined(np.full(ROWS, 0.97)), method=WHOLE)
+    assert ratio.extraMetadata["ratioCube"]["joinCorrection"] == {"enabled": False}
+    assert ratio_cube_analysis.JOIN_FACTOR not in list(denominators.bandNames)
+
+
+def test_the_correction_needs_a_joined_cube(geometry):
+    analysis = RatioCubeAnalysis()
+    analysis.method.set(WHOLE)
+    analysis.joinCorrection.set(True)
+    reason = analysis.unavailableReason(_scene())
+    assert "joined cube" in reason

@@ -110,6 +110,11 @@ class RatioExplorerController(QObject):
         nameSuffix: Callable[[], str] = lambda: "",
         describe: Callable[[], str] = lambda: "",
         onSaveRequested: Callable[[bool], None] | None = None,
+        adjustSpectra: Callable[
+            [VardaRaster, np.ndarray, np.ndarray, np.ndarray],
+            tuple[np.ndarray, np.ndarray],
+        ]
+        | None = None,
     ) -> None:
         """``imagesFor(clickedImage)`` names the image(s) a selection is measured
         on (default: the clicked image itself); a workspace with co-registered
@@ -118,7 +123,10 @@ class RatioExplorerController(QObject):
         ``nameSuffix()`` is added to the names of saved ROIs (e.g. a verdict),
         and ``describe()`` goes in their ``description`` column when not empty.
         ``onSaveRequested(shift)`` takes over S (e.g. to ask for a class);
-        without it S saves at once with :meth:`saveCurrentBoxes`."""
+        without it S saves at once with :meth:`saveCurrentBoxes`.
+        ``adjustSpectra(image, wavelengths, numerator, denominator)`` returns
+        the two box means corrected (e.g. CRISM's detector join) before they
+        are ratioed, plotted and checked."""
         super().__init__(parent)
         self.config = config
         self._collection = collection
@@ -130,6 +138,7 @@ class RatioExplorerController(QObject):
         self._nameSuffix = nameSuffix
         self._describe = describe
         self._onSaveRequested = onSaveRequested
+        self._adjustSpectra = adjustSpectra
         self._current: tuple[VardaRaster, RatioSelection] | None = None
         self._saveCount = 0
         self._mirrorViewports: list[MirrorViewport] = []
@@ -340,8 +349,14 @@ class RatioExplorerController(QObject):
             denominator = np.asarray(
                 computeRegionStatistics(selection.denominator, source)["mean"]
             )
+            wavelengths = VardaPlotWidget.getPlottableWavelengths(
+                source, len(numerator)
+            )
+            if self._adjustSpectra is not None:
+                numerator, denominator = self._adjustSpectra(
+                    source, wavelengths, numerator, denominator
+                )
             ratio = computeRatioSpectrum(numerator, denominator)
-            wavelengths = VardaPlotWidget.getPlottableWavelengths(source, len(ratio))
             entries.append((wavelengths, ratio, self._label(source, selection)))
             if self._showComponents:
                 entries.append(
@@ -365,6 +380,11 @@ class RatioExplorerController(QObject):
             )
         # one batch, so Replace mode keeps every image of this selection
         self._docks.addSpectra(entries)
+
+    def remeasure(self) -> None:
+        """Measure the current selection again (a correction was switched)."""
+        if self._current is not None:
+            self._onSelection(*self._current)
 
     def _label(
         self,

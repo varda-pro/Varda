@@ -8,6 +8,16 @@ can alter results.
 
 ### Added
 
+- **CRISM: scale the VNIR bands to the IR at the 1 µm detector join.** A
+  joined cube's spectra often step where the S and L detectors meet (a
+  median 1.9 % in FRT00005850's MTRDR). **Scale VNIR to IR at 1 µm**, in the
+  CRISM Ratio workspace's Ratio Controls and in Ratio Cube, fits a line to
+  each side of the join and multiplies the VNIR bands so they meet the IR;
+  the IR bands are unchanged. The workspace scales numerator and
+  denominator each by its own factor (shown beside the toggle, and recorded
+  with its 1-sigma in what S and P save); Ratio Cube scales every pixel and
+  adds its factor and 1-sigma to the denominators image. Off by default. See
+  [CRISM ratio cubes](docs/user-guide/crism-ratio.md#the-1-µm-detector-join).
 - **Find Data: sharp previews, and previews on the map.** The Preview panel
   shows the catalog's largest browse image (ODE's large browse image, not
   its 32-pixel thumbnail; a STAC overview when it is a picture) at the

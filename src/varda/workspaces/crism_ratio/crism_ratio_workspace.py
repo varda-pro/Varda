@@ -41,6 +41,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from varda.analysis.detector_join import (
+    DetectorJoin,
+    JoinScale,
+    findJoin,
+    joinScale,
+    scaleVnir,
+)
+from varda.analysis.rasters import goodBands
 from varda.common.keys import controlClick
 from varda.common.entities import Color, VardaRaster
 from varda.common.grid import sameGrid
@@ -52,6 +60,7 @@ from varda.common.parameter_widgets import (
 from varda.common.ui import (
     ElidingComboBox,
     FlowLayout,
+    MutedLabel,
     PanelScrollArea,
     VardaDockWidget,
 )
@@ -229,6 +238,7 @@ class CrismRatioWorkspace(QMainWindow):
         self.lockCheck = QCheckBox("Lock to sensor column")
         self.lockStatus = QLabel()
         self._initLock()
+        self._initJoin()
         self.controller = RatioExplorerController(
             self.roiCollection,
             _ColumnLock(self.lockCheck, self.roiManager),
@@ -237,8 +247,9 @@ class CrismRatioWorkspace(QMainWindow):
             parent=self,
             imagesFor=lambda _clicked: [data],  # always the I/F cube
             nameSuffix=self._verdictSuffix,
-            describe=self.plots.readout.describe,
+            describe=self._describe,
             onSaveRequested=self._requestSavePair,
+            adjustSpectra=self._adjustJoin,
         )
         # what S and P save as: asked each time, or the suggested class at once
         self.askClass = True
@@ -270,6 +281,104 @@ class CrismRatioWorkspace(QMainWindow):
         # a geometry file chosen here or anywhere else enables the lock at once
         # the image outlives the workspace
         connectWhileAlive(self.data.sigMetadataChanged, self._refreshLock, self)
+
+    def _initJoin(self) -> None:
+        self.join: DetectorJoin | None = None
+        centers = self.data.bandModel.centers
+        if centers is not None:
+            good = np.zeros(self.data.bandCount, bool)
+            good[goodBands(self.data)] = True
+            self.join = findJoin(centers, good)
+        # the measured steps of the current pair (numerator, denominator)
+        self.joinScales: tuple[JoinScale, JoinScale] | None = None
+        self.joinCheck = QCheckBox("Scale VNIR to IR at 1 µm")
+        self.joinCheck.setChecked(False)
+        self.joinCheck.setEnabled(self.join is not None)
+        self.joinCheck.toggled.connect(self._onJoinToggled)
+        self.joinStatus = MutedLabel()
+        if self.join is None:
+            self.joinCheck.setToolTip(
+                "Scale the VNIR (S detector) bands to the IR (L detector) at "
+                f"their join near 1 µm: unavailable. {self.data.name} has no "
+                "bands on both detectors (a joined, J, cube such as an MTRDR)."
+            )
+        else:
+            self.joinCheck.setToolTip(
+                "Multiply the VNIR (S detector) bands of the numerator and of the "
+                "denominator, each on its own, so they meet the IR (L detector) "
+                f"at {self.join.atNm:.0f} nm: lines fitted to the bands within "
+                "80 nm on each side of the detector join. The IR bands are "
+                "unchanged. Applies to the plots, the blandness check and what "
+                "S and P save (the factors go in the description)."
+            )
+
+    def _onJoinToggled(self, _checked: bool) -> None:
+        self.controller.remeasure()
+
+    def _adjustJoin(
+        self,
+        image: VardaRaster,
+        wavelengths: np.ndarray,
+        numerator: np.ndarray,
+        denominator: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The pair with their VNIR bands scaled to the IR (with the toggle
+        on); the steps are measured either way, to show and record."""
+        self.joinScales = None
+        if self.join is None or image is not self.data:
+            self._showJoinStatus()
+            return numerator, denominator
+        centers = self.data.bandModel.centers
+        assert centers is not None  # findJoin found a join in them
+        self.joinScales = (
+            joinScale(numerator, centers, self.join),
+            joinScale(denominator, centers, self.join),
+        )
+        self._showJoinStatus()
+        if not self.joinCheck.isChecked():
+            return numerator, denominator
+        num, den = self.joinScales
+        return (
+            scaleVnir(numerator, self.join, num.factor),
+            scaleVnir(denominator, self.join, den.factor),
+        )
+
+    def _joinText(self) -> str:
+        """The two steps, IR / VNIR at the join with their 1-sigma."""
+        assert self.joinScales is not None
+        num, den = self.joinScales
+        return (
+            f"numerator {float(num.factor):.4f} ± {float(num.sigma):.4f}, "
+            f"denominator {float(den.factor):.4f} ± {float(den.sigma):.4f}"
+        )
+
+    def _showJoinStatus(self) -> None:
+        if self.joinScales is None or self.join is None:
+            self.joinStatus.setText("")
+            return
+        num, den = (float(s.factor) for s in self.joinScales)
+        self.joinStatus.setText(f"×{num:.3f} / ×{den:.3f}")
+        self.joinStatus.setToolTip(
+            f"IR / VNIR at {self.join.atNm:.0f} nm (the VNIR factor): "
+            f"{self._joinText()}"
+        )
+
+    def _joinDescription(self) -> str:
+        """The detector join's handling, for what is saved ("" without one)."""
+        if self.join is None or self.joinScales is None:
+            return ""
+        done = "VNIR scaled to IR" if self.joinCheck.isChecked() else "not corrected"
+        return (
+            f"1 µm detector join ({self.join.vnirEndNm:.1f}/"
+            f"{self.join.irStartNm:.1f} nm): {done}; IR/VNIR at "
+            f"{self.join.atNm:.1f} nm (lines over 80 nm each side): "
+            f"{self._joinText()}."
+        )
+
+    def _describe(self) -> str:
+        """What goes in the description of what is saved."""
+        parts = (self.plots.readout.describe(), self._joinDescription())
+        return " ".join(p for p in parts if p)
 
     def _refreshLock(self) -> None:
         """Enable the lock when the I/F cube's detector columns are known
@@ -374,6 +483,7 @@ class CrismRatioWorkspace(QMainWindow):
             # box 2 px less than its text needs
             _row(self.lockCheck),
             self.chooseGeometryButton,
+            _row(self.joinCheck, self.joinStatus),
             self.keysButton,
         ):
             row.addWidget(widget)
@@ -699,7 +809,7 @@ class CrismRatioWorkspace(QMainWindow):
         col, row = centerPixel(numerator)
         denominator = tool.selection.denominator
         name = f"Ratio numerator ({col}, {row}){self._verdictSuffix(denominator)}"
-        description = "" if denominator is None else self.plots.readout.describe()
+        description = "" if denominator is None else self._describe()
         self._pendingPoint = (col, row, description)
         if self.askClass or shift:
             summary = self._summary(numerator, denominator)
@@ -732,6 +842,7 @@ class CrismRatioWorkspace(QMainWindow):
                 int(self.config.boxHeight.value),
             ],
             "lockColumn": self.lockCheck.isChecked(),
+            "joinCorrection": self.joinCheck.isChecked(),
             "blandness": self.plots.readout.currentCheckName(),
             "blandnessLimits": self.plots.readout.limitOverrides(),
             "blandnessExcludeCo2": self.plots.readout.co2Check.isChecked(),
@@ -754,6 +865,8 @@ class CrismRatioWorkspace(QMainWindow):
             self.config.boxHeight.set(int(height))
         if self.lockCheck.isEnabled():
             self.lockCheck.setChecked(bool(state.get("lockColumn", True)))
+        if self.joinCheck.isEnabled():
+            self.joinCheck.setChecked(bool(state.get("joinCorrection", False)))
         self.plots.readout.checkCombo.setCurrentText(
             state.get("blandness", self.plots.readout.currentCheckName())
         )

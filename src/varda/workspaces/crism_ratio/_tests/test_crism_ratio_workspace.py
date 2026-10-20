@@ -700,6 +700,107 @@ def test_the_lock_uses_the_if_geometry_under_a_map_link(qtbot, mapPair, monkeypa
     assert set(seen) == {"/fake/data.img"}
 
 
+# --- the 1 µm detector join ----------------------------------------------------------
+
+# MTRDR-like bands: VNIR to 1010 nm, then IR from 1047 nm
+JOINED_NM = np.concatenate(
+    [np.arange(905.5, 1011.0, 6.55), np.arange(1047.2, 2600, 6.55)]
+)
+
+
+def joinedRaster(name, shape=(30, 40), step=0.98, seed=0):
+    """A joined cube whose IR side sits ``step`` times its VNIR side's level,
+    each pixel at its own brightness."""
+    rows, cols = shape
+    rng = np.random.default_rng(seed)
+    brightness = rng.uniform(0.2, 0.4, (rows, cols, 1))
+    level = np.where(JOINED_NM > 1020, step, 1.0) * (1 - 1e-4 * (JOINED_NM - 1000))
+    values = brightness * level + rng.normal(0, 1e-4, (rows, cols, JOINED_NM.size))
+    return VardaRaster(
+        ArrayDataSource(
+            values.astype(np.float32),
+            wavelengths=JOINED_NM,
+            wavelengthUnits="nanometers",
+            transform=Affine(100.0, 0, 0, 0, -100.0, 0),
+            crs=MARS,
+        ),
+        name=name,
+    )
+
+
+def _measured(workspace):
+    received = []
+    workspace.controller.sigComponents.connect(received.append)
+    return received
+
+
+def test_the_join_toggle_scales_the_vnir_bands_of_both_boxes(qtbot):
+    data = joinedRaster("data", step=0.98)
+    workspace = build(qtbot, joinedRaster("browse", seed=1), data, Link.PIXEL)
+    assert workspace.joinCheck.isEnabled() and not workspace.joinCheck.isChecked()
+    received = _measured(workspace)
+    _pair(workspace)
+    raw = received[-1]
+    vnir = JOINED_NM < 1020
+    num, den = workspace.joinScales
+    assert float(num.factor) == pytest.approx(0.98, abs=0.002)
+    assert float(den.factor) == pytest.approx(0.98, abs=0.002)
+    assert "×0.98" in workspace.joinStatus.text()
+
+    workspace.joinCheck.setChecked(True)  # measured again at once
+    fixed = received[-1]
+    assert np.allclose(fixed.numerator[vnir], raw.numerator[vnir] * float(num.factor))
+    assert np.allclose(fixed.denominator[~vnir], raw.denominator[~vnir])  # IR as is
+    assert np.allclose(fixed.ratio, fixed.numerator / fixed.denominator, rtol=1e-6)
+    # the spectrum no longer steps at the join
+    left, right = fixed.numerator[vnir][-1], fixed.numerator[~vnir][0]
+    assert right / left == pytest.approx(1 - 1e-4 * 37, abs=2e-3)
+
+    workspace.joinCheck.setChecked(False)
+    assert np.allclose(received[-1].numerator, raw.numerator)
+    assert workspace.sessionState()["joinCorrection"] is False
+
+
+def test_what_is_saved_records_the_join_and_its_factors(qtbot):
+    workspace = build(
+        qtbot, joinedRaster("browse", seed=1), joinedRaster("data"), Link.PIXEL
+    )
+    workspace.joinCheck.setChecked(True)
+    _pair(workspace)
+    key(workspace, Qt.Key.Key_S)
+    accept(qtbot, workspace)
+    fid = workspace.roiCollection.fids[0]
+    description = workspace.roiCollection.getProperty(fid, "description")
+    join = workspace.join
+    assert (
+        f"1 µm detector join ({join.vnirEndNm:.1f}/{join.irStartNm:.1f} nm): "
+        "VNIR scaled to IR" in description
+    )
+    num, den = workspace.joinScales
+    assert f"numerator {float(num.factor):.4f} ± {float(num.sigma):.4f}" in description
+    assert f"denominator {float(den.factor):.4f}" in description
+
+
+def test_the_join_toggle_comes_back_from_a_session(qtbot):
+    images = [joinedRaster("browse", seed=1), joinedRaster("data")]
+    workspace = build(qtbot, images[0], images[1], Link.PIXEL)
+    workspace.joinCheck.setChecked(True)
+    copy = buildWorkspace("crism_ratio", images, images, workspace.sessionState())
+    assert isinstance(copy, CrismRatioWorkspace)
+    qtbot.addWidget(copy)
+    assert copy.joinCheck.isChecked()
+
+
+def test_a_cube_on_one_detector_has_no_join_to_scale(qtbot, spectralPair):
+    workspace = build(qtbot, spectralPair[0], spectralPair[1], Link.PIXEL)
+    assert workspace.join is None
+    assert not workspace.joinCheck.isEnabled()
+    assert "unavailable" in workspace.joinCheck.toolTip()
+    _pair(workspace)
+    assert workspace.joinStatus.text() == ""
+    assert "detector join" not in workspace._describe()
+
+
 def _menuActions(workspace, view) -> tuple[QMenu, dict, dict]:
     """The view's right-click additions (the menu is returned to keep it
     alive): its own docks by name, and the Panels submenu's by name."""
