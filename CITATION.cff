@@ -10,6 +10,7 @@ type: software
 authors:
   - given-names: Michael
     family-names: Phillips
+    orcid: "https://orcid.org/0000-0001-8873-2238"
     affiliation: "Lunar and Planetary Laboratory, University of Arizona"
   - given-names: Jesse
     family-names: Oved
@@ -25,8 +26,8 @@ repository-code: "https://github.com/varda-pro/Varda"
 # Zenodo's concept DOI: every version, resolving to the latest. Each release
 # also gets its own DOI, listed on the Zenodo record.
 doi: "10.5281/zenodo.23447208"
-version: "0.10.0"
-date-released: "2026-10-17"
+version: "0.11.0"
+date-released: "2026-10-20"
 keywords:
   - hyperspectral
   - multispectral
