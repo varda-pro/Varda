@@ -24,6 +24,7 @@ import certifi
 import keyring
 import numpy as np
 from affine import Affine
+from astropy.io import fits
 from pyproj import Transformer
 from PyQt6.QtSvg import QSvgRenderer
 from varda.terrain.scene import TerrainSettings, buildTerrain, pageHtml
@@ -72,6 +73,7 @@ def runSelfTest(app: VardaApplication) -> int:
                 "GeoTIFF write and read",
                 lambda: _roundTrip(image, Path(folder) / "a.tif"),
             ),
+            ("FITS read (astropy)", lambda: _fitsRead(Path(folder) / "dtm.fits")),
             ("rendering", lambda: _render(image)),
             ("PCA (SPy)", lambda: _pca(image)),
             ("band parameters (HyPyRameter)", lambda: _bandParameters(image)),
@@ -207,6 +209,27 @@ def _roundTrip(image: VardaRaster, path: Path) -> str:
         return f"{written.name} {loaded.shape}"
     finally:
         loaded.close()  # Windows can't delete a file that is still open
+
+
+def _fitsRead(path: Path) -> str:
+    """A small ALTWG-style cube (PLANEn names and units, scaled integers with
+    BLANK) opens through the loader, memory-mapped, with NaN for no-data."""
+    stored = np.arange(2 * 4 * 5, dtype=np.int16).reshape(2, 4, 5)
+    stored[1, 0, 0] = -1
+    hdu = fits.PrimaryHDU(stored)
+    hdu.header["BSCALE"], hdu.header["BZERO"], hdu.header["BLANK"] = 0.5, 10.0, -1
+    hdu.header["PLANE1"] = ("Latitude of vertices", "[deg]")
+    hdu.header["PLANE2"] = ("Elevation", "[m]")
+    hdu.writeto(path)
+    loaded = _load(path)
+    try:
+        assert loaded.shape == (4, 5, 2), loaded.shape
+        assert loaded.bandNames == ["Latitude of vertices (deg)", "Elevation (m)"]
+        values = loaded.getData([1])[..., 0]
+        assert np.isnan(values[0, 0]) and values[3, 4] == 10.0 + 0.5 * 39
+        return f"{path.name} {loaded.shape}, {loaded.bandNames[1]}"
+    finally:
+        loaded.close()
 
 
 def _load(path: Path) -> VardaRaster:

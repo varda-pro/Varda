@@ -52,6 +52,7 @@ def systemInfo() -> str:
         f"numpy {np.__version__}",
         f"rasterio {rasterio.__version__}, GDAL {rasterio.__gdal_version__}",
         f"pyproj {pyproj.__version__}, PROJ {pyproj.proj_version_str}",
+        f"astropy {_packageVersion('astropy') or 'not installed'}",
         f"Spectral Python (SPy) {_packageVersion('spectral') or 'not installed'}",
         f"HyPyRameter {_packageVersion('hypyrameter') or 'not installed'}",
         f"PyTorch {_torchStatus()}",

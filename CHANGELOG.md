@@ -8,6 +8,16 @@ can alter results.
 
 ### Added
 
+- **FITS images and ALTWG/SPC terrain cubes open.** `.fits`, `.fit`, `.fts`
+  and `.fz` files are read with astropy. The image is the primary HDU or the
+  first image extension, and each plane is a band. OSIRIS-REx ALTWG/SPC cubes
+  get their band names and units from the `PLANEn` cards, e.g. **Elevation
+  (m)**, and show their height by default. BSCALE/BZERO are applied, and
+  BLANK and NaN read as no-data. Pixels are read from a memory map. Local
+  DTMs get no invented coordinate system: the target body and the
+  latitude/longitude/radius/X/Y/Z planes are recorded for later use. Sigma
+  planes stay as bands, carried as-is. Image Properties shows the FITS
+  header. See [FITS images](docs/user-guide/fits-images.md).
 - **ROI areas and perimeters on the body.** Add Column's Geometry measures
   now include **Area on the body (km²)** and **Perimeter on the body (km)**:
   geodesic (Karney, 2013) on the coordinate system's own surface, with the
