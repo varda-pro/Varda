@@ -44,6 +44,8 @@ a = Analysis(
     ["src/varda/main.py"],
     pathex=[],
     binaries=[(UV, "bin")],
+    # astropy (FITS) needs nothing here: pyinstaller-hooks-contrib's astropy hook
+    # collects its data files, submodules and metadata (about 27 MB)
     # GDAL data shipped in rasterio, PROJ data from pyproj, HyPyRameter's parameter
     # tables, Varda's resources and the bundled spectral library
     datas=collect_data_files("rasterio")
