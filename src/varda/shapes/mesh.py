@@ -137,9 +137,9 @@ def _adjacency(plates: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def oriented(model: ShapeModel) -> tuple[ShapeModel, bool]:
-    """The model with consistent winding, normals facing out (positive
-    volume per closed part; away from the patch's middle when open), and
-    whether any plate was flipped."""
+    """The model with consistent winding, normals facing out (a positive
+    total volume when closed; away from the body's center, the origin, when
+    open), and whether any plate was flipped."""
     flip = _consistentFlips(model.plates, *model.adjacency)
     plates = np.where(flip[:, None], model.plates[:, ::-1], model.plates)
     candidate = ShapeModel(model.vertices, plates, model.name, model.body)
@@ -147,23 +147,22 @@ def oriented(model: ShapeModel) -> tuple[ShapeModel, bool]:
         flip = ~flip
         plates = plates[:, ::-1]
     if not flip.any():
-        return model, False
+        # the candidate, whose derived values are already computed
+        return candidate, False
     return ShapeModel(model.vertices, plates, model.name, model.body), True
 
 
 def _facesInward(model: ShapeModel) -> bool:
+    """A closed model with negative volume, or an open one whose plates face
+    the body's center (the origin) more than away from it."""
     corners = model.corners
     if model.isClosed:
         signed = np.einsum(
             "ij,ij->i", corners[:, 0], np.cross(corners[:, 1], corners[:, 2])
         )
         return bool(signed.sum() < 0)
-    middle = model.centroids.mean(axis=0)
-    away = np.einsum("ij,ij->i", model.normals, model.centroids - middle)
-    if np.allclose(away, 0):
-        # a flat patch: face the side the body's center (the origin) isn't on
-        away = np.einsum("ij,ij->i", model.normals, model.centroids)
-    return bool((away * model.areas).sum() < 0)
+    away = np.einsum("ij,ij->i", model.normals, model.centroids) * model.areas
+    return bool(away.sum() < 0)
 
 
 @numba.njit(cache=True)
@@ -270,3 +269,44 @@ def _packed(rows: np.ndarray) -> np.ndarray:
     assert rows.max(initial=0) < 1 << 21, "too many cells or vertices to pack"
     rows = rows.astype(np.int64)
     return (rows[:, 0] << 42) | (rows[:, 1] << 21) | rows[:, 2]
+
+
+_T = (1 + 5**0.5) / 2
+_ICOSAHEDRON_VERTICES = [
+    (-1, _T, 0), (1, _T, 0), (-1, -_T, 0), (1, -_T, 0),
+    (0, -1, _T), (0, 1, _T), (0, -1, -_T), (0, 1, -_T),
+    (_T, 0, -1), (_T, 0, 1), (-_T, 0, -1), (-_T, 0, 1),
+]  # fmt: skip
+_ICOSAHEDRON_PLATES = [
+    (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
+    (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
+    (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
+    (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
+]  # fmt: skip
+
+
+def icosphere(
+    radiusKm: float = 1.0, subdivisions: int = 3, center=(0.0, 0.0, 0.0)
+) -> ShapeModel:
+    """A sphere of 20·4^subdivisions plates, vertices on the sphere,
+    counterclockwise seen from outside."""
+    vertices = [np.array(v, float) / np.linalg.norm(v) for v in _ICOSAHEDRON_VERTICES]
+    plates = list(_ICOSAHEDRON_PLATES)
+    for _ in range(subdivisions):
+        midpoints: dict[tuple[int, int], int] = {}
+
+        def midpoint(a: int, b: int) -> int:
+            key = (min(a, b), max(a, b))
+            if key not in midpoints:
+                point = vertices[a] + vertices[b]
+                vertices.append(point / np.linalg.norm(point))
+                midpoints[key] = len(vertices) - 1
+            return midpoints[key]
+
+        finer = []
+        for a, b, c in plates:
+            ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+            finer += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        plates = finer
+    points = np.array(vertices) * radiusKm + np.asarray(center, float)
+    return ShapeModel(points, np.array(plates, np.int32), f"icosphere {subdivisions}")

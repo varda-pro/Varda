@@ -84,3 +84,26 @@ def test_acceleration_is_minus_the_potential_gradient():
 def test_an_open_model_is_refused():
     with pytest.raises(ValueError, match="closed shape model"):
         polyhedronGravity(openPatch(), 1000.0, np.zeros((1, 3)))
+
+
+def test_degenerate_plates_and_edges_contribute_nothing():
+    """A zero-area plate (on a repeated vertex, so with a zero-length edge)
+    is skipped: the field stays finite and unchanged."""
+    model = cube(1.0)
+    vertices = np.vstack(
+        [model.vertices, model.vertices[[0]]]
+    )  # a duplicate of vertex 0
+    sliver = np.array([[0, 1, 8]])  # 8 == 0: a zero-length edge, zero area
+    degenerate = type(model)(vertices, np.vstack([model.plates, sliver]), "sliver")
+    point = np.array([[0.9, 0.7, 0.6]])
+    clean, _ = polyhedronGravity(model, 1000.0, point)
+    dirty, acceleration = polyhedronGravity(degenerate, 1000.0, point)
+    assert np.isfinite(dirty).all() and np.isfinite(acceleration).all()
+    assert dirty[0] == pytest.approx(clean[0], rel=1e-12)
+
+
+def test_a_point_on_an_edge_stays_finite():
+    potential, acceleration = polyhedronGravity(
+        cube(1.0), 1000.0, np.array([[0.5, 0.5, 0.0]])
+    )
+    assert np.isfinite(potential).all() and np.isfinite(acceleration).all()

@@ -286,7 +286,9 @@ def isNonBodyTarget(name: str) -> bool:
 def bodyNamed(name: str) -> Body | None:
     """The body called ``name``, ignoring case, IAU and ESRI decorations
     ("Mars (2015) - Sphere", "D_MARS", "GCS_Mars_2000") and aliases ("Luna")."""
-    key = _DESIGNATION.sub("", name.strip().lower())
+    key = name.strip().lower()
+    if key not in _ALIASES:
+        key = _DESIGNATION.sub("", key)
     if key in _ALIASES:
         return BODIES[_ALIASES[key]]
     key = _PREFIXES.sub("", _DECORATIONS.sub("", key).strip()).strip()

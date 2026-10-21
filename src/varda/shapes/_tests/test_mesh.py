@@ -53,7 +53,7 @@ def test_mixed_winding_is_made_consistent():
 def test_well_wound_model_is_kept():
     sphere = icosphere(1.0, 2)
     model, flipped = oriented(sphere)
-    assert not flipped and model is sphere
+    assert not flipped and model.contentHash == sphere.contentHash
 
 
 def test_lat_lon_radius_is_planetocentric_east_0_360():
@@ -94,3 +94,17 @@ def test_mean_edge_and_adjacency():
     indptr, indices = model.adjacency
     assert (np.diff(indptr) == 3).all()  # every plate of a closed mesh has 3
     assert len(indices) == 36
+
+
+def test_a_bowl_shaped_patch_keeps_facing_away_from_the_center():
+    """A crater maplet on top of a body (z ≈ 1 km, dished): its plates face
+    +z, away from the body's center, and orientation keeps them so."""
+    patch = openPatch(6)
+    bowl = patch.vertices.copy()
+    bowl[:, 2] = 1 + 0.3 * (bowl[:, 0] ** 2 + bowl[:, 1] ** 2)
+    model = ShapeModel(bowl, patch.plates, "bowl")
+    assert (model.normals[:, 2] > 0).all()
+    kept, flipped = oriented(model)
+    assert not flipped and (kept.normals[:, 2] > 0).all()
+    turned, flipped = oriented(reversed_(model))
+    assert flipped and (turned.normals[:, 2] > 0).all()

@@ -5,7 +5,8 @@ Formats, by suffix:
 - Wavefront OBJ (``.obj``): ``v x y z`` and ``f a b c …`` lines, 1-based,
   ``a/t/n`` forms and polygons fanned into triangles (Wavefront Technologies,
   *Advanced Visualizer* manual, App. B1); other lines are ignored.
-- Gaskell PLT (``.plt``, ``.tab``): the vertex count, then ``index x y z``
+- Gaskell PLT (``.plt``, ``.tab``; a ``.tab`` whose first data line is a
+  ``v`` line is read as OBJ): the vertex count, then ``index x y z``
   lines, the plate count, then ``index a b c`` lines (1-based); some
   archives put both counts on the first line (PDS Small Bodies Node
   shape-model descriptions).
@@ -104,7 +105,7 @@ def _looksLikeMeters(model: ShapeModel, body: str | None) -> bool:
 
 def _read(path: Path) -> tuple[np.ndarray, np.ndarray]:
     suffix = path.suffix.lower()
-    if suffix == ".obj":
+    if suffix == ".obj" or (suffix == ".tab" and _isObjSyntax(path)):
         return _readObj(path)
     if suffix in (".plt", ".tab"):
         return _readPlt(path)
@@ -173,6 +174,17 @@ def _readPlt(path: Path) -> tuple[np.ndarray, np.ndarray]:
     if len(vertices) != vertexCount or len(plates) != plateCount:
         raise ValueError(f"{path.name} ends before its counts say.")
     return vertices, plates
+
+
+def _isObjSyntax(path: Path) -> bool:
+    """Whether the file's first data line is an OBJ ``v`` line (PDS archives
+    also use .tab for OBJ-style models)."""
+    with path.open("r", encoding="utf-8", errors="replace") as file:
+        for line in file:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                return stripped.split()[0] == "v"
+    return False
 
 
 def _isIcq(path: Path) -> bool:

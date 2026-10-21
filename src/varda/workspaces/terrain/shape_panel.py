@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -48,6 +49,7 @@ from varda.shapes.mesh import ShapeModel, latLonRadius
 from varda.shapes.plate_data import (
     PlateData,
     attach,
+    AmbiguousColumns,
     readAltwgPlateTable,
     readPlateCsv,
     writePlateCsv,
@@ -97,7 +99,8 @@ class ShapePanel(QWidget):
         self.unit: str = "km"
         self.notes: list[str] = []
         self.plateData: dict[str, PlateData] = {}
-        self.plateDataPaths: list[str] = []  # files to reopen with a session
+        # files to reopen with a session: {"path": …, "column": … (a table's)}
+        self.plateDataFiles: list[dict] = []
         self._display: ShapeDisplay | None = None
         self._caster: RayCaster | None = None
         self._camera: dict | None = None
@@ -306,7 +309,13 @@ class ShapePanel(QWidget):
 
         def work() -> tuple[ShapeRead, ShapeDisplay, RayCaster]:
             read = readShape(path, body, unit)  # ty: ignore[invalid-argument-type]
-            display = shapeDisplay(read.model, ShapeSettings().maxPlates)
+            # the derived values the panel shows, computed here, not on the GUI
+            # thread
+            model = read.model
+            if model.isClosed:
+                _ = model.volume
+            _ = model.meanEdgeKm
+            display = shapeDisplay(model, ShapeSettings().maxPlates)
             return read, display, RayCaster(read.model)
 
         runInBackground(
@@ -341,7 +350,7 @@ class ShapePanel(QWidget):
         self.path, self.unit = path, unit or "km"
         self.model, self._display, self._caster = read.model, display, caster
         self.notes = [n for n in read.notes if n != METERS_NOTE]
-        self.plateData, self.plateDataPaths = {}, []
+        self.plateData, self.plateDataFiles = {}, []
         self._refreshColorChoices()
         self._showInfo()
         self.status.setText("")
@@ -349,11 +358,13 @@ class ShapePanel(QWidget):
         self.geophysicsButton.setEnabled(read.model.isClosed)
         if self._pending is not None:
             pending, self._pending = self._pending, None
-            for file in pending["files"]:
-                self.openPlateData(Path(file))
-            for box, name in zip(self.rgbBoxes, pending["rgb"], strict=False):
-                box.setCurrentText(name)
-            self.colorBox.setCurrentText(pending["colorBy"])
+            for entry in pending["files"]:
+                self.openPlateData(
+                    Path(entry["path"]),
+                    pending["colorBy"],
+                    pending["rgb"],
+                    entry.get("column"),
+                )
         self._showPage()
         self.sigLoaded.emit()
 
@@ -403,27 +414,62 @@ class ShapePanel(QWidget):
         if path:
             self.openPlateData(Path(path))
 
-    def openPlateData(self, path: Path) -> None:
-        """Add the datasets in ``path``; a file made for another model is
-        refused with the reason in the status line."""
-        if self.model is None:
+    def openPlateData(
+        self,
+        path: Path,
+        colorBy: str | None = None,
+        rgb: list[str] | None = None,
+        column: str | None = None,
+    ) -> None:
+        """Add the datasets in ``path``, read in the background; a file made
+        for another model is refused with the reason in the status line.
+        ``colorBy`` and ``rgb`` (a session's coloring) are chosen once in."""
+        model = self.model
+        if model is None:
             return
         path = Path(path)
-        try:
+        self.status.setText(f"Reading {path.name}…")
+
+        def work() -> list[PlateData]:
             if path.suffix.lower() == ".csv":
-                datasets = readPlateCsv(path, self.model)
+                return readPlateCsv(path, model)
+            return [readAltwgPlateTable(path, model, column)]
+
+        def done(datasets: list[PlateData]) -> None:
+            if self.model is not model:
+                return
+            for data in datasets:
+                self.addPlateData(data)
+            entry = {"path": str(path)}
+            if column is not None:
+                entry["column"] = column
+            self.plateDataFiles.append(entry)
+            note = datasets[0].provenance.get("match") if datasets else None
+            self.status.setText(
+                f"Added {', '.join(d.name for d in datasets)}"
+                + (f" ({note})" if note else "")
+            )
+            for box, name in zip(self.rgbBoxes, rgb or [], strict=False):
+                if box.findText(name) >= 0:
+                    box.setCurrentText(name)
+            if colorBy is not None and self.colorBox.findText(colorBy) >= 0:
+                self.colorBox.setCurrentText(colorBy)
+
+        def failed(error: Exception) -> None:
+            if not isinstance(error, AmbiguousColumns):
+                self.status.setText(str(error))
+                return
+            chosen, ok = QInputDialog.getItem(
+                self, "Plate data", f"{path.name}: which column holds the values?",
+                error.columns, 0, False,
+            )  # fmt: skip
+            if ok and chosen:
+                self.openPlateData(path, colorBy, rgb, chosen)
             else:
-                datasets = [readAltwgPlateTable(path, self.model)]
-        except (OSError, ValueError) as error:
-            self.status.setText(str(error))
-            return
-        for data in datasets:
-            self.addPlateData(data)
-        self.plateDataPaths.append(str(path))
-        note = datasets[0].provenance.get("match") if datasets else None
-        self.status.setText(
-            f"Added {', '.join(d.name for d in datasets)}"
-            + (f" ({note})" if note else "")
+                self.status.setText(str(error))
+
+        runInBackground(
+            work, done, failed, description="Reading plate data", owner=self
         )
 
     def addPlateData(self, data: PlateData) -> None:
@@ -655,14 +701,6 @@ class ShapePanel(QWidget):
 
     # --- sessions -------------------------------------------------------------------------
 
-    def keepCamera(self, callback) -> None:
-        def kept(camera: dict | None) -> None:
-            if camera is not None:
-                self._camera = camera
-            callback()
-
-        self.view.camera(kept)
-
     def sessionState(self) -> dict:
         settings = self.settings()
         return {
@@ -670,7 +708,7 @@ class ShapePanel(QWidget):
             "body": self.body(),
             "unit": self.unit,
             # each with "path", so Package Project carries the files
-            "plateData": [{"path": p} for p in self.plateDataPaths],
+            "plateData": list(self.plateDataFiles),
             "colorBy": self.colorBox.currentText(),
             "rgb": [box.currentText() for box in self.rgbBoxes],
             "colorMap": self.colorMapBox.currentText(),
@@ -678,7 +716,6 @@ class ShapePanel(QWidget):
             "fadeAbove": settings.fadeAbove,
             "sunLight": self.sunLight.isChecked(),
             "sun": [self.sunLat.value(), self.sunLon.value()],
-            "camera": self._camera,
         }
 
     def restoreSessionState(self, state: dict) -> None:
@@ -691,17 +728,16 @@ class ShapePanel(QWidget):
         lat, lon = state.get("sun", [0.0, 0.0])
         self.sunLat.setValue(lat)
         self.sunLon.setValue(lon)
-        self._camera = state.get("camera")
         path = state.get("path")
         if not path:
             return
         self._pending = {
-            "files": [e["path"] for e in state.get("plateData", []) if e.get("path")],
+            "files": [e for e in state.get("plateData", []) if e.get("path")],
             "colorBy": state.get("colorBy", NO_COLOR),
             "rgb": state.get("rgb", []),
         }
-        unit = state.get("unit", "km")
-        self.openShape(Path(path), "m" if unit == "m" else None)
+        # the unit read last time (asked about then, if at all)
+        self.openShape(Path(path), "m" if state.get("unit") == "m" else "km")
 
 
 def _direction(latitude: float, longitude: float) -> tuple[float, float, float]:

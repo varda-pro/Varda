@@ -188,3 +188,9 @@ def test_dsk_type_2(tmp_path):
     model = readShape(writeDsk(tmp_path / "s.bds", sphere)).model
     assert np.allclose(model.vertices, sphere.vertices)
     assert np.array_equal(model.plates, sphere.plates)
+
+
+def test_a_tab_file_in_obj_syntax_reads_as_obj(tmp_path):
+    sphere = icosphere(1.0, 1)
+    path = writeObjText(tmp_path / "bennu.tab", sphere.vertices, sphere.plates)
+    assert readShape(path).model.plateCount == sphere.plateCount

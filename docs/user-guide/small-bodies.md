@@ -38,7 +38,7 @@ and, for Shape Geophysics, to fill in the body's density and rotation period
 | Format | Suffix | What Varda reads | Reference |
 |---|---|---|---|
 | Wavefront OBJ | `.obj` | `v x y z` vertices and `f` faces (1-based; `a/t/n` forms; polygons are split into triangles from their first corner); other lines are ignored | Wavefront *Advanced Visualizer* manual, App. B1 |
-| Gaskell PLT | `.plt`, `.tab` | the vertex count, `index x y z` lines, the plate count, `index a b c` lines (1-based); or both counts on the first line, as some PDS archives write them | PDS Small Bodies Node shape-model data-set descriptions |
+| Gaskell PLT | `.plt`, `.tab` (a `.tab` in OBJ syntax is read as OBJ) | the vertex count, `index x y z` lines, the plate count, `index a b c` lines (1-based); or both counts on the first line, as some PDS archives write them | PDS Small Bodies Node shape-model data-set descriptions |
 | Gaskell ICQ | `.icq` (or a `.txt` whose first line is one integer) | q, then the 6 (q + 1)² vertices of the six cube faces' grids; each grid square becomes two plates, and vertices repeated along the faces' seams are merged, so a global model is closed | Gaskell et al. (2008) |
 | FITS X/Y/Z planes | `.fits`, `.fit` | an ALTWG/SPC cube with X, Y and Z coordinate planes (named by `PLANEn` cards; km, or m when the card's unit says so): each grid square whose four corners have coordinates becomes two plates; fill values (below −10³⁰) are skipped. An **open patch** | ALTWG SIS; [FITS images](fits-images.md) |
 | NAIF DSK type 2 | `.bds` | the first segment's vertices and plates, through SpiceyPy. Needs the `spice` extra (`uv sync --extra spice`); release builds include it. Without it Varda says "Install the spice extra to read DSK files" | NAIF DSK Required Reading |
@@ -46,7 +46,8 @@ and, for Shape Geophysics, to fill in the body's density and rotation period
 After reading, Varda **orients** the model: neighboring plates are made to
 run their shared edge in opposite directions (consistent winding), and the
 whole model is turned so its normals point outward (a positive signed
-volume for a closed model; away from the patch's middle for an open one).
+volume for a closed model; away from the body's center, the origin of its
+coordinates, for an open patch, so a dished crater maplet keeps facing up).
 When any plate was turned, the panel says **"Normals were flipped to face
 outward."** Results (normals, slopes, areas' signs) are computed on the
 oriented model.
@@ -83,7 +84,11 @@ responsive.
 
 Click the model (without dragging) to read a plate:
 
-`Plate 81204 · X 0.1234 Y −0.2001 Z 0.0452 km · lat 10.215° lon 301.652° r 0.2394 km · slope 12.5 ± 0.5 deg`
+`Plate 81204 · X 0.1234 Y -0.2001 Z 0.0452 km · lat 10.215° lon 301.652° r 0.2394 km · slope 12.4 °`
+
+(with " ± σ" after the value when the dataset has a sigma, as ALTWG products
+do; Shape Geophysics' outputs have none: their uncertainty is the ρ ± σ
+datasets, which you can color by and read the same way).
 
 The page sends the click's **view ray**; Varda finds where that ray first
 meets the **full** model (a ray cast through a bounding volume hierarchy,
@@ -110,8 +115,9 @@ uncertainty, made for **one** shape model. **Add Plate Data…** reads:
   then a `plate` column (0-based) and one column per value
   (`name [unit]`) and per sigma (`name sigma`);
 - an **ALTWG plate-ancillary FITS table**: the table's value column (the
-  one that isn't a plate index, a location or SIGMA) and its SIGMA column,
-  ordered by a FACET/PLATE/ID column when there is one.
+  one that isn't a plate index, a location or SIGMA; when there are several,
+  Varda asks which) and its SIGMA column, ordered by a FACET/PLATE/ID column
+  when there is one.
 
 **Matching.** Data is used only on the model it was made for: the same
 content hash **and** plate count. A plate CSV for another resolution of the
@@ -207,7 +213,7 @@ mean edge, the plate counts):
 | gravitational acceleration (magnitude) | m/s² |
 | centrifugal acceleration (magnitude) | m/s² |
 | total acceleration (magnitude) | m/s² |
-| potential (V_eff, negative) | J/kg |
+| effective potential (V_eff, negative) | J/kg |
 | slope | ° |
 | geopotential elevation | m |
 | tilt | ° |
@@ -234,14 +240,32 @@ Export them with **Export → Plate Data as CSV…**.
   and state it. Even on a perfect sphere the plates' facets tilt them by up
   to a few degrees from the radius (about 2–3° for 20,000 plates on a
   sphere).
-- **Coarse evaluation.** Above the exact limit, gravity is computed on a
-  decimated, closed model of at most that many plates; each plate takes the
-  gravity of the coarse plate whose centroid is nearest its own, and its potential is
-  carried to its own centroid to first order (V ≈ V_coarse − g·Δr).
-  Normals, centrifugal terms, slopes and tilts use every plate. The error
-  grows with the difference between the two surfaces near the plate (of
-  the order of the coarse mean edge). The status line and the provenance
-  ("evaluatedOn") say when this was done.
+- **Coarse evaluation.** A model of N plates above the exact limit L takes
+  its gravity from a coarser closed polyhedron of L²/N plates (at least
+  5,000, at most L; the work stays that of an L-plate model), evaluated at
+  every plate's own centroid with the density scaled by the volume ratio, so
+  the mass is kept. The coarse polyhedron is the vertex-clustered model when
+  that is closed, otherwise the outermost surface along the rays of an
+  icosphere from the center (which fills overhangs: state it for
+  non-star-shaped bodies). Normals, centrifugal terms, slopes and tilts use
+  every plate. The provenance's `gravitySource` gives the coarse model's
+  plates and how it was made. Measured on a smooth 300 × 250 × 200 m
+  ellipsoid of 20,480 plates at Bennu's density and spin, against the
+  exact run:
+
+  | Gravity source (vertex clustering) | Slope error, mean | 95th percentile | max |
+  |---|---|---|---|
+  | 988 plates | 0.36° | 0.77° | 1.18° |
+  | 2,300 plates | 0.14° | 0.31° | 0.54° |
+  | 4,716 plates | 0.07° | 0.18° | 0.34° |
+
+  The error falls about as 1/(source plates); a rough or concave body's is
+  larger. A 3-million-plate model at the default limit uses about 13,000
+  source plates. When it matters, compare with a run at a higher limit.
+- **Degenerate plates.** Zero-area plates add nothing to the field and are
+  skipped; if the model is then no longer closed, Shape Geophysics refuses it.
+- **Tilt radius.** Tilt averages the plates within the radius; a radius that
+  would average more than 5 × 10⁸ plate pairs is refused.
 - **Reference potential.** Elevations depend on V_ref: state which.
 - **Rotation.** Uniform rotation about +Z at the period given; precession,
   tumbling (Dimorphos after DART) and YORP spin-up are not modeled.
@@ -289,8 +313,12 @@ was matched. A methods sentence:
 ## Sessions
 
 The workspace's surface, the shape model's file, its body and unit, the
-plate data files, the coloring, the light and the camera are saved with the
-session (paths, not the meshes), and **Package Project** carries the files.
+plate data files (and a table's chosen column), the coloring and the light
+are saved with the session (paths, not the meshes), and **Package Project**
+carries the files. The camera isn't kept: the view opens from its starting
+point. Shape Geophysics results aren't kept either: export them as a plate
+CSV (Export → Plate Data as CSV…) and add that file, which the session then
+reopens.
 
 ## Limitations
 

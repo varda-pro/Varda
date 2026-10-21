@@ -92,6 +92,7 @@ def test_plate_data_for_another_model_shows_the_message(qtbot, panel, tmp_path):
         path, other, [plateData(other, "slope", "deg", np.zeros(other.plateCount))]
     )
     panel.openPlateData(path)
+    qtbot.waitUntil(lambda: "another shape model" in panel.status.text(), timeout=10000)
     assert "slope was made for another shape model" in panel.status.text()
     assert "Traceback" not in panel.status.text()
     assert panel.colorBox.findText("slope") == -1
@@ -106,8 +107,15 @@ def test_the_reader_runs_in_the_background(qtbot, panel, tmp_path, monkeypatch):
         return real(task, onDone, onFailed, **kwargs)
 
     monkeypatch.setattr(shapePanelModule, "runInBackground", recording)
-    opened(qtbot, panel, icosphere(1.0, 2), tmp_path / "ball.obj")
+    model = opened(qtbot, panel, icosphere(1.0, 2), tmp_path / "ball.obj")
     assert "Reading a shape model" in calls
+    path = tmp_path / "slope.csv"
+    writePlateCsv(
+        path, model, [plateData(model, "slope", "deg", np.zeros(model.plateCount))]
+    )
+    panel.openPlateData(path)
+    assert "Reading plate data" in calls
+    qtbot.waitUntil(lambda: "slope" in panel.plateData, timeout=10000)
 
 
 @pytest.mark.parametrize("size", [(1280, 800), (1024, 700)])
@@ -137,7 +145,7 @@ def test_shape_mode_comes_back_from_a_session(qtbot, tmp_path):
     panel.openShape(tmp_path / "ball.obj")
     qtbot.waitUntil(lambda: panel.model is not None, timeout=10000)
     panel.openPlateData(csv)
-    assert "slope" in panel.plateData, panel.status.text()
+    qtbot.waitUntil(lambda: "slope" in panel.plateData, timeout=10000)
     panel.colorBox.setCurrentText("slope")
     state = first.sessionState()
     assert state["shape"]["path"] == str(tmp_path / "ball.obj")
@@ -148,6 +156,61 @@ def test_shape_mode_comes_back_from_a_session(qtbot, tmp_path):
     qtbot.addWidget(second)
     restored = second.shapePanel
     assert restored is not None and second.surfaceBox.currentText() == "Shape model"
-    qtbot.waitUntil(lambda: restored.model is not None, timeout=10000)
-    assert "slope" in restored.plateData
+    qtbot.waitUntil(lambda: "slope" in restored.plateData, timeout=10000)
     assert restored.colorBox.currentText() == "slope"
+
+
+def test_a_table_with_several_value_columns_asks_which(
+    qtbot, panel, tmp_path, monkeypatch
+):
+    from astropy.io import fits
+    from PyQt6.QtWidgets import QInputDialog
+
+    model = opened(qtbot, panel, icosphere(1.0, 2), tmp_path / "ball.obj")
+    n = model.plateCount
+    table = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="QUALITY", format="D", array=np.ones(n)),
+            fits.Column(name="SLOPE", format="D", unit="deg", array=np.arange(n)),
+        ]
+    )
+    path = tmp_path / "two.fits"
+    fits.HDUList([fits.PrimaryHDU(), table]).writeto(path)
+    offered = []
+
+    def choose(parent, title, label, items, *args, **kwargs):
+        offered.append(list(items))
+        return "SLOPE", True
+
+    monkeypatch.setattr(QInputDialog, "getItem", choose)
+    panel.openPlateData(path)
+    qtbot.waitUntil(lambda: "SLOPE" in panel.plateData, timeout=10000)
+    assert offered == [["QUALITY", "SLOPE"]]
+    assert panel.sessionState()["plateData"] == [{"path": str(path), "column": "SLOPE"}]
+
+
+def test_a_model_kept_in_km_is_not_asked_about_again_on_restore(
+    qtbot, tmp_path, monkeypatch
+):
+    asked = []
+
+    def decline(*args, **kwargs):
+        asked.append(args)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", decline)
+    sphere = icosphere(0.245, 2)
+    writeObj(
+        type(sphere)(sphere.vertices * 1000, sphere.plates, "big"), tmp_path / "big.obj"
+    )
+    first = ShapePanel()
+    qtbot.addWidget(first)
+    first.bodyBox.setCurrentText("Bennu")
+    first.openShape(tmp_path / "big.obj")
+    qtbot.waitUntil(lambda: first.model is not None, timeout=10000)
+    assert len(asked) == 1
+    second = ShapePanel()
+    qtbot.addWidget(second)
+    second.restoreSessionState(first.sessionState())
+    qtbot.waitUntil(lambda: second.model is not None, timeout=10000)
+    assert len(asked) == 1

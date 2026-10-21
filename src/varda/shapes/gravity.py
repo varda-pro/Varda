@@ -32,6 +32,8 @@ from varda.shapes.mesh import ShapeModel
 
 G = 6.67430e-11  # m³ kg⁻¹ s⁻² (CODATA 2018)
 CLOSED_ONLY = "Gravity needs a closed shape model; this one has holes or is a patch."
+# Plates smaller than this fraction of the mean plate area add nothing
+_DEGENERATE_AREA = 1e-12
 # Field points per kernel call, so long runs report progress
 _CHUNK = 4096
 
@@ -46,8 +48,7 @@ def polyhedronGravity(
     at ``points`` (km, body-fixed) of ``model`` filled at ``densityKgM3``.
     The model must be closed and wound outward (``mesh.oriented``); raises
     ValueError when it isn't closed."""
-    if not model.isClosed:
-        raise ValueError(CLOSED_ONLY)
+    model = solid(model)
     vertices = model.vertices * 1000.0  # m
     edges, edgeDyads = _edgeDyads(vertices, model.plates)
     normals = model.normals
@@ -66,6 +67,18 @@ def polyhedronGravity(
             progress(stop / len(field))
     scale = G * densityKgM3
     return -scale * potential, scale * acceleration
+
+
+def solid(model: ShapeModel) -> ShapeModel:
+    """The model without zero-area plates, which add nothing to the field
+    (and have no normal); raises ValueError unless what remains is closed."""
+    areas = model.areas
+    keep = areas > _DEGENERATE_AREA * areas.mean()
+    if not keep.all():
+        model = ShapeModel(model.vertices, model.plates[keep], model.name, model.body)
+    if not model.isClosed:
+        raise ValueError(CLOSED_ONLY)
+    return model
 
 
 def _edgeDyads(
@@ -117,6 +130,10 @@ def _werner(
             db = math.sqrt(bx * bx + by * by + bz * bz)
             ex, ey, ez = bx - ax, by - ay, bz - az
             length = math.sqrt(ex * ex + ey * ey + ez * ez)
+            if da + db - length <= 1e-12 * length:
+                # the point lies on the edge, where E_e·r_e is 0 (r_e runs
+                # along the edge), so the term's limit is 0
+                continue
             L = math.log((da + db + length) / (da + db - length))
             E = edgeDyads[e]
             rx = E[0, 0] * ax + E[0, 1] * ay + E[0, 2] * az

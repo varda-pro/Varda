@@ -24,12 +24,14 @@ Slope and elevation are not linear in ρ, so they are also given at ρ − σρ
 and ρ + σρ (the gravitational terms scale with ρ; the centrifugal ones
 don't).
 
-Models of more than ``maxExactPlates`` plates are evaluated on a coarser
-model (``mesh.decimated``): each plate takes the gravity of the coarse plate
-whose centroid is nearest its own, and its potential is carried to its own centroid to
-first order (V(p) ≈ V(q) − g·(p − q)); centrifugal terms, normals, slopes and
-tilts use the full model. The provenance records the plate count actually
-evaluated.
+Models of N > ``maxExactPlates`` (L) plates take their gravity from a
+coarser closed polyhedron of L²/N plates (so the work stays that of an
+L-plate model; at least 5000, at most L), evaluated at every plate's own centroid, its density
+scaled by the volume ratio so the mass is kept. The coarse model is the
+vertex-clustered model (``mesh.decimated``) when that is closed, else the
+outermost surface along the rays of an icosphere from the center (which
+fills overhangs). Centrifugal terms, normals, slopes and tilts use every
+plate. The provenance records the coarse model ("gravitySource").
 """
 
 from __future__ import annotations
@@ -42,8 +44,9 @@ import numpy as np
 from attrs import asdict, frozen
 from scipy.spatial import KDTree
 
-from varda.shapes.gravity import CLOSED_ONLY, G, polyhedronGravity
-from varda.shapes.mesh import ShapeModel, decimated, oriented
+from varda.shapes.gravity import CLOSED_ONLY, G, polyhedronGravity, solid
+from varda.shapes.mesh import ShapeModel, decimated, icosphere, oriented
+from varda.shapes.raycast import RayCaster
 from varda.shapes.plate_data import PlateData, plateData
 
 ProgressCallback = Callable[[int, str], None]
@@ -52,8 +55,13 @@ METHOD = (
     "centroids, plus the centrifugal term; slope and geopotential elevation "
     "after Scheeres et al. (2016); tilt after Hergenrother et al. (2014)"
 )
-# Coarse models a closed one can't be made from are tried this many times
-_COARSE_TRIES = 6
+# Vertex clustering is tried this many times before the radial model
+_COARSE_TRIES = 4
+# Fewer source plates than this bend slopes by tenths of a degree (the guide's
+# table); more cost N × this many pair sums
+_MIN_COARSE = 5000
+# Tilt's neighbor lists stop here (about 30 s and a few hundred MB a chunk)
+MAX_TILT_PAIRS = 5e8
 
 
 @frozen
@@ -74,22 +82,17 @@ def geophysics(
     if not model.isClosed:
         raise ValueError(CLOSED_ONLY)
     _check(settings)
-    model, _ = oriented(model)
-    evaluated = _evaluatedModel(model, settings.maxExactPlates)
-    progress(0, f"Gravity at {evaluated.plateCount:,} plates…")
+    model, _ = oriented(solid(model))
+    source, how = _gravitySource(model, settings.maxExactPlates)
+    message = f"Gravity at {model.plateCount:,} plates from {source.plateCount:,}…"
+    progress(0, message)
     potential, gravity = polyhedronGravity(
-        evaluated,
-        1.0,
-        evaluated.centroids,
-        lambda f: progress(int(90 * f), f"Gravity at {evaluated.plateCount:,} plates…"),
+        source,
+        model.volume / source.volume,  # the coarse model keeps the mass
+        model.centroids,
+        lambda f: progress(int(90 * f), message),
     )
     centroids = model.centroids * 1000.0  # m
-    if evaluated is not model:
-        progress(90, "Carrying gravity to every plate…")
-        _, nearest = KDTree(evaluated.centroids).query(model.centroids)
-        offset = centroids - evaluated.centroids[nearest] * 1000.0
-        gravity = gravity[nearest]
-        potential = potential[nearest] - np.einsum("ij,ij->i", gravity, offset)
     omega = 2 * math.pi / (settings.rotationPeriodH * 3600.0)
     centrifugal = omega**2 * np.column_stack(
         [centroids[:, 0], centroids[:, 1], np.zeros(len(centroids))]
@@ -120,7 +123,8 @@ def geophysics(
         "settings": asdict(settings),
         "G": G,
         "meanEdgeKm": model.meanEdgeKm,
-        "evaluatedOn": evaluated.plateCount,
+        "evaluatedOn": source.plateCount,
+        "gravitySource": {"plates": source.plateCount, "model": how},
         "plates": model.plateCount,
         "shape": model.name,
     }
@@ -129,7 +133,7 @@ def geophysics(
         ("gravitational acceleration", "m/s²", np.linalg.norm(rho * gravity, axis=1)),
         ("centrifugal acceleration", "m/s²", np.linalg.norm(centrifugal, axis=1)),
         ("total acceleration", "m/s²", np.linalg.norm(total, axis=1)),
-        ("potential", "J/kg", effective),
+        ("effective potential", "J/kg", effective),
         ("slope", "°", slope),
         ("geopotential elevation", "m", elevation),
         ("tilt", "°", tilt),
@@ -158,33 +162,63 @@ def _check(settings: GeophysicsSettings) -> None:
         raise ValueError("The tilt radius can't be negative.")
 
 
-def _evaluatedModel(model: ShapeModel, maxPlates: int) -> ShapeModel:
-    """The model, or a closed coarser one of at most ``maxPlates`` plates."""
-    if model.plateCount <= maxPlates:
-        return model
-    cap = maxPlates
+def _gravitySource(model: ShapeModel, maxExact: int) -> tuple[ShapeModel, str]:
+    """The polyhedron gravity comes from, and how it was made."""
+    if model.plateCount <= maxExact:
+        return model, "the model itself"
+    cap = min(maxExact, max(maxExact**2 // model.plateCount, _MIN_COARSE))
     for _ in range(_COARSE_TRIES):
         coarse, _ = oriented(decimated(model, cap))
         if coarse.isClosed:
-            return coarse
+            return coarse, "vertex clustering (mesh.decimated)"
         cap = int(cap * 0.8)
-    raise ValueError(
-        f"Varda couldn't make a closed model of at most {maxPlates:,} plates from "
-        f"this one; raise the plate limit (it has {model.plateCount:,})."
+    return _radialModel(model, cap), "outermost surface along icosphere rays"
+
+
+def _radialModel(model: ShapeModel, maxPlates: int) -> ShapeModel:
+    """An icosphere of at most ``maxPlates`` plates whose vertices are moved
+    to the model's outermost surface along their directions from the center:
+    closed by construction (overhangs are filled)."""
+    subdivisions = max(0, int(math.log(max(maxPlates, 20) / 20, 4)))
+    directions = icosphere(1.0, subdivisions)
+    far = 2.0 * float(np.linalg.norm(model.vertices, axis=1).max())
+    hits = RayCaster(model).intersect(directions.vertices * far, -directions.vertices)
+    if (hits.plate < 0).any():
+        raise ValueError(
+            "Varda couldn't make a coarse model of this shape (the center of its "
+            "coordinates is outside it); raise Evaluate exactly up to."
+        )
+    coarse = ShapeModel(
+        hits.points, directions.plates, f"{model.name} (radial)", model.body
     )
+    return oriented(coarse)[0]
 
 
-def _tilt(model: ShapeModel, radiusM: float) -> np.ndarray:
+def _tilt(model: ShapeModel, radiusM: float, chunk: int = 20_000) -> np.ndarray:
     """Degrees between the (radius-averaged) surface normal and the radius
-    vector at each plate."""
+    vector at each plate; neighbors are gathered ``chunk`` plates at a time,
+    so memory stays bounded."""
     normals = model.normals
     if radiusM > 0:
+        pairs = (
+            math.pi * (radiusM / 1000.0) ** 2 / model.areas.mean() * model.plateCount
+        )
+        if pairs > MAX_TILT_PAIRS:
+            raise ValueError(
+                f"A {radiusM:g} m tilt radius averages about {pairs:.2g} plate pairs "
+                f"on this model (at most {MAX_TILT_PAIRS:.0e}); choose a smaller tilt radius."
+            )
         tree = KDTree(model.centroids)
-        pairs = tree.query_pairs(radiusM / 1000.0, output_type="ndarray")
         weighted = normals * model.areas[:, None]
-        summed = weighted.copy()
-        np.add.at(summed, pairs[:, 0], weighted[pairs[:, 1]])
-        np.add.at(summed, pairs[:, 1], weighted[pairs[:, 0]])
+        summed = np.empty_like(weighted)
+        for start in range(0, model.plateCount, chunk):
+            near = tree.query_ball_point(
+                model.centroids[start : start + chunk], radiusM / 1000.0
+            )
+            counts = np.fromiter((len(n) for n in near), np.int64, len(near))
+            flat = np.concatenate([np.asarray(n, np.int64) for n in near])
+            offsets = np.concatenate([[0], np.cumsum(counts)[:-1]])
+            summed[start : start + len(near)] = np.add.reduceat(weighted[flat], offsets)
         normals = summed / np.linalg.norm(summed, axis=1, keepdims=True)
     radial = model.centroids / np.linalg.norm(model.centroids, axis=1, keepdims=True)
     cosine = np.einsum("ij,ij->i", normals, radial)

@@ -12,7 +12,7 @@ NAMES = [
     "gravitational acceleration",
     "centrifugal acceleration",
     "total acceleration",
-    "potential",
+    "effective potential",
     "slope",
     "geopotential elevation",
     "tilt",
@@ -48,7 +48,7 @@ def test_all_outputs_with_units_and_provenance():
     assert [d.name for d in results] == NAMES
     units = {d.name: d.unit for d in results}
     assert units["area"] == "m²" and units["slope"] == "°"
-    assert units["potential"] == "J/kg" and units["total acceleration"] == "m/s²"
+    assert units["effective potential"] == "J/kg" and units["total acceleration"] == "m/s²"
     assert units["geopotential elevation"] == "m" and units["tilt"] == "°"
     provenance = results[5].provenance
     assert provenance["evaluatedOn"] == model.plateCount
@@ -97,7 +97,7 @@ def test_elevation_is_zero_on_average_and_slope_in_range():
     model = ellipsoid(0.30, 0.25, 0.20)
     out = run(model)
     elevation = out["geopotential elevation"].values
-    potentialRef = np.average(out["potential"].values, weights=model.areas)
+    potentialRef = np.average(out["effective potential"].values, weights=model.areas)
     assert np.isfinite(elevation).all() and potentialRef < 0
     assert ((out["slope"].values >= 0) & (out["slope"].values <= 90)).all()
     minimum = run(model, uRef="minimum")["geopotential elevation"].values
@@ -124,3 +124,40 @@ def test_a_large_model_is_evaluated_on_a_coarser_one():
     assert provenance["evaluatedOn"] < 300_000
     assert all(len(d.values) == model.plateCount for d in results)
     assert np.isfinite(results[5].values).all()
+
+
+def test_coarse_evaluation_matches_the_exact_slopes():
+    """Above the limit, gravity comes from a coarser polyhedron evaluated at
+    every plate's own centroid: slopes stay within a small fraction of a
+    degree of the exact run."""
+    model = ellipsoid(0.30, 0.25, 0.20, subdivisions=5)  # 20,480 plates
+    exact = run(model)["slope"].values
+    coarse = run(model, maxExactPlates=10_000)
+    assert coarse["slope"].provenance["evaluatedOn"] <= 5000
+    error = np.abs(coarse["slope"].values - exact)
+    assert error.mean() < 0.1 and error.max() < 0.5
+
+
+def test_a_rough_model_still_gets_a_closed_coarse_model():
+    model = ellipsoid(0.30, 0.25, 0.20, subdivisions=5)
+    rng = np.random.default_rng(4)
+    noisy = model.vertices * (1 + 0.002 * rng.standard_normal((len(model.vertices), 1)))
+    rough = ShapeModel(noisy, model.plates, "rough")
+    out = run(rough, maxExactPlates=3000)
+    assert np.isfinite(out["slope"].values).all()
+    assert out["slope"].provenance["gravitySource"]["plates"] < 3000
+
+
+def test_tilt_in_chunks_matches_one_pass():
+    from varda.shapes.geophysics import _tilt
+
+    model = ellipsoid(0.30, 0.25, 0.20)
+    assert np.allclose(_tilt(model, 40.0, chunk=97), _tilt(model, 40.0, chunk=10**9))
+
+
+def test_a_tilt_radius_needing_too_many_plate_pairs_is_refused(monkeypatch):
+    from varda.shapes import geophysics as module
+
+    monkeypatch.setattr(module, "MAX_TILT_PAIRS", 10_000)
+    with pytest.raises(ValueError, match="tilt radius"):
+        run(icosphere(0.25, 3), tiltRadiusM=200.0)

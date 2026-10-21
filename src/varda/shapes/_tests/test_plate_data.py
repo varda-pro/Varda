@@ -4,6 +4,7 @@ from astropy.io import fits
 
 from varda.shapes._tests.meshes import icosphere
 from varda.shapes.plate_data import (
+    AmbiguousColumns,
     PlateData,
     attach,
     plateData,
@@ -112,3 +113,31 @@ def test_plate_data_is_frozen():
     model = icosphere(1.0, 1)
     data = plateData(model, "x", "", np.ones(model.plateCount))
     assert isinstance(data, PlateData) and data.plateCount == model.plateCount
+
+
+def test_an_altwg_table_with_several_value_columns_asks_which(tmp_path):
+    model = icosphere(1.0, 2)
+    n = model.plateCount
+    table = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(name="QUALITY", format="D", array=np.ones(n)),
+            fits.Column(name="SLOPE", format="D", unit="deg", array=np.arange(n)),
+        ]
+    )
+    path = tmp_path / "two.fits"
+    fits.HDUList([fits.PrimaryHDU(), table]).writeto(path)
+    with pytest.raises(AmbiguousColumns) as raised:
+        readAltwgPlateTable(path, model)
+    assert raised.value.columns == ["QUALITY", "SLOPE"]
+    chosen = readAltwgPlateTable(path, model, column="SLOPE")
+    assert chosen.name == "SLOPE" and chosen.values[5] == 5
+
+
+def test_a_truncated_csv_is_refused(tmp_path):
+    model = icosphere(1.0, 1)
+    path = tmp_path / "plates.csv"
+    writePlateCsv(path, model, [plateData(model, "x", "", np.ones(model.plateCount))])
+    lines = path.read_text("utf-8").splitlines()
+    path.write_text("\n".join(lines[:-3]) + "\n", "utf-8")
+    with pytest.raises(ValueError, match="77 rows"):
+        readPlateCsv(path, model)

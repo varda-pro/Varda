@@ -51,3 +51,9 @@ def test_body_proj_lacks_has_a_sphere_crs_named_for_it():
     assert ellipsoid is not None and ellipsoid.semi_major_metre == bennu.meanRadius
     crs = bennu.sphereCrs()
     assert identifyBody(crs).body == bennu
+
+
+def test_provisional_designations_and_old_names():
+    assert bodyNamed("2014 MU69") == BODIES["Arrokoth"]
+    assert bodyNamed("67P") == BODIES["Churyumov-Gerasimenko"]
+    assert bodyNamed("433 Eros") == BODIES["Eros"]

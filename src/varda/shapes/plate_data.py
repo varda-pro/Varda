@@ -32,6 +32,18 @@ _HEADER_COLUMN = re.compile(r"^(?P<name>.*?)(?: \[(?P<unit>[^\]]*)\])?$")
 COUNT_ONLY_NOTE = "matched by plate count only: the table names no shape model"
 
 
+class AmbiguousColumns(ValueError):
+    """A table with more than one column that could be the value; ``columns``
+    names them (read it again with ``column``)."""
+
+    def __init__(self, path: Path, columns: list[str]):
+        super().__init__(
+            f"{path.name} has more than one value column ({', '.join(columns)}); "
+            "choose one."
+        )
+        self.columns = columns
+
+
 @frozen(eq=False)
 class PlateData:
     """``values`` (and ``sigma``, 1σ, when known) per plate of the shape
@@ -126,6 +138,11 @@ def readPlateCsv(path: Path, model: ShapeModel) -> list[PlateData]:
         raise ValueError(f"{Path(path).name} isn't a plate data file Varda wrote.")
     provenance = json.loads(meta.get("provenance", "{}"))
     rows = list(csv.reader(lines))
+    if len(rows) - 1 != int(meta["plates"]):
+        raise ValueError(
+            f"{Path(path).name} has {len(rows) - 1} rows for {meta['plates']} "
+            "plates: it is cut short or edited."
+        )
     header, body = (
         rows[0],
         np.array(rows[1:], dtype=np.float64).reshape(-1, len(rows[0])),
@@ -164,11 +181,14 @@ def readPlateCsv(path: Path, model: ShapeModel) -> list[PlateData]:
     return datasets
 
 
-def readAltwgPlateTable(path: Path, model: ShapeModel) -> PlateData:
-    """An ALTWG plate-ancillary FITS table's value column (the one that
-    isn't a plate's index or location, nor SIGMA) and its SIGMA column, for
-    ``model``; raises ValueError when its row count isn't the model's plate
-    count or it has no value column. Rows are put in plate order by a
+def readAltwgPlateTable(
+    path: Path, model: ShapeModel, column: str | None = None
+) -> PlateData:
+    """An ALTWG plate-ancillary FITS table's value ``column`` (by default the
+    only one that isn't a plate's index or location, nor SIGMA) and its SIGMA
+    column, for ``model``; raises ValueError when its row count isn't the
+    model's plate count or it has no value column, and AmbiguousColumns when
+    it has several and ``column`` is None. Rows are put in plate order by a
     FACET/PLATE/ID column when there is one."""
     path = Path(path)
     with fits.open(path, memmap=False) as hdus:
@@ -187,14 +207,16 @@ def readAltwgPlateTable(path: Path, model: ShapeModel) -> PlateData:
                 f"{path.name} has {rows} plates; the shape model has "
                 f"{model.plateCount} plates."
             )
-        valueName = next(
-            (
-                n
-                for n in names
-                if not _LOCATION_COLUMNS.match(n) and not _SIGMA_COLUMN.match(n)
-            ),
-            None,
-        )
+        candidates = [
+            n
+            for n in names
+            if not _LOCATION_COLUMNS.match(n) and not _SIGMA_COLUMN.match(n)
+        ]
+        if column is not None and column not in names:
+            raise ValueError(f"{path.name} has no column {column}.")
+        if column is None and len(candidates) > 1:
+            raise AmbiguousColumns(path, candidates)
+        valueName = column or (candidates[0] if candidates else None)
         if valueName is None:
             raise ValueError(
                 f"{path.name} has no value column (only {', '.join(names)})."

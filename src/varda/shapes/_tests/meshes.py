@@ -1,51 +1,14 @@
-"""Synthetic shape models for tests: spheres, cubes, two lobes and an open
-patch, all in km."""
+"""Synthetic shape models for tests: spheres (``mesh.icosphere``), cubes,
+two lobes and an open patch, all in km."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from varda.shapes.mesh import ShapeModel
+from varda.shapes.mesh import ShapeModel, icosphere
 
-_T = (1 + 5**0.5) / 2
-_ICOSAHEDRON_VERTICES = [
-    (-1, _T, 0), (1, _T, 0), (-1, -_T, 0), (1, -_T, 0),
-    (0, -1, _T), (0, 1, _T), (0, -1, -_T), (0, 1, -_T),
-    (_T, 0, -1), (_T, 0, 1), (-_T, 0, -1), (-_T, 0, 1),
-]  # fmt: skip
-_ICOSAHEDRON_PLATES = [
-    (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
-    (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
-    (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
-    (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
-]  # fmt: skip
-
-
-def icosphere(
-    radiusKm: float = 1.0, subdivisions: int = 3, center=(0.0, 0.0, 0.0)
-) -> ShapeModel:
-    """A sphere of 20·4^subdivisions plates, vertices on the sphere,
-    counterclockwise seen from outside."""
-    vertices = [np.array(v, float) / np.linalg.norm(v) for v in _ICOSAHEDRON_VERTICES]
-    plates = list(_ICOSAHEDRON_PLATES)
-    for _ in range(subdivisions):
-        midpoints: dict[tuple[int, int], int] = {}
-
-        def midpoint(a: int, b: int) -> int:
-            key = (min(a, b), max(a, b))
-            if key not in midpoints:
-                point = vertices[a] + vertices[b]
-                vertices.append(point / np.linalg.norm(point))
-                midpoints[key] = len(vertices) - 1
-            return midpoints[key]
-
-        finer = []
-        for a, b, c in plates:
-            ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
-            finer += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
-        plates = finer
-    points = np.array(vertices) * radiusKm + np.asarray(center, float)
-    return ShapeModel(points, np.array(plates, np.int32), f"icosphere {subdivisions}")
+# icosphere is re-exported for the tests
+__all__ = ["cube", "icosphere", "openPatch", "reversed_", "twoLobes", "uvSphere"]
 
 
 def cube(sideKm: float = 1.0) -> ShapeModel:
