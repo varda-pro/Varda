@@ -59,8 +59,8 @@ are written in Phase 1, test-first. Design:
   such as 1.5e-44 occur, M3); columns outside the WA-valid range (29–632 for
   WA 490947778566, M4). Elements flagged in the BP CDRs are **not** invalid
   (Task 23): they were interpolated during calibration, in DN space, from the
-  neighboring columns of the same detector row (DPSIS §2.6, the a priori
-  mask, and §2.15, the ex post facto correction), so in the TRR3 they are
+  neighboring columns of the same detector row (DPSIS App. L §2.6, the a priori
+  mask, and App. L §2.15, the ex post facto correction), so in the TRR3 they are
   finite, non-outlier values, which the MTRDRs use. The Task 23 review checked
   it on the data: the flagged elements' residual from their neighbors is
   5.5e-3 against 6.5e-3 for the others, and the difference vanishes with a
@@ -593,7 +593,7 @@ are written in Phase 1, test-first. Design:
     it. Leave-one-out (column CO2 residual, none → held out, BP elements kept):
     061C4 −46%, −41%, −52%; 0A93E −64%, −39%, −62%; 08608 −41%, −33%, −44%
     (FRS00031442, FRS0002FE75, FRS00031260); every one ≥ 30%, so
-    `artifactModel` stays on.
+    `artifactModel` stayed on (until D12, below).
   - **Effect on the products (Task 23):** per-pixel CO2 residual 0.0073–0.0077
     → 0.0040–0.0052 (leave-one-out basis 0.0044–0.0054). The basis moves the
     D2300 / BD2290 / BD1900_2 medians by −0.0007 / 0.0000 / +0.0012
@@ -699,6 +699,15 @@ are written in Phase 1, test-first. Design:
   bowl (A7) that correlates −0.81/−0.87 with CAT's 11D87 McGuire/Pelkey
   artifact spectra: the MTRDR has the patch, which our high-passed basis
   cannot hold.
+- **D12 (2026-10-21): the CO2 lines only, and off by default.** Over the
+  whole fit window the basis moved D2300 (up to −0.0018) and BD1900_2 (up
+  to +0.0035) on the rim FRSs, beyond the repeatability. It now corrects
+  1940–2100 nm only (`ARTIFACT_WINDOW_NM`, `appliedArtifact`), which keeps
+  the CO2 gain (0.0040–0.0053 against 0.0073–0.0077 without) and leaves
+  D2300 unmoved (≤ 0.00002), but BD1900_2's 1985 nm band and 2067 nm anchor
+  lie inside the window and it still moves by +0.0014 to +0.0039. So
+  `AtmosphereStep.artifactModel` defaults to off; `--artifacts` turns it on.
+  Numbers: `phase1-validation.md`, Decisions.
 
 **A7. A curve-of-growth term is not added.**
 - **Decision:** no γ (ln T)² term in Phase 1.

@@ -1,7 +1,9 @@
 # CRISM Phase 1 validation (Task 23)
 
 Status: run 2026-10-16 on the demo data; V2 and V3 re-run after the final
-review's fixes (the slew lines left off the map grid, see V3). Design and tolerances:
+review's fixes (the slew lines left off the map grid, see V3). Decisions
+D9–D13 taken 2026-10-21 (see the end); the artifact basis is now off by
+default and limited to the CO2 lines. Design and tolerances:
 `../2026-10-16-crism-processing-design.md` ("Validation design", approved
 as D4). Decisions per step: `evidence-ledger.md`. Tests:
 `src/varda/crism/_tests/test_regression.py` (V2, V3, the artifact basis;
@@ -39,7 +41,7 @@ repository.
     cause unattributed.
 - **Two defects found and fixed** (with regression tests):
   - The pipeline masked every element flagged in the BP CDRs. The
-    calibration has already interpolated those elements (DPSIS §2.6), and
+    calibration has already interpolated those elements (DPSIS App. L §2.6), and
     on the 2014 FRSs this masked 17% of the samples. 98% of the pixels then
     had a gap in the CO2 window.
   - `learn-artifacts`' leave-one-out table raised on every real observation
@@ -252,7 +254,8 @@ spec's 15–20% expectation is met.
 
 ## V3: the rim FRSs
 
-The products of the default recipe, with the BP fix. Since the final review
+The products of the default recipe as it was then (artifact basis on over
+the whole fit window; off by default since D12), with the BP fix. Since the final review
 the map grid, GLT and area weights take only the usable lines (ledger G2):
 the slew lines hold no I/F but their positions spread the grid, and left a
 strip of DE and IN without I/F. The FRS grids shrink from 756 × 903 to
@@ -329,8 +332,9 @@ basis → leave-one-out → in-sample.
 | 0A93E:AT | 0.01022 → 0.00369 (−64%) → 0.00302 | 0.00665 → 0.00405 (−39%) → 0.00373 | 0.00933 → 0.00357 (−62%) → 0.00302 |
 | 08608:AT | 0.00613 → 0.00360 (−41%) → 0.00288 | 0.00752 → 0.00507 (−33%) → 0.00448 | 0.00588 → 0.00329 (−44%) → 0.00279 |
 
-Every leave-one-out reduction is at least 30% (smallest: 33%), so
-`artifactModel` stays on by default.
+Every leave-one-out reduction is at least 30% (smallest: 33%). That kept
+`artifactModel` on by default until D12, which turned it off for its effect
+on BD1900_2 (below and in Decisions).
 
 **The basis's effect on the mineral parameters** (median with − without,
 over the pixels valid in both; the bounds are V2's: the crater-floor
@@ -376,9 +380,9 @@ fit, central 64 lines, BP elements kept.
 ## Fixes made in this task
 
 1. **BP-flagged elements are no longer masked** (`pipeline._Run._read`).
-   - DPSIS §2.6: the a priori bad-pixel mask "is applied to an image by
+   - DPSIS App. L §2.6: the a priori bad-pixel mask "is applied to an image by
      replacing each bad pixel with the average of the two pixels in
-     adjacent columns". §2.15 does the same after the fact.
+     adjacent columns". App. L §2.15 does the same after the fact.
    - So the TRR3 holds interpolated I/F there, which the MTRDRs use.
    - The 2014 BPs flag 13.7% and 24.1% of the 280,320 elements; their union
      was masked. This masked 9.3 M (17%) of FRS00031442's samples and left 98% of
@@ -396,91 +400,60 @@ fit, central 64 lines, BP elements kept.
 3. `saveArtifactBasis` writes a compressed `.npz`: 0.21 MB instead of
    2.2 MB, since the basis is 0 outside the fit window.
 
-## Decisions for Michael
+## Decisions (2026-10-21)
 
-Each is a tolerance or design decision. The tests mark the shortfalls
-`xfail(strict=True)`, so they turn red when the cause is fixed and the
-marker should go.
+Michael took the recommendations. The tests keep every shortfall as
+`xfail(strict=True)` naming its decision, so a fix turns it red and the
+marker goes.
 
-- **D9. V2 Pearson ≥ 0.90.**
-  - **OLINDEX3** (0.895) is EGN. Proposed: accept it until proxy EGN
-    (Phase 4), or gate OLINDEX3 on r after removing the along-track
-    component (0.999).
-  - **D2300, BD2290, BD1900_2 and BD2310** (0.63–0.88) are inside Phase 1.
-    The shortfall is mostly a smooth cross-track trend in ours that the
-    MTRDR does not have. It is unattributed; suspects: residual smile/ESC
-    for D2300 and BD2290, the per-column ATM fit for BD2310, none clear
-    for BD1900_2. The rest is column-to-column scatter.
-  - **Destripe on** (`toggle-destripe`):
-    - r 0.795 / 0.801 / 0.663 / 0.895 / 0.902 (D2300, BD2290, BD1900_2,
-      OLINDEX3, BD2310), CO2 0.00665 → 0.00653;
-    - our column-to-column scatter 2.1–3.8× → 1.5–2.2× the MTRDR's;
-    - the smooth trend unchanged (D2300 0.00173 → 0.00169).
-  - **No combination reaches 0.90 for D2300, BD2290 or BD1900_2.**
-    Destripe on with no fitted shift gives 0.804 / 0.837 / 0.734, but no
-    shift nearly doubles the CO2 residual (0.0123, failing V2's CO2
-    criterion). Applying the fitted shift to the wavelengths (the review's
-    run): 0.789 / 0.782 / 0.638 / 0.896 / 0.883, CO2 0.00631.
-  - **Options and their consequences:**
-    - **(a) Accept the Pearson tolerance as not met for Phase 1.** Gate on
-      the biases (all pass but D2300). For low-contrast parameters use a
-      scale-aware criterion: the MTRDR maps' own spread is only 1.1–1.6×
-      the repeatability for BD2290 and BD1900_2, which makes Pearson harsh.
-      One such criterion is the RMS of ours − MTRDR against the
-      repeatability. Measured: BD2310 0.78×, BD2290 1.07×, OLINDEX3 1.36×,
-      BD1900_2 1.47×, D2300 1.94× (destripe on: 0.69, 0.99, 1.36, 1.34,
-      1.90).
-    - **(b) Turn destripe on by default.** It helps every parameter here
-      and the CO2 residual, against Task 15's slight cross-validated harm
-      on FRS00031442 (M11 0.69% → 0.72%). BD2310 then passes, so its strict
-      xfail would XPASS and the marker must go. The other three stay below
-      0.90.
-    - **(c) A follow-up diagnosis of the smooth trend.** Candidates: an ESC
-      residual quadratic in the smile offset; CAT's per-column artifact
-      patch from the aux files (D3) for the CO2 window.
-    - **(d) Keep the fitted shift.** It halves the CO2 residual and costs
-      0.01–0.08 of r.
-- **D10. The 2 µm bowl** (shape ±1/±2%): up to 3.4%, following CAT's patch.
-  - (a) Accept as a known difference from CAT (A6/A7).
-  - (b) Add the VS ADR artifact spectra as an optional low-pass patch (aux
-    data, not PDS).
-  - (c) A learned low-pass basis. It is degenerate with β (A6), so it
-    would need the MTRDRs as its truth.
-- **D11. D2300 bias** −0.0019 against 0.00152: the same cross-track cause as
-  D9.
-- **D12. The basis and the mineral parameters.**
-  - **The trade:** it halves the FRS CO2 residual (0.0074–0.0077 →
-    0.0040–0.0052 per pixel), but moves three of nine medians beyond V2's
-    bounds:
-    - D2300 on FRS0002FE75: −0.0018, against the repeatability 0.00152;
-    - BD1900_2 on FRS0002FE75: +0.0018, against the spec's 0.0016;
-    - BD1900_2 on FRS00031260: +0.0035, against the spec's 0.0016.
+- **D9, the V2 Pearson r ≥ 0.90: (a) accepted as not met for Phase 1, plus
+  (c) a follow-up diagnosis.**
+  - Phase 1 is gated on the biases (all pass but D2300, D11) and, beside r,
+    reports a scale-aware measure: the RMS of ours − MTRDR over the
+    crater-floor repeatability. `compareMaps` and `validate`'s
+    `report.json` (`rmsDifference`) give it;
+    `test_frt5850_parameter_rms_achieved` pins it (D2300 1.94, BD2290 1.07,
+    BD1900_2 1.47, OLINDEX3 1.36, BD2310 0.78: regression bounds, not
+    tolerances).
+  - OLINDEX3 waits for proxy EGN (Phase 4).
+  - Destripe stays off by default ((b) not taken): it lifts BD2310 to
+    0.902 but leaves the smooth trend and the other three short.
+  - The follow-up diagnosis of the smooth cross-track trend is not started.
+    Candidates, in order: an ESC residual quadratic in the smile offset
+    (D2300, BD2290), the per-column ATM fit (BD2310), CAT's per-column patch
+    from the aux files in the CO2 window (BD1900_2).
+- **D10, the 2 µm bowl: (a) accepted as a known difference from CAT**
+  (ledger A6/A7). The user guide states it with its size.
+- **D11, the D2300 bias** (−0.0019 against 0.00152): accepted with D9, the
+  same cross-track cause.
+- **D12, the basis and the mineral parameters: (c) tried, then (b).**
+  - (c): the basis now corrects 1940–2100 nm only
+    (`atmosphere.ARTIFACT_WINDOW_NM`, `appliedArtifact`; the provenance's
+    `artifact.windowNm`). The window holds the score window, so the basis's
+    unit RMS and the leave-one-out metric are unchanged.
+  - Re-test (the three FRSs, the bundled bases, with − without):
 
-    With the crater-floor repeatability 0.0019 as BD1900_2's bound instead
-    of the spec's 0.0016, it would be two of nine. V3 passes without the
-    basis.
-  - (a) Keep it on, and treat BD1900_2 and D2300 on the rim with the shift
-    as a systematic term.
-  - (b) Turn `artifactModel` off by default.
-  - (c) Mask the basis outside the CO2 lines, for example 1940–2100 nm.
-    That needs a re-test.
-- **D13. V3 BD2310 offset.** FRS00031442 is 0.0055 and 0.0051 from
-  FRT00005C5E and FRT000047A3; the bounds are the MTRDR–MTRDR maximum
-  (0.0045) and the spec's 0.004. The cause is unattributed: the pipeline's
-  own bias is −0.0002 on FRT00005850, the basis changes nothing, and the
-  medians over different overlap areas do not add up around loops.
-  Comparing against the MTRDR–MTRDR maximum alone **still fails**
-  (0.0055 > 0.0045). Options:
-  - (a) Accept it as a per-observation systematic term. The fusion stage's
-    offset correction (F2) absorbs it, and the test stays an xfail until
-    then.
-  - (b) Bound it by the MTRDR maximum plus a stated margin, for example the
-    pair-to-pair scatter of the MTRDR offsets or 0.001 (0.0055 passes from
-    a margin of 0.0010). That is a tolerance change Michael must approve,
-    since it loosens the criterion.
-- **V1 note.** The δ z-score std on seed 1 is 0.875, outside the spec's
-  1.00 ± 0.10; the test asserts 0.8–1.25. Tighten the test or accept the
-  spread?
+    | FRS (scan) | CO2 per pixel with / without | D2300 shift | BD2290 | BD1900_2 (≤ 0.0016) |
+    |---|---|---|---|---|
+    | FRS00031442 (061C4) | 0.00398 / 0.00770 | 0.00000 | +0.00003 | +0.00143 |
+    | FRS0002FE75 (0A93E) | 0.00530 / 0.00741 | +0.00001 | −0.00002 | **+0.00164** |
+    | FRS00031260 (08608) | 0.00426 / 0.00731 | −0.00002 | 0.00000 | **+0.00388** |
+
+    The window keeps nearly all of the CO2 gain (before: 0.00397, 0.00517,
+    0.00420) and no longer moves D2300 (before: up to −0.0018). BD1900_2
+    still moves beyond the bound, as expected: its 1985 nm band and its
+    2067 nm continuum anchor (`validation.summaryParameter`) lie among the
+    CO2 lines.
+    The overlaps with the crater-floor MTRDRs cannot say which BD1900_2 is
+    right (see above).
+  - (b): so `artifactModel` is **off by default**. V3 passes without the
+    basis. `--artifacts <folder>` (or the dialog's checkbox) turns it on;
+    the window applies whenever it is on.
+- **D13, FRS00031442's BD2310 offset** (0.0055, 0.0051 against 0.0045):
+  **(a) accepted as a per-observation systematic term**, for the fusion
+  stage's offset correction (F2) to absorb. The user guide states it.
+- **V1 note** (δ z-score std 0.875 on seed 1): not decided; the test's
+  0.8–1.25 stays.
 
 ## Figures
 

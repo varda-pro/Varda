@@ -260,7 +260,7 @@ def test_invalid_regions_become_nodata(cropDir: Path, tmp_path: Path) -> None:
 
 def test_bad_pixel_elements_are_kept(cropDir: Path, tmp_path: Path) -> None:
     """Elements flagged in the BP CDRs hold I/F the calibration already
-    interpolated along the detector row (DPSIS §2.6), which the MTRDRs use:
+    interpolated along the detector row (DPSIS App. L §2.6), which the MTRDRs use:
     they are counted, not masked (Task 23: masking them left 98% of
     FRS00031442's pixels with a gap in the CO2 window)."""
     observation = _copyCrop(cropDir, tmp_path / "obs")
@@ -459,7 +459,7 @@ def test_recipe_toggles(cropDir: Path, tmp_path: Path) -> None:
     provenance = json.loads(result.provenance.read_text())
     assert provenance["steps"]["destripe"]["enabled"] is True
     assert "RSC(frame)" in provenance["history"] and "area" in provenance["history"]
-    assert "RSC" not in provenance["sigma"]["steps"]  # σ/f only, no variance added
+    assert "RSC" in provenance["sigma"]["steps"]  # σ/f, as PHT and ESC scale it
     frame = provenance["systematic"]["destripeFrame"]  # the crop has too few
     assert len(frame) == 411 and min(frame) >= 0  # bland lines for a frame
     assert "Mean spike count" in _header(result.info)

@@ -191,7 +191,8 @@ _OFFSET_CAUSE = (
 )
 _BASIS_OFF = (
     "so the basis is off by default (D12 b); restricted to the CO2 lines "
-    "(D12 c) it no longer moves D2300, but BD1900_2's own bands lie among them"
+    "(D12 c) it no longer moves D2300, but BD1900_2's 1985 nm band and 2067 nm "
+    "anchor lie among them"
 )
 _MINERAL_CAUSES = {
     ("FRS0002FE75", "BD1900_2"): (

@@ -57,8 +57,8 @@ Companion files:
    App. N; the filter parameters are in every TRR3 label, M3). The MTRDRs
    start from this same filtered I/F, so starting there is the
    consistency-preserving choice. Leask et al. (2018) show the filter turns
-   some spikes into false 1.9/2.1 µm absorptions: 50–100 pixels per image,
-   clustered in certain columns. We detect and flag those; we don't hide
+   some spikes into false 1.9/2.1 µm absorptions (in fewer than 0.05% of
+   pixels, but in 90% of images, in high-variance regions). We detect and flag those; we don't hide
    them.
 3. **The MTRDR grid is fully pinned down** (M1, `mtr_map.cat`):
    - a rolling equirectangular projection, x = R cos φ_P · λ, y = R φ;
@@ -273,6 +273,27 @@ result.mapProjected   # Path to the ENVI .img; result.sensorSpace, result.sigma,
 
 ## Processing steps (Phase 1)
 
+> **This is the design, not a description of the code.** For methods, cite
+> the user guide (`docs/user-guide/crism-processing.md`, "Methods"), which
+> describes what the code does. Where the implementation departs from this
+> section (the ledger records why), the main points are:
+> - **No Monte Carlo** is run. σ through ATM is first-order only; δ's, the
+>   ESC frame's and the artifact scale's uncertainties are not propagated.
+> - **The artifact model is off by default** and acts on 1940–2100 nm only
+>   (D12). α is tied to β by one scene-level c, not fitted per pixel.
+> - **The noise model** uses brightness-normalized second differences on
+>   the central 64 lines (ledger N1), and b depends on λ only.
+> - **The despike** spatial prediction is scaled by whole-spectrum medians,
+>   the spectral one excludes the center band, and a transient test is
+>   added. The Leask count is per pixel only.
+> - **Systematic terms:** `scanChoice` is the chosen scan's correction less
+>   the runner-up's, not a propagated score margin. The dropped off-diagonal
+>   covariance is not recorded. There is no "smile residual" diagnostic and
+>   no "ATM spectral shift artifact" IN band.
+> - **Projection:** φ_P comes from the median latitude, and the DDR's own
+>   latitude/longitude bands are used. Area weights are 4×4 subsampled
+>   overlaps.
+
 Notation: x is the detector column, t the line, λ the band; R is I/F, and
 σ_R its 1σ.
 
@@ -286,8 +307,8 @@ Notation: x is the detector column, t the line, λ the band; R is I/F, and
 - **Invalid samples:** 65535, values below 1e-6 (denormals occur, M3) and
   non-scene columns (outside WA-valid columns 29–632). These become a sample
   mask. Elements flagged in the BP CDRs are *not* masked: the calibration
-  already replaced them by interpolation along the detector row (DPSIS §2.6
-  and §2.15), as the MTRDRs use them; they are counted (Task 23: masking them
+  already replaced them by interpolation along the detector row (DPSIS App. L §2.6
+  and App. L §2.15), as the MTRDRs use them; they are counted (Task 23: masking them
   dropped 17% of FRS00031442's samples).
 - **Masked rows:** slew and edge rows, using the step-size heuristic from
   jezero-rim-mapping (MIT, attributed).
@@ -764,7 +785,8 @@ the same observations, compare CO2 residuals and parameter maps.
   continuity residuals.
 - The ATO/ATU along-track oversampling.
 - PDS's 12 m LMLP I/F products as readers (Kreisch 2017; Seelos 2024 §7.2).
-  The prompt's "LMLP" is Kreisch's log-maximum-likelihood with penalty.
+  "LML" is "Log Maximum Likelihood Processed" (PDS bundle
+  `crism_ato_s_iof_lml`); its I/F products are VNIR (S) only.
 
 ### Phase 4: beyond CAT
 

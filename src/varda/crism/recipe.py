@@ -93,8 +93,8 @@ class AtmosphereStep(ParameterGroup):
         "Model instrument artifacts",
         False,
         "Fit the learned artifact spectra of the volcano scans on the CO2 lines "
-        "(1940–2100 nm). Off by default: it halves the CO2 residual but moves "
-        "BD1900_2 by more than its repeatability (decision D12). Skipped, with "
+        "(1940–2100 nm). Off by default: it lowers the CO2 residual but moves "
+        "BD1900_2 beyond its validation bound (decision D12). Skipped, with "
         "the reason recorded, when no basis matches the observation's epoch.",
     )
     artifactFolder = StringParameter(
@@ -113,9 +113,11 @@ class DestripeStep(ParameterGroup):
         "that is already filtered, and can slightly harm it.",
     )
     splitHalf = BoolParameter(
-        "Treat detector halves separately",
+        "Require stripes in both halves",
         True,
-        "Estimate the striping separately for each half of the detector.",
+        "Remove a stripe only if it is the same in the first and the second "
+        "half of the lines (a split-half test), so that geology along a column "
+        "is kept. Off: only the significance tests apply.",
     )
 
 

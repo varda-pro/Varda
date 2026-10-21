@@ -491,7 +491,7 @@ class _Run:
 
         Elements flagged in the BP CDRs are not masked: they were interpolated
         during calibration, in DN space, from the neighboring columns of the
-        same detector row (DPSIS §2.6, the a priori mask, and §2.15), so in the
+        same detector row (DPSIS App. L §2.6, the a priori mask, and App. L §2.15), so in the
         TRR3 they are finite, non-outlier values, which the MTRDRs use. Masking
         them dropped 17% of FRS00031442's samples (the 2014 BPs flag 14–24% of
         the elements) and left 98% of its pixels with a gap in the CO2 window.
@@ -1141,8 +1141,9 @@ class _Run:
             ]
             steps.append(f"ATM({';'.join(parts)})")
             sigmaSteps.append("ATM")
-        if self.stripes is not None:  # σ/f only: the frame's σ is systematic
+        if self.stripes is not None:  # σ/f; the frame's own σ is systematic
             steps.append("RSC(frame)")
+            sigmaSteps.append("RSC")
         # resampling to the vector always shapes σ; with the smile step off it
         # is from the bands' nominal wavelengths
         if not recipe.smile.enabled.get():

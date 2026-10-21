@@ -71,8 +71,9 @@ can alter results.
   (instrument noise, per band), the geometry (`_de`) and processing (`_in`)
   backplanes, and a recipe and provenance record. Steps: photometry,
   despike, atmospheric correction (fitted transmission with a shift and an
-  elevation prior, and learned instrument-artifact bases for their epoch),
-  optional destriping, smile and empirical shift correction, projection.
+  elevation prior; an optional learned artifact model on the CO₂ lines, off
+  by default), optional destriping, smile and empirical shift correction,
+  projection.
   Calibration files (WA and atmospheric transmission) are found beside the
   observation, in CAT's `aux_files` if you point to them, or fetched from the
   PDS (bad-pixel maps are used when local), and a missing one is reported
@@ -80,9 +81,14 @@ can alter results.
   Ratio Cube and Shadow Mask like an MTRDR: the IN and DE backplanes are
   found beside the I/F, and each product's Varda provenance (in its
   `.aux.xml`) names the TRR3 and DDR. Phase 1 is IR-only with no EGN; it is
-  not bit-for-bit CAT. See the
-  [guide](docs/user-guide/crism-processing.md) and the
-  [validation report](docs/superpowers/specs/crism/phase1-validation.md).
+  not bit-for-bit CAT, and its summary parameters agree with the MTRDR's at
+  Pearson r 0.63–0.89. The
+  [guide](docs/user-guide/crism-processing.md) is written as a citable
+  methods description: every step's math and constants, every parameter, the
+  uncertainty (σ and the systematic terms), the measured agreement with CAT's
+  MTRDRs, a methods paragraph to adapt, and references; the
+  [validation report](docs/superpowers/specs/crism/phase1-validation.md) has
+  every number.
 
 ### Changed
 
