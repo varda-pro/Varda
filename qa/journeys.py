@@ -16,7 +16,10 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFormLayout,
+    QLabel,
     QLineEdit,
+    QScrollArea,
     QToolButton,
     QWidget,
 )
@@ -238,7 +241,41 @@ def lookAtSpectrum(
         run.click(workspace.pixelPlotDock.tabWidget(), "Pixel Spectra tab")
         run.settle(0.3)
     run.qaShot(workspace, "spectrum", "after clicking the image with Pixel Select")
+    checkSpectrumPlot(run, workspace, repeated=not plotted)
     return plotted
+
+
+def checkSpectrumPlot(
+    run: QaRun, workspace: GeneralImageAnalysisWorkflow, repeated: bool
+) -> None:
+    """What a scientist reads off the plot: the y axis says what the values
+    are (release QA 0.12.0 #5), and after clicking a pixel already plotted
+    (``repeated``) a curve that turned thick yellow says it's selected
+    (#9)."""
+    plot = workspace.pixelPlotWidget
+    if not plot.pixelCurves:
+        return
+    yLabel = plot.plotItem.getAxis("left").labelText
+    run.log("spectrum y axis", label=yLabel)
+    if not yLabel.strip():
+        run.finding(
+            "confused",
+            "The spectrum plot's y axis has no label: what are these values?",
+            widget=plot,
+        )
+    selected = plot.selectedCurve
+    if repeated and selected is not None:
+        label = plot.legend.getLabel(selected.plotDataItem)
+        text = label.text if label is not None else ""
+        run.log("a repeat click selected a curve", legend=text)
+        if "selected" not in text.lower():
+            run.finding(
+                "confused",
+                "Clicking a pixel already plotted turned its curve thick yellow, "
+                "and nothing says why",
+                widget=plot,
+                reproduce="Pixel Select, click one pixel twice",
+            )
 
 
 def clickSamePixelAgain(run: QaRun, workspace: GeneralImageAnalysisWorkflow) -> int:
@@ -283,6 +320,7 @@ def runAnalysis(
         return None
     pickImage(run, dialog, image)
     run.qaShot(dialog, "analysis-dialog", dialog.windowTitle())
+    checkAnalysisDialog(run, dialog)
     before, messages = len(images(run)), len(run.messages)
     if not run.click(run.button(dialog, "Run"), "Run button"):
         dialog.reject()
@@ -297,6 +335,57 @@ def runAnalysis(
         run.qaShot(run.mainWindow, "analysis-done", "the result in the Image List")
         return images(run)[-1]
     return None
+
+
+def formFields(dialog: QWidget) -> dict[str, QWidget]:
+    """The dialog's form fields by the text of their labels."""
+    fields: dict[str, QWidget] = {}
+    for form in dialog.findChildren(QFormLayout):
+        for row in range(form.rowCount()):
+            label = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            field = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+            if label is None or field is None:
+                continue
+            labelWidget, fieldWidget = label.widget(), field.widget()
+            if isinstance(labelWidget, QLabel) and fieldWidget is not None:
+                fields[plain(labelWidget.text())] = fieldWidget
+    return fields
+
+
+def checkAnalysisDialog(run: QaRun, dialog: QWidget) -> None:
+    """Its settings aren't hidden behind a scroll bar while the screen has
+    room for them (release QA 0.12.0 #15), and a setting that does nothing
+    yet isn't offered (#10: Weight Image Holds without a weight image)."""
+    screen = dialog.screen()
+    for area in dialog.findChildren(QScrollArea):
+        bar = area.verticalScrollBar()
+        if bar is None or bar.maximum() == 0 or screen is None:
+            continue
+        room = screen.availableGeometry().height() - dialog.frameGeometry().height()
+        if room > bar.maximum() + 40:  # the window's title bar aside
+            run.finding(
+                "annoyed",
+                f"The {dialog.windowTitle()} dialog hides {bar.maximum()} px of "
+                f"its settings behind a scroll bar though the screen has "
+                f"{room} px to spare",
+                widget=dialog,
+            )
+    fields = formFields(dialog)
+    weights, holds = fields.get("Weight Image"), fields.get("Weight Image Holds")
+    if weights is None or holds is None:
+        return
+    combo = weights.findChild(QComboBox)
+    if (
+        combo is not None
+        and combo.currentText().startswith("None")
+        and holds.isEnabled()
+    ):
+        run.finding(
+            "confused",
+            "Weight Image Holds can be changed with no weight image chosen, "
+            "where it does nothing",
+            widget=dialog,
+        )
 
 
 def pickImage(run: QaRun, dialog: QWidget, image: VardaRaster) -> None:

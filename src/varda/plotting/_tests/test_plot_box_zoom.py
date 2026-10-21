@@ -76,10 +76,14 @@ def _boxDrag(
 
 
 def _plotArea(widget) -> tuple[QPointF, QPointF]:
-    """Two points inside the plot area, away from the curve's ends."""
+    """Two points inside the plot area, away from the curve's ends and below
+    the legend (a press on it drags the legend)."""
     rect = widget.viewBox.sceneBoundingRect()
+    top = max(
+        rect.top() + 0.1 * rect.height(), widget.legend.sceneBoundingRect().bottom() + 5
+    )
     return (
-        QPointF(rect.left() + 0.3 * rect.width(), rect.top() + 0.1 * rect.height()),
+        QPointF(rect.left() + 0.3 * rect.width(), top),
         QPointF(rect.left() + 0.6 * rect.width(), rect.top() + 0.3 * rect.height()),
     )
 

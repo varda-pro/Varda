@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
+from typing import Self
 
 from psygnal import Signal
 
@@ -55,6 +56,8 @@ class ParameterGroup:
         for name, attr in declared.items():
             if isinstance(attr, Parameter) or isinstance(attr, ParameterGroup):
                 instanceParam = attr.clone()
+                if isinstance(attr, Parameter) and isinstance(instanceParam, Parameter):
+                    instanceParam.enabledBy = attr.enabledBy
                 # link the parameter's change signal to the collection's change signal. lambda is to discard the value sent by the parameter
                 instanceParam.sigParameterChanged.connect(
                     lambda _: self.sigParameterChanged.emit(self)
@@ -97,6 +100,17 @@ class Parameter[T]:
         self.default = default
         self.value: T = default
         self.description = description
+        # The name of the parameter in the same group that turns this one on
+        # (see ``enabledWhen``); None: always on
+        self.enabledBy: str | None = None
+
+    def enabledWhen(self, name: str) -> Self:
+        """Show this parameter disabled until the parameter called ``name``
+        in the same group is set: a true value, i.e. a checked box, a chosen
+        image (not an optional one's None) or a non-empty text or list.
+        Usage: ``kind = EnumParameter(...).enabledWhen("weights")``."""
+        self.enabledBy = name
+        return self
 
     def set(self, value: T) -> None:
         self.value = value
