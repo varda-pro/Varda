@@ -16,6 +16,7 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QLabel,
     QLineEdit,
     QToolButton,
     QWidget,
@@ -323,6 +324,7 @@ def exportImage(
     pathField = next((f for f in fields if f.placeholderText()), fields[-1])
     run.typeInto(pathField, str(path))
     run.qaShot(dialog, "export-dialog", f"exporting {image.name}")
+    _checkExportDialog(run, dialog, pathField)
     messages = len(run.messages)
     if not run.click(run.button(dialog, "Export"), "Export button"):
         dialog.reject()
@@ -334,6 +336,28 @@ def exportImage(
     )
     run.settle(0.3)
     return path if written and path.exists() else None
+
+
+def _checkExportDialog(run: QaRun, dialog: QWidget, pathField: QLineEdit) -> None:
+    """Can the user see where the file goes, and is it said that the file
+    carries its provenance? (Release QA 0.12.0 #3.)"""
+    text = pathField.text()
+    room = pathField.contentsRect().width() - 8
+    if pathField.fontMetrics().horizontalAdvance(text) > room and (
+        text not in pathField.toolTip()
+    ):
+        run.finding(
+            "annoyed",
+            f"Save as shows only part of {text!r} and no tooltip has the rest",
+            widget=dialog,
+        )
+    said = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    if "provenance" not in said.lower():
+        run.finding(
+            "confused",
+            "Nothing in Export Image says the file records how it was made",
+            widget=dialog,
+        )
 
 
 def _busy() -> bool:

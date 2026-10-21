@@ -358,6 +358,12 @@ def _oneWavelength(run: QaRun, image: VardaRaster) -> None:
         )
 
 
+# Names refused on every system so files stay portable; outside Windows the
+# message should say why (release QA 0.12.0 #18)
+REFUSED_EVERYWHERE = ("CON.tif", "bad<>|?*.tif")
+PORTABLE = re.compile(r"portable|any computer|every system", re.I)
+
+
 def _junkPaths(run: QaRun, image: VardaRaster) -> None:
     cwd = Path.cwd()
     paths = [
@@ -369,8 +375,8 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
         "🙂",
         # Names Windows forbids or reserves: refused everywhere, before writing
         # (release QA #16: Windows said "failed: No error")
-        "CON.tif",
-        str(run.folder / "bad<>|?*.tif"),
+        REFUSED_EVERYWHERE[0],
+        str(run.folder / REFUSED_EVERYWHERE[1]),
     ]
     for typed in paths:
         if not run.useMenu("File", "Export Image", shot=False):
@@ -421,12 +427,30 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
                 f"Export to {typed!r} wrote {written.name!r} (a doubled dot)",
                 reproduce=reproduce,
             )
-        if written is not None and not any(str(written) in m for m in confirmed):
+        told = [m for m in confirmed if written is not None and written.name in m]
+        if written is not None and not any(str(written.parent) in m for m in told):
             run.finding(
                 "confused",
                 f"Export to {typed!r} doesn't say where the file went ({written})",
                 reproduce=reproduce,
             )
+        elif told and not told[-1].startswith(f"Exported {written.name}"):
+            # a narrow window cuts the end off (release QA 0.12.0 #17)
+            run.finding(
+                "annoyed",
+                f"The status bar names the folder before the file: {told[-1]!r}",
+                reproduce=reproduce,
+            )
+        if written is None and Path(typed).name in REFUSED_EVERYWHERE:
+            for message in said:
+                if sys.platform != "win32" and not PORTABLE.search(message.text):
+                    run.finding(
+                        "confused",
+                        f"Export refuses {typed!r} with a Windows rule on "
+                        f"{sys.platform}: {message.text[:160]!r}",
+                        shot=message.screenshot,
+                        reproduce=reproduce,
+                    )
         for message in said:
             if "No error" in message.text or LIBRARY_JARGON.search(message.text):
                 run.finding(

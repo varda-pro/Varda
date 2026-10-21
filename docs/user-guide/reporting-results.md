@@ -10,7 +10,11 @@ own methods, settings and references.
 
 - **Varda:** **Help → Cite Varda…** gives APA and BibTeX (also GitHub's
   **Cite this repository** button). Give the version: it's in the citation,
-  in **Help → About Varda**, and in every result's record (below).
+  in **Help → About Varda**, and in every result's record (below). The DOI
+  in the citation, [10.5281/zenodo.23447208](https://doi.org/10.5281/zenodo.23447208),
+  cites every version and resolves to the latest; each version has its own
+  DOI on that Zenodo record (minted when the release is published, so the
+  app can't show it). Cite the DOI of the version you used.
 - **The methods:** cite the papers behind each method you used, listed in
   each guide's references. Varda implements them; it doesn't replace them.
 - **Other software Varda ran for you:** Spectral Python, HyPyRameter, ISIS,

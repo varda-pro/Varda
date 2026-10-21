@@ -102,6 +102,19 @@ def test_trust_before_use(qaRun: QaRun, qaData: QaData) -> None:
                         "The citation has no DOI to cite this exact version",
                         widget=dialog,
                     )
+                # A concept DOI resolves to the latest version: does the
+                # dialog say so, and where this version's own DOI is?
+                # (release QA 0.12.0 #8)
+                note = " ".join(label.text() for label in dialog.findChildren(QLabel))
+                if not re.search(r"every version|all versions", note) or (
+                    "own DOI" not in note
+                ):
+                    run.finding(
+                        "confused",
+                        f"The citation pairs Version {vardaVersion()} with a DOI "
+                        "and doesn't say whether the DOI pins that version",
+                        widget=dialog,
+                    )
                 dialog.reject()
 
     with run.step("about and license", "Help > About Varda"):

@@ -230,7 +230,7 @@ def exitApp() -> None:
 FILE_ACTIONS: list[Action] = [
     Action(
         id=IMPORT_IMAGE_ID,
-        title="Import Image(s)",
+        title="Import Image(s)…",
         icon=bundledIcon("folder-open"),
         callback=importImage,
         menus=[MenuRule(id=MenuId.FILE, group=MenuGroup.FILE_IO, order=1)],
