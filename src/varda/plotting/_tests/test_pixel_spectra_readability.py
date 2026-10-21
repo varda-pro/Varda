@@ -94,3 +94,17 @@ def test_selecting_another_curve_moves_the_selected_note(widget):
     widget.selectPlot(second)
     assert _legendText(widget, first) == "Pixel (1, 1)"
     assert _legendText(widget, second) == "Selected: Pixel (2, 2)"
+
+
+def test_the_legend_stays_inside_a_narrow_plot(qtbot, widget):
+    """Release QA 0.12.0 rerun (Linux, 1024×700): pinned 30 px from the left,
+    the legend ran past a narrow plot's right edge and cut "Pixel (32, 24)"."""
+    widget.addPixelSpectrum(generate_random_image((40, 40, 10)), 32, 24)
+    widget.resize(240, 220)
+    widget.show()
+    qtbot.waitExposed(widget)
+    qtbot.wait(50)
+    view = widget.plotItem.getViewBox()
+    legend = widget.legend.sceneBoundingRect()
+    assert legend.right() <= view.sceneBoundingRect().right() + 0.5
+    assert legend.top() >= view.sceneBoundingRect().top() - 0.5

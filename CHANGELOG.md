@@ -45,7 +45,8 @@ Windows and Linux):
 - **"N images can't be overlaid" says why** (no map coordinates, another
   body…) and what to do, with each image in the tooltip.
 - **The spectrum plot** labels its y axis (with the data's unit when the
-  file states one), its legend has a background and can be dragged, and a
+  file states one), its legend has a background, stays inside a narrow plot
+  (top-right) and can be dragged, and a
   curve selected by clicking its pixel again says "Selected" in the legend.
 - **PCA, MNF and ICA:** Weight Image Holds is off until a weight image is
   chosen, with plainer option names; the dialog opens tall enough to show

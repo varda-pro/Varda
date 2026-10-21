@@ -172,8 +172,9 @@ are: **Value (<unit>)** from its stated unit (an ENVI header's `data units`,
 a FITS `BUNIT`, or a `units` entry), **Reflectance** for an ENVI file with
 a `reflectance scale factor`, and plain **Value** otherwise, or when the
 plotted images disagree. Varda doesn't guess a unit the file doesn't state.
-The legend is translucent so the curves show through it; drag it to move
-it, or turn it off with **Show Legend** under **View**.
+The legend sits in the plot's top-right corner and is translucent so the
+curves show through it; drag it to move it, or turn it off with **Show
+Legend** under **View**.
 
 **Export…** in the plot's sidebar saves the plot as PNG, SVG or PDF, or the
 curves as CSV. Each curve is a column of its own values (not scaled; see

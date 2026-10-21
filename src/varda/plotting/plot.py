@@ -468,7 +468,11 @@ class VardaPlotWidget(QWidget):
         self.plotItem = pg.PlotItem(viewBox=self.viewBox)
         # Translucent, so the curves stay readable where it overlaps them
         # (it follows the background color); drag it to move it
-        self.legend = self.plotItem.addLegend(pen=pg.mkPen(255, 255, 255, 60))
+        # pinned to the top-right corner (a negative x offset counts from the
+        # right): from the left, a narrow plot's legend ran past its edge
+        self.legend = self.plotItem.addLegend(
+            offset=(-10, 10), pen=pg.mkPen(255, 255, 255, 60)
+        )
         self.plotItem.setLabel("left", DEFAULT_VALUE_LABEL)
         # Left-drag pans, Shift/Cmd+left-drag zooms to the dragged box,
         # right-drag stretches the axes, wheel zooms about the cursor (over an
