@@ -60,6 +60,8 @@ a = Analysis(
     + collect_data_files("pyogrio")
     + collect_data_files("hypyrameter")
     + [("resources", "resources")]
+    # the cited small-body table varda.geo.bodies reads beside itself
+    + [("src/varda/geo/small_bodies.toml", "varda/geo")]
     + LIBRARY_SPECTRA
     + TORCH_WORKER
     + PLUGIN_DOCS

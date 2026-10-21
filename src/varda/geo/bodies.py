@@ -6,13 +6,23 @@ A body's ``IAU_2015`` geographic sphere is code ``naif × 100``, its
 planetographic ellipsoid ``naif × 100 + 1`` and its planetocentric ellipsoid
 ``naif × 100 + 2``, where PROJ has them. An unknown body is ``None``, never
 Earth.
+
+``small_bodies.toml`` adds the bodies PROJ lacks (Bennu, Ryugu, Didymos,
+Dimorphos, Arrokoth) and the density and rotation period of small bodies,
+each value with its citation. A body's ``shape`` says whether a sphere or
+ellipsoid stands for it: ``irregular`` when the table says so or when its
+IAU 2015 radii differ by more than ``IRREGULAR_FLATTENING`` of its mean
+radius ((a − c)/R; Archinal et al. 2018, Sect. 8).
 """
 
 from __future__ import annotations
 
 import re
+import tomllib
+from enum import StrEnum
+from pathlib import Path
 
-from attrs import frozen
+from attrs import field, frozen
 from pyproj import CRS, Geod
 from pyproj.crs import Ellipsoid
 from pyproj.exceptions import CRSError
@@ -21,12 +31,26 @@ from varda.utilities.proj_lock import PROJ_LOCK
 
 # Within this fraction of a body's radii, a CRS's semi-major axis is that body's
 RADIUS_TOLERANCE = 0.01
+# A body whose IAU radii differ by more than this fraction of its mean radius,
+# (a − c)/R, is irregular: Eros (1.36) is; Mars (0.006) and Ceres (0.09) aren't
+IRREGULAR_FLATTENING = 0.1
+SMALL_BODIES_FILE = Path(__file__).with_name("small_bodies.toml")
+
+
+class BodyShape(StrEnum):
+    """Whether a sphere, an ellipsoid or neither stands for a body's shape."""
+
+    SPHERE_LIKE = "sphere-like"
+    ELLIPSOID_LIKE = "ellipsoid-like"
+    IRREGULAR = "irregular"
 
 
 @frozen
 class Body:
-    """A planetary body: its NAIF id, its IAU 2015 radii (m) and its
-    planetographic longitude convention."""
+    """A planetary body: its NAIF id, its IAU 2015 radii (m), its
+    planetographic longitude convention, its shape class, and for small
+    bodies its rotation period and density, each value cited in ``sources``
+    (field name → citation)."""
 
     name: str
     naifId: int
@@ -34,15 +58,25 @@ class Body:
     polarRadius: float  # c, m (= a for bodies PROJ models as spheres)
     meanRadius: float  # IAU mean radius, m
     westPositiveOgraphic: bool  # planetographic longitude increases westward
+    shape: BodyShape = BodyShape.SPHERE_LIKE
+    rotationPeriodH: float | None = None  # sidereal, hours
+    density: tuple[float, float] | None = None  # kg/m³, value and 1σ
+    inProj: bool = True  # PROJ's IAU_2015 has the body's CRSs
+    sources: dict[str, str] = field(factory=dict, eq=False)
 
     def sphereCrs(self) -> CRS:
-        """The body's IAU 2015 geographic sphere (a fresh object)."""
+        """The body's IAU 2015 geographic sphere, or for a body PROJ lacks a
+        sphere of its mean radius named for it (a fresh object)."""
         with PROJ_LOCK:
+            if not self.inProj:
+                return CRS.from_wkt(_sphereWkt(self.name, self.meanRadius))
             return CRS.from_user_input(f"IAU_2015:{self.naifId * 100}")
 
     def referenceCrs(self) -> CRS:
         """The body's IAU 2015 planetocentric ellipsoid, or its sphere when
         PROJ has no ellipsoid for it (a fresh object)."""
+        if not self.inProj:
+            return self.sphereCrs()
         with PROJ_LOCK:
             try:
                 return CRS.from_user_input(f"IAU_2015:{self.naifId * 100 + 2}")
@@ -63,6 +97,9 @@ _KNOWN: dict[str, tuple[int, float]] = {
     "Moon": (301, 1_737_400.0),
     "Mars": (499, 3_389_500.0),
     "Phobos": (401, 11_080.0),
+    "Eros": (2000433, 8_450.0),
+    "Itokawa": (2025143, 173.0),
+    "Churyumov-Gerasimenko": (1000012, 1_650.0),
     "Ceres": (2000001, 469_700.0),
     "Vesta": (2000004, 262_700.0),
     "Io": (501, 1_821_490.0),
@@ -86,9 +123,46 @@ def _ographic(naifId: int) -> CRS | None:
         return None
 
 
-def _body(name: str, naifId: int, meanRadius: float) -> Body:
+def _sphereWkt(name: str, radius: float) -> str:
+    """A planetocentric sphere CRS for a body PROJ lacks, named like PROJ's
+    IAU_2015 ones so ``identifyBody`` finds the body by its datum."""
+    degree = 'ANGLEUNIT["degree",0.0174532925199433]'
+    return (
+        f'GEOGCRS["{name} - Sphere / Ocentric",'
+        f'DATUM["{name}",ELLIPSOID["{name}",{radius!r},0,LENGTHUNIT["metre",1]]],'
+        f'PRIMEM["Reference Meridian",0,{degree}],CS[ellipsoidal,2],'
+        f'AXIS["geodetic latitude (Lat)",north,ORDER[1],{degree}],'
+        f'AXIS["geodetic longitude (Lon)",east,ORDER[2],{degree}]]'
+    )
+
+
+def _shapeFromRadii(a: float, c: float, meanRadius: float) -> BodyShape:
+    if (a - c) / meanRadius > IRREGULAR_FLATTENING:
+        return BodyShape.IRREGULAR
+    return BodyShape.SPHERE_LIKE if a == c else BodyShape.ELLIPSOID_LIKE
+
+
+def _smallBodyValues(entry: dict) -> dict:
+    """The Body fields a ``small_bodies.toml`` entry sets."""
+    values: dict = {"sources": dict(entry.get("sources", {}))}
+    if "rotationPeriodH" in entry:
+        values["rotationPeriodH"] = float(entry["rotationPeriodH"])
+    if "density" in entry:
+        value, sigma = entry["density"]
+        values["density"] = (float(value), float(sigma))
+    if "shape" in entry:
+        values["shape"] = BodyShape(entry["shape"])
+    return values
+
+
+# PROJ's IAU_2015 holds the mean radii in _KNOWN (Archinal et al., 2018)
+_IAU_RADIUS_SOURCE = "Archinal et al. (2018), CMDA 130, 22, Tables 4-6 (PROJ IAU_2015)"
+
+
+def _body(name: str, naifId: int, meanRadius: float, extra: dict) -> Body:
     """The body, with a and c from its planetographic ellipsoid (or its
-    sphere) and its longitude direction from the planetographic CRS's axis."""
+    sphere) and its longitude direction from the planetographic CRS's axis;
+    ``extra`` holds its ``small_bodies.toml`` entry, if any."""
     ographic = _ographic(naifId)
     ellipsoid = (ographic or CRS.from_user_input(f"IAU_2015:{naifId * 100}")).ellipsoid
     if ellipsoid is None:
@@ -97,24 +171,69 @@ def _body(name: str, naifId: int, meanRadius: float) -> Body:
         westPositive = any(axis.direction == "west" for axis in ographic.axis_info)
     else:
         westPositive = name not in _EAST_POSITIVE_OGRAPHIC
+    a, c = ellipsoid.semi_major_metre, ellipsoid.semi_minor_metre
+    values = _smallBodyValues(extra)
+    values["sources"] = {"meanRadius": _IAU_RADIUS_SOURCE} | values["sources"]
+    values.setdefault("shape", _shapeFromRadii(a, c, meanRadius))
     return Body(
         name=name,
         naifId=naifId,
-        equatorialRadius=ellipsoid.semi_major_metre,
-        polarRadius=ellipsoid.semi_minor_metre,
+        equatorialRadius=a,
+        polarRadius=c,
         meanRadius=meanRadius,
         westPositiveOgraphic=westPositive,
+        **values,
     )
 
 
+def _bodyProjLacks(name: str, entry: dict) -> Body:
+    """A body from ``small_bodies.toml`` alone: a sphere of its mean radius,
+    east-positive like other small bodies (Archinal et al., 2018)."""
+    radius = float(entry["meanRadius"])
+    return Body(
+        name=name,
+        naifId=int(entry["naifId"]),
+        equatorialRadius=radius,
+        polarRadius=radius,
+        meanRadius=radius,
+        westPositiveOgraphic=False,
+        inProj=False,
+        **_smallBodyValues(entry),
+    )
+
+
+_SMALL_BODIES: dict[str, dict] = tomllib.loads(SMALL_BODIES_FILE.read_text("utf-8"))
+
 with PROJ_LOCK:
     BODIES: dict[str, Body] = {
-        name: _body(name, naifId, meanRadius)
+        name: _body(name, naifId, meanRadius, _SMALL_BODIES.get(name, {}))
         for name, (naifId, meanRadius) in _KNOWN.items()
     }
+BODIES |= {
+    name: _bodyProjLacks(name, entry)
+    for name, entry in _SMALL_BODIES.items()
+    if name not in BODIES
+}
+
+
+def smallBodies() -> list[Body]:
+    """The bodies ``small_bodies.toml`` describes, in its order."""
+    return [BODIES[name] for name in _SMALL_BODIES]
+
 
 _BY_NAIF = {body.naifId: body for body in BODIES.values()}
-_ALIASES = {"luna": "Moon", "d_mars": "Mars", "mars_2000": "Mars", "moon_2000": "Moon"}
+_ALIASES = {
+    "luna": "Moon",
+    "d_mars": "Mars",
+    "mars_2000": "Mars",
+    "moon_2000": "Moon",
+    "67p": "Churyumov-Gerasimenko",
+    "67p/churyumov-gerasimenko": "Churyumov-Gerasimenko",
+    "2014 mu69": "Arrokoth",
+    "ultima thule": "Arrokoth",
+}
+# A minor planet's number before its name: "(101955) Bennu", "433 Eros"
+_DESIGNATION = re.compile(r"^\(?\d+\)?\s+")
 _DECORATIONS = re.compile(r"\(2015\)|\s-\s*sphere", re.IGNORECASE)
 _PREFIXES = re.compile(r"^(?:d_|gcs_)+", re.IGNORECASE)
 _WORD_SEPARATORS = re.compile(r"[\s/,()_\-]+")
@@ -167,7 +286,7 @@ def isNonBodyTarget(name: str) -> bool:
 def bodyNamed(name: str) -> Body | None:
     """The body called ``name``, ignoring case, IAU and ESRI decorations
     ("Mars (2015) - Sphere", "D_MARS", "GCS_Mars_2000") and aliases ("Luna")."""
-    key = name.strip().lower()
+    key = _DESIGNATION.sub("", name.strip().lower())
     if key in _ALIASES:
         return BODIES[_ALIASES[key]]
     key = _PREFIXES.sub("", _DECORATIONS.sub("", key).strip()).strip()
