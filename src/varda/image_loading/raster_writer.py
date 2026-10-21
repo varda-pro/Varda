@@ -72,13 +72,16 @@ def resolveOutputPath(text: str, folder: Path) -> Path:
     if forbidden:
         shown = " ".join(c if ord(c) >= 32 else f"\\x{ord(c):02x}" for c in forbidden)
         raise ValueError(
-            f"{shown} can't be used in file names (Windows forbids them). "
-            "Choose another name."
+            f"{shown} can't be used in a file name: files with them won't open "
+            "on Windows, so Varda keeps names portable. Rename the file "
+            "without them (use _ or - instead)."
         )
-    if name.split(".")[0].upper() in RESERVED_NAMES:
+    stem = name.split(".")[0]
+    if stem.upper() in RESERVED_NAMES:
         raise ValueError(
-            f"{name.split('.')[0]} is reserved by Windows for devices. "
-            "Choose another name."
+            f"{stem} can't be used as a file name: files named {stem} won't "
+            "open on Windows, so Varda keeps names portable. Rename the file, "
+            f"for example to {stem}_1{name[len(stem) :]}."
         )
     target = typed.with_name(name)
     suffix = target.suffix.lower()

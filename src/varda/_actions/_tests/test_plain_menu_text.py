@@ -42,3 +42,23 @@ def test_menus_and_tips_say_image_and_band():
         assert not re.search(r"\b(raster|scene)s?\b", text, re.I), action.id
         if action.id not in CUBE_IS_A_TERM_OF_ART:
             assert not re.search(r"\bcubes?\b", text, re.I), action.id
+
+
+# Release QA 0.12.0 #14: the menu said "Import Image(s)", the start page
+# "Import Image(s)…"; both open a dialog
+OPENS_A_DIALOG = {
+    "varda.file.import_image",
+    "varda.workspace.new_dual_image",
+    "varda.workspace.new_general_analysis",
+}
+
+
+def test_items_that_open_a_dialog_end_in_an_ellipsis():
+    for actionId in OPENS_A_DIALOG:
+        assert _action(actionId).title.endswith("…"), actionId
+
+
+def test_ellipses_are_one_character_and_never_doubled():
+    for action in ALL_ACTIONS:
+        assert "..." not in action.title, action.id
+        assert "……" not in action.title, action.id

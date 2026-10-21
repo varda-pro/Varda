@@ -238,6 +238,14 @@ def plain(text: str) -> str:
     return text.replace("&&", "\0").replace("&", "").replace("\0", "&").strip(" .…")
 
 
+def _asksFirst(dialog: QDialog) -> bool:
+    """A dialog that asks for something before acting (it can be canceled),
+    which the menu item leading to it should mark with "…"."""
+    return any(
+        plain(b.text()) == "Cancel" for b in dialog.findChildren(QAbstractButton)
+    )
+
+
 class QaRun:
     """One persona's session with the app."""
 
@@ -642,9 +650,28 @@ class QaRun:
             )
             return False
         self.log("menu", item=label)
+        asked, shown = len(self.fileDialogs), set(map(id, self._openDialogs()))
         action.trigger()
         QApplication.processEvents()
+        opened = [d for d in self._openDialogs() if id(d) not in shown]
+        asks = len(self.fileDialogs) > asked or any(map(_asksFirst, opened))
+        if asks and not action.text().rstrip().endswith("…"):
+            self.finding(
+                "annoyed",
+                f"{label} opens a dialog, but its menu text has no …",
+                widget=self._mainOrNone(),
+            )
         return True
+
+    @staticmethod
+    def _openDialogs() -> list[QDialog]:
+        return [
+            w
+            for w in QApplication.topLevelWidgets()
+            if isinstance(w, QDialog)
+            and w.isVisible()
+            and not isinstance(w, (QMessageBox, BusyDialog, QProgressDialog))
+        ]
 
     def _shootMenu(self, path: tuple[str, ...]) -> None:
         """Pop the item's menu up for a screenshot, as the user would see it."""

@@ -92,14 +92,14 @@ def closeCurrentWorkspace(mainGui: MainGUI) -> None:
 WORKSPACE_ACTIONS: list[Action] = [
     Action(
         id="varda.workspace.new_dual_image",
-        title="New Dual Image Workspace",
+        title="New Dual Image Workspace…",
         callback=newDualImageWorkspace,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=1)],
     ),
     Action(
         id="varda.workspace.new_general_analysis",
-        title="New General Image Analysis Workspace",
+        title="New General Image Analysis Workspace…",
         callback=newGeneralAnalysisWorkspace,
         enablement=EXPR_HAS_IMAGES,
         menus=[MenuRule(id=MenuId.WORKSPACE, group=MenuGroup.WORKSPACE_NEW, order=2)],

@@ -2,9 +2,12 @@
 
 import platform
 
+from PyQt6.QtWidgets import QLabel
+
 from varda._actions import ALL_ACTIONS
+from varda._actions._help_actions import CiteDialog
 from varda._actions._menu_ids import MENUBAR, MenuId
-from varda.help_info import citation, systemInfo
+from varda.help_info import citation, citationNote, systemInfo
 from varda.version import vardaVersion
 
 
@@ -56,3 +59,22 @@ def test_the_help_menu_offers_about_cite_system_info_and_docs():
         "Documentation",
         "Report an Issue…",
     } <= titles
+
+
+def test_the_citation_says_its_doi_cites_every_version(qtbot):
+    """Release QA 0.12.0 #8: "(Version 0.12.0)" beside the concept DOI, which
+    resolves to the latest version, didn't pin the version."""
+    note = citationNote()
+    assert "every version" in note
+    assert "latest" in note
+    assert "own DOI" in note
+    assert vardaVersion() in note
+    assert 'href="https://doi.org/10.5281/zenodo.23447208"' in note
+
+    dialog = CiteDialog()
+    qtbot.addWidget(dialog)
+    (label,) = [
+        label for label in dialog.findChildren(QLabel) if "own DOI" in label.text()
+    ]
+    assert label.openExternalLinks()
+    assert label.wordWrap()

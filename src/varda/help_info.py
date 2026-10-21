@@ -109,6 +109,27 @@ def citation() -> tuple[str, str]:
     return apa, bibtex
 
 
+def citationNote() -> str:
+    """What the citation's DOI pins (rich text with a link): Zenodo's concept
+    DOI cites every version and resolves to the latest; the version's own DOI
+    is minted when the release is published, after this app was built, so it
+    can only be pointed to."""
+    data = _citationData()
+    doi = data.get("doi")
+    version = vardaVersion()
+    if version == "unknown":
+        version = str(data.get("version", ""))
+    if not doi:
+        return f"Give the version you used ({version})."
+    record = f"https://doi.org/{doi}"
+    return (
+        f"This DOI ({doi}) cites every version of Varda and always resolves "
+        f"to the latest. Each version has its own DOI, listed on the "
+        f'<a href="{record}">Zenodo record</a>: cite the one for the version '
+        f"you used ({version}), so readers find exactly that version."
+    )
+
+
 def _year(data: dict) -> str:
     """The release year, or this year for a development version."""
     released = data.get("date-released")
