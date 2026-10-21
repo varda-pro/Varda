@@ -117,12 +117,12 @@ def test_the_files_own_crs_chosen_explicitly_stays(tmp_path):
 
 
 def test_a_named_body_varda_does_not_know_is_flagged_not_fixed(tmp_path):
-    label = 'PDS_VERSION_ID = PDS3\nTARGET_NAME = "BENNU"\nEND\n'
+    label = 'PDS_VERSION_ID = PDS3\nTARGET_NAME = "KLEOPATRA"\nEND\n'
     image = loadRaster(str(writeWgs84(tmp_path, label=label)))
     assert image.crsHealth is not None
     (issue,) = image.crsHealth.issues
     assert issue.code == "earth-crs-on-body" and issue.fix is None
-    assert issue.message == "Its CRS says Earth, but its label says Bennu."
+    assert issue.message == "Its CRS says Earth, but its label says Kleopatra."
     assert image.metadataOverrides == {}
     assert image.crs is not None and image.crs.to_epsg() == 4326
 

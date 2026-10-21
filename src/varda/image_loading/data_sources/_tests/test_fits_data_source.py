@@ -106,7 +106,7 @@ def test_metadata_records_the_header_body_and_geometry(tmp_path):
     assert "PLANE9  = 'Elevation'" in metadata[FITS_HEADER_KEY]
     record = metadata[FITS_KEY]
     assert record["target"] == "101955 BENNU"
-    assert record["body"] is None  # unknown to Varda: never Earth
+    assert record["body"] == "Bennu"  # from Varda's small-body table
     assert record["geometryPlanes"] == {
         "latitude": 0, "longitude": 1, "radius": 2, "x": 3, "y": 4, "z": 5,
     }  # fmt: skip
