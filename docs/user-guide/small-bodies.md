@@ -269,6 +269,15 @@ Export them with **Export → Plate Data as CSV…**.
 - **Reference potential.** Elevations depend on V_ref: state which.
 - **Rotation.** Uniform rotation about +Z at the period given; precession,
   tumbling (Dimorphos after DART) and YORP spin-up are not modeled.
+- **Validation status.** The gravity is checked against closed forms: a
+  sphere's exterior field (a point mass), Laplace's equation inside
+  (∇²U = −4πGρ), Werner's cube, and the acceleration as the potential's
+  gradient. Slopes are checked against theory for a spinning sphere, and the
+  coarse evaluation against the exact one (the table above). **It has not
+  yet been compared with a mission's published slope or geopotential maps**
+  (for Bennu, the OSIRIS-REx shape model and its ALTWG plate products): that
+  check is written but waits for the data. Until then, compare a result
+  with the mission's own product where one exists, and say that you did.
 
 ### Reporting your results
 
