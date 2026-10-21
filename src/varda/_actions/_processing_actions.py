@@ -416,8 +416,9 @@ PROCESSING_ACTIONS = processingActions(
         id=CRISM_PROCESS_ACTION_ID,
         title="Process CRISM Observation…",
         tooltip=(
-            "Turn CRISM TRR3 observations into map-projected I/F with the "
-            "atmosphere, spikes and spectral smile corrected"
+            "Turn CRISM TRR3 (targeted reduced data record) observations into "
+            "map-projected I/F with the atmosphere, spikes and spectral smile "
+            "corrected"
         ),
         callback=openCrismProcess,
         menus=[MenuRule(id=CRISM_MENU, group=CRISM_PROCESSING_GROUP, order=0)],
