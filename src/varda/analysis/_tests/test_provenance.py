@@ -117,4 +117,5 @@ def test_a_range_records_its_units_and_an_enum_its_label(tmp_path):
     json.dumps(parameters)
     text = provenanceText(result)
     assert "Wavelengths=2000–2400 nm" in text
-    assert f"Weight Image Holds={WeightKind.WEIGHTS.value}" in text
+    # the one-line summary shortens long values; the record keeps them whole
+    assert "Weight Image Holds=Each pixel's weight" in text
