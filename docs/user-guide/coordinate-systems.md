@@ -174,7 +174,93 @@ radius, e.g. "Unknown body (sphere R = 3000.00 km)". Varda never assumes an
 unknown body is Earth.
 
 The bodies Varda knows: Mercury, Venus, Earth, the Moon, Mars, Phobos,
-Ceres, Vesta, Io, Europa, Ganymede, Callisto, Enceladus and Titan.
+Eros, Itokawa, 67P/Churyumov–Gerasimenko, Ceres, Vesta, Io, Europa,
+Ganymede, Callisto, Enceladus and Titan from PROJ's `IAU_2015` authority,
+and Bennu, Ryugu, Didymos, Dimorphos and Arrokoth, which PROJ lacks, from
+Varda's own table (below). A label target may carry the minor-planet number:
+"(101955) BENNU" is Bennu.
+
+## Small and irregular bodies
+
+Map projections assume a sphere or an ellipsoid stands for the body's
+surface. On small, irregular bodies such as Bennu, Ryugu, Eros and 67P it
+doesn't, for four reasons:
+
+1. **No sphere or ellipsoid fits.** The relief is a large fraction of the
+   radius (Eros is 17 × 5.5 × 5.5 km), so a distance or area measured on any
+   sphere or ellipsoid differs from the one on the ground by far more than
+   its numerical error, and by an amount Varda can't bound without the
+   shape.
+2. **Latitude and longitude can name more than one point.** A line from the
+   center can cross the surface more than once (overhangs, a neck between
+   two lobes): Archinal et al. (2018, Sect. 8) list Eros, Kleopatra, Ida and
+   67P, where the Rosetta team mapped the two lobes separately. A map indexed
+   by latitude and longitude can't hold those points.
+3. **Scale changes with the local radius.** A map's scale is set for one
+   reference radius; a feature at radius r is drawn r/R times too small or
+   too large, and a surface tilted against the radial direction is
+   foreshortened further.
+4. **"Downhill" isn't radial.** Slope and elevation follow gravity and
+   rotation (the geopotential), not the height above a sphere, so a map's
+   heights don't say where material moves.
+
+The IAU convention for these bodies (Archinal et al., 2018) keeps
+planetocentric latitude, east longitude from 0 to 360° and the radius from
+the center of mass as coordinates, and uses a **shape model**, a triangle
+mesh in body-fixed kilometers, as the reference geometry. Varda follows it:
+see [Small bodies and shape models](small-bodies.md).
+
+### Which bodies are irregular
+
+Each body Varda knows has a shape class:
+
+- **irregular** when Varda's small-body table says so (Bennu, Ryugu,
+  Didymos, Dimorphos, Arrokoth, Phobos, Itokawa, 67P), or when its IAU 2015
+  radii differ by more than 10% of its mean radius, (a − c)/R > 0.1 (Eros:
+  (17.0 − 5.5)/8.45 = 1.36);
+- **sphere-like** when its IAU 2015 surface is a sphere (a = c);
+- **ellipsoid-like** otherwise (Mars: 0.006; Ceres: 0.09). Vesta is
+  ellipsoid-like: the IAU gives it an ellipsoid (289 × 280 × 229 km) and
+  doesn't list it among the bodies with multi-valued radii, though its
+  (a − c)/R is 0.23.
+
+On an irregular body:
+
+- the coordinate-system check adds `irregular-body` (below);
+- lengths and areas are still geodesics on the CRS's sphere or ellipsoid,
+  but their method says "approximate (sphere model): irregular body", and
+  the body-model difference is not given (NaN): Varda can't bound the error;
+- Reproject Image's **Recommended** target refuses Measurement and Terrain,
+  with "Irregular body: no map projection keeps distances or areas; use a
+  shape model (3D Terrain → Shape model)". Mosaic is still recommended, for
+  display.
+
+### The small-body table
+
+`src/varda/geo/small_bodies.toml` holds the bodies PROJ lacks and the
+density and rotation period of small bodies, which Shape Geophysics uses as
+defaults. Every value has its own citation, read from that source:
+
+| Body | NAIF ID | Mean radius (m) | Rotation period (h) | Density (kg/m³) | Sources |
+|---|---|---|---|---|---|
+| Bennu | 2101955 | 244 | 4.296061 | 1190 ± 13 | Barnouin et al. (2019), Table 1; Hergenrother et al. (2019) |
+| Ryugu | 2162173 | 448 | 7.63262 | 1190 ± 20 | Watanabe et al. (2019), as tabulated in the Hayabusa2 Ryugu Coordinate System Description |
+| Didymos | 920065803 | 380.5 | 2.260440 (after DART) | 2400 ± 300 (system) | Daly et al. (2023), Table 1; Ďurech et al. (2026) |
+| Dimorphos | 120065803 | 75.5 | none (changed by DART: enter one) | 2400 ± 300 (assumed equal to Didymos's) | Daly et al. (2023), Table 1 |
+| Arrokoth | 2486958 | 9150 | 15.92 | none (only > 290 measured: enter one) | Spencer et al. (2020) |
+| Eros | 2000433 | 8450 (IAU) | 5.270257 | 2670 ± 30 | Archinal et al. (2018), Tables 3, 6; Yeomans et al. (2000) |
+| Itokawa | 2025143 | 173 (PROJ's IAU sphere) | 12.132395 | 1900 ± 130 | Archinal et al. (2018), Table 3; Fujiwara et al. (2006) |
+| 67P | 1000012 | 1650 (IAU) | 12.404100 | 533 ± 6 | Archinal et al. (2018), Tables 3, 6; Pätzold et al. (2016) |
+| Phobos | 401 | 11080 (IAU) | 7.653843 | 1876 ± 20 | Archinal et al. (2018), Table 2; Andert et al. (2010) |
+| Vesta | 2000004 | IAU | 5.342128 | none: enter one | Archinal et al. (2018), Table 3 |
+| Ceres | 2000001 | IAU | 9.074170 | none: enter one | Archinal et al. (2018), Table 3 |
+
+Mean radii are of the volume-equivalent sphere. Rotation periods from
+Archinal et al. (2018) are 360° over the prime meridian's rate W. Bodies PROJ
+lacks get a sphere CRS of their mean radius named for them
+("Bennu - Sphere / Ocentric"), east longitude positive. Vesta's and Ceres's
+densities aren't given because their papers' values couldn't be checked at
+the source; enter them from the source you cite.
 
 ## Combining images
 
@@ -669,7 +755,7 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 |---|---|---|---|---|
 | `no-crs` | Problem | The image has map coordinates (a transform that isn't the identity), or its label describes a map projection, but there is no CRS | "Its map coordinates have no coordinate system, so Varda treats it as unreferenced." When Varda used its label's: "Its file has no coordinate system; Varda built it from its label's map projection." | With a label projection group, see [CRSs built from the label](#crss-built-from-the-label): **used automatically** when complete and nothing is assumed; **offered** (Apply) when Varda had to assume a convention, naming it; when no CRS can be built, the suggestion lists what the label lacks. Otherwise nothing is changed; use **Set coordinate system…** |
 | `unreadable-crs` | Problem | The file has CRS text that PROJ can't read | "Its coordinate system can't be read, so Varda treats it as unreferenced." | Nothing is changed. Image Properties shows the text; use **Set coordinate system…** |
-| `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know (e.g. "Its CRS says Earth, but its label says Bennu."): nothing is changed; use **Set coordinate system…**. A target that names no body is no evidence and gives no finding: `SKY`, `N/A`, `NA`, `NONE`, `NULL`, `UNK`, `UNKNOWN`, `CALIBRATION`, `CALIBRATION TARGET`, `CAL`, `DARK`, `DARK CURRENT`, `FLAT`, `FLAT FIELD`, `BIAS`, `STAR`, `STARS`, `SPACE`, `DEEP SPACE` and `TEST`, in any case |
+| `earth-crs-on-body` | Problem | The CRS is Earth's (e.g. `EPSG:4326`, WGS 84) but the label's target is another body | "Its CRS says Earth, but its label says Mars." | **Geographic CRS (degrees) on a body Varda knows: fixed automatically**, see below. A projected CRS, or a body Varda doesn't know (e.g. "Its CRS says Earth, but its label says Kleopatra."): nothing is changed; use **Set coordinate system…**. A target that names no body is no evidence and gives no finding: `SKY`, `N/A`, `NA`, `NONE`, `NULL`, `UNK`, `UNKNOWN`, `CALIBRATION`, `CALIBRATION TARGET`, `CAL`, `DARK`, `DARK CURRENT`, `FLAT`, `FLAT FIELD`, `BIAS`, `STAR`, `STARS`, `SPACE`, `DEEP SPACE` and `TEST`, in any case |
 | `unknown-body` | Tip | The CRS's radius matches no body Varda knows, and no label names one | "Varda doesn't know which body it's on: radius 100 km matches no known body." | Nothing is changed. Measurements use the CRS's own surface; the image can only be combined with images on the same surface |
 | `ambiguous-body` | Tip | The radius matches several bodies (e.g. Mercury and Callisto at 2425 km), and nothing else names one | "Its radius alone can't tell which body it's on: radius 2425 km matches Mercury, Callisto." | Nothing is changed. Open it with its label, or set the body's own CRS |
 | `label-crs-mismatch` | Problem | The CRS (after any `earth-crs-on-body` fix) isn't the same (`sameCrs`, [What "the same" means](#what-the-same-means)) as the CRS its own label's map projection group describes | "Its label describes Mars, ellipsoid a = 3395.58, c = 3375.60 km, Equirectangular, center lat 10°, lon_0 -100°, but its CRS is Mars, sphere R = 3396.19 km, Equirectangular, center lat 10°, lon_0 100°, 508 m/px (east–west), 500 m/px (north–south)." | **Offered, never automatic** (Apply uses the label's CRS; the file's transform is kept): GDAL may be right, and the label may be the one in error. The suggestion names any convention Varda assumed. The `lon-direction-mismatch` and `latitude-type-mismatch` findings say why the two differ. Against a CRS you chose yourself (**Set coordinate system…**, or a session's), it is **Info**, worded as your choice: "You chose Mars, …; its label describes Mars, …." with the label's CRS still offered |
@@ -677,6 +763,7 @@ tooltip and the status bar tell you, and Image Properties is where you act.
 | `lon-direction-mismatch` | Problem | The label's positive longitude direction (east or west) differs from the CRS's longitude axis | "Its label says longitude increases to the west, but its CRS says east." | Nothing is changed: GDAL's handling of the label varies by driver and version, so either can be right. Check a known feature's longitude |
 | `latitude-type-mismatch` | Tip | The label's latitude type differs from the CRS's: planetocentric on a flattened planetographic CRS, planetographic on a sphere (whose latitude is planetocentric), or planetographic on a planetocentric ellipsoid | "Its label says planetographic latitude, but its CRS's latitude is planetocentric." | Nothing is changed. On Mars the two latitudes differ by up to 0.34° at 45° |
 | `high-distortion` | Tip | The projection's scale error or angular distortion over the image passes the tip-off thresholds (below) | "Its projection distorts the map: up to 1.8% scale error (east–west) at 18.4°N, 1.0° angular distortion." Past the stronger thresholds: "Shapes and slopes are badly distorted on this map: …" | Nothing is changed. Measurements are geodesic and unaffected; reproject it (Processing → Geometry → Reproject Image, [Reprojecting images](reprojecting.md)) for figures and terrain |
+| `irregular-body` | Tip | The body is irregular ([Which bodies are irregular](#which-bodies-are-irregular)) | "Irregular body: distances and areas on a sphere or ellipsoid are approximate; use a shape model." | Nothing is changed. Measurements are labeled approximate; measure on a shape model instead ([Small bodies and shape models](small-bodies.md)) |
 | `lon-0-360` | Info | The image's longitudes run 0..360 (a geographic image past 180°, or a projection centered at 180° or beyond) | "Its longitudes run from 0 to 360° (not −180 to 180°)." | Nothing to do: Varda reads both conventions and never rewrites them |
 
 Without a CRS or with an unreadable one, Varda reports that alone: the other
@@ -1051,6 +1138,40 @@ image's edges, which the grid includes. The check describes the
 projection, not the accuracy of the image's georeferencing.
 
 ## References
+
+- Andert, T. P., et al. (2010). Precise mass determination and the nature
+  of Phobos. *Geophysical Research Letters*, 37, L09202.
+  https://doi.org/10.1029/2009GL041829
+- Barnouin, O. S., et al. (2019). Shape of (101955) Bennu indicative of a
+  rubble pile with internal stiffness. *Nature Geoscience*, 12, 247–252.
+  https://doi.org/10.1038/s41561-019-0330-x
+- Daly, R. T., et al. (2023). Successful kinetic impact into an asteroid for
+  planetary defence. *Nature*, 616, 443–447.
+  https://doi.org/10.1038/s41586-023-05810-5
+- Ďurech, J., et al. (2026). A change of the rotation period of asteroid
+  (65803) Didymos caused by the DART impact. arXiv:2601.04793.
+- Fujiwara, A., et al. (2006). The rubble-pile asteroid Itokawa as observed
+  by Hayabusa. *Science*, 312, 1330–1334.
+  https://doi.org/10.1126/science.1125841
+- Hergenrother, C. W., et al. (2019). The operational environment and
+  rotational acceleration of asteroid (101955) Bennu from OSIRIS-REx
+  observations. *Nature Communications*, 10, 1291.
+  https://doi.org/10.1038/s41467-019-09213-x
+- JAXA Hayabusa2 Project. Ryugu Coordinate System Description, PDS
+  Hayabusa2 archive (hyb2 v3.0), Tables 1–2.
+- NAIF. NAIF IDs Required Reading. https://naif.jpl.nasa.gov
+- Pätzold, M., et al. (2016). A homogeneous nucleus for comet
+  67P/Churyumov–Gerasimenko from its gravity field. *Nature*, 530, 63–65.
+  https://doi.org/10.1038/nature16535
+- Spencer, J. R., et al. (2020). The geology and geophysics of Kuiper Belt
+  object (486958) Arrokoth. *Science*, 367, eaay3999.
+  https://doi.org/10.1126/science.aay3999
+- Watanabe, S., et al. (2019). Hayabusa2 arrives at the carbonaceous
+  asteroid 162173 Ryugu—A spinning top–shaped rubble pile. *Science*, 364,
+  268–272. https://doi.org/10.1126/science.aav8032
+- Yeomans, D. K., et al. (2000). Radio science results during the
+  NEAR-Shoemaker spacecraft rendezvous with Eros. *Science*, 289, 2085–2088.
+  https://doi.org/10.1126/science.289.5487.2085
 
 - Archinal, B. A., et al. (2018). Report of the IAU Working Group on
   Cartographic Coordinates and Rotational Elements: 2015. *Celestial

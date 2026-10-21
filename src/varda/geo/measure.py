@@ -24,6 +24,11 @@ inside the parallels: relative error ≈ δλ² (cos² φ − 2 sin² φ) / 12 w
 over PROJ's areal scale at the pixel center (relative error of order
 (pixel / R)²).
 
+On an irregular body (``Body.shape``), no sphere or ellipsoid stands for
+the surface: the value is still the geodesic on the CRS's surface, but its
+method says "approximate" and the body-model term is NaN, an error Varda
+can't bound without a shape model.
+
 Not included: topography (measurements are horizontal, on the reference
 surface) and the image's georeferencing error."""
 
@@ -40,7 +45,7 @@ from attrs import frozen
 from pyproj import CRS, Geod
 from pyproj.exceptions import CRSError
 
-from varda.geo.bodies import identifyBody, latitudeType, surfaceText
+from varda.geo.bodies import BodyShape, identifyBody, latitudeType, surfaceText
 from varda.geo.distortion import (
     DistortionSummary,
     arealScaleAtPixels,
@@ -94,7 +99,8 @@ class Measurement:
     # the same on the body's IAU 2015 reference ellipsoid, or None when that
     # is the CRS's own surface (or the body is unknown)
     reference: float | None
-    bodyModelDifference: float  # |value − reference| / reference; 0 without one
+    # |value − reference| / reference; 0 without one; NaN on an irregular body
+    bodyModelDifference: float
     # the image projection's distortion over the measured geometry (tips
     # only: the value never uses it)
     distortion: DistortionSummary | None
@@ -119,6 +125,7 @@ class _Surfaces:
     reference: _Surface | None
     method: str
     surface: str  # "sphere R = 3396.19 km"
+    irregular: bool  # on an irregular body: the method says "approximate"
 
 
 @frozen
@@ -179,7 +186,7 @@ def lineLength(
         else None
     )
     return _measurement(
-        value, reference, "m", surfaces.method, _distortion(crs, transform, points)
+        value, reference, "m", surfaces, _distortion(crs, transform, points)
     )
 
 
@@ -230,14 +237,14 @@ def polygonArea(
             area,
             reference[0] if reference else None,
             "m²",
-            surfaces.method,
+            surfaces,
             distortion,
         ),
         _measurement(
             perimeter,
             reference[1] if reference else None,
             "m",
-            surfaces.method,
+            surfaces,
             distortion,
         ),
     )
@@ -465,11 +472,14 @@ def _measurement(
     value: float,
     reference: float | None,
     unit: str,
-    method: str,
+    surfaces: _Surfaces,
     distortion: DistortionSummary | None,
 ) -> Measurement:
-    difference = abs(value - reference) / reference if reference else 0.0
-    return Measurement(value, unit, method, reference, difference, distortion)
+    if surfaces.irregular:
+        difference = math.nan
+    else:
+        difference = abs(value - reference) / reference if reference else 0.0
+    return Measurement(value, unit, surfaces.method, reference, difference, distortion)
 
 
 def _segments(surface: _Surface, lon: np.ndarray, centric: np.ndarray) -> np.ndarray:
@@ -539,6 +549,12 @@ def _surfaces(key: str) -> _Surfaces:
     own = _Surface(Geod(a=a, b=c), a, c)
     body = identifyBody(crs).body
     reference = None
+    surface = surfaceText(ellipsoid)
+    method = f"geodesic (Karney 2013) on {surface}"
+    if body is not None and body.shape is BodyShape.IRREGULAR:
+        model = "sphere" if a == c else "ellipsoid"
+        method += f" — approximate ({model} model): irregular body"
+        return _Surfaces(own, None, method, surface, True)
     if body is not None:
         referenceEllipsoid = body.referenceCrs().ellipsoid
         assert referenceEllipsoid is not None  # IAU_2015 CRSs have one
@@ -546,8 +562,7 @@ def _surfaces(key: str) -> _Surfaces:
         refC = referenceEllipsoid.semi_minor_metre
         if abs(refA - a) > SAME_SURFACE_M or abs(refC - c) > SAME_SURFACE_M:
             reference = _Surface(Geod(a=refA, b=refC), refA, refC)
-    surface = surfaceText(ellipsoid)
-    return _Surfaces(own, reference, f"geodesic (Karney 2013) on {surface}", surface)
+    return _Surfaces(own, reference, method, surface, False)
 
 
 def _layoutFor(crs: CRS | str) -> _Layout:
