@@ -86,12 +86,14 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
 
     if outcome.opened is not None:
         with run.step(
-            "dialogs at laptop size", "Processing > PCA; File > Export Image…"
+            "dialogs at laptop size",
+            "Processing > PCA; File > Export Image…; Processing > CRISM",
         ):
             for menu, kind in (
                 (journeys.PCA_MENU, RunAnalysisDialog),
                 (("File", "Export Image"), ExportImageDialog),
                 (("Help", "Cite Varda"), QWidget),
+                *((menu, QWidget) for menu in journeys.CRISM_DIALOG_MENUS),
             ):
                 if not run.useMenu(*menu, shot=False):
                     continue

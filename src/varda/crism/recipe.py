@@ -49,7 +49,8 @@ class PhotometryStep(ParameterGroup):
         IncidenceSource,
         IncidenceSource.AREOID_POLYNOMIAL,
         "Where the incidence angle comes from: the areoid angle from the "
-        "observation's geometry, or the angle on the MOLA surface.",
+        "observation's geometry, or the angle on the surface measured by the "
+        "Mars Orbiter Laser Altimeter (MOLA).",
     )
 
 
@@ -92,10 +93,11 @@ class AtmosphereStep(ParameterGroup):
     artifactModel = BoolParameter(
         "Model instrument artifacts",
         False,
-        "Fit the learned artifact spectra of the volcano scans on the CO2 lines "
-        "(1940–2100 nm). Off by default: it lowers the CO2 residual but moves "
-        "BD1900_2 beyond its validation bound (decision D12). Skipped, with "
-        "the reason recorded, when no basis matches the observation's epoch.",
+        "Fit the learned artifact spectra of the volcano scans on the carbon "
+        "dioxide (CO2) lines (1940–2100 nm). Off by default: it lowers the CO2 "
+        "residual but can change the 1.9 µm band depth (BD1900_2) by more than "
+        "repeated observations differ. Skipped, with the reason recorded, when "
+        "no basis matches the observation's epoch.",
     )
     artifactFolder = StringParameter(
         "Artifact basis folder",
@@ -125,7 +127,8 @@ class SmileStep(ParameterGroup):
     enabled = _enabled(
         True,
         "Correct the spectral shift across the detector columns (linear "
-        "interpolation onto the MTRDR wavelengths).",
+        "interpolation onto the wavelengths of the map-projected targeted "
+        "reduced data records (MTRDR), CRISM's official products).",
     )
     esc = BoolParameter(
         "Empirical shift correction",

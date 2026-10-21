@@ -32,6 +32,12 @@ from varda.image_rendering.raster_view.viewport_tools.tool_manager import (
 from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
 
 PCA_MENU = ("Processing", "Transforms", "Principal Component Analysis (PCA)")
+# Dialogs that open without data (0.12.0's CRISM processing); each persona
+# that reads or measures dialogs takes these too
+CRISM_DIALOG_MENUS = (
+    ("Processing", "CRISM", "Process CRISM Observation"),
+    ("Processing", "CRISM", "Get CRISM Calibration Files"),
+)
 
 
 @dataclass

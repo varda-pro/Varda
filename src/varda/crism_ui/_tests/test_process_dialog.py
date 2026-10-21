@@ -172,6 +172,23 @@ def test_each_step_has_its_own_titled_box(qtbot, tmp_path):
     ]
 
 
+def test_the_dialog_says_what_to_add_and_where_the_guide_is(qtbot, tmp_path):
+    """Release QA 0.12.0: a first-time user saw an empty table and Add Folder…
+    with no hint of what folder, nor of the guide."""
+    dialog = _dialog(qtbot, tmp_path, [])
+    hint = dialog.hint.text()
+    assert "TRR3" in hint and "DDR" in hint and "CRISM processing" in hint
+
+
+def test_collapsed_steps_point_right(qtbot, tmp_path):
+    """Release QA 0.12.0: every collapsed step showed ▲, which reads as
+    "expanded" or "move up"."""
+    dialog = _dialog(qtbot, tmp_path, [])
+    assert {box.collapsedIcon().isNull() for box in dialog._steps} == {False}
+    assert all(not box.isExpanded() for box in dialog._steps)
+    assert process_dialog.COLLAPSED_ICON == "▶"
+
+
 def test_remove_selected_rows(qtbot, tmp_path):
     dialog = _dialog(qtbot, tmp_path, ["a", "b", "c"])
     dialog.table.selectRow(1)
