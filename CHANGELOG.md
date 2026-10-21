@@ -65,6 +65,31 @@ can alter results.
   labeled approximate, and Reproject Image recommends no projection for
   measurement or terrain.
 
+- **CRISM processing** (Processing → CRISM → Process CRISM Observation…, or
+  `Varda --crism process`): turns a CRISM IR observation's TRR3 I/F into a
+  map-projected, MTRDR-consistent I/F on the MTRDR's own grid, with a σ file
+  (instrument noise, per band), the geometry (`_de`) and processing (`_in`)
+  backplanes, and a recipe and provenance record. Steps: photometry,
+  despike, atmospheric correction (fitted transmission with a shift and an
+  elevation prior; an optional learned artifact model on the CO₂ lines, off
+  by default), optional destriping, smile and empirical shift correction,
+  projection.
+  Calibration files (WA and atmospheric transmission) are found beside the
+  observation, in CAT's `aux_files` if you point to them, or fetched from the
+  PDS (bad-pixel maps are used when local), and a missing one is reported
+  before anything runs. The products work with the CRISM Ratio workspace,
+  Ratio Cube and Shadow Mask like an MTRDR: the IN and DE backplanes are
+  found beside the I/F, and each product's Varda provenance (in its
+  `.aux.xml`) names the TRR3 and DDR. Phase 1 is IR-only with no EGN; it is
+  not bit-for-bit CAT, and its summary parameters agree with the MTRDR's at
+  Pearson r 0.63–0.89. The
+  [guide](docs/user-guide/crism-processing.md) is written as a citable
+  methods description: every step's math and constants, every parameter, the
+  uncertainty (σ and the systematic terms), the measured agreement with CAT's
+  MTRDRs, a methods paragraph to adapt, and references; the
+  [validation report](docs/superpowers/specs/crism/phase1-validation.md) has
+  every number.
+
 ### Changed
 
 - Lengths and areas on irregular bodies (Eros, Phobos and the bodies above)
@@ -85,6 +110,11 @@ can alter results.
   view: its image's Render Settings and Histogram are at the bottom of the
   menu, and **Panels** lists every panel of the workspace, checked when open.
   In the CRISM Ratio, General Image Analysis and Dual workspaces.
+- **A TRR3's DDR is read for its geometry.** Its `.img` has a detached PDS3
+  label and no header, which GDAL can't open alone, so the Shadow Mask and
+  the CRISM geometry lookup never found a TRR3's incidence. Varda now reads
+  it through the `.lbl` beside it, with the label's band names. See
+  [CRISM ratio cubes](docs/user-guide/crism-ratio.md#ratio-cube).
 
 ## 0.11.0 (2026-10-20)
 

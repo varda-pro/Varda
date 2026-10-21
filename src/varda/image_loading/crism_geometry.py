@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import attrs
@@ -32,6 +33,7 @@ from pyproj import CRS
 from rasterio.errors import RasterioError
 
 from varda.common.provenance import CRISM_GEOMETRY_KEYS, PROVENANCE_KEY
+from varda.crism.labels import readLabel
 
 if TYPE_CHECKING:  # entities imports image loading: only the type is needed
     from varda.common.entities import VardaRaster
@@ -283,10 +285,34 @@ class _Header:
     crs: str  # WKT, "" without one
 
 
+def _openable(path: str) -> str:
+    """What GDAL opens for ``path``: the detached PDS3 label beside a CRISM
+    ``.img`` with no ENVI header (a TRR3's DDR), else ``path`` itself."""
+    stem, suffix = os.path.splitext(path)
+    if suffix.lower() != ".img" or any(
+        os.path.isfile(stem + s) for s in (".hdr", ".HDR")
+    ):
+        return path
+    return next((stem + s for s in (".lbl", ".LBL") if os.path.isfile(stem + s)), path)
+
+
+def _descriptions(geom: rasterio.DatasetReader) -> tuple[str, ...]:
+    """The band names: GDAL's, else (GDAL reads a PDS3 label without them)
+    the label's BAND_NAME list."""
+    names = tuple(d or "" for d in geom.descriptions or ())
+    if any(names) or os.path.splitext(geom.name)[1].lower() != ".lbl":
+        return names
+    try:
+        return readLabel(Path(geom.name)).bandNames or names
+    except (OSError, ValueError) as error:
+        logger.info("No band names in %s: %s", geom.name, error)
+        return names
+
+
 def _header(path: str) -> _Header:
-    with rasterio.open(path) as geom:
+    with rasterio.open(_openable(path)) as geom:
         return _Header(
-            tuple(d or "" for d in geom.descriptions or ()),
+            _descriptions(geom),
             geom.height,
             geom.width,
             geom.transform,
@@ -616,8 +642,8 @@ def _readColumnGeometry(
         return _geometry_cache[key]
     result = None
     try:
-        with rasterio.open(geomPath) as geom:
-            descs = geom.descriptions or ()
+        with rasterio.open(_openable(geomPath)) as geom:
+            descs = _descriptions(geom)
             irIdx = findBandIndex(descs, "ir_sample")
             if irIdx is None:
                 logger.info("%s has no IR Sample band", geomPath)
@@ -691,7 +717,9 @@ def columnGeometryFor(image: VardaRaster, chosen: str = "") -> ColumnGeometry | 
 # Geosciences Node: a TRR3 ``..._if166l_trr3`` has the DDR ``..._de166l_ddr1``
 # (no detector sample band: the cube is in sensor space); an MTRDR
 # ``..._if166j_mtr3`` has ``..._in166j_mtr3`` and ``..._de166l_mtr1``; a TER3
-# ``..._if166j_ter3`` has ``..._in166j_ter3``.
+# ``..._if166j_ter3`` has ``..._in166j_ter3``. Varda's own CRISM processing
+# (``varda.crism``) writes ``..._if168l_vmtr`` with ``..._in168l_vmtr`` and
+# ``..._de168l_vmtr``.
 _GEOMETRY_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"_mrr(al|if|ir|sr|su|ra)_"), "_mrrde_"),
     (re.compile(r"_vrr(al|if|ir|sr|su|ra)_"), "_vrrde_"),
@@ -699,6 +727,7 @@ _GEOMETRY_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"_(if|ra)(\d{3})([ls])_trr3"), r"_de\2\3_ddr1"),
     (re.compile(r"_(if|sr|su)(\d{3})[a-z]_ter3"), r"_de\2l_ddr1"),
     (re.compile(r"_(if|sr|su)(\d{3})[a-z]_mtr3"), r"_de\2l_mtr1"),
+    (re.compile(r"_(if|sr|su)(\d{3}[a-z])_vmtr"), r"_de\2_vmtr"),
 ]
 
 
@@ -759,8 +788,8 @@ def sceneIncidenceFor(image: VardaRaster, chosen: str = "") -> Incidence | None:
 
 def _readIncidence(match: GeometryMatch, shape: tuple[int, int]) -> Incidence | None:
     try:
-        with rasterio.open(match.path) as geom:
-            index = findBandIndex(geom.descriptions or (), INCIDENCE)
+        with rasterio.open(_openable(match.path)) as geom:
+            index = findBandIndex(_descriptions(geom), INCIDENCE)
             if index is None:
                 return None
             pixels = _readWindow(match.window, shape)

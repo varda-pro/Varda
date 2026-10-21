@@ -36,6 +36,12 @@ DATA_EXTENSIONS = (
     ".bip",
 )
 HEADER_SUFFIX = ".hdr"
+# header keys Varda writes for a companion uncertainty (sigma) image, as GDAL
+# reports them (lower case, spaces as underscores)
+SIGMA_FILE_KEY = "varda_sigma_file"
+SIGMA_KIND_KEY = "varda_sigma_kind"
+SIGMA_STEPS_KEY = "varda_sigma_steps"
+SIGMA_KEYS = (SIGMA_FILE_KEY, SIGMA_KIND_KEY, SIGMA_STEPS_KEY)
 
 
 def _isHeader(path: Path) -> bool:
@@ -236,8 +242,11 @@ class ENVIDataSource(RasterioDataSource):
     @cached_property
     def extraMetadata(self) -> dict:
         """Extra ENVI metadata not captured by standard properties, and what
-        Varda wrote beside the file (its provenance and scientific metadata)."""
+        Varda wrote beside the file (its provenance and scientific metadata).
+        A Varda sigma companion (``varda sigma file`` and its kind and steps)
+        becomes ``extraMetadata["sigma"]`` with an absolute path."""
         skip = {
+            *SIGMA_KEYS,
             "description",
             "default_bands",
             "wavelength_units",
@@ -245,9 +254,26 @@ class ENVIDataSource(RasterioDataSource):
             "wavelength",
             "geospatial_info",
         }
-        return {
+        extra: dict = {
             **{k: v for k, v in self._enviTags.items() if k not in skip},
             **self._vardaMetadata(),
+        }
+        sigma = self._sigmaCompanion()
+        if sigma is not None:
+            extra["sigma"] = sigma
+        return extra
+
+    def _sigmaCompanion(self) -> dict[str, str | list[str]] | None:
+        """The uncertainty image written beside this one, or None."""
+        name = self._enviTags.get(SIGMA_FILE_KEY, "").strip().strip("{}").strip()
+        if not name:
+            return None
+        header = Path(self._userFilePath).absolute()
+        steps = self._enviTags.get(SIGMA_STEPS_KEY, "").strip().strip("{}")
+        return {
+            "path": str(header.parent / name),
+            "kind": self._enviTags.get(SIGMA_KIND_KEY, "").strip().strip("{}").strip(),
+            "steps": [step.strip() for step in steps.split(",") if step.strip()],
         }
 
     @cached_property

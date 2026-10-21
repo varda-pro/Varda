@@ -24,10 +24,14 @@ from varda.analysis.eigenvalue_dialog import EigenvaluePlotDialog
 from varda.analysis.fatt_dialog import FattDialog
 from varda.analysis.fatt_map import FattMapAnalysis
 from varda.analysis.registry import ANALYSES
+from varda.analysis.ratio_cube_analysis import CATEGORY as CRISM_CATEGORY
 from varda.analysis.runner import AnalysisRunner
 from varda.analysis.transforms import TRANSFORM_METADATA_KEY, InverseTransformAnalysis
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
+from varda.crism import ProcessResult
+from varda.crism_ui.calibration_dialog import CalibrationDialog
+from varda.crism_ui.process_dialog import ProcessCrismDialog
 from varda.context_keys import EXPR_HAS_IMAGES, EXPR_NEVER
 from varda.image_loading import ImageLoadingService
 from varda.library_manager.manager_window import openLibraryManager
@@ -284,6 +288,25 @@ def openSpectralLibraries(mainGui: MainGUI) -> None:
     openLibraryManager(mainGui)
 
 
+def openCrismProcess(images: ProjectImages, mainGui: MainGUI) -> None:
+    """Process CRISM observations; each map-projected product joins the project."""
+    dialog = ProcessCrismDialog(parent=mainGui)
+
+    def load(result: ProcessResult) -> None:
+        if result.mapProjected is not None:
+            ImageLoadingService.load_images(
+                file_paths=[str(result.mapProjected)],
+                on_success_callback=images.append,
+            )
+
+    dialog.sigProcessed.connect(load)
+    dialog.show()
+
+
+def openCrismCalibration(mainGui: MainGUI) -> None:
+    CalibrationDialog(parent=mainGui).show()
+
+
 def openSpectralHourglass(images: ProjectImages, mainGui: MainGUI) -> None:
     NewSpectralHourglassDialog(images, parent=mainGui).connectOnAccept(
         mainGui.addTab
@@ -299,7 +322,13 @@ OPTIONAL_FEATURES_ACTION_ID = "varda.processing.optional_features"
 SPECTRAL_LIBRARIES_ACTION_ID = "varda.processing.spectral_libraries"
 SHAPE_GEOPHYSICS_ACTION_ID = "varda.processing.shape_geophysics"
 SHAPE_MODELS = "Shape Models"
+CRISM_PROCESS_ACTION_ID = "varda.processing.crism_process"
+CRISM_CALIBRATION_ACTION_ID = "varda.processing.crism_calibration"
+CRISM_MENU = categoryMenuId(MenuId.PROCESSING, CRISM_CATEGORY)
+# Processing a TRR3 comes first, above the analyses of a processed cube
+CRISM_PROCESSING_GROUP = "0_processing"
 
+# The CRISM submenu comes from the Ratio Cube analysis's category (CRISM_CATEGORY)
 PROCESSING_SUBMENUS = processingSubmenus(MenuId.PROCESSING, ANALYSES) + [
     submenuItem(MenuId.PROCESSING, SHAPE_MODELS, len(ANALYSES))
 ]
@@ -382,6 +411,23 @@ PROCESSING_ACTIONS = processingActions(
         ),
         callback=openShapeGeophysics,
         menus=[MenuRule(id=categoryMenuId(MenuId.PROCESSING, SHAPE_MODELS))],
+    ),
+    Action(
+        id=CRISM_PROCESS_ACTION_ID,
+        title="Process CRISM Observation…",
+        tooltip=(
+            "Turn CRISM TRR3 observations into map-projected I/F with the "
+            "atmosphere, spikes and spectral smile corrected"
+        ),
+        callback=openCrismProcess,
+        menus=[MenuRule(id=CRISM_MENU, group=CRISM_PROCESSING_GROUP, order=0)],
+    ),
+    Action(
+        id=CRISM_CALIBRATION_ACTION_ID,
+        title="Get CRISM Calibration Files…",
+        tooltip="See which calibration files an observation needs, and fetch the missing ones",
+        callback=openCrismCalibration,
+        menus=[MenuRule(id=CRISM_MENU, group=CRISM_PROCESSING_GROUP, order=1)],
     ),
     Action(
         id=OPTIONAL_FEATURES_ACTION_ID,

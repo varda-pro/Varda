@@ -1284,6 +1284,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pvl"
+version = "1.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/20/63c4e77d106de29e59fe5d1b123de7c61242300b2315c2a57630022a5bf5/pvl-1.3.2.tar.gz", hash = "sha256:7d07baa88af26d2ff04a3548a54392de3245dea13f23d964dc8ed725a5efc6a2", size = 153093, upload-time = "2022-08-11T23:27:14.036Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/4f/d201cd27b306568013c75b429726267fc9b5049c4b8e23e444cf2eb52f0f/pvl-1.3.2-py2.py3-none-any.whl", hash = "sha256:e25a72f468e82a48b55645d0e96e55c3313f90056832aaeb42b351d1dd648d4e", size = 66082, upload-time = "2022-08-11T23:27:11.98Z" },
+]
+
+[[package]]
 name = "pyconify"
 version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2061,6 +2070,7 @@ dependencies = [
     { name = "pluggy" },
     { name = "psutil" },
     { name = "psygnal" },
+    { name = "pvl" },
     { name = "pyconify" },
     { name = "pyogrio" },
     { name = "pyproj" },
@@ -2123,6 +2133,7 @@ requires-dist = [
     { name = "pluggy", specifier = ">=1.6.0" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "psygnal", specifier = ">=0.15.1" },
+    { name = "pvl", specifier = ">=1.3" },
     { name = "pyconify", specifier = ">=0.2.1" },
     { name = "pyogrio", specifier = ">=0.11.1" },
     { name = "pyproj", specifier = ">=3.7.1" },
