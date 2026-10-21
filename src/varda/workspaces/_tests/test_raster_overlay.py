@@ -166,8 +166,14 @@ def test_the_bar_says_which_images_cant_be_overlaid(qtbot):
     widget = OverlayBar(ProjectImages([base, smaller]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    # Release QA #13: "(1 not on this grid)" was unexplained
-    assert widget.notListed.text() == "1 image can't be overlaid"
+    # Release QA #13: "(1 not on this grid)" was unexplained; 0.12.0: "1
+    # image can't be overlaid" said neither why nor what to do
+    assert widget.notListed.text() == (
+        "1 image can't be overlaid: this image has no map coordinates, so "
+        "only images of its size (8 × 6) can be. Resample one to that size "
+        "(Processing → Geometry)."
+    )
+    assert widget.notListed.wordWrap()
     assert "smaller (a different size" in widget.notListed.toolTip()
 
 
@@ -435,9 +441,51 @@ def test_an_image_of_another_body_is_not_offered(qtbot):
     widget = OverlayBar(ProjectImages([base, earth]), base, [])
     qtbot.addWidget(widget)
     assert widget.imageBox.count() == 1
-    assert widget.notListed.text() == "1 image can't be overlaid"
+    assert widget.notListed.text() == (
+        "1 image can't be overlaid: of another body. Check its coordinate "
+        "system in Image Properties."
+    )
     tip = widget.notListed.toolTip()
-    assert "Mars" in tip and "Earth" in tip
+    assert "Mars" in tip and "Earth" in tip and "earth" in tip
+
+
+@pytest.mark.parametrize("width", [180, 260, 600])
+def test_the_explanation_wraps_in_a_narrow_bar(qtbot, width):
+    base = _base()
+    smaller = _raster(np.zeros((3, 8)), "smaller")
+    widget = OverlayBar(ProjectImages([base, smaller]), base, [])
+    qtbot.addWidget(widget)
+    widget.resize(width, widget.heightForWidth(width))
+    widget.show()
+    qtbot.waitExposed(widget)
+    assertNothingClipped(widget)
+
+
+def test_an_image_without_map_coordinates_is_explained(qtbot):
+    base = _marsBase()
+    plain = _raster(np.zeros((3, 8)), "plain")
+    widget = OverlayBar(ProjectImages([base, plain]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.notListed.text() == (
+        "1 image can't be overlaid: no map coordinates. Open a map-projected "
+        "version of it."
+    )
+    assert "plain (not georeferenced" in widget.notListed.toolTip()
+
+
+def test_images_left_out_for_different_reasons_name_each_reason(qtbot):
+    base = _marsBase()
+    plain = _raster(np.zeros((3, 8)), "plain")
+    earth = makeImage(WGS84, centerLonLat=(10, 5), pixelSize=0.01, name="earth")
+    widget = OverlayBar(ProjectImages([base, plain, earth]), base, [])
+    qtbot.addWidget(widget)
+    assert widget.notListed.text() == (
+        "2 images can't be overlaid: no map coordinates (1), of another body "
+        "(1). Hover for each image and what to do."
+    )
+    tip = widget.notListed.toolTip()
+    assert "Open a map-projected version" in tip and "Image Properties" in tip
+    assert "plain (" in tip and "earth (" in tip
 
 
 def test_display_marker_keeps_planetocentric_latitude():
@@ -652,4 +700,6 @@ def test_several_images_off_the_grid_are_counted_plainly(qtbot):
     others = [_raster(np.zeros((3, 8)), f"small {i}") for i in range(2)]
     widget = OverlayBar(ProjectImages([base, *others]), base, [])
     qtbot.addWidget(widget)
-    assert widget.notListed.text() == "2 images can't be overlaid"
+    assert widget.notListed.text().startswith(
+        "2 images can't be overlaid: this image has no map coordinates"
+    )

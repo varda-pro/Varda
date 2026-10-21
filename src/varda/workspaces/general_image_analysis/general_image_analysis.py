@@ -59,6 +59,7 @@ from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_drawing_state import ROIDrawingState
 from varda.rois.roi_drawing_widgets import ROIDrawingController
 from varda.rois.roi_manager_widget import ROIManagerWidget
+from varda.common.keys import controlClick
 from varda.common.ui import VardaDockWidget
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
 
         self.settingsDock = VardaDockWidget("Render Settings")
         self.settingsDock.setWidget(self.rendererSettingsPanel)
+        self.settingsDock.keepInView(self.rendererSettingsPanel.essentialRows)
 
         # settingsDock = Dock(
         #     "Render Settings", widget=self.rendererSettingsPanel, size=(100, 100)
@@ -387,6 +389,10 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
             tool.sigPixelSelected.connect(
                 functools.partial(self._onPixelSelected, tool.viewport.imageEntity)
             )
+            self.setStatusMessage(
+                f"Click a pixel to plot its spectrum; {controlClick('drag')} "
+                "follows the pointer. Drag to pan, scroll to zoom."
+            )
             # The window around the pixel is the active plot's
             tool.setWindowProvider(
                 lambda: self.pixelSpectraDocks.active.pixelConfig.window()
@@ -436,7 +442,12 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         self.setStatusMessage(cropMessage(cropped))
 
     def _onPixelSelected(self, image: VardaRaster, pos: QPointF) -> None:
-        self.pixelSpectraDocks.addPixelSpectra([image], int(pos.x()), int(pos.y()))
+        x, y = int(pos.x()), int(pos.y())
+        self.pixelSpectraDocks.addPixelSpectra([image], x, y)
+        self.setStatusMessage(
+            f"Plotted pixel ({x}, {y}). Click more pixels to compare, or use "
+            "Draw ROI for a region's mean spectrum."
+        )
 
     @property
     def pixelPlotWidget(self) -> PixelSpectraPlotWidget:

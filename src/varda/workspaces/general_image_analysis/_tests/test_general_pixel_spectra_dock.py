@@ -83,3 +83,24 @@ def test_the_status_bar_says_what_to_do_next(qtbot):
     message = workflow.statusBar().currentMessage()
     assert "Pixel Select" in message and "spectrum" in message
     assert "initialized" not in message
+
+
+def test_the_status_bar_moves_on_once_pixel_select_is_on_and_used(qtbot):
+    """Release QA 0.12.0: it kept saying "Turn on Pixel Select…" with Pixel
+    Select on and a spectrum plotted."""
+    image = generate_random_image((20, 20, 10))
+    workflow = GeneralImageAnalysisWorkflow(GeneralImageAnalysisConfig([image]))
+    qtbot.addWidget(workflow)
+    statusBar = workflow.statusBar()
+    assert statusBar is not None
+    workflow.toolManager1.select(PixelSelectTool)
+    message = statusBar.currentMessage()
+    assert "Turn on" not in message
+    assert message.startswith("Click a pixel")
+
+    tool = workflow.toolManager1.activeTool
+    assert isinstance(tool, PixelSelectTool)
+    tool.sigPixelSelected.emit(QPointF(2.0, 3.0))
+    message = statusBar.currentMessage()
+    assert "Turn on" not in message and "Click a pixel" not in message
+    assert "(2, 3)" in message and "Draw ROI" in message

@@ -92,9 +92,9 @@ class PyqtgraphTextOverlay:
         anchor: tuple[float, float],
     ):
         self._item = pg.TextItem(text=text, color=color, anchor=anchor)
-        font = self._item.textItem.font()
-        font.setPointSize(fontSize)
-        self._item.textItem.setFont(font)
+        self._text = text
+        self._fontSize = fontSize
+        self._setPointSize(fontSize)
         if backgroundColor:
             self._item.fill = pg.mkBrush(color=backgroundColor, alpha=backgroundAlpha)
             self._item.border = pg.mkPen(color=backgroundColor, width=1)
@@ -114,18 +114,52 @@ class PyqtgraphTextOverlay:
 
     _MARGIN = 8  # px kept free at the view's right edge
     _MIN_WRAP = 80  # px: narrower than this (a view not laid out yet), don't wrap
+    _MIN_FIT = 24  # px: shorter than this (a view not laid out yet), don't fit
+    _MIN_POINT_SIZE = 8  # a hint in a short view gets no smaller than this
 
-    def _wrapToView(self, _viewBox: pg.ViewBox | None = None) -> None:
-        """Wrap the text at word breaks when it is wider than the view, so a
-        narrow view never cuts it off."""
+    def _setPointSize(self, size: int) -> None:
+        font = self._item.textItem.font()
+        font.setPointSize(size)
+        self._item.textItem.setFont(font)
+
+    def _wrap(self) -> None:
         self._item.setTextWidth(-1)  # its natural width
         available = self._viewBox.width() - self._MARGIN
         natural = self._item.textItem.boundingRect().width()
         if natural > available >= self._MIN_WRAP:
             self._item.setTextWidth(available)
 
+    def _tooTall(self) -> bool:
+        available = self._viewBox.height() - self._MARGIN
+        return available >= self._MIN_FIT and (
+            self._item.textItem.boundingRect().height() > available
+        )
+
+    def _wrapToView(self, _viewBox: pg.ViewBox | None = None) -> None:
+        """Wrap the text at word breaks when it is wider than the view, so a
+        narrow view never cuts it off. A hint in the corner that is then
+        taller than the view gets a smaller font, down to a legible size,
+        and, if it still doesn't fit, its last words are left out (the full
+        text is its tooltip)."""
+        self._item.setText(self._text)
+        self._item.setToolTip("")
+        size = self._fontSize
+        self._setPointSize(size)
+        self._wrap()
+        if not self._pinned:
+            return
+        while self._tooTall() and size > self._MIN_POINT_SIZE:
+            size -= 1
+            self._setPointSize(size)
+            self._wrap()
+        words = self._text.split()
+        while self._tooTall() and len(words) > 1:
+            words.pop()
+            self._item.setText(" ".join(words) + "…")
+            self._item.setToolTip(self._text)
+
     def setText(self, text: str) -> None:
-        self._item.setText(text)
+        self._text = text
         self._wrapToView()
 
     def setPos(self, pos: QPointF) -> None:

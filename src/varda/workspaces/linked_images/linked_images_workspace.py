@@ -142,7 +142,9 @@ class LinkedImagesWorkspace(QMainWindow):
         self.histograms = []
         for image, renderer in zip(self.images, self.renderers):
             self.displayChoice.addItem(image.name)
-            settings = PanelScrollArea(renderer.getSettingsPanel())
+            panel = renderer.getSettingsPanel()
+            settings = PanelScrollArea(panel)
+            settings.keepInView(panel.essentialRows)
             histogram = NewHistogramView(renderer)
             self.histograms.append(histogram)
             page = QSplitter(Qt.Orientation.Vertical)

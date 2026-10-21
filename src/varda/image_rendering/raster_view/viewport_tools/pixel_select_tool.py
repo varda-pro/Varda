@@ -119,7 +119,9 @@ class PixelSelectTool(ViewportTool):
         self._removeWindowOutline()
 
     def _updateCrosshair(self, event: PointerEvent, emitSignal=True):
-        """Position the crosshairs at the pointer and optionally emit the pixel."""
+        """Position the crosshairs at the pointer and optionally emit the
+        pixel. The hint goes once the tool is used: it covers the image."""
+        self.hideText()
         local = event.localPos
         # Quantize to a pixel, then offset to the pixel's center for display.
         centeredPos = pg.Point(int(local.x()), int(local.y())) + pg.Point(0.5, 0.5)

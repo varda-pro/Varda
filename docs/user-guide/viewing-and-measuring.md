@@ -88,8 +88,11 @@ image.
   ellipsoid), with longitudes 0–360 or −180–180. These are **reprojected
   for display** (below).
 
-The images left out are counted beside the list ("2 images can't be overlaid"),
-and its tooltip names each with the reason: "Mars and Earth are different
+The images left out are counted beside the list, with why and what to do
+("1 image can't be overlaid: no map coordinates. Open a map-projected version
+of it."; when the view's own image has no map coordinates, only images of its
+size can be overlaid: resample one to that size with Processing → Geometry →
+Resample), and its tooltip names each with the reason: "Mars and Earth are different
 bodies", "doesn't overlap this image", "not georeferenced, can't be placed
 on this image". Images of other bodies are always refused. An image that
 would be reprojected onto a view image larger than 100 million pixels is
@@ -150,7 +153,8 @@ CRS reads "° W", and a 0..360 image shows longitudes in [0, 360) followed by
 ## Pixel spectra
 
 Turn on **Pixel Select** under a view and click a pixel to plot its
-spectrum; the **Pixel Spectra** tab comes to the front. A plain drag still
+spectrum; the **Pixel Spectra** tab comes to the front (the tool's hint over
+the view goes once you click, and the status bar names the next step). A plain drag still
 pans the view; Ctrl-drag (⌘-drag on a Mac) plots the pixel under the pointer
 as it moves. Clicking a pixel already plotted highlights its curve instead of
 drawing it again. Under **Pixel Spectra** in the plot's sidebar,

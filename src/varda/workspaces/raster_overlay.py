@@ -41,13 +41,14 @@ from varda.common.display_grid import (
     displayChoices,
     displayNote,
     needsReprojection,
+    notOverlaidText,
     reprojectForDisplay,
 )
 from varda.common.entities import VardaRaster
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
 from varda.common.parameter_widgets import connectWhileAlive
-from varda.common.ui import ElidingComboBox, FlowLayout, MutedLabel
+from varda.common.ui import ElidingComboBox, FlowLayout, MutedLabel, notListedLabel
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.image_rendering.render_parameters import StretchParameter
@@ -202,9 +203,9 @@ class OverlayBar(QWidget):
         )
         # long names are elided, with the full name in the tooltip
         self.layerBox = ElidingComboBox()
-        # the images left out (other bodies, no overlap, ...): a count in the
-        # bar, each image and why in its tooltip
-        self.notListed = MutedLabel()
+        # the images left out (other bodies, no overlap, ...): how many, why
+        # and what to do in the bar, each image and why in its tooltip
+        self.notListed = notListedLabel()
         # an overlay in another projection: being, or been, reprojected
         self.reprojectedLabel = MutedLabel()
         self.reprojectedLabel.setVisible(False)
@@ -329,11 +330,10 @@ class OverlayBar(QWidget):
         them be."""
         current = self.currentOverlay()
         choices = displayChoices(list(self.images), self.base)
-        left = len(choices.excluded)
-        images = "1 image" if left == 1 else f"{left} images"
-        self.notListed.setText(f"{images} can't be overlaid" if left else "")
-        self.notListed.setToolTip(choices.note)
-        self.notListed.setVisible(bool(left))
+        note, tip = notOverlaidText(choices, self.base)
+        self.notListed.setText(note)
+        self.notListed.setToolTip(tip)
+        self.notListed.setVisible(bool(note))
         listed = [(image, image.name) for image in choices.images]
         if listed == self._listed:
             return

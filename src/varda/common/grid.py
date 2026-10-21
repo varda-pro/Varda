@@ -141,6 +141,9 @@ def sameGridChoices(
     return choices
 
 
+NO_OVERLAP = "doesn't overlap this image"
+
+
 def placementProblem(image: VardaRaster, base: VardaRaster) -> str | None:
     """Why ``image`` can't be resampled onto ``base``'s grid by map location,
     or None: on the same grid, or georeferenced (like ``base``), on the same
@@ -162,7 +165,7 @@ def placementProblem(image: VardaRaster, base: VardaRaster) -> str | None:
     except (RasterioError, ValueError):
         return "can't be reprojected to this image's map projection"
     if shift is None:
-        return "doesn't overlap this image"
+        return NO_OVERLAP
     return None
 
 
