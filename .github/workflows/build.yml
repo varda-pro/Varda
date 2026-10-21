@@ -32,8 +32,9 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        # HyPyRameter (small, pure Python) ships in every build; PyTorch does not
-        run: uv sync --extra hypyrameter
+        # HyPyRameter (small, pure Python) and SpiceyPy (5.6 MB, for DSK shape
+        # models) ship in every build; PyTorch does not
+        run: uv sync --extra hypyrameter --extra spice
 
       - name: Build with PyInstaller
         # Varda.spec bundles the uv set up above, which Processing > Optional

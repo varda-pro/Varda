@@ -26,7 +26,7 @@ don't).
 
 Models of more than ``maxExactPlates`` plates are evaluated on a coarser
 model (``mesh.decimated``): each plate takes the gravity of the coarse plate
-nearest its centroid, and its potential is carried to its own centroid to
+whose centroid is nearest its own, and its potential is carried to its own centroid to
 first order (V(p) ≈ V(q) − g·(p − q)); centrifugal terms, normals, slopes and
 tilts use the full model. The provenance records the plate count actually
 evaluated.
@@ -45,7 +45,6 @@ from scipy.spatial import KDTree
 from varda.shapes.gravity import CLOSED_ONLY, G, polyhedronGravity
 from varda.shapes.mesh import ShapeModel, decimated, oriented
 from varda.shapes.plate_data import PlateData, plateData
-from varda.shapes.raycast import RayCaster
 
 ProgressCallback = Callable[[int, str], None]
 METHOD = (
@@ -87,7 +86,7 @@ def geophysics(
     centroids = model.centroids * 1000.0  # m
     if evaluated is not model:
         progress(90, "Carrying gravity to every plate…")
-        nearest = RayCaster(evaluated).closestPoint(model.centroids).plate
+        _, nearest = KDTree(evaluated.centroids).query(model.centroids)
         offset = centroids - evaluated.centroids[nearest] * 1000.0
         gravity = gravity[nearest]
         potential = potential[nearest] - np.einsum("ij,ij->i", gravity, offset)

@@ -38,7 +38,8 @@ tar -xzf Varda-linux-x64.tar.gz
 To add Varda to your applications menu (with its icon), run `./Varda/install.sh`
 once. If you move the folder later, run it again from the new place.
 
-The downloads include HyPyRameter band parameters. The PyTorch CNN/ViT
+The downloads include HyPyRameter band parameters and SpiceyPy (NAIF DSK
+shape models, [Small bodies](small-bodies.md); the `spice` extra from source). The PyTorch CNN/ViT
 classifiers download PyTorch the first time you use them (see
 [Optional features](optional-features.md)).
 
@@ -73,7 +74,7 @@ You need Python 3.13 and the [uv package manager](https://docs.astral.sh/uv/).
    ```bash
    uv sync
    # with the optional extras (see Optional features):
-   uv sync --extra hypyrameter --extra ml
+   uv sync --extra hypyrameter --extra spice --extra ml
    ```
    `uv sync` on its own removes extras that were installed before, so repeat
    the `--extra` flags whenever you sync.

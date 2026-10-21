@@ -288,8 +288,14 @@ def _closest(
                         plates[i] = order[k]
                         nearest[i] = candidate
             else:
-                stack[depth] = children[node, 0]
-                stack[depth + 1] = children[node, 1]
+                # the nearer child last, so it's searched first and prunes more
+                left, right = children[node, 0], children[node, 1]
+                if _boxDistance2(point, boxLow[left], boxHigh[left]) < _boxDistance2(
+                    point, boxLow[right], boxHigh[right]
+                ):
+                    left, right = right, left
+                stack[depth] = left
+                stack[depth + 1] = right
                 depth += 2
         if plates[i] >= 0:
             distances[i] = np.sqrt(best2)

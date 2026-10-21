@@ -6,7 +6,7 @@ The page holds the model's vertices quantized to 16 bits per axis over its
 bounding box (Bennu's 0.5 km: 8 mm steps) and its plates as int32, and one
 color per plate. Models above ``ShapeSettings.maxPlates`` are shown
 decimated (``mesh.decimated``) and the page says so; each shown plate takes
-the color of the full model's plate nearest its centroid. A click reports
+the color of the full model's plate whose centroid is nearest its own. A click reports
 the plate and the view ray (``varda:pick``), so Varda reads the full model
 where the ray meets it, never the decimated one.
 """
@@ -24,7 +24,7 @@ from attrs import asdict, frozen
 
 from varda.shapes.mesh import ShapeModel, decimated
 from varda.shapes.plate_data import PlateData, attach
-from varda.shapes.raycast import RayCaster
+from scipy.spatial import KDTree
 from varda.terrain.scene import THREE_FILES, Legend, _dataUrl
 from varda.utilities.resources import resource_path
 
@@ -89,8 +89,8 @@ def shapeDisplay(model: ShapeModel, maxPlates: int) -> ShapeDisplay:
     shown = decimated(model, maxPlates)
     if shown is model:
         return ShapeDisplay(model, model, np.arange(model.plateCount))
-    source = RayCaster(model).closestPoint(shown.centroids).plate
-    return ShapeDisplay(model, shown, source.astype(np.int64))
+    _, source = KDTree(model.centroids).query(shown.centroids)
+    return ShapeDisplay(model, shown, np.asarray(source, np.int64))
 
 
 def plateColors(

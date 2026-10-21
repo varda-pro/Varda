@@ -74,7 +74,7 @@ Plates are shaded flat: each plate is one facet, as in the model.
 **Display limit.** Models of more than 512,000 plates are shown decimated:
 vertices are merged on a cubic grid (each cell's vertices become their mean)
 until the model fits, and each shown plate takes the color of the model's
-plate nearest its centroid. The panel says "Shown with N of M plates";
+plate whose centroid is nearest its own. The panel says "Shown with N of M plates";
 readouts and exports always use every plate. Exported web pages are
 limited to 200,000 plates so that ordinary laptops' browsers stay
 responsive.
@@ -236,7 +236,7 @@ Export them with **Export → Plate Data as CSV…**.
   sphere).
 - **Coarse evaluation.** Above the exact limit, gravity is computed on a
   decimated, closed model of at most that many plates; each plate takes the
-  gravity of the coarse plate nearest its centroid, and its potential is
+  gravity of the coarse plate whose centroid is nearest its own, and its potential is
   carried to its own centroid to first order (V ≈ V_coarse − g·Δr).
   Normals, centrifugal terms, slopes and tilts use every plate. The error
   grows with the difference between the two surfaces near the plate (of
@@ -301,8 +301,23 @@ session (paths, not the meshes), and **Package Project** carries the files.
 
 ## Limits found
 
-(Measured with the largest model tried; see the release notes for the
-machine.)
+Measured on a 14-core Apple-silicon desktop with a synthetic 3,137,512-plate
+sphere of Bennu's size (the Bennu 3-million-plate model's scale), written as
+OBJ:
+
+| Step | Time |
+|---|---|
+| Reading the OBJ and orienting it | 12 s |
+| Decimating for display (to 489,952 plates) | 1.6 s |
+| Indexing for picks (the ray-casting hierarchy) | 2.9 s |
+| The 3D page | 13 MB, under 0.1 s to build |
+
+Varda's memory rose from 0.66 GB to a peak of 2.3 GB while opening it. The
+3D view holds the display model only (about 35 MB of vertex data for
+490,000 plates). Shape Geophysics on such a model evaluates gravity on
+200,000 plates by default (about 3 min on that machine; laptops take two to
+four times longer); lower **Evaluate exactly up to** for a quicker, coarser
+run.
 
 ## References
 

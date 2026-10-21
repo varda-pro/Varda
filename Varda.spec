@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import (
     collect_data_files,
+    collect_dynamic_libs,
     collect_submodules,
     copy_metadata,
 )
@@ -50,7 +51,9 @@ PLUGIN_DOCS = [
 a = Analysis(
     ["src/varda/main.py"],
     pathex=[],
-    binaries=[(UV, "bin")],
+    # CSPICE, which SpiceyPy (the spice extra: DSK shape models) loads from
+    # its own folder
+    binaries=[(UV, "bin")] + collect_dynamic_libs("spiceypy"),
     # astropy (FITS) needs nothing here: pyinstaller-hooks-contrib's astropy hook
     # collects its data files, submodules and metadata (about 27 MB)
     # GDAL data shipped in rasterio, PROJ data from pyproj, HyPyRameter's parameter

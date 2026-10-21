@@ -238,9 +238,10 @@ def decimated(model: ShapeModel, maxPlates: int) -> ShapeModel:
 
 
 def _clustered(model: ShapeModel, cell: float) -> ShapeModel:
-    keys = np.floor(model.vertices / cell).astype(np.int64)
+    cells = np.floor(model.vertices / cell).astype(np.int64)
+    cells -= cells.min(axis=0)
     _, cluster, counts = np.unique(
-        keys, axis=0, return_inverse=True, return_counts=True
+        _packed(cells), return_inverse=True, return_counts=True
     )
     cluster = cluster.ravel()
     sums = np.zeros((len(counts), 3))
@@ -254,11 +255,18 @@ def _clustered(model: ShapeModel, cell: float) -> ShapeModel:
     )
     plates = plates[keep]
     # a plate and its reverse (a collapsed sliver's two sides) cancel
-    canonical = np.sort(plates, axis=1)
     _, first, counts = np.unique(
-        canonical, axis=0, return_index=True, return_counts=True
+        _packed(np.sort(plates, axis=1)), return_index=True, return_counts=True
     )
-    plates = plates[np.sort(first[counts.ravel() == 1])]
+    plates = plates[np.sort(first[counts == 1])]
     used, remapped = np.unique(plates, return_inverse=True)
     name = f"{model.name} (decimated)" if model.name else "decimated"
     return ShapeModel(vertices[used], remapped.reshape(-1, 3), name, model.body)
+
+
+def _packed(rows: np.ndarray) -> np.ndarray:
+    """(n, 3) non-negative integers as one int64 each (21 bits a column),
+    for fast 1-D uniques."""
+    assert rows.max(initial=0) < 1 << 21, "too many cells or vertices to pack"
+    rows = rows.astype(np.int64)
+    return (rows[:, 0] << 42) | (rows[:, 1] << 21) | rows[:, 2]

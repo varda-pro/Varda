@@ -67,6 +67,7 @@ def test_running_adds_the_twelve_datasets_in_the_background(qtbot, tmp_path):
 def test_the_processing_menu_offers_shape_geophysics():
     (action,) = [a for a in ALL_ACTIONS if a.id == "varda.processing.shape_geophysics"]
     assert action.title == "Shape Geophysics…"
+    assert action.menus is not None
     assert action.menus[0].id == "varda/processing/shape_models"
     assert ("varda/processing", "Shape Models") in [
         (parent, item.title) for parent, item in PROCESSING_SUBMENUS

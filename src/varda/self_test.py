@@ -44,6 +44,10 @@ from varda.branding.title_mark import ICON_DIR
 from varda.catalogs.basemaps import LAYERS, bundledImage
 from varda.catalogs.gazetteer import loadGazetteer
 from varda.common.entities import VardaRaster
+from varda.shapes import formats
+from varda.shapes.formats import readShape, writeObj
+from varda.shapes.mesh import ShapeModel
+from varda.shapes.raycast import RayCaster
 from varda.geo.bodies import identifyBody
 from varda.geo.reproject import gridFor, reprojectBand
 from varda.geo.transform import gdalWarp, transformPoints
@@ -83,6 +87,11 @@ def runSelfTest(app: VardaApplication) -> int:
                 lambda: _roundTrip(image, Path(folder) / "a.tif"),
             ),
             ("FITS read (astropy)", lambda: _fitsRead(Path(folder) / "dtm.fits")),
+            (
+                "shape model (read, ray cast, volume)",
+                lambda: _shapeModel(Path(folder) / "octahedron.obj"),
+            ),
+            ("NAIF DSK (SpiceyPy)", lambda: _dskRead(Path(folder) / "octahedron.bds")),
             (
                 "vector files (pyogrio)",
                 lambda: _vectorRoundTrip(Path(folder) / "p.geojson"),
@@ -278,6 +287,66 @@ def _fitsRead(path: Path) -> str:
         return f"{path.name} {loaded.shape}, {loaded.bandNames[1]}"
     finally:
         loaded.close()
+
+
+# A unit octahedron: 6 vertices, 8 plates wound outward, volume 4/3 km³
+_OCTAHEDRON_VERTICES = np.array(
+    [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], float
+)
+_OCTAHEDRON_PLATES = np.array(
+    [
+        [0, 2, 4],
+        [2, 1, 4],
+        [1, 3, 4],
+        [3, 0, 4],
+        [2, 0, 5],
+        [1, 2, 5],
+        [3, 1, 5],
+        [0, 3, 5],
+    ]
+)
+
+
+def _shapeModel(path: Path) -> str:
+    """A shape model written as OBJ reads back closed, with its volume, and a
+    ray from +X meets it at x = 1 (numba's BVH kernel works here)."""
+    writeObj(ShapeModel(_OCTAHEDRON_VERTICES, _OCTAHEDRON_PLATES, "octahedron"), path)
+    model = readShape(path).model
+    assert model.isClosed and abs(model.volume - 4 / 3) < 1e-12, model.volume
+    hits = RayCaster(model).intersect(
+        np.array([[5.0, 0.1, 0.1]]), np.array([[-1.0, 0, 0]])
+    )
+    assert hits.plate[0] >= 0 and abs(hits.points[0, 0] - 0.8) < 1e-12, hits.points
+    return f"octahedron: {model.plateCount} plates, volume {model.volume:.4f} km³"
+
+
+def _dskRead(path: Path) -> str:
+    """SpiceyPy (the spice extra, bundled in releases) writes and reads a
+    type 2 DSK segment of the octahedron."""
+    spice = formats.spiceypy
+    assert spice is not None, "SpiceyPy is not installed"
+    plates = _OCTAHEDRON_PLATES + 1
+    spaixd, spaixi = spice.dskmi2(
+        _OCTAHEDRON_VERTICES,
+        plates,
+        5.0,
+        4,
+        1_000_000,
+        100_000,
+        200_000,
+        True,
+        2_000_000,
+    )
+    handle = spice.dskopn(str(path), "Varda self-test", 0)
+    spice.dskw02(
+        handle, 2101955, 1, 1, "IAU_BENNU", 1, np.zeros(10), -np.pi, np.pi,
+        -np.pi / 2, np.pi / 2, 0.0, 2.0, -1e9, 1e9,
+        _OCTAHEDRON_VERTICES, plates, spaixd, spaixi,
+    )  # fmt: skip
+    spice.dskcls(handle, True)
+    model = readShape(path).model
+    assert np.allclose(model.vertices, _OCTAHEDRON_VERTICES), model.vertices
+    return f"DSK type 2: {model.plateCount} plates (SpiceyPy {spice.__version__})"
 
 
 def _vectorRoundTrip(path: Path) -> str:
