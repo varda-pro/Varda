@@ -88,3 +88,30 @@ def openPatch(cells: int = 4) -> ShapeModel:
 def reversed_(model: ShapeModel) -> ShapeModel:
     """The model with every plate's winding reversed."""
     return ShapeModel(model.vertices, model.plates[:, ::-1].copy(), model.name)
+
+
+def uvSphere(radiusKm: float, rings: int, segments: int) -> ShapeModel:
+    """A latitude–longitude sphere of 2·segments·(rings − 1) plates, built
+    without Python loops (for large test models)."""
+    lat = np.linspace(-np.pi / 2, np.pi / 2, rings + 1)[1:-1]
+    lon = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+    la, lo = np.meshgrid(lat, lon, indexing="ij")
+    ring = np.column_stack(
+        [
+            (np.cos(la) * np.cos(lo)).ravel(),
+            (np.cos(la) * np.sin(lo)).ravel(),
+            np.sin(la).ravel(),
+        ]
+    )
+    vertices = np.vstack([[0, 0, -1], ring, [0, 0, 1]]) * radiusKm
+    index = 1 + np.arange((rings - 1) * segments).reshape(rings - 1, segments)
+    nxt = np.roll(index, -1, axis=1)
+    a, b, c, d = index[:-1], nxt[:-1], nxt[1:], index[1:]
+    quads = np.concatenate(
+        [np.stack([a, b, c], -1).reshape(-1, 3), np.stack([a, c, d], -1).reshape(-1, 3)]
+    )
+    south = np.column_stack([np.zeros(segments, int), nxt[0], index[0]])
+    top = len(vertices) - 1
+    north = np.column_stack([np.full(segments, top), index[-1], nxt[-1]])
+    plates = np.vstack([quads, south, north]).astype(np.int32)
+    return ShapeModel(vertices, plates, "uv sphere")
