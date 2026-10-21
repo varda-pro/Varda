@@ -186,8 +186,8 @@ def test_pds3_and_isis_keep_units_beside_values(tmp_path: Path) -> None:
 
 def test_unknown_target_is_kept_as_written(tmp_path: Path) -> None:
     label = tmp_path / "x.lbl"
-    label.write_text("PDS_VERSION_ID = PDS3\nTARGET_NAME = BENNU\nEND\n")
-    assert labelHints(str(label)).target == "BENNU"
+    label.write_text("PDS_VERSION_ID = PDS3\nTARGET_NAME = KLEOPATRA\nEND\n")
+    assert labelHints(str(label)).target == "KLEOPATRA"
 
 
 def test_garbage_is_empty(tmp_path: Path) -> None:

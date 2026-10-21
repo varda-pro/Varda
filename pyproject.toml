@@ -64,6 +64,12 @@ hypyrameter = [
 ml = [
     "torch>=2.4",
 ]
+# 3D Terrain's Shape model surface reads NAIF DSK (type 2) files through
+# SpiceyPy. Install with   uv sync --extra spice
+# Without it, DSK files are listed as unavailable; other formats still work.
+spice = [
+    "spiceypy>=6",
+]
 
 [dependency-groups]
 dev = [
@@ -147,9 +153,11 @@ source_modules = [
     "varda.terrain.solid",
     "varda.terrain.vectors",
     "varda.terrain.animation",
+    "varda.terrain.shape_scene",
     "varda.workspaces.linked_images.linking",
     "varda.workspaces.crism_ratio.mapping",
     "varda.vector_import",
+    "varda.shapes",
 ]
 forbidden_modules = ["PyQt6"]
 ignore_imports = [

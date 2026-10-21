@@ -35,7 +35,7 @@ from pyproj import CRS
 from pyproj.crs import Ellipsoid
 
 from varda.common.parameter import LabeledEnum
-from varda.geo.bodies import Body, identifyBody, latitudeType
+from varda.geo.bodies import Body, BodyShape, identifyBody, latitudeType
 from varda.geo.describe import CrsDescription, crsText, describeCrs
 from varda.geo.distortion import ANGLE_TIP_DEG, SCALE_TIP, Distortion, distortionAt
 from varda.geo.equivalence import (
@@ -65,6 +65,17 @@ _SAME_BODY = (Compatibility.SAME, Compatibility.EQUIVALENT, Compatibility.SAME_B
 _EDGE_POINTS = 21
 # samples per side of the lon/lat grid that isGoodEnough checks
 _GRID = 9
+
+
+IRREGULAR_NOTE = (
+    "Irregular body: no map projection keeps distances or areas; "
+    "use a shape model (3D Terrain → Shape model)"
+)
+
+
+class IrregularBodyError(ValueError):
+    """No projection is recommended for measurement or terrain on an
+    irregular body (``Body.shape``); the message is ``IRREGULAR_NOTE``."""
 
 
 class Purpose(LabeledEnum):
@@ -164,7 +175,15 @@ def recommendProjection(
 ) -> Recommendation:
     """The projection for ``footprint`` (of an image on ``crs``) and
     ``purpose``, following spec §4.6's rules; ``existing`` are the CRSs of
-    all the inputs (a mosaic's). Raises ValueError for a CRS on no body."""
+    all the inputs (a mosaic's). Raises ValueError for a CRS on no body,
+    and IrregularBodyError for measurement or terrain on an irregular body."""
+    body = identifyBody(crs).body
+    if (
+        purpose is not Purpose.MOSAIC
+        and body is not None
+        and body.shape is BodyShape.IRREGULAR
+    ):
+        raise IrregularBodyError(IRREGULAR_NOTE)
     surface, ellipsoidal = _surface(crs, existing)
     lon, lat = footprint.center
     if isGlobal(footprint):

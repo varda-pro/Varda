@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import QWidget
 
 logger = logging.getLogger(__name__)
 
-READY, ERROR = "varda:ready", "varda:error "
+READY, ERROR, PICK = "varda:ready", "varda:error ", "varda:pick "
 
 
 class _Page(QWebEnginePage):
@@ -43,6 +43,7 @@ class TerrainView(QWebEngineView):
 
     sigReady = pyqtSignal()
     sigFailed = pyqtSignal(str)
+    sigPick = pyqtSignal(dict)  # a shape page's clicked plate and view ray
     _live: weakref.WeakSet[TerrainView] = weakref.WeakSet()
 
     @classmethod
@@ -76,6 +77,8 @@ class TerrainView(QWebEngineView):
             self.sigReady.emit()
         elif message.startswith(ERROR):
             self.sigFailed.emit(message.removeprefix(ERROR))
+        elif message.startswith(PICK):
+            self.sigPick.emit(json.loads(message.removeprefix(PICK)))
 
     def _call(self, script: str, callback: Callable | None = None) -> None:
         if callback is None:

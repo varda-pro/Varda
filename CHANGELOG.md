@@ -36,6 +36,33 @@ can alter results.
   are drawn over their footprints when they are north-up maps of them
   (CTX, HiRISE, THEMIS VIS); others stay in the panel, which says so. See
   [Finding data](docs/user-guide/finding-data.md#previews).
+- **Shape models of small bodies.** 3D Terrain has a **Surface** switch:
+  **Shape model** opens a plate model (OBJ, Gaskell PLT and ICQ, FITS X/Y/Z
+  planes, NAIF DSK with the new `spice` extra), orients its normals
+  outward (and says so), shows it in 3D (decimated above 512,000 plates),
+  reads the plate under a click from where the view ray meets the full
+  model, colors plates by plate data with its uncertainty (sigma as color,
+  or faded uncertain plates), and exports OBJ, STL, plate CSV, web pages
+  and stills. Plate data is matched to its model by content hash and plate
+  count. Guide: Small bodies and shape models.
+- **Shape Geophysics** (Processing → Shape Models, or the shape panel): per
+  plate gravity, slope, geopotential elevation and tilt of a closed shape
+  model (constant-density polyhedron gravity, Werner & Scheeres 1997, plus
+  rotation), with slope and elevation also at ρ ± σ, since they aren't
+  linear in density. Models above 200,000 plates are evaluated on a
+  decimated model and the result says so.
+- **Irregular bodies.** Bennu, Ryugu, Didymos, Dimorphos and Arrokoth are
+  known bodies (from a cited table; PROJ lacks them), as are Eros, Itokawa
+  and 67P, with densities and rotation periods for Shape Geophysics. On an
+  irregular body the coordinate-system check says so, lengths and areas are
+  labeled approximate, and Reproject Image recommends no projection for
+  measurement or terrain.
+
+### Changed
+
+- Lengths and areas on irregular bodies (Eros, Phobos and the bodies above)
+  report "approximate (sphere model): irregular body" and no body-model
+  difference.
 
 ### Fixed
 

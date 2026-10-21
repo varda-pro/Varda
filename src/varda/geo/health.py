@@ -24,7 +24,13 @@ from affine import Affine
 from attrs import frozen
 from pyproj import CRS
 
-from varda.geo.bodies import BodyMatch, bodyNamed, identifyBody, isNonBodyTarget
+from varda.geo.bodies import (
+    BodyMatch,
+    BodyShape,
+    bodyNamed,
+    identifyBody,
+    isNonBodyTarget,
+)
 from varda.geo.describe import CrsDescription, describeCrs
 from varda.geo.distortion import DistortionSummary, distortionOver
 from varda.geo.equivalence import sameCrs
@@ -86,7 +92,7 @@ class CrsIssue:
     # "no-crs", "unreadable-crs", "earth-crs-on-body", "unknown-body",
     # "ambiguous-body", "lon-direction-mismatch", "latitude-type-mismatch",
     # "high-distortion", "lon-0-360", "label-crs-mismatch",
-    # "lon-bounds-westward"
+    # "lon-bounds-westward", "irregular-body"
     code: str
     severity: Severity
     message: str  # one line, plain words
@@ -174,6 +180,8 @@ def _check(
             issues.append(mismatch)
     if used.kind in ("geographic", "projected") and body.body is None:
         issues.append(_unknownBody(body))
+    if body.body is not None and body.body.shape is BodyShape.IRREGULAR:
+        issues.append(IRREGULAR_ISSUE)
     issues.extend(_conventions(used, hints))
     if label is not None and used.kind == "projected":
         westward = _westwardCheck(effective, transform, width, height, hints)
@@ -194,6 +202,15 @@ def _check(
             )
         )
     return CrsHealth(description, body, tuple(issues), distortion)
+
+
+IRREGULAR_ISSUE = CrsIssue(
+    "irregular-body",
+    Severity.TIP,
+    "Irregular body: distances and areas on a sphere or ellipsoid are "
+    "approximate; use a shape model.",
+    "Open a shape model in 3D Terrain (Surface → Shape model) to measure on the body",
+)
 
 
 def _ownLabel(hints: LabelHints) -> bool:

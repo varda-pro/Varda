@@ -1,0 +1,131 @@
+# Small-body values Varda needs that PROJ's IAU_2015 authority lacks: the
+# bodies it has no CRS for (Bennu, Ryugu, Didymos, Dimorphos, Arrokoth), and
+# the density and rotation period of bodies it knows. Every value carries its
+# own citation in [<body>.sources], and each was read from that source.
+#
+# naifId: NAIF ID (NAIF IDs Required Reading); only for bodies PROJ lacks
+# meanRadius: m, radius of the volume-equivalent sphere
+# rotationPeriodH: sidereal rotation period, hours
+# density: [value, 1 sigma], kg/m^3
+# shape: "sphere-like", "ellipsoid-like" or "irregular"; when absent, the
+#        rule in bodies.py decides from the IAU 2015 radii
+
+[Bennu]
+naifId = 2101955
+meanRadius = 244.0
+rotationPeriodH = 4.296061
+density = [1190.0, 13.0]
+shape = "irregular"
+
+[Bennu.sources]
+naifId = "NAIF IDs Required Reading (2101955 BENNU)"
+meanRadius = "Barnouin et al. (2019), Nat. Geosci. 12, 247-252, Table 1: average radius (volume-equivalent sphere) 244 m"
+rotationPeriodH = "Hergenrother et al. (2019), Nat. Commun. 10, 1291: 4.296061 ± 0.000002 h at the J2000 epoch"
+density = "Barnouin et al. (2019), Nat. Geosci. 12, 247-252, Table 1: 1190 ± 13 kg/m³"
+shape = "Barnouin et al. (2019): top-shaped rubble pile"
+
+[Ryugu]
+naifId = 2162173
+meanRadius = 448.0
+rotationPeriodH = 7.63262
+density = [1190.0, 20.0]
+shape = "irregular"
+
+[Ryugu.sources]
+naifId = "NAIF IDs Required Reading (2162173 RYUGU)"
+meanRadius = "Watanabe et al. (2019), Science 364, 268-272, as tabulated in the Hayabusa2 Ryugu Coordinate System Description (PDS hyb2 v3.0), Table 2: R = 0.448 ± 0.002 km"
+rotationPeriodH = "Watanabe et al. (2019), Science 364, 268-272, as tabulated in the Hayabusa2 Ryugu Coordinate System Description (PDS hyb2 v3.0), Table 1: 7.63262 ± 0.00002 h"
+density = "Watanabe et al. (2019), Science 364, 268-272: 1.19 ± 0.02 g/cm³"
+shape = "Watanabe et al. (2019): spinning-top-shaped rubble pile"
+
+[Didymos]
+naifId = 920065803
+meanRadius = 380.5
+rotationPeriodH = 2.26044
+density = [2400.0, 300.0]
+shape = "irregular"
+
+[Didymos.sources]
+naifId = "NAIF IDs Required Reading (920065803 DIDYMOS, extended schema)"
+meanRadius = "Daly et al. (2023), Nature 616, 443-447, Table 1: volume-equivalent diameter 761 ± 26 m"
+rotationPeriodH = "Ďurech et al. (2026), arXiv:2601.04793: post-DART-impact period 2.260440 ± 0.000008 h (pre-impact 2.2603891 h)"
+density = "Daly et al. (2023), Nature 616, 443-447, Table 1: Didymos system density 2400 ± 300 kg/m³"
+shape = "Daly et al. (2023), Table 1: extents 849 × 851 × 620 m"
+
+[Dimorphos]
+naifId = 120065803
+meanRadius = 75.5
+density = [2400.0, 300.0]
+shape = "irregular"
+
+[Dimorphos.sources]
+naifId = "NAIF IDs Required Reading (120065803 DIMORPHOS, extended schema)"
+meanRadius = "Daly et al. (2023), Nature 616, 443-447, Table 1: volume-equivalent diameter 151 ± 5 m"
+rotationPeriodH = "None given: Daly et al. (2023) could not update Dimorphos's rotation, and the DART impact changed its orbit (Ďurech et al. 2026: ~11.92 h to ~11.37 h); enter one for your epoch"
+density = "Daly et al. (2023), Nature 616, 443-447, Table 1: the system density 2400 ± 300 kg/m³, assuming Dimorphos's equals Didymos's ('difficult-to-quantify uncertainties')"
+shape = "Daly et al. (2023): oblate spheroid, extents 177 × 174 × 116 m"
+
+[Arrokoth]
+naifId = 2486958
+meanRadius = 9150.0
+rotationPeriodH = 15.92
+shape = "irregular"
+
+[Arrokoth.sources]
+naifId = "NAIF IDs Required Reading (2486958 ARROKOTH)"
+meanRadius = "Spencer et al. (2020), Science 367, eaay3999: volume 3210 ± 650 km³, a sphere of diameter 18.3 ± 1.2 km"
+rotationPeriodH = "Spencer et al. (2020), Science 367, eaay3999: 15.92 ± 0.02 h"
+density = "None measured: Spencer et al. (2020) give only a lower bound, > 290 kg/m³; enter one"
+shape = "Spencer et al. (2020): contact binary, 36 × 20 × 10 km"
+
+[Eros]
+rotationPeriodH = 5.270257
+density = [2670.0, 30.0]
+
+[Eros.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 3: W rate 1639.38864745°/day"
+density = "Yeomans et al. (2000), Science 289, 2085-2088: 2.67 ± 0.03 g/cm³"
+
+[Itokawa]
+rotationPeriodH = 12.132395
+density = [1900.0, 130.0]
+shape = "irregular"
+
+[Itokawa.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 3: W rate 712.143°/day"
+density = "Fujiwara et al. (2006), Science 312, 1330-1334: 1.9 ± 0.13 g/cm³"
+shape = "Archinal et al. (2018), Table 6: semi-axes 268 × 147 × 104 m"
+
+[Churyumov-Gerasimenko]
+rotationPeriodH = 12.404100
+density = [533.0, 6.0]
+shape = "irregular"
+
+[Churyumov-Gerasimenko.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 3: W rate 696.543884683°/day"
+density = "Pätzold et al. (2016), Nature 530, 63-65: 533 ± 6 kg/m³"
+shape = "Archinal et al. (2018), Table 6 and Sect. 8: radii 2.40 × 1.55 × 1.20 km, multi-valued planetocentric radii"
+
+[Phobos]
+rotationPeriodH = 7.653843
+density = [1876.0, 20.0]
+shape = "irregular"
+
+[Phobos.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 2: W rate 1128.84475928°/day"
+density = "Andert et al. (2010), Geophys. Res. Lett. 37, L09202: 1876 ± 20 kg/m³"
+shape = "Archinal et al. (2018), Table 5: radii 13.0 × 11.4 × 9.1 km"
+
+[Vesta]
+rotationPeriodH = 5.342128
+shape = "ellipsoid-like"
+
+[Vesta.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 3: W rate 1617.3329428°/day"
+shape = "Archinal et al. (2018), Table 6: an IAU ellipsoid, 289 × 280 × 229 km, not flagged as multi-valued (Sect. 8)"
+
+[Ceres]
+rotationPeriodH = 9.074170
+
+[Ceres.sources]
+rotationPeriodH = "Archinal et al. (2018), CMDA 130, 22, Table 3: W rate 952.1532°/day"

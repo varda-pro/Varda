@@ -95,7 +95,7 @@ def test_label_beats_crs():
 
 
 def test_unknown_label_falls_back_to_crs():
-    match = identifyBody(WGS84, labelTarget="ARROKOTH")
+    match = identifyBody(WGS84, labelTarget="KLEOPATRA")
     assert match.body is not None and match.body.name == "Earth"
 
 
@@ -144,6 +144,9 @@ def test_all_bodies_present():
         "Moon",
         "Mars",
         "Phobos",
+        "Eros",
+        "Itokawa",
+        "Churyumov-Gerasimenko",
         "Ceres",
         "Vesta",
         "Io",
@@ -152,6 +155,11 @@ def test_all_bodies_present():
         "Callisto",
         "Enceladus",
         "Titan",
+        "Bennu",
+        "Ryugu",
+        "Didymos",
+        "Dimorphos",
+        "Arrokoth",
     ]
 
 
@@ -173,7 +181,7 @@ def test_bodyNamed_aliases(name, expected):
 
 
 def test_bodyNamed_unknown():
-    assert bodyNamed("Arrokoth") is None
+    assert bodyNamed("Kleopatra") is None
     assert bodyNamed("") is None
 
 

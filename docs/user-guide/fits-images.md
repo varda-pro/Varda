@@ -99,9 +99,10 @@ metadata:
 
 - `target` is the `TARGET` (or `OBJECT`) header as written, and `body` is the
   body Varda knows it as. Varda tries the name with and without a leading
-  catalog number ("101955 BENNU", then "BENNU"). A body that isn't in
-  Varda's table (Bennu and Ryugu, for now) stays unknown (`null`). It is
-  never assumed to be Earth.
+  catalog number ("101955 BENNU", then "BENNU"). Bennu, Ryugu and the other
+  small bodies in [Varda's table](coordinate-systems.md#the-small-body-table)
+  are known; a body that isn't stays unknown (`null`). It is never assumed
+  to be Earth.
 - `geometryPlanes` gives the band indices of the latitude, longitude, radius
   and X, Y, Z planes. Per the SIS these are planetocentric latitude and
   east longitude (deg), radius (km), and body-fixed X/Y/Z of the vertex (km).

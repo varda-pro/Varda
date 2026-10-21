@@ -161,11 +161,11 @@ def test_a_target_that_isnt_a_body_is_ignored(target: str):
 
 def test_an_earth_crs_on_a_body_varda_does_not_know_is_flagged_not_fixed():
     image = makeImage(WGS84, centerLonLat=GALE, pixelSize=1 / 256)
-    health = check(image, hints(target="BENNU"))
+    health = check(image, hints(target="KLEOPATRA"))
     assert codes(health) == ["earth-crs-on-body"]
     (issue,) = health.issues
     assert issue.severity is Severity.PROBLEM
-    assert issue.message == "Its CRS says Earth, but its label says Bennu."
+    assert issue.message == "Its CRS says Earth, but its label says Kleopatra."
     assert issue.suggestion == "Set coordinate system…"
     assert issue.fix is None
 

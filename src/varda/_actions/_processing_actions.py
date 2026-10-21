@@ -34,6 +34,7 @@ from varda.library_manager.manager_window import openLibraryManager
 from varda.maingui import MainGUI
 from varda.optional_features.optional_features_dialog import openOptionalFeatures
 from varda.workspaces.mosaic.cam2map_dialog import Cam2mapDialog
+from varda.workspaces.terrain.terrain_workspace import SHAPE_SURFACE, TerrainWorkspace
 from varda.workspaces.spectral_hourglass.new_hourglass_dialog import (
     NewSpectralHourglassDialog,
 )
@@ -269,6 +270,15 @@ def openCam2map(images: ProjectImages, mainGui: MainGUI) -> None:
     dialog.show()
 
 
+def openShapeGeophysics(images: ProjectImages, mainGui: MainGUI) -> None:
+    """A 3D Terrain workspace on a shape model, then Shape Geophysics."""
+    workspace = TerrainWorkspace(images)
+    mainGui.addTab(workspace)
+    workspace.surfaceBox.setCurrentText(SHAPE_SURFACE)
+    assert workspace.shapePanel is not None
+    workspace.shapePanel.openGeophysics()
+
+
 def openSpectralLibraries(mainGui: MainGUI) -> None:
     """The Spectral Library Manager; non-modal, one at a time."""
     openLibraryManager(mainGui)
@@ -287,8 +297,12 @@ FATT_ACTION_ID = "varda.processing.fatt"
 CAM2MAP_ACTION_ID = "varda.processing.cam2map"
 OPTIONAL_FEATURES_ACTION_ID = "varda.processing.optional_features"
 SPECTRAL_LIBRARIES_ACTION_ID = "varda.processing.spectral_libraries"
+SHAPE_GEOPHYSICS_ACTION_ID = "varda.processing.shape_geophysics"
+SHAPE_MODELS = "Shape Models"
 
-PROCESSING_SUBMENUS = processingSubmenus(MenuId.PROCESSING, ANALYSES)
+PROCESSING_SUBMENUS = processingSubmenus(MenuId.PROCESSING, ANALYSES) + [
+    submenuItem(MenuId.PROCESSING, SHAPE_MODELS, len(ANALYSES))
+]
 PROCESSING_ACTIONS = processingActions(
     MenuId.PROCESSING, "varda.processing", ANALYSES, _menuCallback
 ) + [
@@ -358,6 +372,16 @@ PROCESSING_ACTIONS = processingActions(
         ),
         callback=openSpectralLibraries,
         menus=[MenuRule(id=MenuId.PROCESSING, group="8_libraries")],
+    ),
+    Action(
+        id=SHAPE_GEOPHYSICS_ACTION_ID,
+        title="Shape Geophysics…",
+        tooltip=(
+            "Gravity, slope, geopotential elevation and tilt per plate of a "
+            "small body's shape model, with bounds from its density's uncertainty"
+        ),
+        callback=openShapeGeophysics,
+        menus=[MenuRule(id=categoryMenuId(MenuId.PROCESSING, SHAPE_MODELS))],
     ),
     Action(
         id=OPTIONAL_FEATURES_ACTION_ID,
