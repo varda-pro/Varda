@@ -48,7 +48,9 @@ def test_all_outputs_with_units_and_provenance():
     assert [d.name for d in results] == NAMES
     units = {d.name: d.unit for d in results}
     assert units["area"] == "m²" and units["slope"] == "°"
-    assert units["effective potential"] == "J/kg" and units["total acceleration"] == "m/s²"
+    assert (
+        units["effective potential"] == "J/kg" and units["total acceleration"] == "m/s²"
+    )
     assert units["geopotential elevation"] == "m" and units["tilt"] == "°"
     provenance = results[5].provenance
     assert provenance["evaluatedOn"] == model.plateCount
