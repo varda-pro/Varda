@@ -251,6 +251,12 @@ class Curve(QObject):
         return curve
 
 
+# The y axis's name when what the values are isn't known
+DEFAULT_VALUE_LABEL = "Value"
+# The legend's background opacity (0-255): the curves show through it
+LEGEND_ALPHA = 170
+
+
 class RangeMode(Enum):
     AUTO = 1
     FIT_Y_TO_X_RANGE = 2
@@ -460,7 +466,10 @@ class VardaPlotWidget(QWidget):
         self.gv.scene().sigMouseClicked.connect(self.onSceneClicked)
         self.viewBox = ModifierDragViewBox()
         self.plotItem = pg.PlotItem(viewBox=self.viewBox)
-        self.legend = self.plotItem.addLegend()
+        # Translucent, so the curves stay readable where it overlaps them
+        # (it follows the background color); drag it to move it
+        self.legend = self.plotItem.addLegend(pen=pg.mkPen(255, 255, 255, 60))
+        self.plotItem.setLabel("left", DEFAULT_VALUE_LABEL)
         # Left-drag pans, Shift/Cmd+left-drag zooms to the dragged box,
         # right-drag stretches the axes, wheel zooms about the cursor (over an
         # axis, that axis only: over Y it stretches the spectra).
@@ -492,6 +501,7 @@ class VardaPlotWidget(QWidget):
         self.appearanceConfig.sigParameterChanged.connect(
             self.onAppearanceParamsChanged
         )
+        self.onAppearanceParamsChanged()  # the legend's background
 
         # sigRangeChangedManually fires only on user interaction (rubber-band
         # zoom, pan, wheel), not on programmatic setRange calls.
@@ -691,7 +701,10 @@ class VardaPlotWidget(QWidget):
         return QSize(1200, 600)
 
     def onAppearanceParamsChanged(self):
-        self.gv.setBackground(self.appearanceConfig.backgroundColor.value.toQColor())
+        background = self.appearanceConfig.backgroundColor.value.toQColor()
+        self.gv.setBackground(background)
+        background.setAlpha(LEGEND_ALPHA)
+        self.legend.setBrush(pg.mkBrush(background))
 
     def onViewParamsChanged(self):
         self.legend.setVisible(self.viewConfig.showLegend.value)
@@ -989,9 +1002,9 @@ class VardaPlotWidget(QWidget):
 
     def selectPlot(self, curve: Curve) -> None:
         if self.selectedCurve is not None:
-            self.selectedCurve.setHighlighted(False)
+            self._showSelected(self.selectedCurve, False)
         self.selectedCurve = curve
-        curve.setHighlighted(True)
+        self._showSelected(curve, True)
         self.sigSelectedCurveChanged.emit(curve)
         settings = WrapperWidget(
             VBoxBuilder(Qt.AlignmentFlag.AlignTop)
@@ -1021,10 +1034,21 @@ class VardaPlotWidget(QWidget):
             return
         self.deselectPlot()
 
+    def _showSelected(self, curve: Curve, selected: bool) -> None:
+        """The selected curve has a yellow halo, and its legend entry starts
+        with "Selected:" (first, so a narrow plot doesn't cut it off) so the
+        halo explains itself."""
+        curve.setHighlighted(selected)
+        label = self.legend.getLabel(curve.plotDataItem)
+        name = curve.plotDataItem.name()
+        if label is not None and name:
+            label.setText(f"Selected: {name}" if selected else name)
+            self.legend.updateSize()
+
     def deselectPlot(self):
         if self.selectedCurve is None:
             return
-        self.selectedCurve.setHighlighted(False)
+        self._showSelected(self.selectedCurve, False)
         self.curveSettingsBox.setContent(self._curvePlaceholder())
         self.selectedCurve = None
         self.sigSelectedCurveChanged.emit(None)
@@ -1200,6 +1224,10 @@ class VardaPlotWidget(QWidget):
             exportPlot(self, target)
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "Export failed", str(error))
+
+    def setValueLabel(self, label: str) -> None:
+        """Name the y axis, e.g. "Value (I/F)"."""
+        self.plotItem.setLabel("left", label)
 
     def setSpectralUnit(self, unit: SpectralUnit | None) -> None:
         self.spectralUnit = unit

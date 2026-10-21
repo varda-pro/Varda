@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDoubleSpinBox,
     QLineEdit,
+    QSpinBox,
     QWidget,
 )
 
@@ -269,6 +270,7 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
         if field is None:
             continue
         for junk in JUNK:
+            shownBefore = field.text()
             box.setFocus()
             field.selectAll()
             keyClick(field, Qt.Key.Key_Delete)
@@ -276,6 +278,15 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
             keyClick(field, Qt.Key.Key_Tab)  # leave the field
             QApplication.processEvents()
             run.log("typed", into=type(box).__name__, junk=junk, shows=field.text())
+            if not _tookOrRefused(box, junk, shownBefore, field.text()):
+                run.finding(
+                    "wrong result",
+                    f"Typed {junk!r} into a number box and left it; it shows "
+                    f"{field.text()!r}, a value never typed (it should take "
+                    f"what was typed or refuse it whole)",
+                    widget=dialog,
+                    reproduce=f"PCA dialog: type {junk!r} into a number box, press Tab",
+                )
     run.qaShot(dialog, "junk-settings", "after typing junk into every number box")
     before, messages = len(journeys.images(run)), len(run.messages)
     runButton = run.button(dialog, "Run")
@@ -304,6 +315,28 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
     elif dialog.isVisible():
         run.log("Run refused the junk", reason=dialog.statusLabel.text())
         dialog.reject()
+
+
+def _tookOrRefused(
+    box: QAbstractSpinBox, typed: str, shownBefore: str, shownAfter: str
+) -> bool:
+    """Whether a number box left after typing shows what was typed, or what
+    it showed before (refused whole); never a value made of a part of it
+    ("1e309" as 1309, "-1" as 1). Empty or blank text may put the value
+    back."""
+    if shownAfter == shownBefore:
+        return True
+    try:
+        wanted = float(typed)
+    except ValueError:
+        return False
+    number = shownAfter
+    if isinstance(box, (QSpinBox, QDoubleSpinBox)):
+        number = number.removeprefix(box.prefix()).removesuffix(box.suffix())
+    try:
+        return float(number.strip().replace(",", "")) == wanted
+    except ValueError:
+        return False
 
 
 def _oneWavelength(run: QaRun, image: VardaRaster) -> None:

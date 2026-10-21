@@ -11,12 +11,14 @@ from __future__ import annotations
 import inspect
 import os
 import weakref
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 
 from psygnal import SignalInstance
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QSignalBlocker, Qt
+from PyQt6.QtCore import QObject, QPoint, QSignalBlocker, Qt
+from PyQt6.QtGui import QValidator
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -29,6 +31,8 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
+    QToolTip,
     QWidget,
 )
 
@@ -53,7 +57,6 @@ from varda.common.ui import (
     FloatSlider,
     HBoxBuilder,
     SliderBuilder,
-    SpinBoxBuilder,
     VBoxBuilder,
     WrapperWidget,
     notListedLabel,
@@ -88,32 +91,54 @@ def formWidget(
     params: Iterable[Parameter | ParameterGroup], parent: QWidget | None = None
 ) -> QWidget:
     """A labeled form editing ``params``; nested groups are flattened in."""
+    return _form({str(i): param for i, param in enumerate(params)}, parent)
+
+
+def groupWidget(group: ParameterGroup, parent: QWidget | None = None) -> QWidget:
+    """A labeled form editing every parameter in ``group``. A parameter
+    ``enabledWhen`` another of its group's is disabled, label and all,
+    until that one is set."""
+    return _form(group.params, parent)
+
+
+def _form(
+    named: Mapping[str, Parameter | ParameterGroup], parent: QWidget | None
+) -> QWidget:
     formLayout = QFormLayout()
     formLayout.setContentsMargins(0, 0, 0, 0)
     formLayout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
     formLayout.setFieldGrowthPolicy(formLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    widget = QWidget(parent)
 
-    def addRows(items: Iterable[Parameter | ParameterGroup]) -> None:
-        for param in items:
+    def addRows(items: Mapping[str, Parameter | ParameterGroup]) -> None:
+        for param in items.values():
             if isinstance(param, ParameterGroup):
-                addRows(param.params.values())
+                addRows(param.params)
                 continue
             label = QLabel(param.name)
-            widget = parameterWidget(param)
+            field = parameterWidget(param)
             if param.description is not None:
                 label.setToolTip(param.description)
-                widget.setToolTip(param.description)
-            formLayout.addRow(label, widget)
+                field.setToolTip(param.description)
+            formLayout.addRow(label, field)
+            controller = items.get(param.enabledBy or "")
+            if isinstance(controller, Parameter):
+                _enableWhileSet(controller, (label, field), widget)
 
-    addRows(params)
-    widget = QWidget(parent)
+    addRows(named)
     widget.setLayout(formLayout)
     return widget
 
 
-def groupWidget(group: ParameterGroup, parent: QWidget | None = None) -> QWidget:
-    """A labeled form editing every parameter in ``group``."""
-    return formWidget(group.params.values(), parent)
+def _enableWhileSet(
+    controller: Parameter, widgets: tuple[QWidget, ...], owner: QWidget
+) -> None:
+    def update(value: object) -> None:
+        for widget in widgets:
+            widget.setEnabled(bool(value))
+
+    update(controller.get())
+    connectWhileAlive(controller.sigParameterChanged, update, owner)
 
 
 class _SlotWhileAlive(QObject):
@@ -157,21 +182,134 @@ def paramLayoutDefault() -> HBoxBuilder:
     )
 
 
+ENTER_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+
+
+def _keepTyped(
+    verdict: tuple[QValidator.State, str, int], text: str, pos: int
+) -> tuple[QValidator.State, str, int]:
+    """Qt's verdict on text typed in a spin box, except that text it can't
+    read stays as typed (Qt dropped the rejected keystroke and kept the
+    rest, so "-1" became 1 and "1e309" 1309); ``finishTyping`` refuses it."""
+    if verdict[0] == QValidator.State.Invalid:
+        return QValidator.State.Intermediate, text, pos
+    return verdict
+
+
+def _typed(box: QSpinBox | QDoubleSpinBox) -> tuple[str, str]:
+    """The box's text, and what was typed in it (without prefix, suffix)."""
+    edit = box.lineEdit()
+    text = edit.text() if edit is not None else ""
+    return text, text.removeprefix(box.prefix()).removesuffix(box.suffix()).strip()
+
+
+def _refuse(box: QAbstractSpinBox, typed: str, why: str) -> str:
+    """Say (in a tool tip under the box) why ``typed`` was refused; returns
+    the message, "" for an emptied box (its value simply comes back)."""
+    if not typed:
+        return ""
+    refusal = f"“{typed}” {why}"
+    QToolTip.showText(box.mapToGlobal(QPoint(0, box.height())), refusal, box)
+    return refusal
+
+
+class NumberSpinBox(QSpinBox):
+    """A whole-number box that takes only a value typed in full. A value
+    is taken when typing ends (Return, or leaving the box), never partway
+    (not 1, 13, 130 on the way to 1309); text that isn't a whole number in
+    range stays as typed until then, and is then refused whole: the box
+    keeps its value and says why (``refusal``). The arrows and the wheel
+    step as usual."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setKeyboardTracking(False)
+        self.refusal = ""  # why the last text typed was refused ("" if taken)
+
+    def validate(self, input: str | None, pos: int) -> tuple:
+        return _keepTyped(super().validate(input, pos), input or "", pos)
+
+    def finishTyping(self) -> bool:
+        """Take the text typed, or refuse it; False when refused."""
+        text, typed = _typed(self)
+        self.refusal = ""
+        if QSpinBox.validate(self, text, 0)[0] != QValidator.State.Acceptable:
+            self.setValue(self.value())  # shows the value it kept
+            show = self.textFromValue
+            self.refusal = _refuse(
+                self,
+                typed,
+                f"isn't a whole number from {show(self.minimum())} to "
+                f"{show(self.maximum())}; kept {show(self.value())}{self.suffix()}.",
+            )
+        return not self.refusal
+
+    def focusOutEvent(self, e) -> None:
+        self.finishTyping()
+        super().focusOutEvent(e)
+
+    def keyPressEvent(self, e) -> None:
+        if e is not None and e.key() in ENTER_KEYS and not self.finishTyping():
+            e.accept()  # refused: not on to the dialog's default button (Run)
+            return
+        super().keyPressEvent(e)
+
+
+class NumberDoubleSpinBox(QDoubleSpinBox):
+    """``NumberSpinBox`` for decimal numbers: text that isn't a number in
+    range with at most ``decimals()`` decimals is refused whole."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setKeyboardTracking(False)
+        self.refusal = ""
+
+    def validate(self, input: str | None, pos: int) -> tuple:
+        return _keepTyped(super().validate(input, pos), input or "", pos)
+
+    def finishTyping(self) -> bool:
+        text, typed = _typed(self)
+        self.refusal = ""
+        if QDoubleSpinBox.validate(self, text, 0)[0] != QValidator.State.Acceptable:
+            self.setValue(self.value())
+            show = self.textFromValue
+            self.refusal = _refuse(
+                self,
+                typed,
+                f"isn't a number from {show(self.minimum())} to "
+                f"{show(self.maximum())} with at most {self.decimals()} "
+                f"decimals; kept {show(self.value())}{self.suffix()}.",
+            )
+        return not self.refusal
+
+    def focusOutEvent(self, e) -> None:
+        self.finishTyping()
+        super().focusOutEvent(e)
+
+    def keyPressEvent(self, e) -> None:
+        if e is not None and e.key() in ENTER_KEYS and not self.finishTyping():
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+
 @widgetFor(IntParameter)
 class IntParameterWidget(QWidget):
     def __init__(self, param: IntParameter, parent: QWidget | None = None):
         super().__init__(parent)
         self.param = param
-        self.spinBox = (
-            SpinBoxBuilder(self)
-            .sizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            .minimumSize(0, 30)  # as wide as its range needs (0: from its hint)
-            .range(param.range if param.range is not None else (-100000, 100000))
-            .default(param.get())
-            .binding(self.valueChanged)
-            .build()
+        self.spinBox = NumberSpinBox(self)
+        self.spinBox.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
+        # as wide as its range needs (0: from its hint)
+        self.spinBox.setMinimumSize(0, 30)
+        self.spinBox.setRange(
+            *(param.range if param.range is not None else (-100000, 100000))
+        )
+        self.spinBox.setValue(param.get())
         self.spinBox.setSingleStep(param.step)
+        self.spinBox.valueChanged.connect(self.valueChanged)
         self.unitLabel = QLabel(param.units) if param.units is not None else None
         if param.range is not None:
             self.slider = (
@@ -223,7 +361,7 @@ class FloatParameterWidget(QWidget):
         self.param = param
         paramLayout = paramLayoutDefault()
 
-        self.spinBox = QDoubleSpinBox(parent=self)
+        self.spinBox = NumberDoubleSpinBox(self)
         # decimals first: the spin box rounds its range and value to them
         if param.decimals is not None:
             self.spinBox.setDecimals(param.decimals)
@@ -281,8 +419,8 @@ class Vec2ParameterWidget(QWidget):
         self.setLayout(FlowLayout().withWidget(pairs[0]).withWidget(pairs[1]))
         connectWhileAlive(param.sigParameterChanged, self.onParamChanged, self)
 
-    def _makeSpinBox(self, range: Vec2, value: float) -> QDoubleSpinBox:
-        spinBox = QDoubleSpinBox(parent=self)
+    def _makeSpinBox(self, range: Vec2, value: float) -> NumberDoubleSpinBox:
+        spinBox = NumberDoubleSpinBox(self)
         # decimals first: the spin box rounds its range and value to them
         if self.param.decimals is not None:
             spinBox.setDecimals(self.param.decimals)

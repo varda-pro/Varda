@@ -80,9 +80,11 @@ PCA, MNF and ICA each choose what goes in:
 - **Weight Image** (optional; none by default) gives each value a weight from
   another image on the same grid: per band (an image with the same bands)
   or per pixel (one band). Weights are never resampled; images that can't
-  be used are named under the dropdown, with why. **Weight Image Holds** says whether that image holds
-  weights (larger counts more), such as the number of frames behind each value, or uncertainties
-  σ (weighted 1/σ²).
+  be used are named under the dropdown, with why. **Weight Image Holds**
+  (off until a weight image is chosen) says what that image's values are:
+  **Each pixel's weight** (higher counts more), such as the number of frames
+  behind each value, or **Each pixel's uncertainty σ** (each value weighted
+  by 1/σ²). With one weight band per image band, "pixel" reads "value".
 
 Without weights, a pixel's missing values (no-data or NaN) are filled by
 linear interpolation along its spectrum, and a pixel missing more than half

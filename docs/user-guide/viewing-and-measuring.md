@@ -152,13 +152,24 @@ CRS reads "° W", and a 0..360 image shows longitudes in [0, 360) followed by
 Turn on **Pixel Select** under a view and click a pixel to plot its
 spectrum; the **Pixel Spectra** tab comes to the front. A plain drag still
 pans the view; Ctrl-drag (⌘-drag on a Mac) plots the pixel under the pointer
-as it moves. Clicking a pixel already plotted highlights its curve instead of
-drawing it again. Under **Pixel Spectra** in the plot's sidebar,
+as it moves. Clicking (or Ctrl/⌘-clicking) a pixel already plotted selects
+its curve instead of drawing it again: the curve gets a thick yellow halo,
+its legend entry starts with "Selected:", its marker on the image turns yellow,
+and its settings appear under **Selected Curve** in the sidebar. Click an
+empty part of the plot to deselect it. Under **Pixel Spectra** in the plot's sidebar,
 **Window Width** and **Window Height** (1 px each by default, up to 99) set
 a box around the click instead. A box plots the mean of its pixels, with a
 shaded band of ±1 standard deviation (see [ROI statistics](#roi-statistics)
 for how both are computed). An even-sized box extends one pixel further
 right and down than left and up.
+
+The y axis names the values when the image's metadata says what they
+are: **Value (<unit>)** from its stated unit (an ENVI header's `data units`,
+a FITS `BUNIT`, or a `units` entry), **Reflectance** for an ENVI file with
+a `reflectance scale factor`, and plain **Value** otherwise, or when the
+plotted images disagree. Varda doesn't guess a unit the file doesn't state.
+The legend is translucent so the curves show through it; drag it to move
+it, or turn it off with **Show Legend** under **View**.
 
 **Export…** in the plot's sidebar saves the plot as PNG, SVG or PDF, or the
 curves as CSV. Each curve is a column of its own values (not scaled; see

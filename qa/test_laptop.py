@@ -250,4 +250,5 @@ def test_windows_150_percent_scaling(qaRun: QaRun, qaData: QaData) -> None:
             if dialog is not None:
                 run.qaShot(dialog, "scaled-150-pca-dialog")
                 audit(run, dialog, "the PCA dialog at 150 % scaling")
+                journeys.checkAnalysisDialog(run, dialog)
                 dialog.reject()

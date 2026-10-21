@@ -48,9 +48,14 @@ def _overAxis(plotItem: pg.PlotItem, name: str, fraction: float = 0.5) -> QPoint
     ``fraction`` of the way along it (from the top or left). (An axis's own
     bounding rect spans the plot when it draws grid lines.)"""
     rect = plotItem.getViewBox().sceneBoundingRect()
+    # whole pixels, where the mouse events land
     if name == "left":
-        return QPointF(rect.left() - 8, rect.top() + fraction * rect.height())
-    return QPointF(rect.left() + fraction * rect.width(), rect.bottom() + 8)
+        return QPointF(
+            round(rect.left() - 8), round(rect.top() + fraction * rect.height())
+        )
+    return QPointF(
+        round(rect.left() + fraction * rect.width()), round(rect.bottom() + 8)
+    )
 
 
 def _settle(qtbot, widget, viewBox: pg.ViewBox) -> None:
