@@ -1,4 +1,5 @@
 import pytest
+from PyQt6 import sip
 from pytestqt.exceptions import TimeoutError as QtTimeoutError
 
 from varda.shapes._tests.meshes import icosphere
@@ -6,11 +7,16 @@ from varda.terrain.shape_scene import ShapeSettings, shapePageHtml
 from varda.workspaces.terrain.terrain_view import TerrainView
 
 
-def test_the_shape_page_loads_and_draws(qtbot):
+@pytest.fixture
+def view():
+    """A view deleted when the test ends, not whenever Python collects it:
+    WebEngine crashes when a page goes in a collection mid-run."""
     view = TerrainView()
-    qtbot.addWidget(view)
-    view.resize(400, 300)
-    view.show()
+    yield view
+    sip.delete(view)
+
+
+def test_the_shape_page_loads_and_draws(qtbot, view):
     failures: list[str] = []
     view.sigFailed.connect(failures.append)
     view.showPage(shapePageHtml(icosphere(1.0, 3), ShapeSettings(), {}))
