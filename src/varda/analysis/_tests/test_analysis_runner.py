@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+from PyQt6.QtWidgets import QMainWindow
+
 from varda.analysis.analysis import Analysis
 from varda.analysis.runner import AnalysisRunner
 from varda.common.di_types import ProjectImages
@@ -191,3 +193,20 @@ def test_a_result_whose_image_was_removed_meanwhile_is_dropped(qtbot, monkeypatc
     assert list(images) == []
     (text,) = told
     assert image.name in text and "removed" in text
+
+
+def test_the_status_bar_says_the_analysis_finished(qtbot):
+    """Release QA 0.12.0: nothing said an analysis had finished."""
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    images = ProjectImages()
+    image = generate_random_image((10, 10, 10))
+    images.append(image)
+    runner = AnalysisRunner(images, parent=window)
+
+    with qtbot.waitSignal(runner.sigFinished, timeout=5000):
+        runner.run(DoublingAnalysis(), image)
+
+    statusBar = window.statusBar()
+    assert statusBar is not None
+    assert statusBar.currentMessage() == f"Doubling done: {image.name} doubled"

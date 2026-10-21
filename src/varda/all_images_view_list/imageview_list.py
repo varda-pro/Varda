@@ -26,6 +26,8 @@ from varda.geo.health import flagged, headline
 ICON_SIZE = THUMBNAIL_SIZE
 LEFT_MARGIN = 4  # px between the item's edge and its thumbnail and name
 BADGE_DIAMETER = 10  # px: the dot for a coordinate-system finding
+# characters of a name the list is never too narrow for (with its title)
+NAME_CHARACTERS = 16
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,8 @@ class ImageListWidget(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setMouseTracking(True)  # hover state for the item delegate
+        # names are shortened in the middle instead (the delegate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.imageList = imageList
         # One small thumbnail per image, made on its first paint and again
         # after the image's metadata (e.g. its no-data value) changes
@@ -107,6 +111,17 @@ class ImageListWidget(QListWidget):
         self.imageList.sigDataChanged.connect(self._updateItems)
         self.itemDoubleClicked.connect(self._onItemDoubleClicked)
         self.customContextMenuRequested.connect(self._onContextMenuRequested)
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        """Wide enough for the dock's title and a name of ``NAME_CHARACTERS``
+        characters: squeezed by a small window, the list said "Ima…" and
+        couldn't tell a result from its source."""
+        hint = super().minimumSizeHint()
+        bar = self.verticalScrollBar()
+        names = NAME_CHARACTERS * self.fontMetrics().averageCharWidth()
+        extra = 2 * (LEFT_MARGIN + self.frameWidth() + self.spacing())
+        extra += bar.sizeHint().width() if bar is not None else 0
+        return QtCore.QSize(max(hint.width(), names + extra), hint.height())
 
     def keyPressEvent(self, e) -> None:
         if e is not None and e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -200,9 +215,7 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             iconRect.left(), iconRect.bottom() + 1, rect.right() - iconRect.left(), 0
         )
         textRect.setBottom(rect.bottom())
-        text = option.fontMetrics.elidedText(
-            label, Qt.TextElideMode.ElideRight, textRect.width()
-        )
+        text = self.labelText(label, option.fontMetrics, textRect.width())
         painter.save()
         painter.setPen(option.palette.text().color())
         painter.drawText(
@@ -225,6 +238,24 @@ class ImageItemDelegate(QtWidgets.QStyledItemDelegate):
             painter.setPen(QtGui.QPen(highlight, 1))
             painter.drawRoundedRect(frame, 3, 3)
         painter.restore()
+
+    @staticmethod
+    def labelText(label: str, metrics: QtGui.QFontMetrics, width: int) -> str:
+        """``label`` shortened in the middle to fit ``width``: a result's name
+        differs from its source's at the end ("scene PCA"); the full name is
+        the item's tooltip."""
+        return metrics.elidedText(label, Qt.TextElideMode.ElideMiddle, width)
+
+    def sizeHint(self, option, index) -> QtCore.QSize:
+        """Never wider than the list (its name is shortened instead), so it
+        never scrolls sideways."""
+        hint = super().sizeHint(option, index)
+        view = self.parent()
+        viewport = view.viewport() if isinstance(view, QListView) else None
+        if isinstance(view, QListView) and viewport is not None:
+            widest = viewport.width() - 2 * view.spacing() - 1
+            hint.setWidth(max(ICON_SIZE + LEFT_MARGIN, min(hint.width(), widest)))
+        return hint
 
     @staticmethod
     def hasBadge(index: QtCore.QModelIndex) -> bool:

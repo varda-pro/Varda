@@ -190,10 +190,14 @@ class DualImageWorkspace(QMainWindow):
         self.plotDock.setWidget(self.plotWidget)
 
         self.primarySettingsDock = VardaDockWidget("Primary Render Settings")
-        self.primarySettingsDock.setWidget(self.primaryRenderer.getSettingsPanel())
-
         self.secondarySettingsDock = VardaDockWidget("Secondary Render Settings")
-        self.secondarySettingsDock.setWidget(self.secondaryRenderer.getSettingsPanel())
+        for dock, renderer in (
+            (self.primarySettingsDock, self.primaryRenderer),
+            (self.secondarySettingsDock, self.secondaryRenderer),
+        ):
+            panel = renderer.getSettingsPanel()
+            dock.setWidget(panel)
+            dock.keepInView(panel.essentialRows)
 
         self.primaryHistogramDock = VardaDockWidget("Primary Histogram")
         self.primaryHistogramDock.setWidget(self.primaryHistogram)

@@ -139,3 +139,32 @@ def test_an_assumed_wavelength_unit_is_named_in_the_tooltip(qtbot):
     assert _item(widget, 0).toolTip() == (
         "big\nWavelength units not declared; assuming nm from the values (400–2500)"
     )
+
+
+LONG_NAME = "qa_cube_reflectance_corrected.img PCA"
+
+
+def test_a_long_name_keeps_its_end(qtbot):
+    """Release QA 0.12.0: "qa_cube.im…" hid that it was the PCA result."""
+    widget = _showWidget(qtbot)
+    metrics = widget.fontMetrics()
+    shown = ImageItemDelegate.labelText(LONG_NAME, metrics, 100)
+    assert shown != LONG_NAME and "…" in shown
+    assert shown.startswith("qa") and shown.endswith("PCA")
+    assert metrics.horizontalAdvance(shown) <= 100
+
+
+def test_a_narrow_list_never_scrolls_sideways(qtbot):
+    data = np.zeros((20, 20, 3), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data), name=LONG_NAME)
+    widget = _showWidget(qtbot, image, generate_random_image((20, 20, 10)))
+    widget.resize(widget.minimumSizeHint().width(), 300)
+    qtbot.wait(50)
+    viewport = widget.viewport()
+    assert viewport is not None
+    for row in range(widget.count()):
+        item = widget.item(row)
+        assert item is not None
+        assert widget.visualItemRect(item).right() <= viewport.width(), item.text()
+    bar = widget.horizontalScrollBar()
+    assert bar is None or not bar.isVisible()

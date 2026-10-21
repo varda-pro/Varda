@@ -17,13 +17,14 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from qa import journeys
 from qa.data import QaData, manySmall
-from qa.harness import Network, QaRun, keyClick
+from qa.harness import Network, QaRun, keyClick, plain
 from varda.analysis.dialog import RunAnalysisDialog
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import clippedWidgets
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.export_image_dialog import ExportImageDialog
 from varda.image_loading.raster_writer import writeRaster
+from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
 
 pytestmark = [pytest.mark.qa, pytest.mark.qt_no_exception_capture]
 
@@ -77,11 +78,18 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
                 )
 
     if outcome.viewed is not None:
-        for width, height in SIZES:
-            with run.step(f"workspace at {width}×{height}"):
-                run.resizeWindow(width, height)
-                run.qaShot(run.mainWindow, f"workspace-{width}x{height}")
-                audit(run, run.mainWindow, f"the workspace at {width}×{height}")
+        # at each size with Pixel Select's hint showing (drawn over the image,
+        # where the audit looks too), and at the window's smallest width,
+        # where the other personas work (maximized on the test screen)
+        for width, height in (*SIZES, (0, SIZES[0][1])):
+            with run.step(
+                f"workspace at {width}×{height}", "Turn Pixel Select off and on"
+            ):
+                run.resizeWindow(width, height)  # 0: as narrow as it gets
+                where = "{}×{}".format(run.mainWindow.width(), run.mainWindow.height())
+                _turnPixelSelectOnAgain(run, outcome.viewed)
+                run.qaShot(run.mainWindow, f"workspace-{where.replace('×', 'x')}")
+                audit(run, run.mainWindow, f"the workspace at {where}")
         run.resizeWindow(*SIZES[0])
 
     if outcome.opened is not None:
@@ -181,6 +189,26 @@ def test_small_screen_offline(qaRun: QaRun, qaData: QaData) -> None:
     if sys.platform.startswith("linux"):
         with run.step("fonts (Linux)", "Look at the window's text"):
             _checkFonts(run)
+
+
+def _turnPixelSelectOnAgain(
+    run: QaRun, workspace: GeneralImageAnalysisWorkflow
+) -> None:
+    """Click Pixel Select off and on, so its hint shows over the view."""
+    _, toolbar = journeys.mainViewport(workspace)
+    action = next(
+        (a for a in toolbar.actions() if plain(a.text()) == "Pixel Select"),
+        None,
+    )
+    if action is None:
+        return
+    for _ in range(2 if action.isChecked() else 1):
+        button = toolbar.widgetForAction(action)
+        if button is not None and button.isVisible():
+            run.click(button, "Pixel Select tool")
+        else:
+            action.trigger()
+    run.settle(0.2)
 
 
 def _largeCube() -> VardaRaster:

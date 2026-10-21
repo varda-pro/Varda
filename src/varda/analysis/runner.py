@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtWidgets import QMainWindow, QMessageBox, QWidget
 
 from varda.analysis.analysis import Analysis
 from varda.analysis.provenance import recordProvenance
@@ -22,6 +22,8 @@ from varda.common.memory import (
 )
 from varda.image_loading.raster_writer import writeRaster
 from varda.utilities.background import onMainThread, runInBackground
+
+DONE_MESSAGE_MS = 15000  # how long the status bar says an analysis finished
 
 
 def companionPath(outputPath: str, main: VardaRaster, companion: VardaRaster) -> Path:
@@ -122,6 +124,7 @@ class AnalysisRunner(QObject):
                 return
             for result in results:
                 self._images.append(result)
+            self._announce(f"{analysis.name} done: {results[0].name}")
             self.sigFinished.emit(results[0])
 
         def onFailed(error: Exception) -> None:
@@ -136,6 +139,13 @@ class AnalysisRunner(QObject):
         runInBackground(
             task, onFinished, onFailed, description=f"Analysis {analysis.name}"
         )
+
+    def _announce(self, message: str) -> None:
+        """Say so in the window's status bar (the busy dialog is gone)."""
+        window = self._parentWidget
+        statusBar = window.statusBar() if isinstance(window, QMainWindow) else None
+        if statusBar is not None:
+            statusBar.showMessage(message, DONE_MESSAGE_MS)
 
     def _memoryAllows(self, analysis: Analysis, image: VardaRaster) -> bool:
         estimate = analysis.estimateMemory(image)

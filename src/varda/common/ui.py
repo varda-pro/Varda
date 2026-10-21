@@ -170,6 +170,17 @@ class FlowLayout(QLayout):
             size = size.expandedTo(item.minimumSize())
         return size + self._margins()
 
+    @staticmethod
+    def _itemSize(item: QLayoutItem, available: int) -> QSize:
+        """An item's size in a row ``available`` wide: its preferred width
+        (no wider than the row, no narrower than its minimum), and a wrapped
+        label's height at that width, so it keeps all its lines."""
+        size = item.sizeHint()
+        width = max(min(size.width(), available), item.minimumSize().width())
+        if item.hasHeightForWidth():
+            return QSize(width, item.heightForWidth(width))
+        return QSize(width, size.height())
+
     def _arrange(self, rect: QRect, move: bool) -> int:
         """Place the items (with ``move``) in ``rect``; the height they take."""
         m = self.contentsMargins()
@@ -187,15 +198,14 @@ class FlowLayout(QLayout):
             x += width + xGap
         y = area.y()
         for row in rows:
-            height = max((i.sizeHint().height() for i in row), default=0)
+            sizes = [self._itemSize(item, area.width()) for item in row]
+            height = max((size.height() for size in sizes), default=0)
             x = area.x()
-            for item in row:
-                size = item.sizeHint()
-                width = max(min(size.width(), area.width()), item.minimumSize().width())
+            for item, size in zip(row, sizes):
                 if move:
                     top = y + (height - size.height()) // 2
-                    item.setGeometry(QRect(x, top, width, size.height()))
-                x += width + xGap
+                    item.setGeometry(QRect(QPoint(x, top), size))
+                x += size.width() + xGap
             y += height + yGap
         return y - yGap - rect.y() + m.bottom()
 
@@ -384,6 +394,26 @@ class _PanelContents(QWidget):
         return layout.minimumHeightForWidth(a0)
 
 
+def _reach(layout: QLayout, part: QWidget | QLayout) -> int | None:
+    """The height of a column of rows down to and including ``part``, by
+    their preferred heights; None when ``part`` isn't in it."""
+    height = layout.contentsMargins().top()
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None:
+            continue
+        # QLayoutItem's widget(): a QStackedLayout's own widget() takes an index
+        if part in (QLayoutItem.widget(item), item.layout()):
+            return height + item.sizeHint().height()
+        inner = item.layout()
+        within = _reach(inner, part) if inner is not None else None
+        if within is not None:
+            return height + within
+        if not item.isEmpty():
+            height += item.sizeHint().height() + max(layout.spacing(), 0)
+    return None
+
+
 class PanelScrollArea(QScrollArea):
     """A panel (a form, a list of details, a table with buttons) that
     scrolls vertically when it can't get any shorter, and never sideways:
@@ -401,6 +431,24 @@ class PanelScrollArea(QScrollArea):
         contents = _PanelContents(panel)
         self.setWidget(contents)
         contents.installEventFilter(self)
+        self._kept: QWidget | QLayout | None = None
+
+    def keepInView(self, part: QWidget | QLayout) -> None:
+        """Never get shorter than the panel's top down to ``part`` (its
+        essential rows, e.g. a color map with its handles), a widget or
+        layout in the panel's column of rows: cut through by the bottom
+        edge, a drawn control looks whole with its handles hidden."""
+        self._kept = part
+        self.updateGeometry()
+
+    def _keptHeight(self) -> int:
+        """How far down the panel ``part`` reaches, by the rows' preferred
+        heights (known before the panel is laid out: a dock manager reads
+        the minimum size once, when the dock is added)."""
+        layout = self.panel.layout()
+        if self._kept is None or layout is None:
+            return 0
+        return _reach(layout, self._kept) or 0
 
     def eventFilter(self, a0, a1) -> bool:
         if a0 is self.widget() and a1 is not None:
@@ -415,7 +463,11 @@ class PanelScrollArea(QScrollArea):
 
     def minimumSizeHint(self) -> QSize:
         width = self._withScrollBar(self.panel.minimumSizeHint().width())
-        return QSize(width, super().minimumSizeHint().height())
+        height = max(
+            super().minimumSizeHint().height(),
+            self._keptHeight() + 2 * self.frameWidth(),
+        )
+        return QSize(width, height)
 
     def sizeHint(self) -> QSize:
         hint = self.panel.sizeHint()
@@ -861,6 +913,13 @@ class VardaDockWidget(ads.CDockWidget):
 
     def widget(self) -> QWidget | None:
         return self._panel or super().widget()
+
+    def keepInView(self, part: QWidget | QLayout) -> None:
+        """Never get so short that ``part`` of the panel is cut off (see
+        ``PanelScrollArea.keepInView``)."""
+        area = super().widget()
+        assert isinstance(area, PanelScrollArea), "for a panel set with setWidget"
+        area.keepInView(part)
 
     def withWidget(self, widget: QWidget) -> VardaDockWidget:
         self.setWidget(widget)

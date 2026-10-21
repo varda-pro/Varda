@@ -17,6 +17,7 @@ from rasterio.enums import Resampling
 
 from varda.common.entities import VardaRaster
 from varda.common.grid import (
+    NO_OVERLAP,
     Excluded,
     ImageChoices,
     onGridOf,
@@ -24,6 +25,7 @@ from varda.common.grid import (
     sameGrid,
 )
 from varda.geo.describe import describeCrs
+from varda.geo.equivalence import Compatibility, compatibility
 from varda.utilities.proj_lock import PROJ_LOCK
 
 # the largest base image (in pixels) an overlay is reprojected onto for display
@@ -35,6 +37,9 @@ DISPLAY_CACHE_BYTES = 512 * 2**20
 type GridKey = tuple[str, tuple[float, ...], int, int]
 # a cached array: (band, the base's grid)
 type CacheKey = tuple[int, GridKey]
+
+
+TOO_LARGE = "too large to reproject for display"
 
 
 def needsReprojection(image: VardaRaster, base: VardaRaster) -> bool:
@@ -52,7 +57,7 @@ def displayChoices(images: Sequence[VardaRaster], base: VardaRaster) -> ImageCho
     if pixels <= DISPLAY_MAX_PIXELS:
         return choices
     reason = (
-        f"too large to reproject for display ({pixels / 1e6:.0f} Mpx); "
+        f"{TOO_LARGE} ({pixels / 1e6:.0f} Mpx); "
         "reproject it with Processing → Geometry → Reproject Image"
     )
     result = ImageChoices(excluded=list(choices.excluded))
@@ -62,6 +67,61 @@ def displayChoices(images: Sequence[VardaRaster], base: VardaRaster) -> ImageCho
         else:
             result.images.append(image)
     return result
+
+
+def _whyNot(excluded: Excluded, base: VardaRaster, count: int) -> tuple[str, str]:
+    """Why an image can't be overlaid on ``base``, in a few words, and what
+    to do about it (``count``: how many images share the reason)."""
+    image = excluded.image
+    it, its = ("them", "their") if count > 1 else ("it", "its")
+    if not base.hasGeospatialData:
+        return (
+            "this image has no map coordinates, so only images of its size "
+            f"({base.width} × {base.height}) can be",
+            "Resample one to that size (Processing → Geometry)",
+        )
+    if not image.hasGeospatialData:
+        return "no map coordinates", f"Open a map-projected version of {it}"
+    if compatibility(image.crs, base.crs) == Compatibility.DIFFERENT_BODY:
+        return (
+            "of another body",
+            f"Check {its} coordinate system in Image Properties",
+        )
+    if excluded.reason == NO_OVERLAP:
+        return "no overlap with this image", "Choose an image of the same area"
+    if excluded.reason.startswith(TOO_LARGE):
+        return (
+            "this image is too large to reproject onto",
+            f"Reproject {it} first (Processing → Geometry → Reproject Image)",
+        )
+    return "can't be placed on this image", "Hover for why"
+
+
+def notOverlaidText(choices: ImageChoices, base: VardaRaster) -> tuple[str, str]:
+    """The note beside the overlay list (how many images can't be overlaid,
+    why and what to do) and its tooltip (each image and why); "" for both
+    when every image can be."""
+    if not choices.excluded:
+        return "", ""
+    kinds: dict[str, list[Excluded]] = {}
+    for excluded in choices.excluded:
+        kinds.setdefault(_whyNot(excluded, base, 1)[0], []).append(excluded)
+    reasons = [_whyNot(group[0], base, len(group)) for group in kinds.values()]
+    count = len(choices.excluded)
+    images = "1 image" if count == 1 else f"{count} images"
+    if len(reasons) == 1:
+        ((why, todo),) = reasons
+        note = f"{images} can't be overlaid: {why}. {todo}."
+    else:
+        counted = ", ".join(
+            f"{why} ({len(group)})" for why, group in zip(kinds, kinds.values())
+        )
+        note = (
+            f"{images} can't be overlaid: {counted}. Hover for each image and "
+            "what to do."
+        )
+    advice = "\n".join(f"{why}: {todo}." for why, todo in reasons)
+    return note, f"{advice}\n\n{choices.note}"
 
 
 def reprojectForDisplay(
