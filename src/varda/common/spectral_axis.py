@@ -7,7 +7,9 @@ band indices, labels or parameter images), FWHM in nm, the bad-band mask
 (ENVI ``bbl``), the reflectance scale factor and the no-data value.
 
 When a file declares no unit, ``bandModelFor`` infers one from the values and
-logs that it did; nothing else in Varda guesses units.
+flags it (``unitWasInferred``, ``unitNote``: logged once per image by
+``VardaRaster``, shown in Image Properties and the image list's tooltip);
+nothing else in Varda guesses units.
 """
 
 from __future__ import annotations
@@ -152,18 +154,26 @@ def parseEnviList(value) -> list[float] | None:
     return [float(item) for item in value]
 
 
-def _inferUnit(values: np.ndarray) -> SpectralUnit:
-    unit = (
+def _unitFromValues(values: np.ndarray) -> SpectralUnit:
+    return (
         SpectralUnit.MICROMETRE
         if np.nanmax(values) < MAX_MICROMETRES
         else SpectralUnit.NANOMETRE
     )
-    logger.warning(
-        "Wavelength units not declared; assuming %s from the values (%.4g-%.4g)",
-        unit.value,
-        np.nanmin(values),
-        np.nanmax(values),
+
+
+def assumedUnitNote(unit: SpectralUnit, values: npt.ArrayLike) -> str:
+    """What Varda assumed about wavelengths whose unit wasn't declared."""
+    array = np.asarray(values, dtype=np.float64)
+    return (
+        f"Wavelength units not declared; assuming {unit.value} from the values "
+        f"({np.nanmin(array):.4g}–{np.nanmax(array):.4g})"
     )
+
+
+def _inferUnit(values: np.ndarray) -> SpectralUnit:
+    unit = _unitFromValues(values)
+    logger.warning(assumedUnitNote(unit, values))
     return unit
 
 
@@ -195,6 +205,14 @@ class BandModel:
     def isSpectral(self) -> bool:
         return self.centers is not None
 
+    @property
+    def unitNote(self) -> str:
+        """What was assumed about the unit when the source declared none
+        ("" when it declared one); ``VardaRaster`` logs it once."""
+        if not self.unitWasInferred or self.centers is None or self.unit is None:
+            return ""
+        return assumedUnitNote(self.unit, self.native(self.centers))
+
     def native(self, nanometres: npt.ArrayLike) -> np.ndarray:
         """Nanometres in the source's own unit (for labels and settings)."""
         if self.unit is None:
@@ -222,7 +240,7 @@ def bandModelFor(
     if _isNumeric(values) and values.size == bandCount:
         if unit is None and declared.strip().lower() not in ("parameter", "parameters"):
             if not _isBandIndexList(values):
-                unit, inferred = _inferUnit(values.astype(np.float64)), True
+                unit, inferred = _unitFromValues(values.astype(np.float64)), True
         if unit is not None:
             centers = toNanometres(values, unit)
 

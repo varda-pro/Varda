@@ -6,7 +6,7 @@ from shapely.geometry import box
 
 from varda.analysis import transforms
 from varda.analysis.analysis import AnalysisContext
-from varda.analysis.linear_algebra import NoiseEstimate
+from varda.analysis.linear_algebra import NoiseEstimate, varianceShareText
 from varda.analysis.transforms import (
     TRANSFORM_METADATA_KEY,
     IcaAnalysis,
@@ -321,3 +321,24 @@ def test_the_weight_settings_say_what_they_do():
     assert analysis.weightKind.name == "Weight Image Holds"
     assert "counts less" in analysis.weightKind.description
     assert "larger counts more" in WeightKind.WEIGHTS.value
+
+
+def test_every_pc_band_name_tells_its_share_apart():
+    """Release QA 0.12.0 #12: most components were named "PC 3 (0.0%)" …
+    "PC 40 (0.0%)", so they couldn't be told apart or ranked."""
+    image = _image(bands=12)  # three sources: components 4-12 hold ~1e-5 %
+    analysis = PcaAnalysis()
+    analysis.components.set(12)
+    result = analysis.run(image, lambda p, m: None)
+    shares = [float(name.split("(")[1].rstrip("%)")) for name in result.bandNames]
+    assert all(share > 0 for share in shares)  # none reads "0.0%"
+    assert shares == sorted(shares, reverse=True)  # ranked as the components are
+
+
+def test_variance_shares_keep_two_significant_figures_when_small():
+    assert varianceShareText(0.852) == "85.2%"
+    assert varianceShareText(0.034) == "3.4%"
+    assert varianceShareText(0.0034) == "0.34%"
+    assert varianceShareText(0.000012) == "0.0012%"
+    assert varianceShareText(3.4e-7) == "3.4e-05%"
+    assert varianceShareText(0.0) == "0%"

@@ -84,3 +84,20 @@ def test_eigenvalue_plot_is_offered_in_the_transforms_menu():
     assert action.title == "Eigenvalue Plot…"
     assert action.menus is not None
     assert action.menus[0].id == categoryMenuId(MenuId.PROCESSING, "Transforms")
+
+
+def test_small_variance_shares_are_not_rounded_to_zero(qtbot):
+    """Release QA 0.12.0 #12: shares below 0.005 % read "0.00%"."""
+    rng = np.random.default_rng(0)
+    sources = rng.normal(size=(20 * 30, 3)) * np.array([3.0, 2.0, 1.0])
+    cube = (sources @ rng.normal(size=(3, 8))).reshape(20, 30, 8)
+    cube += 0.001 * rng.normal(size=cube.shape)  # components 4-8: ~1e-6 %
+    image = VardaRaster(ArrayDataSource(cube), name="scene")
+    analysis = PcaAnalysis()
+    analysis.components.set(8)
+    result = analysis.run(image, lambda p, m: None)
+    dialog = EigenvaluePlotDialog([image, result], image=result)
+    qtbot.addWidget(dialog)
+    shares = [float(_cell(dialog, row, 2).rstrip("%")) for row in range(8)]
+    assert all(share > 0 for share in shares)  # none reads "0.00%"
+    assert shares == sorted(shares, reverse=True)

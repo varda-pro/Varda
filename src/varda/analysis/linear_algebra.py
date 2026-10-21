@@ -53,6 +53,14 @@ class TransformResult:
     noiseCovariance: np.ndarray | None = None
 
 
+def varianceShareText(share: float) -> str:
+    """A share of the variance (0-1) as a percentage that tells components
+    apart: one decimal from 1 % ("85.2%"), two significant figures below
+    ("0.34%", "0.0012%", "3.4e-05%"), never a rounded "0.0%"."""
+    percent = 100 * float(share)
+    return f"{percent:.1f}%" if abs(percent) >= 1 else f"{percent:.2g}%"
+
+
 def flattenValid(cube, nodata: float | None) -> tuple[np.ndarray, np.ndarray]:
     """(samples, bands) matrix of pixels valid in every band, and the (rows,
     cols) mask of which pixels those are. Nodata and NaN mark invalid."""

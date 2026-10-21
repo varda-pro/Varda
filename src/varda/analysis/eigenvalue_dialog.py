@@ -11,7 +11,7 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QFormLayout, QLabel, QTableView, QWidget
 
 from varda.analysis.eigenvalue_plot import EigenvaluePlot
-from varda.analysis.linear_algebra import suggestedComponents
+from varda.analysis.linear_algebra import suggestedComponents, varianceShareText
 from varda.analysis.transforms import TRANSFORM_METADATA_KEY
 from varda.common.entities import VardaRaster
 from varda.common.parameter import ImageParameter, IntParameter
@@ -50,7 +50,7 @@ class EigenvalueTableModel(QAbstractTableModel):
         return (
             str(row + 1),
             f"{self._eigenvalues[row]:.5g}",
-            f"{100 * self._shares[row]:.2f}%",
+            varianceShareText(self._shares[row]),
             f"{100 * self._cumulative[row]:.1f}%",
         )[index.column()]
 

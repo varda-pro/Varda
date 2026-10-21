@@ -37,7 +37,13 @@ record holds:
 
 - **The process:** its name and identifier (e.g. "Band Math",
   `band_math`).
-- **Every setting**, as the dialog or workspace had it. Workspace results
+- **Every setting**, as the dialog or workspace had it. A Processing
+  menu result records each setting under the name its dialog shows, a
+  choice by the label you picked (e.g. `"Weight Image Holds": "Weights:
+  larger counts more (e.g. sample counts)"`), and a range by its two ends
+  with the unit they were shown in (`"Wavelengths": {"from": 1000.0, "to":
+  2600.0, "units": "nm"}`; no `units` when the dialog showed none, e.g.
+  band numbers). Workspace results
   record their own settings: a mosaic its full recipe (order, corrections,
   tie points with their match quality and phase-plane SNR, radiometry with
   its fit quality, seams, blending), output grid and resampling; its source
@@ -122,8 +128,8 @@ reopened PCA, MNF or ICA result still works with **Eigenvalue Plot** and
 The file's description (the ENVI header's `description`, or the GeoTIFF's
 description tag) also keeps a one-line summary, such as "Made with Varda
 0.9.0: Band Math (Expression=…) from /data/scene.img on 2026-10-16T…",
-naming the plugin when there is one; long values are shortened there, never
-in the record.
+naming the plugin when there is one; a range reads "Wavelengths=1000–2600
+nm" there. Long values are shortened there, never in the record.
 
 To read the record outside Varda:
 

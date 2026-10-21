@@ -473,6 +473,13 @@ class QaRun:
                     where=where,
                 )
                 self.log("step error", traceback=traceback.format_exc())
+        for where, message in _vardaRuntimeWarnings(caught):
+            self.finding(
+                "annoyed",
+                f'Varda printed numpy\'s "{message}" to the console',
+                reproduce=reproduce,
+                where=where,
+            )
         self.log(
             "step done",
             seconds=round(time.monotonic() - started, 2),
@@ -808,6 +815,23 @@ def _busyFeedbackShown() -> bool:
         isinstance(w, (BusyDialog, QProgressDialog)) and w.isVisible()
         for w in QApplication.topLevelWidgets()
     )
+
+
+def _vardaRuntimeWarnings(
+    caught: list[warnings.WarningMessage],
+) -> list[tuple[str, str]]:
+    """(``src/varda/file:line``, message) of each distinct RuntimeWarning
+    raised in Varda's own code (e.g. numpy's "invalid value encountered in
+    divide"): console noise a user can't act on."""
+    found: dict[tuple[str, str], None] = {}
+    for warning in caught:
+        name = warning.filename.replace("\\", "/")
+        if issubclass(warning.category, RuntimeWarning) and (
+            "/varda/" in name and "/qa/" not in name
+        ):
+            where = f"src/varda/{name.rpartition('/varda/')[2]}:{warning.lineno}"
+            found[(where, str(warning.message))] = None
+    return list(found)
 
 
 def _innermostVarda(tb: TracebackType | None) -> str:

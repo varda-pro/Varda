@@ -183,7 +183,10 @@ components used).
   have the same bands: if the transform left bands out, first cut the
   original to the same bands with **Subset (Crop Rows, Columns, Bands)**.
 - **What's saved where.** The band names of a PCA result carry each
-  component's share of the variance ("PC 1 (85.2%)"). The eigenvalues,
+  component's share of the variance: one decimal from 1 % ("PC 1
+  (85.2%)"), two significant figures below it ("PC 7 (0.0034%)", "PC 40
+  (2.1e-05%)"), so even the noise components can be told apart and ranked.
+  The **Eigenvalue Plot…** table's Variance % column uses the same rule. The eigenvalues,
   explained variance, mean and inverse are kept with the result and in its
   exported files (the `VARDA` metadata domain), so **Eigenvalue Plot…** and
   **Inverse Transform** work on a reopened file. Quote the values you report

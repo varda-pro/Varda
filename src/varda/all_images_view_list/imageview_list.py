@@ -38,10 +38,16 @@ def _pixmap(rgba: np.ndarray) -> QPixmap:
 
 
 def imageToolTip(image: VardaRaster) -> str:
-    """The image's full name (the label may be cut short), and its first
-    coordinate-system finding."""
+    """The image's full name (the label may be cut short), its first
+    coordinate-system finding and the wavelength unit assumed when the file
+    declares none."""
     finding = headline(image.crsHealth)
-    return image.name if finding is None else f"{image.name}\nMap: {finding}"
+    lines = [image.name]
+    if finding is not None:
+        lines.append(f"Map: {finding}")
+    if image.bandModel.unitNote:
+        lines.append(image.bandModel.unitNote)
+    return "\n".join(lines)
 
 
 class ImageItem(QListWidgetItem):

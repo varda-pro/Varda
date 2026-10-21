@@ -8,6 +8,7 @@ from varda.analysis.band_math import BandMathAnalysis
 from varda.analysis.detection import RxAnalysis
 from varda.analysis.provenance import PROVENANCE_KEY, provenanceText, recordProvenance
 from varda.analysis.runner import AnalysisRunner
+from varda.analysis.transforms import PcaAnalysis, WeightKind
 from varda.common.di_types import ProjectImages
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -99,3 +100,21 @@ def test_long_parameter_values_are_shortened_in_the_one_line_text():
     result = analysis.run(image, lambda p, m: None)
     recordProvenance(result, analysis, image)
     assert "…" in provenanceText(result)
+
+
+def test_a_range_records_its_units_and_an_enum_its_label(tmp_path):
+    """Release QA 0.12.0 #6: the exported record said ``"Wavelengths": {"x":
+    1000.0, "y": 2600.0}`` and ``"Weight Image Holds": "WEIGHTS"``, which a
+    methods section can't quote."""
+    image = _image()  # 2000-2400 nm
+    analysis = PcaAnalysis()
+    analysis.prepareFor(image)
+    result = analysis.run(image, lambda p, m: None)
+    recordProvenance(result, analysis, image)
+    parameters = result.extraMetadata[PROVENANCE_KEY]["parameters"]
+    assert parameters["Wavelengths"] == {"from": 2000.0, "to": 2400.0, "units": "nm"}
+    assert parameters["Weight Image Holds"] == WeightKind.WEIGHTS.value
+    json.dumps(parameters)
+    text = provenanceText(result)
+    assert "Wavelengths=2000–2400 nm" in text
+    assert f"Weight Image Holds={WeightKind.WEIGHTS.value}" in text
