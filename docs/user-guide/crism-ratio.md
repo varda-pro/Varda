@@ -590,7 +590,8 @@ what it saves is ROIs and points.
   defined in this cube's pixels and shown on both views.
 - **Ratio Controls** (right, top): one row (it wraps when narrow) with the box
   size (**Box** width × height, pixels), **Lock to sensor column** (see
-  [Column lock](#column-lock)), **Choose/Change Geometry File…**, **Show
+  [Column lock](#column-lock)), **Choose/Change Geometry File…**, **Go to
+  Sensor…** (see [Go to a sensor position](#go-to-a-sensor-position)), **Show
   ROIs** (on by default: the saved ROIs, each pair's numerator and
   denominator boxes, outlined in their class colors on both images, the
   browse one through the link; the ROI Manager hides or shows them one by
@@ -792,6 +793,27 @@ Two cases where the lock cannot be met are said, never silent:
   Geometry File…**.
   Ratioing still works; the denominator is simply where you click, so the
   ratio keeps whatever column-dependent artifacts the two columns differ by.
+
+### Go to a sensor position
+
+**Go to Sensor…** in Ratio Controls places the boxes by detector position
+instead of a click: type the numerator's **sample** and **line**, and the
+denominator's, and press **Go**. The positions are 0-based, as the I/F cube's
+geometry gives them: the IN file's IR Sample and IR Line bands (for Varda's
+own processed cubes, the `…_in…_vmtr` file's Source sample and Source line,
+the TRR3's sample and line), or an unprojected cube's columns and rows. Each
+box goes on the image pixel whose detector position is nearest the one
+typed, exactly as a click there would place it: with **Lock to sensor
+column** on, the denominator goes on the numerator's column in that row, as
+a right-click does. **On the numerator's detector column** (on when the lock
+is) fills in the denominator's sample from the numerator's; untick **Place
+the denominator too** to move only the numerator. The dialog stays open, so
+positions can be typed one after another, opens on the current boxes'
+positions, and says where each box landed, with how many detector pixels
+away the nearest map pixel was when no pixel saw the position typed (a map
+pixel sees one detector position, so in a map-projected cube some positions
+fall between pixels). It is unavailable when the geometry has no detector
+lines (a backplane with IR Sample but no IR Line).
 
 ### Blandness readout
 

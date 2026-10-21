@@ -193,7 +193,8 @@ _BAND_ALIASES: dict[str, tuple[str, ...]] = {
         "sample",
     ),
     # never plain "line": "VNIR Line" would match it
-    "ir_line": ("ir (l-detector) line", "ir line", "l-detector line"),
+    # "Source line": Varda's own CRISM processing (its …_in…_vmtr file)
+    "ir_line": ("ir (l-detector) line", "ir line", "l-detector line", "source line"),
     "target_id": ("target id",),
     "segment_id": ("segment id (counter)", "segment id", "segment"),
     # the solar incidence angle to the reference surface, not the MOLA-local one

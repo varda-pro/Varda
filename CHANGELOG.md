@@ -8,6 +8,13 @@ can alter results.
 
 ### Added
 
+- **CRISM Ratio: go to a sensor position.** **Go to Sensor…** in Ratio
+  Controls takes a detector sample and line for the numerator and the
+  denominator (0-based, as the IN file's IR Sample and IR Line, or an
+  unprojected cube's columns and rows) and puts the boxes on the nearest
+  image pixels, as clicks there would (the column lock applies), saying
+  where each landed. See
+  [CRISM ratio cubes](docs/user-guide/crism-ratio.md#go-to-a-sensor-position).
 - **Drag vector files onto Varda.** A GeoPackage, Shapefile, GeoJSON, KML,
   FlatGeobuf or GPX file dropped on the window goes to the current
   workspace: the import dialog of the manager its geometry suggests

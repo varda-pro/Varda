@@ -33,6 +33,7 @@ from varda.workspaces.crism_ratio.crism_ratio_workspace import (
     NewCrismRatioDialog,
 )
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape
+from varda.workspaces.crism_ratio.sensor_dialog import SensorTargets
 from varda.workspaces.linked_images.linking import Link
 from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
 
@@ -881,3 +882,94 @@ def test_on_a_coarser_browse_grid_the_rois_go_through_the_map(qtbot, mapPair):
     polygon = np.array([[4.0, 6.0], [10.0, 6.0], [10.0, 12.0], [4.0, 12.0]])
     mapped = workspace._roiViews["browse"]._toView(polygon)
     np.testing.assert_allclose(mapped, polygon / 2, atol=1e-6)
+
+
+# --- go to a sensor position -----------------------------------------------------------
+
+
+def _dataSelection(workspace):
+    return workspace.toolManagers[1].activeTool.selection
+
+
+def test_typed_sensor_positions_move_both_boxes(qtbot):
+    # an unprojected cube: the detector sample and line are its column and row
+    browse = raster("browse", (40, 640), georeferenced=False, seed=1)
+    data = raster("data", (40, 640), georeferenced=False, seed=2)
+    workspace = build(qtbot, browse, data, Link.PIXEL)
+    assert workspace.sensorButton.isEnabled()
+    text = workspace.goToSensor(SensorTargets((100, 6), (300, 30)))
+    selection = _dataSelection(workspace)
+    np.testing.assert_array_equal(selection.numerator, boxPolygonPixels(100, 6, 5, 5))
+    # the column lock (on) keeps the denominator in the numerator's column
+    np.testing.assert_array_equal(
+        selection.denominator, boxPolygonPixels(100, 30, 5, 5)
+    )
+    assert "Numerator at sample 100, line 6." in text
+    assert "Denominator at sample 100, line 30." in text
+    # the browse view shows the same pair
+    np.testing.assert_array_equal(
+        tool(workspace, 0).selection.numerator, selection.numerator
+    )
+
+
+def test_without_the_lock_the_denominator_goes_where_typed(qtbot):
+    browse = raster("browse", (40, 640), georeferenced=False, seed=1)
+    data = raster("data", (40, 640), georeferenced=False, seed=2)
+    workspace = build(qtbot, browse, data, Link.PIXEL)
+    workspace.lockCheck.setChecked(False)
+    workspace.goToSensor(SensorTargets((100, 6), (300, 30)))
+    np.testing.assert_array_equal(
+        _dataSelection(workspace).denominator, boxPolygonPixels(300, 30, 5, 5)
+    )
+
+
+@pytest.fixture
+def mappedBackplane(monkeypatch):
+    """A map whose pixels see detector sample 39 - col and line 2 × row."""
+    rows, cols = np.mgrid[0:30, 0:40].astype(np.float64)
+    geometry = ColumnGeometry(ir_sample=39 - cols, ir_line=2 * rows, source="IN")
+    monkeypatch.setattr(ratio_explorer, "columnGeometryFor", lambda *_args: geometry)
+    monkeypatch.setattr(
+        crism_ratio_workspace, "columnGeometryFor", lambda *_args: geometry
+    )
+    monkeypatch.setattr(VardaRaster, "filePath", property(lambda self: "/fake/x.img"))
+    return geometry
+
+
+def test_on_a_map_the_nearest_pixel_is_used_and_said(qtbot, pixelPair, mappedBackplane):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    text = workspace.goToSensor(SensorTargets((30, 21), None))  # line 21: between
+    numerator = _dataSelection(workspace).numerator
+    col, row = ratio_explorer.centerPixel(numerator)
+    assert col == 9 and row in (10, 11)
+    assert "1.0 detector pixels away" in text
+
+
+def test_the_dialog_starts_from_the_current_boxes_and_goes(
+    qtbot, pixelPair, mappedBackplane
+):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    workspace.goToSensor(SensorTargets((30, 20), (30, 40)))
+    workspace.openSensorGoto()
+    dialog = workspace.sensorDialog
+    assert dialog is not None and dialog.isVisible()
+    assert (dialog.numeratorSample.value(), dialog.numeratorLine.value()) == (30, 20)
+    assert dialog.denominatorLine.value() == 40
+    assert dialog.sameColumn.isChecked() and not dialog.denominatorSample.isEnabled()
+    dialog.numeratorSample.setValue(25)
+    dialog.numeratorLine.setValue(4)
+    dialog.denominatorLine.setValue(50)
+    dialog.goButton.click()
+    selection = _dataSelection(workspace)
+    np.testing.assert_array_equal(selection.numerator, boxPolygonPixels(14, 2, 5, 5))
+    np.testing.assert_array_equal(selection.denominator, boxPolygonPixels(14, 25, 5, 5))
+    assert "Numerator at sample 25, line 4" in dialog.resultLabel.text()
+
+
+def test_without_detector_lines_go_to_sensor_is_unavailable(
+    qtbot, pixelPair, withBackplane
+):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    assert workspace.lockCheck.isEnabled()  # columns, but no lines
+    assert not workspace.sensorButton.isEnabled()
+    assert "unavailable" in workspace.sensorButton.toolTip()
