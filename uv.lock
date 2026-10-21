@@ -1873,6 +1873,22 @@ wheels = [
 ]
 
 [[package]]
+name = "spiceypy"
+version = "8.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/80/b2b113e9efffb29faf6c231354643763ef3a204137aeada78d9e27a2e568/spiceypy-8.3.0.tar.gz", hash = "sha256:abe5223a80c253c5fa3318a52e80789807d0b1f4dbbc464dc92b35b83024b018", size = 652647, upload-time = "2026-10-11T21:21:21.69Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/23/18bc4bab26ccfc962499cba4901325b1983083a5c0da8e8c7cd52531543c/spiceypy-8.3.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:ab84d70ee9e073130aad021a31d5b9defa28fe0994913bbde43ca5053f3dab18", size = 2149078, upload-time = "2026-10-11T21:20:50.829Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/26/982859afee3da884a8b03a0f3f39305c794ffb45457562b93b5bd4a6d1e3/spiceypy-8.3.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:7c4490301dc82b60f98d608b8222444689b47eeeb146c65e7b08524a3a3790b6", size = 1917646, upload-time = "2026-10-11T21:20:53.022Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/6e/60fab3c040762af14c27e97bd1a4404efc1c1d55777dc31500f6158d2f1d/spiceypy-8.3.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0220367c404dec342f5ef8592326bbe99e4e2e13e8902c3540d8eec67366b5fa", size = 2327633, upload-time = "2026-10-11T21:20:55.174Z" },
+    { url = "https://files.pythonhosted.org/packages/73/44/70e9dea6f145987917b8f9bf574fb12f2132e53075d37b309a44b65afea8/spiceypy-8.3.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bbfab248ac7a9e242b104353aa2e4275734a4768e542bce4802a4112666d8a1a", size = 2416720, upload-time = "2026-10-11T21:20:57.242Z" },
+    { url = "https://files.pythonhosted.org/packages/44/67/236d2ed951d5e45c84df173e842a965592977bec5a60a5272eb684088966/spiceypy-8.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:4774fd3f39493e9b29d2d704d65678c55b7ffd3426f7c9f23bd2e06cd5cb8c52", size = 2010301, upload-time = "2026-10-11T21:20:59.179Z" },
+]
+
+[[package]]
 name = "superqt"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2068,6 +2084,9 @@ hypyrameter = [
 ml = [
     { name = "torch" },
 ]
+spice = [
+    { name = "spiceypy" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2117,10 +2136,11 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "shapely", specifier = ">=2.0" },
     { name = "spectral", specifier = ">=0.24,<0.26" },
+    { name = "spiceypy", marker = "extra == 'spice'", specifier = ">=6" },
     { name = "superqt", specifier = ">=0.8.0" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.4" },
 ]
-provides-extras = ["hypyrameter", "ml"]
+provides-extras = ["hypyrameter", "ml", "spice"]
 
 [package.metadata.requires-dev]
 dev = [

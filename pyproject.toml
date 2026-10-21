@@ -64,6 +64,12 @@ hypyrameter = [
 ml = [
     "torch>=2.4",
 ]
+# 3D Terrain's Shape model surface reads NAIF DSK (type 2) files through
+# SpiceyPy. Install with   uv sync --extra spice
+# Without it, DSK files are listed as unavailable; other formats still work.
+spice = [
+    "spiceypy>=6",
+]
 
 [dependency-groups]
 dev = [
