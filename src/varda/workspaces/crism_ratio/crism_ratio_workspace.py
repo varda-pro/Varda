@@ -67,6 +67,9 @@ from varda.image_loading.crism_geometry_chooser import (
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
+from varda.image_rendering.raster_view.viewport_context_menu_controller import (
+    ViewportContextMenuController,
+)
 from varda.image_rendering.raster_view.viewport_tools.crop_tool import CropTool
 from varda.image_rendering.raster_view.viewport_tools.pixel_select_tool import (
     PixelSelectTool,
@@ -451,18 +454,25 @@ class CrismRatioWorkspace(QMainWindow):
             self.dockManager.addAutoHideDockWidget(
                 ads.SideBarLocation.SideBarRight, dock
             )
-        for name, renderer in (
-            ("Browse", self.browseRenderer),
-            ("I/F", self.dataRenderer),
+        # each view's right-click offers its image's display docks, and every
+        # dock under Panels: a dock closed by mistake comes back from there
+        self.viewportMenu = ViewportContextMenuController(self.roiManager, parent=self)
+        for name, renderer, view in (
+            ("Browse", self.browseRenderer, self.browseView),
+            ("I/F", self.dataRenderer, self.dataView),
         ):
-            for title, widget in (
-                (f"{name} Render Settings", renderer.getSettingsPanel()),
-                (f"{name} Histogram", NewHistogramView(renderer, self)),
-            ):
-                self.dockManager.addAutoHideDockWidget(
-                    ads.SideBarLocation.SideBarBottom,
-                    VardaDockWidget(title).withWidget(widget),
+            docks = [
+                VardaDockWidget(title).withWidget(widget)
+                for title, widget in (
+                    (f"{name} Render Settings", renderer.getSettingsPanel()),
+                    (f"{name} Histogram", NewHistogramView(renderer, self)),
                 )
+            ]
+            for dock in docks:
+                self.dockManager.addAutoHideDockWidget(
+                    ads.SideBarLocation.SideBarBottom, dock
+                )
+            self.viewportMenu.attach(view, docks)
 
     def showEvent(self, a0: QShowEvent | None) -> None:
         super().showEvent(a0)

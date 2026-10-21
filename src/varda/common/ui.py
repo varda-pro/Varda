@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QAbstractScrollArea,
     QApplication,
+    QMenu,
 )
 from PyQt6.QtGui import (
     QColor,
@@ -864,6 +865,41 @@ class VardaDockWidget(ads.CDockWidget):
     def withWidget(self, widget: QWidget) -> VardaDockWidget:
         self.setWidget(widget)
         return self
+
+
+def showDock(dock: ads.CDockWidget) -> None:
+    """Open ``dock`` wherever it lives: back in its place if it was closed,
+    slid out if it hides at an edge, brought to the front if it is a tab."""
+    dock.toggleView(True)
+    container = dock.autoHideDockContainer() if dock.isAutoHide() else None
+    if container is not None:
+        container.collapseView(False)
+    else:
+        dock.setAsCurrentTab()
+        dock.raise_()
+
+
+def dockManagerOf(widget: QWidget) -> ads.CDockManager | None:
+    """The dock manager of the dock ``widget`` is in (None outside one)."""
+    parent = widget.parentWidget()
+    while parent is not None and not isinstance(parent, ads.CDockWidget):
+        parent = parent.parentWidget()
+    return parent.dockManager() if parent is not None else None
+
+
+def panelsMenu(manager: ads.CDockManager, parent: QWidget | None = None) -> QMenu:
+    """ "Panels": every panel of ``manager`` by name, checked when open.
+    Choosing one opens it (``showDock``), so a panel closed by mistake comes
+    back."""
+    menu = QMenu("Panels", parent)
+    docks = sorted(manager.dockWidgetsMap().values(), key=lambda d: d.windowTitle())
+    for dock in docks:
+        action = menu.addAction(dock.windowTitle())
+        assert action is not None
+        action.setCheckable(True)
+        action.setChecked(not dock.isClosed())
+        action.triggered.connect(lambda _checked, d=dock: showDock(d))
+    return menu
 
 
 MUTED_TEXT_WEIGHT = 0.65  # share of the normal text color in muted text

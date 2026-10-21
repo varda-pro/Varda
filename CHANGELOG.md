@@ -17,6 +17,14 @@ can alter results.
   (CTX, HiRISE, THEMIS VIS); others stay in the panel, which says so. See
   [Finding data](docs/user-guide/finding-data.md#previews).
 
+### Fixed
+
+- **A closed panel can be opened again.** Closing a workspace's Render
+  Settings, Histogram or another panel left no way back. Right-click an image
+  view: its image's Render Settings and Histogram are at the bottom of the
+  menu, and **Panels** lists every panel of the workspace, checked when open.
+  In the CRISM Ratio, General Image Analysis and Dual workspaces.
+
 ## 0.11.0 (2026-10-20)
 
 ### Added

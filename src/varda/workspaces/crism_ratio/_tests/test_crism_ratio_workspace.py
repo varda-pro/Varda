@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from affine import Affine
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMenu, QMessageBox
 from pyproj import CRS
 
 from varda.common.keys import controlClick
@@ -698,3 +698,48 @@ def test_the_lock_uses_the_if_geometry_under_a_map_link(qtbot, mapPair, monkeypa
         tool(workspace).selection.denominator, boxPolygonPixels(7, 17, 5, 5)
     )
     assert set(seen) == {"/fake/data.img"}
+
+
+def _menuActions(workspace, view) -> tuple[QMenu, dict, dict]:
+    """The view's right-click additions (the menu is returned to keep it
+    alive): its own docks by name, and the Panels submenu's by name."""
+    menu = QMenu()
+    workspace.viewportMenu.addPanels(menu, view)
+    actions = {a.text(): a for a in menu.actions() if a.text()}
+    panels = next(a.menu() for a in menu.actions() if a.menu() is not None)
+    return menu, actions, {a.text(): a for a in panels.actions()}
+
+
+def test_a_closed_render_settings_dock_comes_back_from_the_views_menu(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    workspace.resize(1280, 800)
+    workspace.show()
+    settings = workspace.dockManager.findDockWidget("I/F Render Settings")
+    settings.closeDockWidget()
+    assert settings.isClosed()
+
+    menu, actions, panels = _menuActions(workspace, workspace.dataView)
+    # the view's own image: its render settings and histogram, not the browse's
+    assert {"I/F Render Settings", "I/F Histogram"} <= set(actions)
+    assert "Browse Render Settings" not in actions
+    # and every dock of the workspace, the closed one unchecked
+    assert set(panels) == set(workspace.dockManager.dockWidgetsMap())
+    assert not panels["I/F Render Settings"].isChecked()
+    assert panels["Spectra"].isChecked()
+
+    actions["I/F Render Settings"].trigger()
+    assert not settings.isClosed() and settings.isAutoHide()
+    container = settings.autoHideDockContainer()
+    qtbot.waitUntil(lambda: container.isVisible(), timeout=2000)  # slid out
+
+    settings.closeDockWidget()
+    menu, _, panels = _menuActions(workspace, workspace.dataView)
+    panels["I/F Render Settings"].trigger()
+    assert not settings.isClosed()
+
+
+def test_the_browse_views_menu_offers_the_browse_images_docks(qtbot, pixelPair):
+    workspace = build(qtbot, pixelPair[0], pixelPair[1], Link.PIXEL)
+    menu, actions, _ = _menuActions(workspace, workspace.browseView)
+    assert {"Browse Render Settings", "Browse Histogram"} <= set(actions)
+    assert "I/F Render Settings" not in actions

@@ -194,14 +194,6 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         self.viewportContextMenuController = ViewportContextMenuController(
             self.roiManagerWidget, parent=self
         )
-        for vp in (
-            self.tripleRasterView.viewport1,
-            self.tripleRasterView.viewport2,
-            self.tripleRasterView.viewport3,
-        ):
-            vp.sigContextMenuRequested.connect(
-                self.viewportContextMenuController.onContextMenuRequested
-            )
 
     def _initUI(self):
         """Initialize the user interface for the workflow"""
@@ -209,6 +201,15 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         self.setWindowTitle(self.config.image.value.name)
 
         self._setupDocks()
+        # every view shows the image: each offers its display docks
+        for vp in (
+            self.tripleRasterView.viewport1,
+            self.tripleRasterView.viewport2,
+            self.tripleRasterView.viewport3,
+        ):
+            self.viewportContextMenuController.attach(
+                vp, [self.settingsDock, self.histogramDock]
+            )
         # Set the raster view as the central widget
         # self.setCentralWidget(self.tripleRasterView)
 
