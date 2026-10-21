@@ -159,6 +159,7 @@ def test_compare_maps() -> None:
     assert comparison.n == 600 - 8
     assert comparison.pearson == pytest.approx(1.0)
     assert comparison.medianBias == pytest.approx(0.003)
+    assert comparison.rmsDifference == pytest.approx(0.003)
 
 
 @pytest.mark.filterwarnings("error")

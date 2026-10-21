@@ -32,6 +32,7 @@ import numpy as np
 from varda.crism.atmosphere import (
     ArtifactBasis,
     AtmosphereModel,
+    appliedArtifact,
     artifactFileName,
     artifactScale,
     learnArtifactBasis,
@@ -159,7 +160,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--artifacts",
         type=Path,
-        help="a folder of artifact bases (learn-artifacts), searched first",
+        help="a folder of artifact bases (learn-artifacts), searched first; "
+        "turns the artifact model on",
     )
     calibrationOptions(run)
 
@@ -235,6 +237,7 @@ def _run(args: argparse.Namespace) -> int:
         recipe.output.cog.set(True)
     if args.artifacts is not None:
         recipe.atmosphere.artifactFolder.set(str(args.artifacts))
+        recipe.atmosphere.artifactModel.set(True)
     observations = _observations(args.paths)
     if not observations:
         raise _UsageError("no observation found")
@@ -334,12 +337,13 @@ def columnCo2Median(column: ColumnResiduals, basis: ArtifactBasis | None) -> flo
         column.wavelengths, column.selection.chosen.values, fit.shiftNm
     )
     if basis is not None:
-        probe = AtmosphereModel(column.selection.chosen, fit.shiftNm, basis.spectra)
+        artifact = appliedArtifact(basis, column.wavelengths)
+        probe = AtmosphereModel(column.selection.chosen, fit.shiftNm, artifact)
         scale, _ = artifactScale(
             column.spectra, column.spread, column.wavelengths, probe
         )
         if math.isfinite(scale):
-            path = path + scale * basis.spectra
+            path = path + scale * artifact
     with np.errstate(invalid="ignore", over="ignore"):
         corrected = column.spectra * np.exp(-fit.beta[:, None] * path)
         window = (column.wavelengths > CO2_WINDOW_NM[0]) & (

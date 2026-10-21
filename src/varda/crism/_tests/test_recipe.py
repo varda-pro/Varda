@@ -20,7 +20,7 @@ def test_defaults_follow_the_rulings():
     recipe = Recipe()
     assert recipe.destripe.enabled.get() is False
     assert recipe.smile.esc.get() is True
-    assert recipe.atmosphere.artifactModel.get() is True
+    assert recipe.atmosphere.artifactModel.get() is False  # D12
     assert recipe.atmosphere.source.get() is TransmissionSource.PDS_AT
     assert recipe.despike.threshold.get() == 5.0
     assert recipe.projection.maxDistanceFactor.get() == 2.0

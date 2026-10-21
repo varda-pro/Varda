@@ -55,6 +55,10 @@ from varda.version import vardaVersion
 FIT_WINDOW_NM = (1850.0, 2200.0)
 SCORE_WINDOW_NM = (1947.0, 2066.0)
 HYDRATION_MASK_NM = (1880.0, 1945.0)
+# The bands the artifact basis corrects (decision D12): the CO2 lines it is
+# learned for. Applied over the whole fit window, it moved the BD1900_2 and
+# D2300 medians of the rim FRSs beyond the crater-floor repeatability.
+ARTIFACT_WINDOW_NM = (1940.0, 2100.0)
 CONTINUUM_DEGREE = 3
 
 _MIN_FIT_BANDS = 24  # of the ~43 fitted bands (53 in the window, 10 masked)
@@ -1205,6 +1209,14 @@ def learnArtifactBasis(
         (float(min(sclks)), float(max(sclks))),
         vardaVersion(),
     )
+
+
+def appliedArtifact(basis: ArtifactBasis, wavelengths: np.ndarray) -> np.ndarray:
+    """``basis.spectra`` on the bands the basis corrects (``ARTIFACT_WINDOW_NM``,
+    with ``wavelengths`` ``(s, b)``), 0 elsewhere: what the pipeline fits and
+    divides out. The window holds the score window, so the basis's unit RMS
+    and the leave-one-out table are unchanged."""
+    return np.where(_inside(wavelengths, ARTIFACT_WINDOW_NM), basis.spectra, 0.0)
 
 
 def artifactScale(

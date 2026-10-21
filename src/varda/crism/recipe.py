@@ -91,9 +91,11 @@ class AtmosphereStep(ParameterGroup):
     )
     artifactModel = BoolParameter(
         "Model instrument artifacts",
-        True,
-        "Fit the known artifact spectra of the volcano scans. Skipped, with the "
-        "reason recorded, when no basis matches the observation's epoch.",
+        False,
+        "Fit the learned artifact spectra of the volcano scans on the CO2 lines "
+        "(1940–2100 nm). Off by default: it halves the CO2 residual but moves "
+        "BD1900_2 by more than its repeatability (decision D12). Skipped, with "
+        "the reason recorded, when no basis matches the observation's epoch.",
     )
     artifactFolder = StringParameter(
         "Artifact basis folder",

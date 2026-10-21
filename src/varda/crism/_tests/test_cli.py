@@ -201,6 +201,7 @@ def test_cli_learn_artifacts(
     artifact = record["steps"]["atmosphere"]["artifact"]
     assert artifact["used"] is True and artifact["file"] == str(files[0])
     assert record["recipe"]["atmosphere"]["artifactFolder"] == str(out)
+    assert record["recipe"]["atmosphere"]["artifactModel"] is True
 
 
 def test_cli_learn_artifacts_from_one_observation_warns(

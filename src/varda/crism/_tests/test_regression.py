@@ -133,7 +133,8 @@ CHOSEN_SCANS = {
 # --- causes of the criteria that are not met (measured; phase1-validation.md) --------
 
 _PEARSON_CAUSE = (
-    "DECISION PENDING, inside Phase 1, unattributed: 52-91% of the "
+    "ACCEPTED for Phase 1 (D9 a; diagnosis is a follow-up, D9 c), inside "
+    "Phase 1, unattributed: 52-91% of the "
     "difference's variance is cross-track (per detector column); most of that "
     "is a smooth trend (15-column running median: 84% of D2300's and 66% of "
     "BD1900_2's column variance), the rest column-to-column scatter 2.1-3.8x "
@@ -161,14 +162,16 @@ _PEARSON_CAUSES = {
 }
 _BIAS_CAUSES = {
     "D2300": (
-        "DECISION PENDING, inside Phase 1: the cross-track structure behind "
+        "ACCEPTED for Phase 1 (D11, with D9), inside Phase 1: the cross-track "
+        "structure behind "
         "the Pearson shortfall (the smooth trend); the per-column median "
         "difference is -0.0020, ours "
         "0.5-1% low at 2120 and 2170 nm on columns > 480"
     ),
 }
 _SHAPE_CAUSE = (
-    "DECISION PENDING, inside Phase 1 (ledger A6/A7): a 2 um bowl, ours up to "
+    "ACCEPTED as a known difference from CAT (D10 a), inside Phase 1 "
+    "(ledger A6/A7): a 2 um bowl, ours up to "
     "3.4% below the MTRDR at 2033-2093 nm and 1-2.4% at 1875-1940 and "
     "2100-2210 nm; ln(shape ratio) correlates -0.81/-0.87 with CAT's VS ADR "
     "artifact spectra (11D87, McGuire/Pelkey), the patch the MTRDR has and a "
@@ -177,7 +180,8 @@ _SHAPE_CAUSE = (
     "with phase (r = -0.72 at 2400 nm): EGN"
 )
 _OFFSET_CAUSE = (
-    "DECISION PENDING, cause unattributed: FRS00031442's BD2310 is 0.0055 and 0.0051 above "
+    "ACCEPTED as a per-observation systematic term for fusion's offset "
+    "correction (F2) to absorb (D13 a), cause unattributed: FRS00031442's BD2310 is 0.0055 and 0.0051 above "
     "FRT00005C5E's and FRT000047A3's in their overlaps (0.0004 against "
     "HRL000040FF's); the same without the artifact basis (0.0057, 0.0053) and "
     "with a leave-one-out one; our pipeline's BD2310 bias against the MTRDR on "
@@ -185,22 +189,19 @@ _OFFSET_CAUSE = (
     "(FRT00005C5E-HRL000040FF), above the spec's 0.004, and the offset "
     "exceeds that maximum too"
 )
+_BASIS_OFF = (
+    "so the basis is off by default (D12 b); restricted to the CO2 lines "
+    "(D12 c) it no longer moves D2300, but BD1900_2's own bands lie among them"
+)
 _MINERAL_CAUSES = {
     ("FRS0002FE75", "BD1900_2"): (
-        "DECISION PENDING, inside Phase 1 (A6): the 0A93E basis moves "
-        "BD1900_2's median by +0.00176 (leave-one-out basis +0.00171), above "
-        "the spec's 0.0016"
-    ),
-    ("FRS0002FE75", "D2300"): (
-        "DECISION PENDING, inside Phase 1 (A6): the 0A93E basis moves D2300's "
-        "median by -0.00177 (leave-one-out basis -0.00168), above the "
-        "repeatability 0.00152"
+        "inside Phase 1 (A6): the 0A93E basis moves BD1900_2's median by "
+        f"+0.00164, above the spec's 0.0016, {_BASIS_OFF}"
     ),
     ("FRS00031260", "BD1900_2"): (
-        "DECISION PENDING, inside Phase 1 (A6): the 08608 basis moves "
-        "BD1900_2's median by +0.0035 (leave-one-out basis +0.0031), above "
-        "the spec's 0.0016; it moves the FRS toward two of the three "
-        "overlapping MTRDRs and away from the third"
+        "inside Phase 1 (A6): the 08608 basis moves BD1900_2's median by "
+        "+0.0039, above the spec's 0.0016; it moves the FRS toward two of the "
+        f"three overlapping MTRDRs and away from the third, {_BASIS_OFF}"
     ),
 }
 
@@ -243,7 +244,7 @@ def _library(paper: Path, name: str, cache: Path) -> CalibrationLibrary:
 
 
 def _process(
-    paper: Path, name: str, folder: Path, artifactModel: bool = True
+    paper: Path, name: str, folder: Path, artifactModel: bool = False
 ) -> ProcessResult:
     recipe = Recipe()
     recipe.atmosphere.artifactModel.set(artifactModel)
@@ -264,13 +265,12 @@ def frt5850(paper: Path, tmp_path_factory: pytest.TempPathFactory) -> ProcessRes
 def frsProducts(
     paper: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> dict[str, tuple[ProcessResult, ProcessResult]]:
-    """Each FRS with the default recipe and with the artifact model off."""
+    """Each FRS with the artifact model on and with the default recipe (off,
+    D12)."""
     return {
         name: (
-            _process(paper, name, tmp_path_factory.mktemp(name.lower())),
-            _process(
-                paper, name, tmp_path_factory.mktemp(f"{name.lower()}_nobasis"), False
-            ),
+            _process(paper, name, tmp_path_factory.mktemp(name.lower()), True),
+            _process(paper, name, tmp_path_factory.mktemp(f"{name.lower()}_nobasis")),
         )
         for name in FRS
     }
@@ -480,6 +480,26 @@ def test_frt5850_parameter_bias(
     assert abs(compareMaps(ours, theirs).medianBias) <= _biasBound(name, repeatability)
 
 
+def test_frt5850_parameter_rms_achieved(
+    v2: _V2, repeatability: dict[str, float]
+) -> None:
+    """D9 (a): the scale-aware measure reported beside r, the RMS of ours −
+    MTRDR over the crater-floor repeatability, pinned at the measured values
+    plus about 0.05 (regression bounds, not tolerances). Measured: D2300
+    1.94, BD2290 1.07, BD1900_2 1.47, OLINDEX3 1.36, BD2310 0.78."""
+    bounds = {
+        "D2300": 2.0,
+        "BD2290": 1.12,
+        "BD1900_2": 1.52,
+        "OLINDEX3": 1.41,
+        "BD2310": 0.83,
+    }
+    for name in PARAMETERS:
+        ours, theirs = v2.comparison.parameters[name]
+        rms = compareMaps(ours, theirs).rmsDifference
+        assert rms / repeatability[name] <= bounds[name], name
+
+
 def _blockMeans(a: np.ndarray, f: int) -> np.ndarray:
     rows, cols = a.shape[0] // f * f, a.shape[1] // f * f
     return a[:rows, :cols].reshape(rows // f, f, cols // f, f).mean(axis=(1, 3))
@@ -592,10 +612,11 @@ def test_frs_co2_residual(
     residual RMS at most 0.0080 (the medians over the six local MTRDRs, M7).
     The bundled basis was learned from these three FRSs, so the product
     without it must pass too. Measured (with / without the basis; a
-    leave-one-out basis in between): FRS00031442 0.00397 / 0.00770 (0.00439),
-    scene 0.00193 / 0.00659; FRS0002FE75 0.00517 / 0.00741 (0.00537), scene
-    0.00362 / 0.00619; FRS00031260 0.00420 / 0.00731 (0.00457), scene 0.00203
-    / 0.00597."""
+    leave-one-out basis over 1850-2200 nm in between, before D12):
+    FRS00031442 0.00398 / 0.00770 (0.00439), scene 0.00194 / 0.00659;
+    FRS0002FE75 0.00530 / 0.00741 (0.00537), scene 0.00380 / 0.00619;
+    FRS00031260 0.00426 / 0.00731 (0.00457), scene 0.00211 / 0.00597. The
+    product without the basis is the default (D12)."""
     for result in frsProducts[name]:
         median, scene = _co2(_mapped(result))
         assert median <= FRS_CO2_MEDIAN
@@ -709,9 +730,10 @@ def test_artifact_basis_preserves_mineral_medians(
     """Task 14's review: the basis must not move the D2300, BD2290 and
     BD1900_2 medians by more than the between-observation repeatability
     (V2's bounds: the crater-floor repeatability measured here, and the
-    spec's 0.0016 for BD1900_2). Measured shifts: FRS00031442 −0.00072,
-    −0.00001, +0.00121; FRS0002FE75 −0.00176, −0.00007, +0.00176;
-    FRS00031260 −0.00094, −0.00000, +0.00350."""
+    spec's 0.0016 for BD1900_2). Measured shifts (D2300, BD2290, BD1900_2)
+    with the basis on the CO2 lines (D12): FRS00031442 0.00000, +0.00003,
+    +0.00143; FRS0002FE75 +0.00001, −0.00002, +0.00164; FRS00031260 −0.00002,
+    0.00000, +0.00388. Over the whole fit window D2300 moved by up to −0.0018."""
     with_, without = frsProducts[name]
     a, b = _parameterMedians(_mapped(with_), _mapped(without))[parameter]
     assert abs(a - b) <= _biasBound(parameter, repeatability)
@@ -720,9 +742,9 @@ def test_artifact_basis_preserves_mineral_medians(
 def test_artifact_basis_mineral_shift_achieved(
     frsProducts: dict[str, tuple[ProcessResult, ProcessResult]],
 ) -> None:
-    """What is met: BD2290 unmoved (≤ 0.0001), D2300 ≤ 0.0019 and BD1900_2 ≤
-    0.0037 (the measured maxima plus 0.0001 and 0.0002: regression bounds)."""
-    bounds = {"D2300": 0.0019, "BD2290": 0.0001, "BD1900_2": 0.0037}
+    """What is met: D2300 and BD2290 unmoved (≤ 0.0001), BD1900_2 ≤ 0.0041
+    (the measured maximum plus 0.0002: regression bounds)."""
+    bounds = {"D2300": 0.0001, "BD2290": 0.0001, "BD1900_2": 0.0041}
     for with_, without in frsProducts.values():
         medians = _parameterMedians(_mapped(with_), _mapped(without))
         for parameter, (a, b) in medians.items():

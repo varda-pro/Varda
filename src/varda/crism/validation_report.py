@@ -378,6 +378,7 @@ def validate(
             report["parameters"][name] = {
                 "pearson": fit.pearson,
                 "medianBias": fit.medianBias,
+                "rmsDifference": fit.rmsDifference,
                 "n": fit.n,
             }
             _mapFigure(name, a, b, folder / f"{name}.png")

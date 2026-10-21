@@ -1100,6 +1100,20 @@ def test_round_trip_npz(tmp_path: Path) -> None:
     )
 
 
+def test_applied_artifact_only_on_the_co2_lines() -> None:
+    """D12: the basis corrects 1940–2100 nm only, the whole score window, and
+    is 0 on the rest of the fit window, where the mineral bands are."""
+    basis = _basis(shape=(3, 60))
+    wavelengths = np.broadcast_to(np.linspace(1850.0, 2240.0, 60), (3, 60))
+    applied = atmosphere.appliedArtifact(basis, wavelengths)
+    low, high = atmosphere.ARTIFACT_WINDOW_NM
+    inside = (wavelengths >= low) & (wavelengths <= high)
+    np.testing.assert_array_equal(applied[inside], basis.spectra[inside])
+    assert not applied[~inside].any()
+    score = atmosphere.SCORE_WINDOW_NM
+    assert low <= score[0] and score[1] <= high
+
+
 def _save(folder: Path, basis: ArtifactBasis, key: str | None = None) -> Path:
     """``basis`` under the file name of ``key`` (default: its own)."""
     folder.mkdir(parents=True, exist_ok=True)

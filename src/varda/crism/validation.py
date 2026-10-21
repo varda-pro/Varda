@@ -143,11 +143,14 @@ class MapComparison:
     pearson: float
     medianBias: float  # median of ours − reference
     n: int  # pixels where both are finite
+    # RMS of ours − reference: with the between-observation repeatability, a
+    # scale-aware measure where a parameter's own spread is small (D9)
+    rmsDifference: float = np.nan
 
 
 def compareMaps(ours: np.ndarray, reference: np.ndarray) -> MapComparison:
-    """Pearson r and median bias of two co-registered parameter maps, over the
-    pixels where both are finite."""
+    """Pearson r, median bias and RMS difference of two co-registered
+    parameter maps, over the pixels where both are finite."""
     a, b = np.asarray(ours, np.float64), np.asarray(reference, np.float64)
     both = np.isfinite(a) & np.isfinite(b)
     a, b = a[both], b[both]
@@ -156,7 +159,13 @@ def compareMaps(ours: np.ndarray, reference: np.ndarray) -> MapComparison:
     da, db = a - a.mean(), b - b.mean()
     scale = np.sqrt((da @ da) * (db @ db))
     pearson = float(da @ db / scale) if scale > 0 else np.nan  # NaN if constant
-    return MapComparison(pearson, float(np.median(a - b)), int(a.size))
+    difference = a - b
+    return MapComparison(
+        pearson,
+        float(np.median(difference)),
+        int(a.size),
+        float(np.sqrt(np.mean(difference**2))),
+    )
 
 
 def _albedo(image: np.ndarray) -> np.ndarray:

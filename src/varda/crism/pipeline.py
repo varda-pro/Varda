@@ -92,6 +92,8 @@ from varda.crism.atmosphere import (
     ElevationModel,
     PixelFit,
     SelectionResult,
+    ARTIFACT_WINDOW_NM,
+    appliedArtifact,
     artifactScale,
     columnSpectra,
     correct,
@@ -699,7 +701,8 @@ class _Run:
         if lookup.basis is None:
             return None, None, {"used": False, "reason": lookup.reason}
         basis = lookup.basis
-        probe = AtmosphereModel(selection.chosen, selection.fit.shiftNm, basis.spectra)
+        artifact = appliedArtifact(basis, self.wavelengths)
+        probe = AtmosphereModel(selection.chosen, selection.fit.shiftNm, artifact)
         scale, scaleSigma = artifactScale(spectra, spread, self.wavelengths, probe)
         if not math.isfinite(scale):
             return (
@@ -712,12 +715,13 @@ class _Run:
                 },
             )
         return (
-            basis.spectra,
+            artifact,
             scale,
             {
                 "used": True,
                 "reason": lookup.reason,
                 "file": lookup.path,
+                "windowNm": list(ARTIFACT_WINDOW_NM),
                 "scale": scale,
                 "scaleSigma": scaleSigma,
                 "sourceObservations": list(basis.sourceObservations),
