@@ -8,6 +8,12 @@ can alter results.
 
 ### Added
 
+- **Drag vector files onto Varda.** A GeoPackage, Shapefile, GeoJSON, KML,
+  FlatGeobuf or GPX file dropped on the window goes to the current
+  workspace: the import dialog of the manager its geometry suggests
+  (polygons as ROIs, points as points, lines as lines), or, in Find Data, a
+  map overlay. A GeoPackage of raster tiles still opens as an image. See
+  [Importing vector data](docs/user-guide/importing-vector-data.md).
 - **CRISM Ratio: saved ROIs on the images.** **Show ROIs** (on by default,
   in Ratio Controls) outlines the saved ROIs in their class colors on the
   I/F and browse views, the browse one through the link; selecting one in
