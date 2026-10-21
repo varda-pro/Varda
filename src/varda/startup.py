@@ -11,7 +11,7 @@ import varda
 from varda.common.keys import NativeKeyTranslator
 from varda._actions._menu_ids import menuBar
 from varda.workspaces.terrain.terrain_view import TerrainView
-from varda._actions._file_actions import cleanOldExtractions, importImagePaths
+from varda._actions._file_actions import cleanOldExtractions
 from varda.all_images_view_list.image_list_menu_controller import (
     ImageListMenuController,
 )
@@ -20,6 +20,7 @@ from varda.maingui import MainGUI
 from varda.session_autosave import SessionAutosaver
 from varda.spectral_libraries.store import LibraryStore, setDefaultStore
 from varda.update_check import checkForUpdatesLater
+from varda.vector_drop import importDroppedPaths
 
 
 def defaultLibrariesFolder() -> Path:
@@ -61,9 +62,10 @@ def createVarda(q_app: QApplication, checkForUpdates: bool = True) -> VardaAppli
     app.maingui.imageList.sigRemoveRequested.connect(
         imageListController.onRemoveRequested
     )
-    # Files dragged onto the window import like File > Import Image(s)
+    # Files dragged onto the window: images import like File > Import
+    # Image(s), vector files go to the current workspace (vector_drop)
     app.maingui.sigFilesDropped.connect(
-        lambda paths: importImagePaths(paths, app.images)
+        lambda paths: importDroppedPaths(paths, app.images, app.maingui)
     )
     app.context.changed.connect(
         lambda _keys: app.maingui.menuBar().update_from_context(app.context)

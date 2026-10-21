@@ -13,6 +13,19 @@ can't be undone, but you can delete what it added.
 3. Click **Import**. A message says how many features were imported and
    what was skipped, and why.
 
+**Or drag the file onto Varda's window**, with the workspace you want it in
+in front. A GeoPackage (`.gpkg`, unless it holds only raster tiles, which
+opens as an image), Shapefile (`.shp`), GeoJSON (`.geojson`), KML,
+FlatGeobuf (`.fgb`) or GPX file goes to the same import dialog, of the
+manager its first layer suggests: polygons (or a mix) to the ROI Manager,
+points to the Points Manager, lines to the Lines tab. A workspace without
+that manager uses its ROI Manager, whose preview says what it skips. In
+**Find Data** a dropped vector file is drawn on the map, as **Add
+Overlay…** does. Images dropped with it import as images. A CSV or JSON
+file could hold anything, so those come in through **Import…** only; and
+since features are always placed on an image, a vector file dropped with no
+image workspace in front gets a message saying where to drop it.
+
 ## Formats
 
 - Anything GDAL reads through pyogrio: **Shapefile** (`.shp`, with its

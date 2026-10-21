@@ -61,6 +61,12 @@ IMPORT_FILE_FILTER = (
     "All files (*)"
 )
 
+# What a file dropped on the window must end in to be read as vectors (a CSV
+# or JSON file could be anything, so those still come through Import…)
+DROPPED_VECTOR_SUFFIXES = frozenset(
+    {".geojson", ".gpkg", ".shp", ".kml", ".fgb", ".gpx"}
+)
+
 # Column names guessed (ignoring case), in order of preference
 NAME_COLUMNS = ("name", "label", "id")
 CLASS_COLUMNS = ("class", "type", "unit")
@@ -228,6 +234,36 @@ def listLayers(path: str | Path) -> tuple[str, ...]:
     if Path(path).suffix.lower() == ".csv":
         return (Path(path).stem,)
     return tuple(str(name) for name in pyogrio.list_layers(path)[:, 0])
+
+
+def isDroppedVectorFile(path: str | Path) -> bool:
+    """Whether a file dropped on the window is a vector file: by its
+    extension, with a vector layer GDAL reads (a GeoPackage of raster tiles
+    alone is an image, so it opens as one)."""
+    path = Path(path)
+    if path.suffix.lower() not in DROPPED_VECTOR_SUFFIXES:
+        return False
+    try:
+        return len(pyogrio.list_layers(path)) > 0
+    except (pyogrio.errors.DataSourceError, OSError):
+        # unreadable: the importer says why, except for a GeoPackage, which
+        # may still open as an image
+        return path.suffix.lower() != ".gpkg"
+
+
+def suggestedTarget(path: str | Path) -> Target:
+    """What a vector file's first layer suggests it becomes: points as
+    points, lines as lines, anything else (polygons, mixed) as ROIs."""
+    try:
+        layers = pyogrio.list_layers(path)
+    except (pyogrio.errors.DataSourceError, OSError):
+        return Target.ROIS
+    geometry = str(layers[0, 1]) if len(layers) else ""
+    if "Point" in geometry:
+        return Target.POINTS
+    if "Line" in geometry:
+        return Target.LINES
+    return Target.ROIS
 
 
 def guessColumn(columns: list[str], candidates: tuple[str, ...]) -> str | None:
