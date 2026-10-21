@@ -118,10 +118,12 @@ def normalize_numba(image, minVals, maxVals):
 
 def _scaled(image: np.ndarray, low, high) -> np.ndarray:
     """``image`` clipped to ``low``-``high`` and scaled to 0-1. A channel with
-    no range (constant, or all NaN) gives NaN, quietly: numpy's 0/0 warning
-    says nothing a viewer can act on."""
+    no range (constant) is 0, as ``normalize_numba`` makes it: it is data,
+    not no-data. NaN stays NaN."""
+    span = np.asarray(high, dtype=np.float64) - low
     with np.errstate(divide="ignore", invalid="ignore"):
-        return (np.clip(image, low, high) - low) / (high - low)
+        scaled = (np.clip(image, low, high) - low) / np.where(span > 0, span, 1.0)
+    return scaled.astype(np.float32, copy=False)
 
 
 @registerStretchAlgorithm("Min-Max (Auto Full Range)")

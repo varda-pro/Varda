@@ -4,6 +4,60 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Changed
+
+- **Typed numbers take effect when you finish typing.** A number box in an
+  analysis's settings applies its value on Return or when you leave it, not
+  at every keystroke, and text that isn't a number (such as "1e309") is
+  refused whole, keeping the previous value with a note, instead of being
+  silently turned into another number (1309). The arrows and the scroll
+  wheel still change it at once. See
+  [Typing numbers in settings](docs/user-guide/README.md#typing-numbers-in-settings).
+
+### Fixed
+
+Found by the 0.12.0 release QA (five first-time-user personas on macOS,
+Windows and Linux):
+
+- **Exported provenance a methods section can quote.** Settings are recorded
+  as the dialog shows them: ranges with their units
+  (`{"from": 1000, "to": 2600, "units": "nm"}`, "Wavelengths=1000–2600 nm"
+  in the one-line description) and choices by their label, not internal
+  names. See [Reporting results](docs/user-guide/reporting-results.md).
+- **PCA band names tell components apart:** small variance shares keep two
+  significant figures ("PC 7 (0.0012%)") instead of all reading "(0.0%)";
+  the Eigenvalue Plot table too.
+- **Cite Varda says its DOI cites every version** and that each version's
+  own DOI is on the Zenodo record, to cite the one you used.
+- **Export Image** shows the whole save path (its full path in a tooltip)
+  and says the file carries Varda's provenance; the "Exported …" message
+  names the file first and no longer lingers. Names refused for
+  portability (CON, `* ? |`) are explained on every system.
+- **The workspace at small window sizes:** the ROI Manager's hint keeps all
+  its lines, the Image List shows its title and the distinguishing end of
+  each name (full name in the tooltip) without sideways scrolling, and the
+  color-stretch controls stay in view at 1024 × 700.
+- **Pixel Select's hint** fits its box and goes once you've clicked a
+  pixel, and the status line moves on to the next step.
+- **An analysis says when it's done** in the status bar ("PCA done: …").
+- **"N images can't be overlaid" says why** (no map coordinates, another
+  body…) and what to do, with each image in the tooltip.
+- **The spectrum plot** labels its y axis (with the data's unit when the
+  file states one), its legend has a background and can be dragged, and a
+  curve selected by clicking its pixel again says "Selected" in the legend.
+- **PCA, MNF and ICA:** Weight Image Holds is off until a weight image is
+  chosen, with plainer option names; the dialog opens tall enough to show
+  every setting when the screen has room (it hid Output at 150 % scaling).
+- **An assumed wavelength unit is shown** (the image list's tooltip and Image
+  Properties) and logged once per image, not three times.
+- **A constant image renders flat** instead of as no-data, without numpy's
+  divide warning.
+- **CRISM processing:** the dialog says which folder to add and where the
+  guide is, collapsed steps point right, its tooltips spell out MTRDR, MOLA
+  and CO₂, and menu items that open a dialog end in "…".
+
 ## 0.12.0 (2026-10-21)
 
 ### Added

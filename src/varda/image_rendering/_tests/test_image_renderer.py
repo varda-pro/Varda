@@ -178,4 +178,10 @@ def test_a_constant_image_renders_without_a_divide_warning(qtbot):
         stretched = MinMaxStretch().apply(image.getData())
         mono = MinMaxStretch().apply(image.getData()[..., :1])
         ImageRenderer(image).render()
-    assert np.isnan(stretched).all() and np.isnan(mono).all()  # as before
+    # a constant band is data, not no-data: it renders flat (0, as the
+    # numba path's normalize does), and no-data stays NaN
+    assert (stretched == 0).all() and (mono == 0).all()
+    withGap = np.full((4, 4, 1), 0.2, np.float32)
+    withGap[0, 0, 0] = np.nan
+    flat = MinMaxStretch().apply(withGap)
+    assert np.isnan(flat[0, 0, 0]) and (flat[1:, :, 0] == 0).all()
