@@ -81,6 +81,16 @@ def test_turning_it_on_shows_how_to_use_it(viewport):
     tool.deactivate()
 
 
+def test_the_hint_goes_once_a_pixel_is_selected(qtbot, viewport):
+    """Release QA 0.12.0: the hint stayed over the image after use."""
+    tool = PixelSelectTool(viewport)
+    widget, center = _surface(viewport)
+    qtbot.mouseClick(widget, LEFT, NONE, center)
+    qtbot.wait(20)
+    assert tool._textOverlay is None
+    tool.deactivate()
+
+
 class _ClickTaker(QGraphicsRectItem):
     """Stands in for an ROI or line handle that takes its clicks."""
 

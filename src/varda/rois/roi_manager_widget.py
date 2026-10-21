@@ -197,10 +197,14 @@ class ROIManagerWidget(QWidget):
             "selected class until you start a new one."
         )
         hint.setWordWrap(True)
-        form = QFormLayout(box)
-        form.addRow(hint)
+        # the hint above the form, not a row of it: a form layout can keep the
+        # height it worked out for a wider dock, cutting the hint to one line
+        form = QFormLayout()
         form.addRow("Shape:", ROIShapePicker(state))
         form.addRow(ROIClassPicker(state))
+        layout = QVBoxLayout(box)
+        layout.addWidget(hint)
+        layout.addLayout(form)
         return box
 
     def _computeInBackground(

@@ -6,7 +6,8 @@ from shapely.geometry import box
 
 from varda.analysis import transforms
 from varda.analysis.analysis import AnalysisContext
-from varda.analysis.linear_algebra import NoiseEstimate
+from varda.analysis.dialog import RunAnalysisDialog
+from varda.analysis.linear_algebra import NoiseEstimate, varianceShareText
 from varda.analysis.transforms import (
     TRANSFORM_METADATA_KEY,
     IcaAnalysis,
@@ -14,6 +15,7 @@ from varda.analysis.transforms import (
     PcaAnalysis,
     WeightKind,
 )
+from varda.common.parameter_widgets import EnumParameterWidget
 from varda.common.vec2 import Vec2
 from varda.common.entities import Color, ROIMode, VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -320,4 +322,55 @@ def test_the_weight_settings_say_what_they_do():
     assert analysis.weights.name == "Weight Image"
     assert analysis.weightKind.name == "Weight Image Holds"
     assert "counts less" in analysis.weightKind.description
-    assert "larger counts more" in WeightKind.WEIGHTS.value
+    # Release QA 0.12.0 #10: "Weights: larger counts more (e.g. sample
+    # counts)" was hard to parse
+    assert WeightKind.WEIGHTS.value == (
+        "Each pixel's weight (higher counts more, e.g. a sample count)"
+    )
+    assert WeightKind.INVERSE_VARIANCE.value == (
+        "Each pixel's uncertainty σ (weighted by 1/σ²)"
+    )
+
+
+@pytest.mark.parametrize("analysisType", [PcaAnalysis, MnfAnalysis, IcaAnalysis])
+def test_weight_image_holds_is_off_until_a_weight_image_is_chosen(qtbot, analysisType):
+    """Release QA 0.12.0 #10: it stayed editable with "None (unweighted)"."""
+    image = _structured()
+    counts = np.ones(np.asarray(image.getData()).shape, np.float32)
+    weights = VardaRaster(ArrayDataSource(counts), name="FRAMES USED")
+    dialog = RunAnalysisDialog(
+        [image, weights], [analysisType], analysis=analysisType, image=image
+    )
+    qtbot.addWidget(dialog)
+    analysis = dialog.selectedAnalysis()
+    holds = next(
+        w
+        for w in dialog.findChildren(EnumParameterWidget)
+        if w.param is analysis.weightKind
+    )
+    assert analysis.weights.get() is None and not holds.isEnabled()
+    analysis.weights.set(weights)
+    assert holds.isEnabled()
+    analysis.weights.clear()
+    assert not holds.isEnabled()
+
+
+def test_every_pc_band_name_tells_its_share_apart():
+    """Release QA 0.12.0 #12: most components were named "PC 3 (0.0%)" …
+    "PC 40 (0.0%)", so they couldn't be told apart or ranked."""
+    image = _image(bands=12)  # three sources: components 4-12 hold ~1e-5 %
+    analysis = PcaAnalysis()
+    analysis.components.set(12)
+    result = analysis.run(image, lambda p, m: None)
+    shares = [float(name.split("(")[1].rstrip("%)")) for name in result.bandNames]
+    assert all(share > 0 for share in shares)  # none reads "0.0%"
+    assert shares == sorted(shares, reverse=True)  # ranked as the components are
+
+
+def test_variance_shares_keep_two_significant_figures_when_small():
+    assert varianceShareText(0.852) == "85.2%"
+    assert varianceShareText(0.034) == "3.4%"
+    assert varianceShareText(0.0034) == "0.34%"
+    assert varianceShareText(0.000012) == "0.0012%"
+    assert varianceShareText(3.4e-7) == "3.4e-05%"
+    assert varianceShareText(0.0) == "0%"

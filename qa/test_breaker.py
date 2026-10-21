@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDoubleSpinBox,
     QLineEdit,
+    QSpinBox,
     QWidget,
 )
 
@@ -269,6 +270,7 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
         if field is None:
             continue
         for junk in JUNK:
+            shownBefore = field.text()
             box.setFocus()
             field.selectAll()
             keyClick(field, Qt.Key.Key_Delete)
@@ -276,6 +278,15 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
             keyClick(field, Qt.Key.Key_Tab)  # leave the field
             QApplication.processEvents()
             run.log("typed", into=type(box).__name__, junk=junk, shows=field.text())
+            if not _tookOrRefused(box, junk, shownBefore, field.text()):
+                run.finding(
+                    "wrong result",
+                    f"Typed {junk!r} into a number box and left it; it shows "
+                    f"{field.text()!r}, a value never typed (it should take "
+                    f"what was typed or refuse it whole)",
+                    widget=dialog,
+                    reproduce=f"PCA dialog: type {junk!r} into a number box, press Tab",
+                )
     run.qaShot(dialog, "junk-settings", "after typing junk into every number box")
     before, messages = len(journeys.images(run)), len(run.messages)
     runButton = run.button(dialog, "Run")
@@ -304,6 +315,28 @@ def _junkInSettings(run: QaRun, image: VardaRaster) -> None:
     elif dialog.isVisible():
         run.log("Run refused the junk", reason=dialog.statusLabel.text())
         dialog.reject()
+
+
+def _tookOrRefused(
+    box: QAbstractSpinBox, typed: str, shownBefore: str, shownAfter: str
+) -> bool:
+    """Whether a number box left after typing shows what was typed, or what
+    it showed before (refused whole); never a value made of a part of it
+    ("1e309" as 1309, "-1" as 1). Empty or blank text may put the value
+    back."""
+    if shownAfter == shownBefore:
+        return True
+    try:
+        wanted = float(typed)
+    except ValueError:
+        return False
+    number = shownAfter
+    if isinstance(box, (QSpinBox, QDoubleSpinBox)):
+        number = number.removeprefix(box.prefix()).removesuffix(box.suffix())
+    try:
+        return float(number.strip().replace(",", "")) == wanted
+    except ValueError:
+        return False
 
 
 def _oneWavelength(run: QaRun, image: VardaRaster) -> None:
@@ -358,6 +391,12 @@ def _oneWavelength(run: QaRun, image: VardaRaster) -> None:
         )
 
 
+# Names refused on every system so files stay portable; outside Windows the
+# message should say why (release QA 0.12.0 #18)
+REFUSED_EVERYWHERE = ("CON.tif", "bad<>|?*.tif")
+PORTABLE = re.compile(r"portable|any computer|every system", re.I)
+
+
 def _junkPaths(run: QaRun, image: VardaRaster) -> None:
     cwd = Path.cwd()
     paths = [
@@ -369,8 +408,8 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
         "🙂",
         # Names Windows forbids or reserves: refused everywhere, before writing
         # (release QA #16: Windows said "failed: No error")
-        "CON.tif",
-        str(run.folder / "bad<>|?*.tif"),
+        REFUSED_EVERYWHERE[0],
+        str(run.folder / REFUSED_EVERYWHERE[1]),
     ]
     for typed in paths:
         if not run.useMenu("File", "Export Image", shot=False):
@@ -421,12 +460,30 @@ def _junkPaths(run: QaRun, image: VardaRaster) -> None:
                 f"Export to {typed!r} wrote {written.name!r} (a doubled dot)",
                 reproduce=reproduce,
             )
-        if written is not None and not any(str(written) in m for m in confirmed):
+        told = [m for m in confirmed if written is not None and written.name in m]
+        if written is not None and not any(str(written.parent) in m for m in told):
             run.finding(
                 "confused",
                 f"Export to {typed!r} doesn't say where the file went ({written})",
                 reproduce=reproduce,
             )
+        elif told and not told[-1].startswith(f"Exported {written.name}"):
+            # a narrow window cuts the end off (release QA 0.12.0 #17)
+            run.finding(
+                "annoyed",
+                f"The status bar names the folder before the file: {told[-1]!r}",
+                reproduce=reproduce,
+            )
+        if written is None and Path(typed).name in REFUSED_EVERYWHERE:
+            for message in said:
+                if sys.platform != "win32" and not PORTABLE.search(message.text):
+                    run.finding(
+                        "confused",
+                        f"Export refuses {typed!r} with a Windows rule on "
+                        f"{sys.platform}: {message.text[:160]!r}",
+                        shot=message.screenshot,
+                        reproduce=reproduce,
+                    )
         for message in said:
             if "No error" in message.text or LIBRARY_JARGON.search(message.text):
                 run.finding(

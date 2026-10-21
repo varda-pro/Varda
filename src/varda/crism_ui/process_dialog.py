@@ -59,6 +59,14 @@ STEP_TITLES = {
     "projection": "Map projection",
     "output": "Outputs",
 }
+# superqt's default ▲ for a collapsed box reads as "expanded" or "move up"
+COLLAPSED_ICON = "▶"
+EXPANDED_ICON = "▼"
+HINT = (
+    "Add a folder for each observation: its TRR3 I/F (…_if…l_trr3) and its "
+    "DDR (…_ddr1), with their labels. The method, its uncertainty and how to "
+    "report it: Help → Documentation → CRISM processing."
+)
 _log = logging.getLogger(__name__)
 
 
@@ -119,7 +127,11 @@ class ProcessCrismDialog(QDialog):
         stepsLayout.setContentsMargins(0, 0, 0, 0)
         for key, group in self.recipe.params.items():
             assert isinstance(group, ParameterGroup)
-            box = QCollapsible(STEP_TITLES.get(key, key.capitalize()))
+            box = QCollapsible(
+                STEP_TITLES.get(key, key.capitalize()),
+                expandedIcon=EXPANDED_ICON,
+                collapsedIcon=COLLAPSED_ICON,
+            )
             box.setContent(groupWidget(group))
             box.collapse(animate=False)
             self._steps.append(box)
@@ -173,7 +185,10 @@ class ProcessCrismDialog(QDialog):
         buttons.addWidget(self.cancelButton)
         buttons.addWidget(self.closeButton)
 
+        self.hint = MutedLabel(HINT)
+        self.hint.setWordWrap(True)
         layout = QVBoxLayout(self)
+        layout.addWidget(self.hint)
         layout.addLayout(observations, 1)
         layout.addLayout(recipeButtons)
         layout.addWidget(scroll, 2)

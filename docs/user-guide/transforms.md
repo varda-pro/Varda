@@ -80,9 +80,11 @@ PCA, MNF and ICA each choose what goes in:
 - **Weight Image** (optional; none by default) gives each value a weight from
   another image on the same grid: per band (an image with the same bands)
   or per pixel (one band). Weights are never resampled; images that can't
-  be used are named under the dropdown, with why. **Weight Image Holds** says whether that image holds
-  weights (larger counts more), such as the number of frames behind each value, or uncertainties
-  σ (weighted 1/σ²).
+  be used are named under the dropdown, with why. **Weight Image Holds**
+  (off until a weight image is chosen) says what that image's values are:
+  **Each pixel's weight** (higher counts more), such as the number of frames
+  behind each value, or **Each pixel's uncertainty σ** (each value weighted
+  by 1/σ²). With one weight band per image band, "pixel" reads "value".
 
 Without weights, a pixel's missing values (no-data or NaN) are filled by
 linear interpolation along its spectrum, and a pixel missing more than half
@@ -183,7 +185,10 @@ components used).
   have the same bands: if the transform left bands out, first cut the
   original to the same bands with **Subset (Crop Rows, Columns, Bands)**.
 - **What's saved where.** The band names of a PCA result carry each
-  component's share of the variance ("PC 1 (85.2%)"). The eigenvalues,
+  component's share of the variance: one decimal from 1 % ("PC 1
+  (85.2%)"), two significant figures below it ("PC 7 (0.0034%)", "PC 40
+  (2.1e-05%)"), so even the noise components can be told apart and ranked.
+  The **Eigenvalue Plot…** table's Variance % column uses the same rule. The eigenvalues,
   explained variance, mean and inverse are kept with the result and in its
   exported files (the `VARDA` metadata domain), so **Eigenvalue Plot…** and
   **Inverse Transform** work on a reopened file. Quote the values you report

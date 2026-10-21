@@ -75,3 +75,14 @@ def test_several_problems_at_once_are_one_message(gui, tmp_path):
         "2 images have coordinate-system problems (a dot on their thumbnails). "
         "Details in Image Properties."
     ]
+
+
+def test_the_image_list_shows_its_title_and_names_in_the_smallest_window(gui, qtbot):
+    """Release QA 0.12.0: at the default window size the dock was ~90 px
+    wide, titled "Ima…", its names cut to "qa_cube.im…"."""
+    gui.resize(0, 0)  # clamped to the window's minimum
+    qtbot.wait(50)
+    metrics = gui.imageListDock.fontMetrics()
+    width = gui.imageListDock.width()
+    assert width >= metrics.horizontalAdvance("Image List") + 50  # + its buttons
+    assert width >= 16 * metrics.averageCharWidth()

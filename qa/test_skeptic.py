@@ -30,6 +30,8 @@ from varda.version import vardaVersion
 pytestmark = [pytest.mark.qa, pytest.mark.qt_no_exception_capture]
 
 GUIDE = Path(__file__).resolve().parents[1] / "docs" / "user-guide"
+# An enum member's name ("WEIGHTS", "INVERSE_VARIANCE") where its label belongs
+INTERNAL_NAME = re.compile(r"[A-Z][A-Z0-9]*(_[A-Z0-9]+)+|[A-Z]{4,}")
 # What a methods section needs from a process's guide page
 GUIDE_NEEDS = {
     "a reference": re.compile(r"(doi\.org|doi:|et al\.|\(\d{4}\))", re.I),
@@ -100,6 +102,19 @@ def test_trust_before_use(qaRun: QaRun, qaData: QaData) -> None:
                     run.finding(
                         "confused",
                         "The citation has no DOI to cite this exact version",
+                        widget=dialog,
+                    )
+                # A concept DOI resolves to the latest version: does the
+                # dialog say so, and where this version's own DOI is?
+                # (release QA 0.12.0 #8)
+                note = " ".join(label.text() for label in dialog.findChildren(QLabel))
+                if not re.search(r"every version|all versions", note) or (
+                    "own DOI" not in note
+                ):
+                    run.finding(
+                        "confused",
+                        f"The citation pairs Version {vardaVersion()} with a DOI "
+                        "and doesn't say whether the DOI pins that version",
                         widget=dialog,
                     )
                 dialog.reject()
@@ -247,5 +262,28 @@ def _checkProvenance(run: QaRun, path: Path) -> None:
     for need in ("process", "parameters", "vardaVersion", "inputs"):
         if need not in json.dumps(provenance):
             run.finding("confused", f"The export's provenance has no {need}")
+    parameters = (
+        provenance.get("parameters", {}) if isinstance(provenance, dict) else {}
+    )
+    for name, value in parameters.items():
+        # a methods section quotes settings as the dialog showed them
+        if isinstance(value, dict) and set(value) == {"x", "y"}:
+            run.finding(
+                "confused",
+                f"The export's provenance records {name} as x/y with no units",
+            )
+        elif isinstance(value, str) and INTERNAL_NAME.fullmatch(value):
+            run.finding(
+                "confused",
+                f"The export's provenance records {name} as {value!r}, "
+                "not the label the dialog showed",
+            )
     if not any(descriptions):
         run.finding("confused", "The exported bands have no names")
+    rounded = [d for d in descriptions if d and d.endswith("(0.0%)")]
+    if len(rounded) > 1:
+        run.finding(
+            "confused",
+            f"{len(rounded)} exported PC bands are named '(0.0%)', so they can't "
+            "be told apart or ranked",
+        )

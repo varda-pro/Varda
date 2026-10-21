@@ -1,5 +1,6 @@
 """Tests for the interaction signals emitted by ImageListWidget."""
 
+import numpy as np
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QContextMenuEvent
 from PyQt6.QtWidgets import QApplication, QListWidgetItem
@@ -8,8 +9,10 @@ from varda.all_images_view_list.imageview_list import (
     ImageItemDelegate,
     ImageListWidget,
 )
+from varda.common.entities import VardaRaster
 from varda.common.observable_list import ObservableList
 from varda.geo._tests.fixtures import writeWgs84
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.image_loading_service import loadRaster
 from varda.utilities.debug import generate_random_image
 
@@ -123,3 +126,45 @@ def test_painting_the_badge_makes_no_new_thumbnail(qtbot, tmp_path, monkeypatch)
     for _ in range(3):
         viewport.repaint()
     assert made == []  # the badge reads the health checked at load
+
+
+def test_an_assumed_wavelength_unit_is_named_in_the_tooltip(qtbot):
+    """Release QA 0.12.0 #13: "Wavelength units not declared; assuming nm"
+    went only to the log."""
+    data = np.random.default_rng(0).random((6, 7, 5)).astype(np.float32)
+    image = VardaRaster(
+        ArrayDataSource(data, wavelengths=np.linspace(400, 2500, 5)), name="big"
+    )
+    widget = _showWidget(qtbot, image)
+    assert _item(widget, 0).toolTip() == (
+        "big\nWavelength units not declared; assuming nm from the values (400–2500)"
+    )
+
+
+LONG_NAME = "qa_cube_reflectance_corrected.img PCA"
+
+
+def test_a_long_name_keeps_its_end(qtbot):
+    """Release QA 0.12.0: "qa_cube.im…" hid that it was the PCA result."""
+    widget = _showWidget(qtbot)
+    metrics = widget.fontMetrics()
+    shown = ImageItemDelegate.labelText(LONG_NAME, metrics, 100)
+    assert shown != LONG_NAME and "…" in shown
+    assert shown.startswith("qa") and shown.endswith("PCA")
+    assert metrics.horizontalAdvance(shown) <= 100
+
+
+def test_a_narrow_list_never_scrolls_sideways(qtbot):
+    data = np.zeros((20, 20, 3), dtype=np.float32)
+    image = VardaRaster(ArrayDataSource(data), name=LONG_NAME)
+    widget = _showWidget(qtbot, image, generate_random_image((20, 20, 10)))
+    widget.resize(widget.minimumSizeHint().width(), 300)
+    qtbot.wait(50)
+    viewport = widget.viewport()
+    assert viewport is not None
+    for row in range(widget.count()):
+        item = widget.item(row)
+        assert item is not None
+        assert widget.visualItemRect(item).right() <= viewport.width(), item.text()
+    bar = widget.horizontalScrollBar()
+    assert bar is None or not bar.isVisible()

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,6 +36,9 @@ from varda.common.parameter_widgets import (
     groupWidget,
     parameterWidget,
 )
+
+# Room left for the window's title bar when sizing it to the screen
+TITLE_BAR_ALLOWANCE = 40
 
 
 class RunAnalysisDialog(QDialog):
@@ -126,10 +129,11 @@ class RunAnalysisDialog(QDialog):
             .withWidget(outputBox)
             .withStretch()
         )
+        self.scrollArea = PanelScrollArea(body)
         self.setLayout(
             VBoxBuilder()
             .withLayout(form)
-            .withWidget(PanelScrollArea(body), 1)
+            .withWidget(self.scrollArea, 1)
             # Beside Run, never scrolled out of view: why it's off, or what
             # the settings make it read
             .withWidget(self.statusLabel)
@@ -141,6 +145,13 @@ class RunAnalysisDialog(QDialog):
             )
         )
 
+        # Qt would size it to at most two thirds of the screen's height,
+        # hiding the Output section behind a scroll bar at 150 % scaling
+        screen = self.screen()
+        if screen is not None:
+            free = screen.availableGeometry().size() - QSize(0, TITLE_BAR_ALLOWANCE)
+            self.resize(self.openingSize(free))
+
         self.analysisCombo.currentIndexChanged.connect(self._showSettings)
         self.imageParam.sigParameterChanged.connect(lambda _: self._showSettings())
         self.saveCheck.toggled.connect(self._updateRunState)
@@ -149,6 +160,16 @@ class RunAnalysisDialog(QDialog):
             lambda: self.sigRunRequested.emit(
                 self.selectedAnalysis(), self.selectedImage(), self.outputPath()
             )
+        )
+
+    def openingSize(self, available: QSize) -> QSize:
+        """As big as the dialog needs to show all of its settings without
+        scrolling, up to ``available`` (beyond that they scroll)."""
+        hint = self.sizeHint()
+        panel = self.scrollArea.panel.sizeHint().height()
+        height = hint.height() - self.scrollArea.sizeHint().height() + panel
+        return QSize(
+            min(hint.width(), available.width()), min(height, available.height())
         )
 
     def selectedAnalysis(self) -> Analysis:

@@ -11,6 +11,12 @@ What they share:
   cm⁻¹) before computing, so every "per nm" below is per nanometer whatever
   unit the image uses. Continuum Removal and Spectral Slope need numeric
   wavelengths with units; Spectral Derivative falls back to band numbers.
+  When a file doesn't declare its wavelength unit, Varda assumes µm for
+  values below 100 and nm otherwise, and says so in the image's tooltip in
+  the image list and under **Wavelength unit** in **Image Properties**
+  ("Wavelength units not declared; assuming nm from the values
+  (400–2500)"). Set the unit there if the assumption is wrong, and report
+  the unit you used.
 - **Bad bands.** All three tools leave out the bands marked bad in the
   image (the ENVI `bbl` list, editable in **Image Properties**).
 - **Missing values.** No-data values in the good bands are filled by linear

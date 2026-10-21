@@ -238,6 +238,14 @@ def plain(text: str) -> str:
     return text.replace("&&", "\0").replace("&", "").replace("\0", "&").strip(" .…")
 
 
+def _asksFirst(dialog: QDialog) -> bool:
+    """A dialog that asks for something before acting (it can be canceled),
+    which the menu item leading to it should mark with "…"."""
+    return any(
+        plain(b.text()) == "Cancel" for b in dialog.findChildren(QAbstractButton)
+    )
+
+
 class QaRun:
     """One persona's session with the app."""
 
@@ -465,6 +473,13 @@ class QaRun:
                     where=where,
                 )
                 self.log("step error", traceback=traceback.format_exc())
+        for where, message in _vardaRuntimeWarnings(caught):
+            self.finding(
+                "annoyed",
+                f'Varda printed numpy\'s "{message}" to the console',
+                reproduce=reproduce,
+                where=where,
+            )
         self.log(
             "step done",
             seconds=round(time.monotonic() - started, 2),
@@ -642,9 +657,28 @@ class QaRun:
             )
             return False
         self.log("menu", item=label)
+        asked, shown = len(self.fileDialogs), set(map(id, self._openDialogs()))
         action.trigger()
         QApplication.processEvents()
+        opened = [d for d in self._openDialogs() if id(d) not in shown]
+        asks = len(self.fileDialogs) > asked or any(map(_asksFirst, opened))
+        if asks and not action.text().rstrip().endswith("…"):
+            self.finding(
+                "annoyed",
+                f"{label} opens a dialog, but its menu text has no …",
+                widget=self._mainOrNone(),
+            )
         return True
+
+    @staticmethod
+    def _openDialogs() -> list[QDialog]:
+        return [
+            w
+            for w in QApplication.topLevelWidgets()
+            if isinstance(w, QDialog)
+            and w.isVisible()
+            and not isinstance(w, (QMessageBox, BusyDialog, QProgressDialog))
+        ]
 
     def _shootMenu(self, path: tuple[str, ...]) -> None:
         """Pop the item's menu up for a screenshot, as the user would see it."""
@@ -781,6 +815,23 @@ def _busyFeedbackShown() -> bool:
         isinstance(w, (BusyDialog, QProgressDialog)) and w.isVisible()
         for w in QApplication.topLevelWidgets()
     )
+
+
+def _vardaRuntimeWarnings(
+    caught: list[warnings.WarningMessage],
+) -> list[tuple[str, str]]:
+    """(``src/varda/file:line``, message) of each distinct RuntimeWarning
+    raised in Varda's own code (e.g. numpy's "invalid value encountered in
+    divide"): console noise a user can't act on."""
+    found: dict[tuple[str, str], None] = {}
+    for warning in caught:
+        name = warning.filename.replace("\\", "/")
+        if issubclass(warning.category, RuntimeWarning) and (
+            "/varda/" in name and "/qa/" not in name
+        ):
+            where = f"src/varda/{name.rpartition('/varda/')[2]}:{warning.lineno}"
+            found[(where, str(warning.message))] = None
+    return list(found)
 
 
 def _innermostVarda(tb: TracebackType | None) -> str:

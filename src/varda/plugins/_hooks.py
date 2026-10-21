@@ -38,7 +38,7 @@ def registerCatalogs():
 @hookspec
 def registerDataSources():
     """Return ``(formatName, fileExtensions, DataSourceClass)`` tuples: file
-    formats Varda can open, offered in File → Import Image(s)."""
+    formats Varda can open, offered in File → Import Image(s)…"""
 
 
 @hookimpl(wrapper=True)

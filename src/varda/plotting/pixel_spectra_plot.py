@@ -23,13 +23,35 @@ from PyQt6.QtWidgets import QCheckBox, QPushButton, QWidget
 from varda.common.entities import Color, VardaRaster
 from varda.common.parameter import EnumParameter, IntParameter, ParameterGroup
 from varda.common.ui import ButtonBuilder, FlowLayout, SectionBox, VBoxBuilder
-from varda.plotting.plot import Curve, VardaPlotWidget
+from varda.plotting.plot import DEFAULT_VALUE_LABEL, Curve, VardaPlotWidget
 from varda.rois.region_statistics import boxPolygonPixels, computeRegionStatistics
 from varda.common.parameter_widgets import groupWidget
 from varda.spectral_libraries.spectrum import SpectrumOrigin
 from varda.spectral_libraries.store import LibraryStore
 
 logger = logging.getLogger(__name__)
+
+
+# Metadata naming the unit of an image's values (keys lower case, "_" as
+# " "): ENVI "data units", FITS BUNIT, and others' "units"
+VALUE_UNIT_KEYS = ("data units", "value units", "units", "bunit")
+
+
+def valueAxisLabel(image: VardaRaster) -> str:
+    """The y axis's name for an image's spectra: "Value (<unit>)" when its
+    metadata states the values' unit, "Reflectance" for an ENVI file with a
+    reflectance scale factor, else "Value"."""
+    metadata = {
+        str(key).lower().replace("_", " "): value
+        for key, value in image.extraMetadata.items()
+    }
+    for key in VALUE_UNIT_KEYS:
+        unit = str(metadata.get(key) or "").strip().strip("{}").strip()
+        if unit:
+            return f"{DEFAULT_VALUE_LABEL} ({unit})"
+    if "reflectance scale factor" in metadata:
+        return "Reflectance"
+    return DEFAULT_VALUE_LABEL
 
 
 class SpectrumMode(Enum):
@@ -171,6 +193,7 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
             self._requestSaveAllPoints
         )
         self.sigPixelCurvesChanged.connect(self._updateSaveButtons)
+        self.sigPixelCurvesChanged.connect(self._updateValueLabel)
         self._updateSaveButtons()
 
         # Directly after the base widget's "View" section
@@ -203,6 +226,11 @@ class PixelSpectraPlotWidget(VardaPlotWidget):
         enabled = bool(self._pixelCurvesWithOrigin())
         self.savePointButton.setEnabled(enabled)
         self.saveAllPointsButton.setEnabled(enabled)
+
+    def _updateValueLabel(self) -> None:
+        """The y axis names the values of the images plotted, if they agree."""
+        labels = {valueAxisLabel(origin.image) for origin in self.pixelOrigins.values()}
+        self.setValueLabel(labels.pop() if len(labels) == 1 else DEFAULT_VALUE_LABEL)
 
     def _requestSavePoint(self) -> None:
         candidates = self._pixelCurvesWithOrigin()

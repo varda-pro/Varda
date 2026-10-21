@@ -32,6 +32,7 @@ from varda.analysis.linear_algebra import (
     suggestionRule,
     weightedPca,
     unflatten,
+    varianceShareText,
 )
 from varda.analysis.rasters import goodBands, readCube
 from varda.common.entities import VardaRaster
@@ -70,8 +71,8 @@ def _componentsParameter() -> IntParameter:
 
 
 class WeightKind(LabeledEnum):
-    WEIGHTS = "Weights: larger counts more (e.g. sample counts)"
-    INVERSE_VARIANCE = "Uncertainties σ (weight 1/σ²)"
+    WEIGHTS = "Each pixel's weight (higher counts more, e.g. a sample count)"
+    INVERSE_VARIANCE = "Each pixel's uncertainty σ (weighted by 1/σ²)"
 
 
 def _wavelengthsParameter() -> Vec2Parameter:
@@ -106,9 +107,11 @@ def _weightKindParameter() -> EnumParameter:
         description=(
             "What the weight image's values are: weights, where larger means a "
             "value counts more, or uncertainties σ, where larger means it "
-            "counts less (each value is weighted 1/σ²)."
+            "counts less (each value is weighted 1/σ²). A one-band weight image "
+            "gives a pixel one weight for all its bands; one with the image's "
+            "bands gives each value its own. Off until a Weight Image is chosen."
         ),
-    )
+    ).enabledWhen("weights")
 
 
 def transformMetadata(
@@ -370,7 +373,7 @@ class PcaAnalysis(_ComponentAnalysis):
 
     def _bandNames(self, result):
         return [
-            f"PC {i + 1} ({100 * share:.1f}%)"
+            f"PC {i + 1} ({varianceShareText(share)})"
             for i, share in enumerate(result.explainedVariance)
         ]
 

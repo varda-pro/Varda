@@ -169,12 +169,17 @@ right-clicking an image → **Export Image…**.
 
 In **Save as**, a name without a folder (`result.tif`) goes into the folder
 you last exported to, or else the image's own folder; the dialog then shows
-the full path, and the status bar says where the file was written. The
+the full path (also in its tooltip), and the status bar says what was
+written and where ("Exported result.tif to /data/exports"; hover over it
+for the full path). A line in the dialog reminds you that the file carries
+Varda's provenance record (below). The
 suffix picks the format (`.img` or none for ENVI, `.tif` for GeoTIFF).
 Trailing dots and spaces are dropped. Names that some system can't store are
-refused before anything is written, so the file can be shared with any
-computer: the characters `< > : " | ? *` and the names Windows reserves
-(`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`). When writing
+refused before anything is written, on every system, so the file opens on
+any computer: the characters `< > : " | ? *` and the device names Windows
+keeps for itself (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`,
+with or without a suffix). The message names the problem and suggests a
+name that works (`CON_1.tif`). When writing
 fails (a folder that doesn't exist, no permission, a full disk) the message
 says what to do; the library's own text is under **Show Details…**.
 

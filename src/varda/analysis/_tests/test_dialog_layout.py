@@ -4,8 +4,10 @@ nothing in it is cut off at its smallest width."""
 import numpy as np
 import pytest
 from affine import Affine
+from PyQt6.QtCore import QSize
 from rasterio import CRS
 
+from varda.analysis.analysis import Analysis
 from varda.analysis.dialog import RunAnalysisDialog
 from varda.analysis.fatt_map import FattMapAnalysis
 from varda.analysis.image_math import ApplyMaskAnalysis
@@ -13,6 +15,7 @@ from varda.analysis.spectral_library import LibrarySpectrum
 from varda.analysis.registry import availableAnalyses
 from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
+from varda.common.parameter import IntParameter
 from varda.common.parameter_widgets import ImageParameterWidget
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.debug import generate_random_image
@@ -95,4 +98,59 @@ def test_the_not_listed_note_fits_a_laptop_screen(qtbot):
     qtbot.waitExposed(dialog)
     assertNothingClipped(dialog)
     dialog.resize(1280, 800)
+    assertNothingClipped(dialog)
+
+
+class _TallAnalysis(Analysis):
+    """Settings taller than two thirds of the test screen but shorter than
+    all of it, like PCA's at 150 % display scaling."""
+
+    name = "Tall"
+    description = "An analysis with many settings."
+    first = IntParameter("First", 1, range=(0, 9))
+    second = IntParameter("Second", 1, range=(0, 9))
+    third = IntParameter("Third", 1, range=(0, 9))
+    fourth = IntParameter("Fourth", 1, range=(0, 9))
+    fifth = IntParameter("Fifth", 1, range=(0, 9))
+    sixth = IntParameter("Sixth", 1, range=(0, 9))
+    seventh = IntParameter("Seventh", 1, range=(0, 9))
+    eighth = IntParameter("Eighth", 1, range=(0, 9))
+
+    def run(self, image, reportProgress):
+        return image
+
+
+def _scrollRange(dialog: RunAnalysisDialog) -> int:
+    bar = dialog.scrollArea.verticalScrollBar()
+    assert bar is not None
+    return bar.maximum()
+
+
+def test_a_dialog_opens_as_tall_as_its_settings_when_the_screen_has_room(qtbot):
+    """Release QA 0.12.0 #15: at 150 % the PCA dialog opened at two thirds
+    of the screen's height (Qt's limit for a window sized to its contents),
+    its Output section scrolled out of view though the screen had room."""
+    image = generate_random_image((30, 30, 10))
+    dialog = RunAnalysisDialog([image], [_TallAnalysis], analysis=_TallAnalysis)
+    qtbot.addWidget(dialog)
+    screen = dialog.screen()
+    assert screen is not None
+    screen = screen.availableGeometry()
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.height() > screen.height() * 2 // 3  # the case at hand
+    assert dialog.frameGeometry().height() <= screen.height()
+    assert _scrollRange(dialog) == 0  # nothing hidden behind a scroll bar
+
+
+def test_a_dialog_taller_than_the_screen_opens_on_it_and_scrolls(qtbot):
+    image = generate_random_image((30, 30, 10))
+    dialog = RunAnalysisDialog([image], [_TallAnalysis], analysis=_TallAnalysis)
+    qtbot.addWidget(dialog)
+    size = dialog.openingSize(QSize(1280, 300))
+    assert size.height() == 300 and size.width() <= 1280
+    dialog.resize(size)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert _scrollRange(dialog) > 0
     assertNothingClipped(dialog)

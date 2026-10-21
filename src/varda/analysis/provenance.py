@@ -6,20 +6,42 @@ from __future__ import annotations
 
 from varda.analysis.analysis import Analysis
 from varda.common.entities import VardaRaster
-from varda.common.parameter import ImageParameter, Parameter, ParameterGroup
+from varda.common.parameter import (
+    EnumParameter,
+    ImageParameter,
+    Parameter,
+    ParameterGroup,
+    Vec2Parameter,
+)
 from varda.common.provenance import PROVENANCE_KEY as PROVENANCE_KEY
 from varda.common.provenance import RESULT_KEYS, makeProvenance, plain, setProvenance
 from varda.common.provenance import provenanceText as provenanceText
 
 
 def parameterValues(group: ParameterGroup) -> dict:
+    """Every setting as a methods section quotes it: by the name the dialog
+    shows, a choice by its label, a pair by its value names with the unit it
+    is shown in (``{"from": 1000.0, "to": 2600.0, "units": "nm"}``)."""
     values = {}
     for param in group.params.values():
         if isinstance(param, ParameterGroup):
             values[type(param).__name__] = parameterValues(param)
         elif isinstance(param, Parameter):
-            values[param.name] = plain(param.get())
+            values[param.name] = parameterValue(param)
     return values
+
+
+def parameterValue(param: Parameter) -> object:
+    if isinstance(param, EnumParameter):
+        return param.label()
+    if isinstance(param, Vec2Parameter):
+        value = param.get()
+        first, second = (name.lower() for name in param.valueNames)
+        pair: dict = {first: plain(value.x), second: plain(value.y)}
+        if param.suffix.strip():
+            pair["units"] = param.suffix.strip()
+        return pair
+    return plain(param.get())
 
 
 def imageInputs(group: ParameterGroup) -> list[VardaRaster]:

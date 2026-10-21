@@ -1,6 +1,9 @@
+import warnings
+
 import numpy as np
 
 from varda.common.entities import VardaRaster
+from varda.image_rendering.stretch_algorithms import MinMaxStretch
 from varda.image_loading.data_sources import ArrayDataSource
 from varda.image_rendering.image_renderer import (
     RenderMode,
@@ -164,3 +167,21 @@ def test_render_clips_out_of_range_stretch_output(qtbot):
     r.setManualStretch(0.0, 1.0)
     rgba = r.render()
     assert list(rgba[0, :, 0]) == [0, 255, 255]
+
+
+def test_a_constant_image_renders_without_a_divide_warning(qtbot):
+    """Release QA 0.12.0 #19: opening a constant GeoTIFF printed numpy's
+    "invalid value encountered in divide" (min-max with min == max)."""
+    image = VardaRaster(ArrayDataSource(np.full((8, 8, 3), 0.2, np.float32)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        stretched = MinMaxStretch().apply(image.getData())
+        mono = MinMaxStretch().apply(image.getData()[..., :1])
+        ImageRenderer(image).render()
+    # a constant band is data, not no-data: it renders flat (0, as the
+    # numba path's normalize does), and no-data stays NaN
+    assert (stretched == 0).all() and (mono == 0).all()
+    withGap = np.full((4, 4, 1), 0.2, np.float32)
+    withGap[0, 0, 0] = np.nan
+    flat = MinMaxStretch().apply(withGap)
+    assert np.isnan(flat[0, 0, 0]) and (flat[1:, :, 0] == 0).all()

@@ -188,13 +188,13 @@ def test_writing_a_name_ending_in_a_dot_makes_no_double_dot(tmp_path):
 
 @pytest.mark.parametrize("name", ["bad<>.tif", "a|b.tif", "what?.img", "x*.tif"])
 def test_characters_windows_forbids_are_named(tmp_path, name):
-    with pytest.raises(ValueError, match="can't be used in file names"):
+    with pytest.raises(ValueError, match="can't be used in a file name"):
         resolveOutputPath(name, tmp_path)
 
 
 @pytest.mark.parametrize("name", ["CON.tif", "nul", "com1.img", "LPT9.tif"])
 def test_names_windows_reserves_are_refused(tmp_path, name):
-    with pytest.raises(ValueError, match="reserved"):
+    with pytest.raises(ValueError, match="won't open on Windows"):
         resolveOutputPath(name, tmp_path)
 
 

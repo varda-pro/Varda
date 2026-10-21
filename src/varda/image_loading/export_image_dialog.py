@@ -10,9 +10,11 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QStatusBar,
     QWidget,
 )
 
@@ -33,7 +35,30 @@ from varda.utilities.background import runInBackground
 
 
 LAST_FOLDER_KEY = "export/lastFolder"
-CONFIRMATION_MS = 15000
+CONFIRMATION_MS = 8000
+# Save as is wide enough for a typical path, folder and all (the full path
+# is in its tooltip too)
+PATH_FIELD_CHARS = 72
+PROVENANCE_NOTE = (
+    "The file carries Varda's provenance: how this image was made, "
+    "with every step and setting."
+)
+
+
+def announceExport(bar: QStatusBar, written: Path) -> None:
+    """Say in the status bar where the file went, its name first (a narrow
+    window cuts the end off), with the full path in the bar's tooltip until
+    the message goes."""
+    message = f"Exported {written.name} to {written.parent}"
+    bar.showMessage(message, CONFIRMATION_MS)
+    bar.setToolTip(str(written))
+
+    def clearTooltip(current: str) -> None:
+        if current != message:
+            bar.setToolTip("")
+            bar.messageChanged.disconnect(clearTooltip)
+
+    bar.messageChanged.connect(clearTooltip)
 
 
 class ExportImageDialog(QDialog):
@@ -63,6 +88,12 @@ class ExportImageDialog(QDialog):
 
         self.pathEdit = QLineEdit()
         self.pathEdit.setPlaceholderText("ENVI (.img / .hdr) or GeoTIFF (.tif)")
+        self.pathEdit.setMinimumWidth(
+            self.pathEdit.fontMetrics().horizontalAdvance("n" * PATH_FIELD_CHARS)
+        )
+        self.pathEdit.textChanged.connect(self.pathEdit.setToolTip)
+        provenanceNote = QLabel(PROVENANCE_NOTE)
+        provenanceNote.setWordWrap(True)
         self.browseButton = ButtonBuilder("Browse…").onClick(self._browse)
         self.exportButton = ButtonBuilder("Export").onClick(self.accept)
 
@@ -77,6 +108,7 @@ class ExportImageDialog(QDialog):
         self.setLayout(
             VBoxBuilder()
             .withLayout(form)
+            .withWidget(provenanceNote)
             .withStretch()
             .withLayout(
                 HBoxBuilder()
@@ -140,10 +172,9 @@ class ExportImageDialog(QDialog):
             progress.close()
             self.settings.setValue(LAST_FOLDER_KEY, str(Path(path).parent))
             owner = self.parentWidget()
-            if isinstance(owner, QMainWindow) and owner.statusBar() is not None:
-                owner.statusBar().showMessage(
-                    f"Exported {image.name} to {written}", CONFIRMATION_MS
-                )
+            bar = owner.statusBar() if isinstance(owner, QMainWindow) else None
+            if bar is not None:
+                announceExport(bar, Path(written))
             self.sigExported.emit(image, path)
 
         def onFailed(error: Exception) -> None:

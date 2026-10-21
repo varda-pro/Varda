@@ -1,12 +1,15 @@
 """The Run Analysis dialog picks an image and an analysis and shows its settings."""
 
 import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 
 from varda.analysis.analysis import Analysis
 from varda.analysis.dialog import RunAnalysisDialog
 from varda.analysis.transforms import PcaAnalysis
 from varda.common.entities import VardaRaster
 from varda.common.parameter import IntParameter
+from varda.common.parameter_widgets import NumberSpinBox
 from varda.common.vec2 import Vec2
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.debug import generate_random_image
@@ -146,3 +149,23 @@ def test_pca_shows_the_bands_it_will_use_and_refuses_a_one_wavelength_range(qtbo
 
     assert not dialog.runButton.isEnabled()
     assert "needs at least two" in dialog.statusLabel.text()
+
+
+def test_return_after_junk_in_a_number_box_refuses_it_and_does_not_run(qtbot):
+    """Release QA 0.12.0 #11: junk typed in Components is refused whole, and
+    the Return that ends it doesn't go on to press Run."""
+    image = generate_random_image((10, 10, 10))
+    dialog = RunAnalysisDialog([image], [AlphaAnalysis], analysis=AlphaAnalysis)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    runs = []
+    dialog.sigRunRequested.connect(lambda *args: runs.append(args))
+    box = dialog.findChild(NumberSpinBox)
+    box.setFocus()
+    box.selectAll()
+    QTest.keyClicks(box, "-1")
+    QTest.keyClick(box, Qt.Key.Key_Return)
+    assert runs == [] and dialog.isVisible()
+    assert dialog.selectedAnalysis().knob.get() == 1
+    assert "-1" in box.refusal

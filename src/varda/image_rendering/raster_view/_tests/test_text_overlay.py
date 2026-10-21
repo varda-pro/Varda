@@ -7,6 +7,7 @@ import pytest
 from PyQt6.QtCore import QPointF
 
 from varda.common.entities import VardaRaster
+from varda.common.layout_audit import clippedWidgets
 from varda.image_loading.data_sources import ArrayDataSource
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.raster_view.image_viewport import ImageViewport
@@ -71,3 +72,17 @@ def test_a_label_with_a_position_stays_on_the_image(qtbot):
     assert overlay._item.pos() == QPointF(50, 60)
     assert overlay._item.parentItem() is view._vb.childGroup
     overlay.remove()
+
+
+def test_a_hint_taller_than_a_short_view_still_fits_it(qtbot):
+    """Release QA 0.12.0: in a short overview the Pixel Select hint wrapped
+    to three lines and its last words fell off the bottom of the view."""
+    view = viewport(qtbot)
+    overlay = view.addTextOverlay(HINT)
+    assert isinstance(overlay, PyqtgraphTextOverlay)
+    view.resize(260, 90)
+    view.show()
+    qtbot.waitExposed(view)
+    qtbot.wait(20)
+    assertInside(view, overlay)
+    assert clippedWidgets(view) == []

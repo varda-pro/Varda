@@ -25,6 +25,7 @@ from varda.help_info import (
     ISSUES_URL,
     REPOSITORY_URL,
     citation,
+    citationNote,
     documentationUrl,
     localGuide,
     systemInfo,
@@ -56,7 +57,8 @@ def showAbout(mainGui: MainGUI) -> None:
 
 
 class CiteDialog(QDialog):
-    """The citation as APA and BibTeX, each with a copy button."""
+    """The citation as APA and BibTeX, each with a copy button, and what
+    its DOI pins."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,10 +71,16 @@ class CiteDialog(QDialog):
             box = QPlainTextEdit(text)
             box.setReadOnly(True)
             box.setMinimumHeight(70 if title == "APA" else 150)
+            if title == "APA":  # three lines: leave the height to BibTeX
+                box.setMaximumHeight(110)
             layout.addWidget(box)
             button = QPushButton(f"Copy {title}")
             button.clicked.connect(lambda _, t=text: _copy(t))
             layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignRight)
+        note = QLabel(citationNote())
+        note.setWordWrap(True)
+        note.setOpenExternalLinks(True)
+        layout.addWidget(note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

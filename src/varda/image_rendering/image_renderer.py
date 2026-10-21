@@ -372,6 +372,12 @@ class RendererSettingsPanel(QWidget):
 
         self.setLayout(layout)
 
+    @property
+    def essentialRows(self) -> QStackedLayout:
+        """The rows a docked panel keeps in view (``keepInView``): Mode and
+        the bands, or the color map with its handles."""
+        return self.bandStack
+
     def _syncBandStack(self, *args) -> None:
         isRgb = self.settings.mode.get() == RenderMode.RGB
         self.bandStack.setCurrentIndex(self._rgbIndex if isRgb else self._monoIndex)

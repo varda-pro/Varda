@@ -5,7 +5,7 @@ can add:
 
 - **analyses**: new items in the Processing menu that turn an image into a new
   image, such as a spectral index, a filter or a classifier
-- **file formats**: new kinds of image that File → Import Image(s) can open
+- **file formats**: new kinds of image that File → Import Image(s)… can open
 
 This guide walks through [`examples/band-depth`](examples/band-depth/), a
 complete plugin that adds **Processing → Spectral Parameters → Band Depth**.

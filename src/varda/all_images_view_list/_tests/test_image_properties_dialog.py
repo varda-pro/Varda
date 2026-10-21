@@ -543,3 +543,25 @@ def test_a_failed_read_is_shown(qtbot, monkeypatch):
     qtbot.addWidget(dialog)
     qtbot.waitUntil(lambda: "disk gone" in dialog.classMethod.text(), timeout=10000)
     assert dialog.classTable.rowCount() == 0
+
+
+def test_an_assumed_wavelength_unit_is_shown_beside_the_unit(qtbot):
+    """Release QA 0.12.0 #13: the assumed unit was only logged."""
+    image = _image()  # wavelengths 1-4, no unit: assumed µm
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    assert dialog.unitNote.isVisibleTo(dialog)
+    assert dialog.unitNote.text() == (
+        "Wavelength units not declared; assuming µm from the values (1–4). "
+        "Choose the unit if that's wrong."
+    )
+
+
+def test_a_declared_wavelength_unit_has_no_note(qtbot):
+    data = np.zeros((2, 3, 4), dtype=np.float32)
+    image = VardaRaster(
+        ArrayDataSource(data, wavelengths=np.arange(4.0) + 1, wavelengthUnits="nm")
+    )
+    dialog = ImagePropertiesDialog(image)
+    qtbot.addWidget(dialog)
+    assert not dialog.unitNote.isVisibleTo(dialog)

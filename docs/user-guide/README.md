@@ -45,3 +45,14 @@ Something missing or unclear? [Open an issue](https://github.com/varda-pro/Varda
   are the networks' own terms.
 - **Pixel**: one position in an image; its values across the bands are its
   **spectrum**.
+
+## Typing numbers in settings
+
+A number box takes what you type when you press Return or leave the box,
+never partway through (typing 1309 doesn't run with 1, 13 and 130 first).
+Text that isn't a number in the box's range, such as `1e309`, `0x10` or a
+negative number where only positive ones are allowed, is refused whole: the
+box keeps the value it had and says why in a tip under it, and Return
+doesn't go on to press **Run**. A setting is only ever the value you see.
+Settings that only matter once another is set (such as **Weight Image
+Holds** before a **Weight Image** is chosen) are grayed out until then.

@@ -98,6 +98,16 @@ def test_only_what_the_ui_says(qaRun: QaRun, qaData: QaData) -> None:
                 corpus += widgetTexts(dialog, "the PCA dialog")
                 dialog.reject()
 
+    with run.step("read the CRISM dialogs", "Processing > CRISM > each item"):
+        for menu in journeys.CRISM_DIALOG_MENUS:
+            if run.useMenu(*menu, shot=False):
+                dialog = run.newDialog()
+                if dialog is not None:
+                    run.qaShot(dialog, dialog.windowTitle() or menu[-1])
+                    corpus += widgetTexts(dialog, f"the {menu[-1]} dialog")
+                    dialog.close()
+                    run.settle(0.2)
+
     with run.step("abbreviations"):
         _abbreviations(run, corpus)
     with run.step("idioms"):

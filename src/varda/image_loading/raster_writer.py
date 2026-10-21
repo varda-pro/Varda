@@ -72,13 +72,16 @@ def resolveOutputPath(text: str, folder: Path) -> Path:
     if forbidden:
         shown = " ".join(c if ord(c) >= 32 else f"\\x{ord(c):02x}" for c in forbidden)
         raise ValueError(
-            f"{shown} can't be used in file names (Windows forbids them). "
-            "Choose another name."
+            f"{shown} can't be used in a file name: files with them won't open "
+            "on Windows, so Varda keeps names portable. Rename the file "
+            "without them (use _ or - instead)."
         )
-    if name.split(".")[0].upper() in RESERVED_NAMES:
+    stem = name.split(".")[0]
+    if stem.upper() in RESERVED_NAMES:
         raise ValueError(
-            f"{name.split('.')[0]} is reserved by Windows for devices. "
-            "Choose another name."
+            f"{stem} can't be used as a file name: files named {stem} won't "
+            "open on Windows, so Varda keeps names portable. Rename the file, "
+            f"for example to {stem}_1{name[len(stem) :]}."
         )
     target = typed.with_name(name)
     suffix = target.suffix.lower()
@@ -211,14 +214,15 @@ _ENVI_DESCRIPTION = re.compile(r"^description = \{.*?\}", re.MULTILINE | re.DOTA
 
 def _setEnviDescription(header: Path, description: str) -> None:
     """Put ``description`` in the header: GDAL's ENVI driver writes the
-    file's path there, whatever the ENVI metadata says."""
-    text = header.read_text()
+    file's path there, whatever the ENVI metadata says. UTF-8 as GDAL
+    writes it, whatever the system's encoding ("cm⁻¹" isn't in cp1252)."""
+    text = header.read_text(encoding="utf-8")
     entry = f"description = {{\n{description}}}"
     if _ENVI_DESCRIPTION.search(text):
         text = _ENVI_DESCRIPTION.sub(lambda _match: entry, text, count=1)
     else:
         text = text.replace("ENVI\n", f"ENVI\n{entry}\n", 1)
-    header.write_text(text)
+    header.write_text(text, encoding="utf-8")
 
 
 def _enviList(items: list[str]) -> str:

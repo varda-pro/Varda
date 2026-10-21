@@ -488,7 +488,7 @@ once it is a day old; you can delete one sooner when no run is going.
 ## Using the products in Varda
 
 The dialog adds the map-projected I/F to the project; the other products
-open with **Import Image(s)**. Varda's CRISM tools treat them like an MTRDR:
+open with **File → Import Image(s)…**. Varda's CRISM tools treat them like an MTRDR:
 
 - **Column lock** in the CRISM Ratio workspace and **Processing → CRISM →
   Ratio Cube** read the detector column from `…_in168l_vmtr` (its "Source
