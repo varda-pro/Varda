@@ -8,6 +8,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Network use and privacy](network-and-privacy.md): every connection Varda makes, when, and what it sends; turning off the update check; where AI keys are kept
 - [Sessions and saving results](sessions-and-saving.md): saving and restoring your work, autosave, exporting images
 - [3D Terrain](3d-terrain.md): DEMs in 3D with draped images, figures and interactive web pages
+- [Small bodies and shape models](small-bodies.md): plate shape models of irregular bodies in 3D, picking plates, plate data with uncertainty
 - [Linked Images](linked-images.md): any number of images linked by pixel or map location, with every image's spectrum and profile at once
 - [Lines and profiles](lines-and-profiles.md): drawing lines and plotting topographic and band profiles along them
 - [Viewing and measuring](viewing-and-measuring.md): display stretches, pixel spectra and library overlays, ROI statistics, the Ratio Explorer

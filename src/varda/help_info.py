@@ -69,6 +69,7 @@ def systemInfo() -> str:
         f"astropy {_packageVersion('astropy') or 'not installed'}",
         f"Spectral Python (SPy) {_packageVersion('spectral') or 'not installed'}",
         f"HyPyRameter {_packageVersion('hypyrameter') or 'not installed'}",
+        f"SpiceyPy {_packageVersion('spiceypy') or 'not installed'}",
         f"PyTorch {_torchStatus()}",
     ]
     return "\n".join(lines)

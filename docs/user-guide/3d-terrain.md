@@ -38,6 +38,16 @@ Drag to orbit, right-drag (or Shift-drag) to pan, and scroll to zoom.
 keeps the current camera by name; double-click a saved view to return to it.
 Views and settings are saved with the session.
 
+## Shape models
+
+**Surface** at the top switches between a **DEM** and a **Shape model**: a
+triangle mesh of a small, irregular body (Bennu, Ryugu, Eros…) in
+body-fixed km, where a DEM's map projection would mislead. Shape mode has
+its own panel and view: open OBJ, Gaskell PLT and ICQ, FITS X/Y/Z planes or
+NAIF DSK models, click a plate to read its position and value, color plates
+by plate data and its uncertainty, and export OBJ, STL, plate CSV, web pages
+and stills. See [Small bodies and shape models](small-bodies.md).
+
 ## Block diagrams and 3D printing
 
 - **Sides (block diagram)** stands the surface on walls down to a flat base,

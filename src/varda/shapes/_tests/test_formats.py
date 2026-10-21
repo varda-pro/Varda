@@ -112,6 +112,12 @@ def test_obj_round_trip(tmp_path):
     assert np.array_equal(model.plates, sphere.plates)
 
 
+def test_obj_round_trip_keeps_the_content_hash(tmp_path):
+    sphere = icosphere(1.0, 3)
+    writeObj(sphere, tmp_path / "out.obj")
+    assert readShape(tmp_path / "out.obj").model.contentHash == sphere.contentHash
+
+
 def test_stl_holds_the_corners_to_float32(tmp_path):
     sphere = icosphere(1.0, 2)
     writeStl(sphere, tmp_path / "out.stl")

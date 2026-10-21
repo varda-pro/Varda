@@ -262,11 +262,13 @@ def _readDsk(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def writeObj(model: ShapeModel, path: Path) -> None:
-    """The model as Wavefront OBJ, vertices in km to 1e-12 km."""
+    """The model as Wavefront OBJ, vertices in km to every bit (17
+    significant digits), so it reads back with the same content hash and
+    its plate data still matches."""
     with Path(path).open("w", encoding="utf-8") as file:
         file.write(f"# {model.name}: {len(model.vertices)} vertices, ")
         file.write(f"{model.plateCount} plates, km; written by Varda\n")
-        np.savetxt(file, model.vertices, fmt="v %.15g %.15g %.15g")
+        np.savetxt(file, model.vertices, fmt="v %.17g %.17g %.17g")
         np.savetxt(file, model.plates + 1, fmt="f %d %d %d")
 
 

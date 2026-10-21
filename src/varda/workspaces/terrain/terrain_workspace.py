@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -93,6 +94,8 @@ from varda.workspaces.raster_overlay import COLOR_MAPS, colorMap
 from varda.workspaces.find_data.basemap import imageBody
 from varda.workspaces.terrain.overlay_display import OverlayDisplay
 from varda.workspaces.terrain.overlay_panel import OverlayPanel, TerrainOverlay
+from varda.workspaces.terrain.shape_panel import ShapePanel
+from varda.workspaces.terrain.still_dialog import StillDialog
 from varda.workspaces.terrain.terrain_view import TerrainView
 
 PLAIN, ELEVATION = "None (shaded relief)", "Elevation colors"
@@ -112,13 +115,7 @@ SIDE_COLORS = {
     "Black": "#16181b",
 }
 CUSTOM = "Custom…"
-STILL_SIZES = {
-    "HD (1920 × 1080)": (1920, 1080),
-    "4K (3840 × 2160)": (3840, 2160),
-    "8K (7680 × 4320)": (7680, 4320),
-    "Square (3000 × 3000)": (3000, 3000),
-}
-MAX_STILL = 16384  # px on a side: WebGL's canvas limit
+DEM_SURFACE, SHAPE_SURFACE = "DEM", "Shape model"
 MAX_PROFILES = 20  # curves in the Profiles panel (a file of contacts has hundreds)
 
 
@@ -193,48 +190,6 @@ def renderDrape(
         colors = tuple("#%02x%02x%02x" % tuple(int(c) for c in rgb[:3]) for rgb in lut)
         legend = Legend(colors, low, high)
     return rgba, legend
-
-
-class StillDialog(QDialog):
-    """The size of a still and whether its background is transparent."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Export Still")
-        self.preset = QComboBox()
-        self.preset.addItems([*STILL_SIZES, "Custom"])
-        self.preset.setCurrentText("4K (3840 × 2160)")
-        self.widthBox = QSpinBox()
-        self.heightBox = QSpinBox()
-        for box in (self.widthBox, self.heightBox):
-            box.setRange(64, MAX_STILL)
-            box.setSuffix(" px")
-        self.transparent = QCheckBox("Transparent background")
-        self.preset.currentTextChanged.connect(self._onPreset)
-        self._onPreset(self.preset.currentText())
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form = QFormLayout(self)
-        form.addRow("Size:", self.preset)
-        form.addRow("Width:", self.widthBox)
-        form.addRow("Height:", self.heightBox)
-        form.addRow("", self.transparent)
-        form.addRow(buttons)
-
-    def _onPreset(self, name: str) -> None:
-        size = STILL_SIZES.get(name)
-        for box in (self.widthBox, self.heightBox):
-            box.setEnabled(size is None)
-        if size is not None:
-            self.widthBox.setValue(size[0])
-            self.heightBox.setValue(size[1])
-
-    def stillSize(self) -> tuple[int, int]:
-        return self.widthBox.value(), self.heightBox.value()
 
 
 ANIMATION_SIZES = {
@@ -430,7 +385,29 @@ class TerrainWorkspace(QMainWindow):
         splitter.addWidget(self.view)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([320, 1100])
-        self.setCentralWidget(splitter)
+        # the surface: a DEM, or a shape model (its panel and view, made
+        # when first chosen)
+        self.surfaceBox = QComboBox()
+        self.surfaceBox.addItems([DEM_SURFACE, SHAPE_SURFACE])
+        self.surfaceBox.setToolTip(
+            "A DEM (a map of heights), or a shape model of a small, irregular "
+            "body (a triangle mesh in body-fixed coordinates)"
+        )
+        self.surfaceBox.currentTextChanged.connect(self._onSurface)
+        self.shapePanel: ShapePanel | None = None
+        self.surfaces = QStackedWidget()
+        self.surfaces.addWidget(splitter)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(6, 4, 6, 0)
+        bar.addWidget(QLabel("Surface:"))
+        bar.addWidget(self.surfaceBox)
+        bar.addStretch(1)
+        central = QWidget()
+        column = QVBoxLayout(central)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addLayout(bar)
+        column.addWidget(self.surfaces, 1)
+        self.setCentralWidget(central)
         self.displayDock = QDockWidget("Overlay Display", self)
         self.displayDock.setObjectName("overlayDisplay")
         self.displayDock.setWidget(self.overlayDisplay)
@@ -448,6 +425,21 @@ class TerrainWorkspace(QMainWindow):
         if isinstance(projectImages, ObservableList):
             # a bound method, so Qt disconnects it when the workspace is deleted
             projectImages.sigDataChanged.connect(self._onProjectImagesChanged)
+
+    # --- the surface -----------------------------------------------------------------
+
+    def _onSurface(self, surface: str) -> None:
+        shape = surface == SHAPE_SURFACE
+        if shape and self.shapePanel is None:
+            self.shapePanel = ShapePanel()
+            self.surfaces.addWidget(self.shapePanel)
+        self.surfaces.setCurrentIndex(1 if shape else 0)
+        if shape:
+            # the DEM's docks belong to its surface
+            self.displayDock.hide()
+            self.profileDock.hide()
+        elif self.lineLayers:
+            self.profileDock.show()
 
     # --- the panel ------------------------------------------------------------------
 
@@ -1564,6 +1556,10 @@ class TerrainWorkspace(QMainWindow):
     def sessionState(self) -> dict:
         drape = self.drapeBox.currentData()
         return {
+            "surface": self.surfaceBox.currentText(),
+            "shape": None
+            if self.shapePanel is None
+            else self.shapePanel.sessionState(),
             "band": int(self.bandBox.currentData() or 0),
             "drape": drape if isinstance(drape, str) else "image",
             "overlays": [
@@ -1648,6 +1644,13 @@ class TerrainWorkspace(QMainWindow):
             for name, camera in state.get("views", {}).items():
                 self._keepView(name, camera)
             self._camera = state.get("camera")
+            shape = state.get("shape")
+            if shape:
+                self._onSurface(SHAPE_SURFACE)  # makes the shape panel
+                assert self.shapePanel is not None
+                self.shapePanel.restoreSessionState(shape)
+            self.surfaceBox.setCurrentText(state.get("surface", DEM_SURFACE))
+            self._onSurface(self.surfaceBox.currentText())
         finally:
             self._restoring = False
         self.rebuild()

@@ -90,8 +90,9 @@ def buildWorkspace(
         workspace = FindDataWorkspace(projectImages)
         workspace.restoreSessionState(dict(extra or {}))
         return workspace
-    if kind == "terrain" and images:
-        workspace = TerrainWorkspace(projectImages, images[0])
+    if kind == "terrain" and (images or (extra or {}).get("shape")):
+        # a shape model alone needs no image
+        workspace = TerrainWorkspace(projectImages, images[0] if images else None)
         workspace.restoreSessionState(dict(extra or {}), images[1:])
         return workspace
     state = dict(extra or {})
