@@ -900,6 +900,130 @@ detection) and, in their description, the verdict with its values and
 limits. Points are not yet kept by the session: export
 them from the Points Manager before closing.
 
+## Sensor space and published ROIs
+
+How to turn an ROI given in sensor coordinates (a published table, a
+collaborator's list, CAT or a TER) into the right map pixels of an MTRDR,
+and how to check it.
+
+### Which sensor space
+
+The CRISM team built the TER products in the **IR detector's sensor space**
+and the MTRDRs from them (Seelos et al., 2024). The VNIR data were mapped
+into the IR sensor space from the ground location of every VNIR and IR
+pixel, by nearest neighbor so that no spectra were averaged, and every
+pixel without both VNIR and IR data was set to 65535 in all bands. So:
+
+- **A sensor row and column means IR line and sample.** Coordinates from
+  CAT, a TER or a published table refer to the IR pixel grid.
+- **The `VNIR Sample` and `VNIR Line` backplanes are not another way to
+  select ROIs.** They record which original VNIR pixel was copied into each
+  map pixel. They differ from the IR coordinates by a few pixels, which is
+  the transform itself, not a misregistration: selecting by them picks
+  different ground.
+- **65535 is no data** in every band of such a pixel; Varda reads it as
+  missing.
+
+Varda's column lock, Ratio Cube and **Go to Sensor…** all use the IN file's
+IR Sample and IR Line bands.
+
+### 0-based or 1-based
+
+The IN backplane's IR Line and IR Sample are **0-based** (0–509 and 0–639
+in an FRT), and so is Varda (Go to Sensor, the pixel readout). Published
+and collaborator ROI tables are often **1-based**: subtract 1 from each
+before typing them, and say which you used.
+
+### From a sensor box to map pixels
+
+A box of *h* × *h* sensor pixels does not map to *h* × *h* map pixels: the
+map projection oversamples, so a 3 × 3 sensor box covers about 6 to 11 map
+pixels of an MTRDR. To reproduce a sensor-space ROI exactly, take **every
+map pixel whose rounded IR Line and IR Sample fall inside the box**, without
+forcing *h* × *h*. With the IN cube's bands read as arrays (`irLine`,
+`irSample`) and a 1-based box center (`r` = IR line, `c` = IR sample):
+
+```python
+import numpy as np
+
+line, sample = np.rint(irLine), np.rint(irSample)
+
+def sensorBox(r: int, c: int, h: int) -> np.ndarray:
+    """The map pixels of an h x h IR sensor box centered on the 1-based
+    (r, c); the backplanes are 0-based."""
+    rows = range(r - h // 2 - 1, r + h // 2)
+    cols = range(c - h // 2 - 1, c + h // 2)
+    return np.isin(line, rows) & np.isin(sample, cols)
+```
+
+The spectrum is the mean of the I/F over those pixels, with no-data
+(values above 10³, i.e. 65535) left out; the ratio is the numerator's mean
+divided by the denominator's, band by band, with both from the same scene
+and, for column-dependent artifacts, the same detector columns.
+
+**Varda's boxes are boxes of map pixels.** The Ratio Explorer's boxes, and
+those **Go to Sensor…** places, are *w* × *h* map pixels centered on the
+pixel nearest the sensor position. They sample the right ground but not the
+same pixels as a sensor box, so for a figure or table that reproduces a
+published ROI, select by the backplanes as above and record the map-pixel
+counts. Likewise, an ROI saved in Varda (or a GeoPackage exported from it)
+is your own polygon: when a published ROI exists, extract from its sensor
+coordinates, and say in the caption which you used.
+
+**A check that the coordinates are IR.** For HRL0000407E (Bond crater), a
+published 3 × 3 ROI (numerator at IR line 246, sample 200; denominator at
+336, 200; 1-based) selected 7 and 11 map pixels by the IR backplanes, and
+its ratio reproduced the published CRISM ratio plot. Selected by the VNIR
+backplanes instead, the boxes held 6 and 9 pixels, the numerator box
+shared no pixel with the IR one (it sat about 3 map samples west), and the
+ratio's shape longward of 1.4 µm differed.
+
+### Quality checks for an ROI
+
+- **`VNIR/IR Mask`** (IN backplane) should be 0 across the ROI.
+- **`VNIR/IR Ground Sampling Offset`** is the ground distance between the
+  VNIR pixel copied in and the IR pixel. Compare the ROI's with the scene's
+  median: at or below it, the 0.4–1.0 µm data are well matched to the IR
+  (Bond: 3.0 and 6.1 against a scene median of 10.8).
+- Nearest-neighbor resampling can repeat or skip a VNIR pixel within a box.
+  That adds a little noise below 1 µm but does not change the ground
+  sampled.
+- Check the **denominator** for absorptions of its own near 1, 2 and 2.3 µm
+  before trusting a weak band in the ratio (the blandness readout's
+  windows do this).
+
+### Classification and display
+
+- **Classify on ratio spectra without continuum removal.** On red-sloped
+  ratios, a hull across about 0.75–1.8 µm can turn the slope's curvature
+  into an apparent 1.25 µm band: spectra with no detection have reached
+  continuum-removed depths of 0.03–0.06 this way.
+- **Use both detectors (S and L) for the 1 µm region.** With the L detector
+  alone, a continuum starts inside the olivine band and removes its
+  short-wavelength edge near 0.7 µm, which is what separates olivine from
+  plagioclase.
+- **The S/L seam.** Varda's **Scale VNIR to IR at 1 µm** (see
+  [The 1 µm detector join](#the-1-µm-detector-join)) *multiplies* the S
+  bands so lines fitted within 80 nm of the gap meet at 1028.7 nm. Another
+  common choice *shifts* them by the difference of lines fitted over
+  0.90–1.012 µm (S) and 1.045–1.15 µm (L), evaluated at 1.03 µm, leaving
+  steps under 0.003 alone. Both remove the step and agree at the join; at
+  a VNIR band whose level differs from its level at the join by a fraction
+  *x*, they differ by the step times *x*. Name the one used. Normalizing or offsetting
+  spectra for a figure is display only.
+
+### Checklist for a new ROI
+
+1. Confirm the coordinates are IR sensor space, and whether they are 1-based
+   or 0-based; ask if it is unclear.
+2. Select the pixels by the IR Line and IR Sample backplanes, and record the
+   map-pixel counts.
+3. Check that the VNIR/IR mask is 0 and the ground sampling offset is at or
+   below the scene's median.
+4. Reproduce the source's own ratio plot before using the spectrum.
+5. Check the denominator for its own absorptions near 1, 2 and 2.3 µm
+   before trusting a weak 1.25 µm band.
+
 ## References
 
 - Clark, R. N., & Roush, T. L. (1984). Reflectance spectroscopy:
@@ -915,7 +1039,9 @@ them from the Points Manager before closing.
   for Mars investigation and data set from the Mars Reconnaissance
   Orbiter's primary science phase. *Journal of Geophysical Research*, 114,
   E00D07.
-
+- Seelos, F. P., et al. (2024). The CRISM investigation in Mars orbit:
+  Overview, history, and delivered data products. *Icarus*, 419, 115612.
+  doi:10.1016/j.icarus.2023.115612.
 - Viviano-Beck, C. E., et al. (2014). Revised CRISM spectral parameters and
   summary products based on the currently detected mineral diversity on Mars.
   *Journal of Geophysical Research: Planets*, 119, 1403–1431.
