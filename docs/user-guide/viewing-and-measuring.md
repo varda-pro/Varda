@@ -337,6 +337,11 @@ column (below) with the **count** statistic.
 
 ### Calculated columns
 
+Double-click a cell of the ROI table (a class, a description, a value) to
+edit what it holds. A number is edited in full, not as the six figures
+shown, and stays a number; clearing it leaves it missing. Calculated
+columns are read-only.
+
 **Add Column...** adds a column to the ROI table. Its **Kind** is one of:
 
 - **Geometry**, with **Measure**:

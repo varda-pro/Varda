@@ -439,6 +439,7 @@ class _PlotGraphicsView(pg.GraphicsView):
 class VardaPlotWidget(QWidget):
     # The selected curve changed: the curve, or None when nothing is selected
     sigSelectedCurveChanged = pyqtSignal(object)
+    sigFitToData = pyqtSignal()  # fitToData ran (the button, or code)
 
     def __init__(
         self,
@@ -760,6 +761,7 @@ class VardaPlotWidget(QWidget):
         """Frame all curves once, leaving the range under manual control."""
         self.viewBox.autoRange()
         self._onUserViewChange()
+        self.sigFitToData.emit()
 
     @staticmethod
     def _curvePlaceholder() -> QLabel:

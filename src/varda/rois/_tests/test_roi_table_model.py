@@ -1,5 +1,6 @@
 """Tests for ROITableModel denominator badge/state."""
 
+import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from shapely.geometry import box
@@ -94,3 +95,45 @@ def test_moving_an_roi_into_a_class_takes_on_its_colour(qtbot):
     model = ROITableModel(c)
     model.setData(model.index(1, 1), "alpha")
     assert c.getROI(moved).name == "alpha" and c.getROI(moved).color == RED
+
+
+def _column(model: ROITableModel, name: str) -> int:
+    headers = [
+        model.headerData(c, Qt.Orientation.Horizontal)
+        for c in range(model.columnCount())
+    ]
+    return headers.index(name)
+
+
+def test_an_editor_starts_from_the_cells_text(qtbot):
+    collection = _collection_with_two()
+    collection.addColumn("description")
+    fid = collection.fids[0]
+    collection.setProperty(fid, "description", "Denominator blandness: ✓ bland")
+    model = ROITableModel(collection)
+    index = model.index(0, _column(model, "description"))
+    # the editor opens on the text, so a double-click edits it in place
+    assert model.data(index, Qt.ItemDataRole.EditRole) == (
+        "Denominator blandness: ✓ bland"
+    )
+    assert model.setData(index, "Denominator blandness: ✓ bland. Checked twice.")
+    assert collection.getProperty(fid, "description").endswith("Checked twice.")
+
+
+def test_a_number_is_edited_in_full_and_stays_a_number(qtbot):
+    collection = _collection_with_two()
+    collection.addColumn("depth")
+    fid = collection.fids[0]
+    collection.setProperty(fid, "depth", 0.0123456789)
+    model = ROITableModel(collection)
+    index = model.index(0, _column(model, "depth"))
+    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "0.0123457"
+    text = model.data(index, Qt.ItemDataRole.EditRole)
+    assert text == "0.0123456789"  # not the six figures shown
+    model.setData(index, text)  # an edit left as it was changes nothing
+    assert collection.getProperty(fid, "depth") == 0.0123456789
+    model.setData(index, "0.5")
+    assert collection.getProperty(fid, "depth") == 0.5
+    model.setData(index, "")
+    assert np.isnan(collection.getProperty(fid, "depth"))
+    assert model.data(index, Qt.ItemDataRole.EditRole) == ""

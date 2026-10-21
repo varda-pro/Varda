@@ -590,8 +590,12 @@ what it saves is ROIs and points.
   defined in this cube's pixels and shown on both views.
 - **Ratio Controls** (right, top): one row (it wraps when narrow) with the box
   size (**Box** width × height, pixels), **Lock to sensor column** (see
-  [Column lock](#column-lock)), **Choose/Change Geometry File…**, **Scale VNIR
-  to IR at 1 µm** with the current pair's factors beside it (see
+  [Column lock](#column-lock)), **Choose/Change Geometry File…**, **Show
+  ROIs** (on by default: the saved ROIs, each pair's numerator and
+  denominator boxes, outlined in their class colors on both images, the
+  browse one through the link; the ROI Manager hides or shows them one by
+  one, and selecting one there highlights it), **Scale VNIR to IR at 1 µm**
+  with the current pair's factors beside it (see
   [The 1 µm detector join](#the-1-µm-detector-join); unavailable for a cube on
   one detector), and **?**,
   whose tooltip (hover, or click it) lists the clicks and keys of
@@ -614,9 +618,12 @@ what it saves is ROIs and points.
   image's **Render Settings** and **Histogram**, and **Panels** for every
   panel of the workspace: one closed by mistake comes back from there.
 
-Each new pair replaces the curves, refits the Y ranges and shows the whole
-spectrum; the plots always show the same wavelength range, so zooming or
-panning one moves the others. The image's bad bands (ENVI `bbl`) are left out
+Each new pair replaces the curves and refits the Y ranges. The plots show
+the whole spectrum, or the wavelength range you zoomed or panned to, which
+stays while you click new pairs (Y refits to the data inside it); **Fit to
+Data** in a plot's sidebar, or zooming out to the whole spectrum, goes back to
+the whole spectrum for each pair. The plots always show the same wavelength
+range, so zooming or panning one moves the others. The image's bad bands (ENVI `bbl`) are left out
 of the plots and the readout. An image without wavelengths is plotted by band
 number, and the readout says the check needs wavelengths.
 
