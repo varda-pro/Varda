@@ -232,6 +232,12 @@ class ImagePropertiesDialog(QDialog):
         edits.addRow("Name:", self.nameEdit)
         edits.addRow("No-data value:", self.noDataEdit)
         edits.addRow("Wavelength unit:", self.unitsBox)
+        # the unit Varda assumed when the file declares none (Release QA #13)
+        note = image.bandModel.unitNote
+        self.unitNote = MutedLabel(f"{note}. Choose the unit if that's wrong.")
+        self.unitNote.setWordWrap(True)
+        edits.addRow("", self.unitNote)
+        edits.setRowVisible(self.unitNote, bool(note))
         edits.addRow("Description:", self.descriptionEdit)
 
         # one row per band

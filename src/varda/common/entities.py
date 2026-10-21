@@ -318,13 +318,16 @@ class VardaRaster:
         """The spectral axis: centers in nm (None if the bands aren't one),
         FWHM, bad bands, scale factor and no-data. Use it for any calculation
         with wavelengths instead of ``wavelengths`` and ``wavelengthUnits``."""
-        return bandModelFor(
+        model = bandModelFor(
             self.wavelengths,
             self.wavelengthUnits,
             self.nodata,
             self.extraMetadata,
             self.bandCount,
         )
+        if model.unitNote:
+            logger.warning("%s: %s", self.name, model.unitNote)
+        return model
 
     @property
     def bandNames(self) -> list[str]:

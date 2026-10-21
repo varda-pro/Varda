@@ -4,6 +4,8 @@ FWHM, bad bands, scale factor and no-data carried alongside."""
 import numpy as np
 import pytest
 
+from varda.common.entities import VardaRaster
+
 from varda.common.spectral_axis import (
     bandWavelengthLabels,
     formatWavelength,
@@ -18,6 +20,8 @@ from varda.common.spectral_axis import (
     toNanometres,
     unitLabel,
 )
+from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.raster_writer import writeRaster
 
 
 @pytest.mark.parametrize(
@@ -97,10 +101,27 @@ def test_band_indices_and_labels_are_not_a_spectral_axis():
         (np.linspace(7.5, 13.5, 10), SpectralUnit.MICROMETRE),  # thermal IR, undeclared
     ],
 )
-def test_undeclared_units_are_inferred_once_and_flagged(values, unit, caplog):
+def test_undeclared_units_are_inferred_and_flagged(values, unit):
     model = bandModelFor(values, "Unknown", None, {}, len(values))
     assert model.unit is unit and model.unitWasInferred
-    assert "assuming" in caplog.text
+    assert model.unitNote.startswith(
+        f"Wavelength units not declared; assuming {unit.value} from the values ("
+    )
+    assert bandModelFor(values, unit.value, None, {}, len(values)).unitNote == ""
+
+
+def test_an_undeclared_unit_is_logged_once_per_image(caplog, tmp_path):
+    """Release QA 0.12.0 #13: one image logged the assumption three times."""
+    data = np.random.default_rng(0).random((6, 7, 5)).astype(np.float32)
+    image = VardaRaster(
+        ArrayDataSource(data, wavelengths=np.linspace(400, 2500, 5)), name="big"
+    )
+    assert image.bandModel.unitWasInferred and image.bandModel.isSpectral
+    writeRaster(image, tmp_path / "big.img")  # reads the band model again
+    logged = [r.getMessage() for r in caplog.records if "not declared" in r.message]
+    assert logged == [
+        "big: Wavelength units not declared; assuming nm from the values (400–2500)"
+    ]
 
 
 def test_native_values_round_trip():

@@ -350,6 +350,11 @@ class EnumParameter[E: Enum](Parameter[E]):
             name = re.sub(r"^([a-z])", makeUpper, name)
             self.enumNames.append(name)
 
+    def label(self, member: E | None = None) -> str:
+        """The UI label of ``member`` (the current value by default)."""
+        chosen = self.value if member is None else member
+        return self.enumNames[list(self.enumType).index(chosen)]
+
     def clone(self) -> EnumParameter[E]:
         return EnumParameter(self.name, self.enumType, self.default, self.description)
 

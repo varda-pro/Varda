@@ -32,6 +32,7 @@ from varda.analysis.linear_algebra import (
     suggestionRule,
     weightedPca,
     unflatten,
+    varianceShareText,
 )
 from varda.analysis.rasters import goodBands, readCube
 from varda.common.entities import VardaRaster
@@ -370,7 +371,7 @@ class PcaAnalysis(_ComponentAnalysis):
 
     def _bandNames(self, result):
         return [
-            f"PC {i + 1} ({100 * share:.1f}%)"
+            f"PC {i + 1} ({varianceShareText(share)})"
             for i, share in enumerate(result.explainedVariance)
         ]
 

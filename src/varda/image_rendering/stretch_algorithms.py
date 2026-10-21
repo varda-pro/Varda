@@ -116,6 +116,14 @@ def normalize_numba(image, minVals, maxVals):
     return out
 
 
+def _scaled(image: np.ndarray, low, high) -> np.ndarray:
+    """``image`` clipped to ``low``-``high`` and scaled to 0-1. A channel with
+    no range (constant, or all NaN) gives NaN, quietly: numpy's 0/0 warning
+    says nothing a viewer can act on."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return (np.clip(image, low, high) - low) / (high - low)
+
+
 @registerStretchAlgorithm("Min-Max (Auto Full Range)")
 class MinMaxStretch(StretchAlgorithm):
     """Simple min-max stretch that uses the full range of values in the image."""
@@ -136,7 +144,7 @@ class MinMaxStretch(StretchAlgorithm):
             maxVal = np.nanmax(stats)
             self.minVals = minVal
             self.maxVals = maxVal
-            return (np.clip(image, minVal, maxVal) - minVal) / (maxVal - minVal)
+            return _scaled(image, minVal, maxVal)
 
         # Compute percentiles for each channel
         minVals = np.nanmin(stats, axis=(0, 1)).reshape((1, 1, 3))
@@ -145,7 +153,7 @@ class MinMaxStretch(StretchAlgorithm):
         self.minVals = minVals.squeeze()
         self.maxVals = maxVals.squeeze()
 
-        return (np.clip(image, minVals, maxVals) - minVals) / (maxVals - minVals)
+        return _scaled(image, minVals, maxVals)
 
     def minMaxVals(self):
         if self.minVals is not None and self.maxVals is not None:

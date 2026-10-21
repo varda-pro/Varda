@@ -211,14 +211,15 @@ _ENVI_DESCRIPTION = re.compile(r"^description = \{.*?\}", re.MULTILINE | re.DOTA
 
 def _setEnviDescription(header: Path, description: str) -> None:
     """Put ``description`` in the header: GDAL's ENVI driver writes the
-    file's path there, whatever the ENVI metadata says."""
-    text = header.read_text()
+    file's path there, whatever the ENVI metadata says. UTF-8 as GDAL
+    writes it, whatever the system's encoding ("cm⁻¹" isn't in cp1252)."""
+    text = header.read_text(encoding="utf-8")
     entry = f"description = {{\n{description}}}"
     if _ENVI_DESCRIPTION.search(text):
         text = _ENVI_DESCRIPTION.sub(lambda _match: entry, text, count=1)
     else:
         text = text.replace("ENVI\n", f"ENVI\n{entry}\n", 1)
-    header.write_text(text)
+    header.write_text(text, encoding="utf-8")
 
 
 def _enviList(items: list[str]) -> str:

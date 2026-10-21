@@ -6,7 +6,9 @@ A provenance record is plain JSON-friendly data in an image's
     {
       "schema": 1,
       "process": "Band Math", "processId": "band_math",
-      "parameters": {...},                       # every setting
+      "parameters": {...},                       # every setting (an analysis's:
+                                                 # choices by label, ranges as
+                                                 # {"from", "to", "units"?})
       "inputs": [{"name", "path", "provenance"?, "crismColumnsFile"?,
                   "crismIncidenceFile"?, "labelHints"?, "crsFix"?}],
       "vardaVersion": "0.9.0", "created": "2026-10-17T12:00:00+00:00",
@@ -262,7 +264,19 @@ def fileMetadata(
 # --- one line, for descriptions ---------------------------------------------------------
 
 
+def _isRange(value) -> bool:
+    """A setting's range as ``parameterValues`` records it: {"from", "to"} as
+    numbers, with "units" when it has one."""
+    return (
+        isinstance(value, Mapping)
+        and {"from", "to"} <= set(value) <= {"from", "to", "units"}
+        and all(isinstance(value[k], int | float) for k in ("from", "to"))
+    )
+
+
 def _brief(value) -> str:
+    if _isRange(value):  # "1000–2600 nm"
+        value = f"{value['from']:g}–{value['to']:g} {value.get('units', '')}".strip()
     text = str(value)
     return text if len(text) <= _BRIEF else text[: _BRIEF - 1] + "…"
 
