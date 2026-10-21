@@ -150,6 +150,7 @@ source_modules = [
     "varda.workspaces.linked_images.linking",
     "varda.workspaces.crism_ratio.mapping",
     "varda.vector_import",
+    "varda.shapes",
 ]
 forbidden_modules = ["PyQt6"]
 ignore_imports = [
