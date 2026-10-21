@@ -363,6 +363,75 @@ column-matched. The record sets `vnirApproximate` in that case, and the
 description says so. A VNIR-only (S) cube ratioed by its own image columns
 is column-matched and not flagged.
 
+### The 1 µm detector join
+
+CRISM measures 362–1053 nm on its VNIR (S) detector and 1001–3920 nm on its
+IR (L) detector (Murchie et al. 2007). A joined (J) cube such as an MTRDR
+keeps the S bands up to about 1010 nm and the L bands from about 1047 nm,
+and the two detectors' calibrations differ slightly, so a spectrum often
+**steps at the join**. In FRT00005850's MTRDR the IR side sits a median
+1.9 % below the VNIR side (IR/VNIR 0.981; 5th–95th percentile of pixels
+0.969–0.996). A ratio divides a step out only as far as numerator and
+denominator share it: for pairs of pixels in the same column of that MTRDR
+the median step left in the ratio was 0.7 %, and 2 % at the 95th
+percentile.
+
+**Scale VNIR to IR at 1 µm** (off by default; in the Ratio Cube dialog and
+the workspace's Ratio Controls) removes the step from each spectrum before
+it is ratioed. This is Varda's own empirical correction:
+
+1. **The join** is the widest gap between neighboring band centers between
+   950 and 1100 nm that is at least 3 times the cube's median band spacing
+   (1010.2 to 1047.2 nm in an MTRDR). The VNIR bands are those at or below
+   its short end. A cube with no such gap (IR-only, VNIR-only) has no join,
+   and the option is unavailable.
+2. **Fit.** A least-squares line is fitted to each side: the good bands
+   (not marked bad in `bbl`, with a value) within **80 nm** of the gap, at
+   least 4 per side (13 and 13 in an MTRDR).
+3. **Scale.** Both lines are evaluated at the gap's middle (1028.7 nm in an
+   MTRDR), and the VNIR bands are multiplied by the factor *f* = IR / VNIR
+   there. The IR bands are unchanged, so every band depth and parameter
+   beyond 1.05 µm is unchanged. A spectrum without enough values on a side,
+   or with a level that isn't positive, is left as it is.
+
+In the workspace the numerator and the denominator box means are each
+scaled by their own factor, then ratioed. The Ratio Cube scales every pixel
+by its own factor before anything else, so the bland pixels are chosen and
+the column denominators averaged from scaled spectra.
+
+**Uncertainty.** *f*'s 1-sigma comes from the two fits' standard errors at
+the gap's middle, (σ_f / f)² = (σ_IR / IR)² + (σ_VNIR / VNIR)². On
+synthetic spectra with white noise it matches the spread of repeated
+estimates within 15 % (`test_detector_join`). On the MTRDR above it was a
+median 0.0064 per pixel and hardly smaller (0.0058) for 5 × 5 box means:
+the scatter about the lines is mostly the spectrum's own shape, not noise,
+so σ_f states how well a straight line describes each side, and the
+correction is good to about half a percent. **Limitation:** the lines bridge
+a 37 nm gap. A spectrum that curves there (the short-wavelength side of a
+1 µm iron band) is made continuous to the lines, not to the truth, so
+interpret band shapes that straddle 1 µm with the factor and its σ in view,
+or compare with the option off.
+
+**Where it is recorded.**
+
+- *Workspace:* the factors (IR/VNIR) of the current pair are shown beside the
+  check box (numerator / denominator; their 1-sigma in its tooltip), and
+  whether or not the option is on, what S and P save carries "1 µm detector
+  join (<VNIR end>/<IR start> nm): VNIR scaled to IR" (or "not corrected")
+  with both factors ± 1-sigma, in the description. Sessions keep the setting.
+- *Ratio Cube:* the record's `joinCorrection` holds `enabled` and, when on,
+  `vnirEndNm`, `irStartNm`, `atNm`, `fitNm`, the factor's median and 5th and
+  95th percentiles over pixels (`factorMedian`, `factorP5`, `factorP95`),
+  `sigmaMedian`, and `unscaledPixels`. The **Denominators** image gains two
+  bands, "VNIR join factor (IR/VNIR)" and "VNIR join factor 1-sigma", per
+  pixel. The description says it in one sentence.
+
+A methods section can add: "Before ratioing, the VNIR (S detector) bands of
+each spectrum were scaled to the IR (L detector) at their join: lines fitted
+to the good bands within 80 nm on each side of the 1010–1047 nm gap were
+matched at 1029 nm (Varda <version>; median factor <factorMedian>, 5–95 %
+<factorP5>–<factorP95>, median 1-sigma <sigmaMedian>)."
+
 ### Outputs
 
 - **Ratio cube** (`… ratio cube`): float32, the input's bands, wavelengths and
@@ -387,6 +456,9 @@ is column-matched and not flagged.
   - `fallback` (`null`, `neighbors`, `whole column` or `no data`) and
     `borrowed` (`[[column, pixels], …]`, for *neighbors*);
   - `spectrum` and `std`: the denominator and its spread, per band.
+
+  And `joinCorrection`: whether the VNIR bands were scaled to the IR, and how
+  (see [The 1 µm detector join](#the-1-µm-detector-join)).
 - **Denominators** (`… ratio denominators`): band 1 "Used as denominator" is 1
   where the pixel was pooled into at least one column's denominator (with a
   value in at least one band), and 0
@@ -397,7 +469,8 @@ is column-matched and not flagged.
   own pixels unless they were bland. Band 2 "Column denominator count" is the
   number of pixels pooled for the pixel's column (`count`; 0 for *no data*).
   In the whole-column fallback a pixel with no value in any band is neither
-  pooled nor counted.
+  pooled nor counted. With **Scale VNIR to IR at 1 µm**, bands 3 and 4 are
+  each pixel's factor and its 1-sigma (NaN where the pixel was left unscaled).
 
 ### Saving and sharing
 
@@ -517,7 +590,10 @@ what it saves is ROIs and points.
   defined in this cube's pixels and shown on both views.
 - **Ratio Controls** (right, top): one row (it wraps when narrow) with the box
   size (**Box** width × height, pixels), **Lock to sensor column** (see
-  [Column lock](#column-lock)), **Choose/Change Geometry File…**, and **?**,
+  [Column lock](#column-lock)), **Choose/Change Geometry File…**, **Scale VNIR
+  to IR at 1 µm** with the current pair's factors beside it (see
+  [The 1 µm detector join](#the-1-µm-detector-join); unavailable for a cube on
+  one detector), and **?**,
   whose tooltip (hover, or click it) lists the clicks and keys of
   [the click loop](#the-click-loop).
 - **Spectra** (under the controls, left): the numerator (green) and the

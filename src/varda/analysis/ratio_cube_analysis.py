@@ -34,6 +34,7 @@ from varda.analysis.blandness import (
     parseExclusions,
     windowBandCounts,
 )
+from varda.analysis.detector_join import FIT_NM, DetectorJoin, findJoin, joinScale
 from varda.analysis.rasters import bandMetadata, goodBands, readGoodBands
 from varda.analysis.ratio_cube import (
     ColumnDenominators,
@@ -45,6 +46,7 @@ from varda.analysis.ratio_cube import (
 )
 from varda.common.entities import VardaRaster
 from varda.common.parameter import (
+    BoolParameter,
     EnumParameter,
     FilePathParameter,
     FloatParameter,
@@ -67,6 +69,9 @@ from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.raster_writer import SIDECAR_WRITERS
 
 CATEGORY = "CRISM"
+# the denominators image's planes with the 1 µm join correction on
+JOIN_FACTOR = "VNIR join factor (IR/VNIR)"
+JOIN_SIGMA = "VNIR join factor 1-sigma"
 NO_DATA = "no data"
 # CRISM's VNIR (S detector) bands lie below this; the backplane's column is
 # the IR (L) detector's, so in a cube with bands on both detectors the VNIR
@@ -309,6 +314,15 @@ class RatioCubeAnalysis(Analysis):
         "borrow bland pixels from; 0 never borrows",
     )
 
+    joinCorrection = BoolParameter(
+        "Scale VNIR to IR at 1 µm",
+        False,
+        "Before anything else, multiply each pixel's VNIR (S detector) bands "
+        "so they meet its IR (L detector) bands at their join near 1 µm (lines "
+        "fitted to the bands within 80 nm on each side); the IR bands are "
+        "unchanged. Needs a joined cube (bands on both detectors)",
+    )
+
     def __init__(self) -> None:
         super().__init__()
         self._image: VardaRaster | None = None
@@ -389,6 +403,12 @@ class RatioCubeAnalysis(Analysis):
                 "The image needs wavelengths (nm, µm or cm⁻¹) for the blandness check."
             )
         wavelengths = centers[goodBands(image)]
+        if self.joinCorrection.get() and findJoin(wavelengths) is None:
+            return (
+                "Scale VNIR to IR at 1 µm needs a joined cube, with good bands "
+                "on both detectors beside their join near 1 µm (an MTRDR, say); "
+                "this one has none. Turn it off."
+            )
         if self.method.get() is RatioCubeMethod.WHOLE_COLUMN:
             return ""
         try:
@@ -441,6 +461,11 @@ class RatioCubeAnalysis(Analysis):
         assert centers is not None
         wavelengths = centers[bands]
         strip, column = columnKeys(geometry)
+        join = findJoin(wavelengths) if self.joinCorrection.get() else None
+        joinPlanes: list[np.ndarray] = []
+        if join is not None:
+            reportProgress(5, "scaling the VNIR bands to the IR")
+            joinPlanes = self._scaleVnir(cube, wavelengths, join)
 
         whole = self.method.get() is RatioCubeMethod.WHOLE_COLUMN
         record: dict = {
@@ -461,6 +486,7 @@ class RatioCubeAnalysis(Analysis):
             "vnirApproximate": _vnirApproximate(centers, geometry),
             "vnirBelowNm": VNIR_BELOW_NM,
             "bands": [int(b) + 1 for b in bands],
+            "joinCorrection": self._joinRecord(join, joinPlanes),
         }
         if whole:
             use, minimum, radius = complete, 1, 0
@@ -520,11 +546,14 @@ class RatioCubeAnalysis(Analysis):
             description=description,
         )
         used = np.where(strip >= 0, denominators.pooled, np.nan).astype(np.float32)
+        names = ["Used as denominator", "Column denominator count"]
+        if joinPlanes:
+            names += [JOIN_FACTOR, JOIN_SIGMA]
         companion = ArrayDataSource(
-            np.stack([used, _perPixel(strip, column, counts)], axis=2),
-            wavelengths=np.array(["Used as denominator", "Column denominator count"]),
+            np.stack([used, _perPixel(strip, column, counts), *joinPlanes], axis=2),
+            wavelengths=np.array(names),
             wavelengthUnits="",
-            bandNames=["Used as denominator", "Column denominator count"],
+            bandNames=names,
             transform=image.transform,
             crs=image.crs,
             defaultBands=np.array([0, 0, 0]),
@@ -535,6 +564,43 @@ class RatioCubeAnalysis(Analysis):
             VardaRaster(result, name=f"{image.name} ratio cube"),
             VardaRaster(companion, name=f"{image.name} ratio denominators"),
         ]
+
+    @staticmethod
+    def _scaleVnir(
+        cube: np.ndarray, wavelengths: np.ndarray, join: DetectorJoin
+    ) -> list[np.ndarray]:
+        """Scale each pixel's VNIR bands to its IR in place; its factor and
+        1-sigma as float32 planes (NaN where a side had too few values: that
+        pixel is left as it was)."""
+        scale = joinScale(cube, wavelengths, join)
+        factor = np.where(np.isfinite(scale.factor), scale.factor, 1.0)
+        cube[..., join.vnir] *= factor[..., None]
+        return [scale.factor.astype(np.float32), scale.sigma.astype(np.float32)]
+
+    @staticmethod
+    def _joinRecord(join: DetectorJoin | None, planes: list[np.ndarray]) -> dict:
+        if join is None:
+            return {"enabled": False}
+        factor, sigma = planes
+        finite = np.isfinite(factor)
+        low, median, high = (
+            (_round(v) for v in np.percentile(factor[finite], [5, 50, 95]))
+            if finite.any()
+            else (None, None, None)
+        )
+        return {
+            "enabled": True,
+            "vnirEndNm": _round(join.vnirEndNm),
+            "irStartNm": _round(join.irStartNm),
+            "atNm": _round(join.atNm),
+            "fitNm": FIT_NM,
+            "factorMedian": median,
+            "factorP5": low,
+            "factorP95": high,
+            "sigmaMedian": _round(np.nanmedian(sigma)) if finite.any() else None,
+            "unscaledPixels": int(np.count_nonzero(~finite)),
+            "planes": [JOIN_FACTOR, JOIN_SIGMA],
+        }
 
     def _thresholds(self) -> dict:
         check, limits = self._check(), self._limits()
@@ -623,6 +689,18 @@ class RatioCubeAnalysis(Analysis):
             parts.append(
                 f"detector columns from {record['geometry']} of "
                 f"{record['geometryFile']}" + (f" (found: {found})" if found else "")
+            )
+        join = record["joinCorrection"]
+        if join["enabled"]:
+            parts.append(
+                "each pixel's VNIR bands were first scaled to its IR at the "
+                f"{join['vnirEndNm']:g}/{join['irStartNm']:g} nm detector join "
+                f"(IR/VNIR of lines over {join['fitNm']:g} nm each side, at "
+                f"{join['atNm']:g} nm): factor median {join['factorMedian']:g} "
+                f"(5-95 % {join['factorP5']:g}-{join['factorP95']:g}), 1-sigma "
+                f"median {join['sigmaMedian']}, {join['unscaledPixels']} pixels "
+                "left unscaled; per-pixel factors and 1-sigma are in the "
+                "denominators image"
             )
         if record["vnirApproximate"]:
             parts.append(
