@@ -28,7 +28,9 @@ def _models() -> list[Path]:
     return sorted(found, key=lambda p: p.stat().st_size)
 
 
-pytestmark = pytest.mark.skipif(not _models(), reason=f"no Bennu shape model in {BENNU_FOLDER}")
+pytestmark = pytest.mark.skipif(
+    not _models(), reason=f"no Bennu shape model in {BENNU_FOLDER}"
+)
 
 
 @pytest.fixture(scope="module")
