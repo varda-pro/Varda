@@ -153,6 +153,7 @@ source_modules = [
     "varda.terrain.solid",
     "varda.terrain.vectors",
     "varda.terrain.animation",
+    "varda.terrain.shape_scene",
     "varda.workspaces.linked_images.linking",
     "varda.workspaces.crism_ratio.mapping",
     "varda.vector_import",
