@@ -25,6 +25,7 @@ import PyQt6Ads as ads
 from PyQt6.QtCore import QByteArray, QSize, QTimer
 from PyQt6.QtGui import QShowEvent, QStandardItemModel
 from PyQt6.QtWidgets import (
+    QPushButton,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -96,7 +97,12 @@ from varda.points.point_collection import PointCollection
 from varda.points.point_manager_widget import PointManagerWidget
 from varda.rois.roi_collection import ROICollection
 from varda.rois.roi_manager_widget import ROIManagerWidget
-from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
+from varda.workspaces.crism_ratio.mapping import (
+    dataToView,
+    imageToSensor,
+    sensorToImage,
+    viewToData,
+)
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
 from varda.workspaces.crism_ratio.ratio_classes import (
     DENOMINATOR_CLASS,
@@ -108,6 +114,7 @@ from varda.workspaces.crism_ratio.ratio_classes import (
     suggestedClass as suggestedLibraryClass,
 )
 from varda.workspaces.crism_ratio.save_dialog import SaveRatioDialog
+from varda.workspaces.crism_ratio.sensor_dialog import SensorGotoDialog, SensorTargets
 from varda.spectral_libraries.spectrum import LibrarySpectrum
 from varda.workspaces.linked_images.linked_images_workspace import ViewGroupLink
 from varda.workspaces.linked_images.linking import Link, linkWarnings
@@ -317,6 +324,10 @@ class CrismRatioWorkspace(QMainWindow):
 
     def _initLock(self) -> None:
         self.columnSource = ""
+        self.sensorGeometry: ColumnGeometry | None = None  # with lines, for Go to
+        self.sensorButton = QPushButton("Go to Sensor…")
+        self.sensorButton.clicked.connect(self.openSensorGoto)
+        self.sensorDialog: SensorGotoDialog | None = None
         self.chooseGeometryButton = chooseGeometryButton(self.data, parent=self)
         self.lockCheck.toggled.connect(self._showLockStatus)
         status = self.statusBar()
@@ -455,6 +466,18 @@ class CrismRatioWorkspace(QMainWindow):
         self.chooseGeometryButton.setText(
             "Change Geometry File…" if available else CHOOSE_TEXT
         )
+        self.sensorGeometry = (
+            geometry if geometry is not None and geometry.ir_line is not None else None
+        )
+        self.sensorButton.setEnabled(self.sensorGeometry is not None)
+        self.sensorButton.setToolTip(
+            "Type a detector sample and line for the numerator and the "
+            "denominator, and the boxes jump there"
+            if self.sensorGeometry is not None
+            else "Go to a sensor position: unavailable. It needs each pixel's "
+            "detector line as well as its column: the IN file's IR Line band, or "
+            "an unprojected CRISM cube."
+        )
         self._showLockStatus()
 
     def _showLockStatus(self) -> None:
@@ -528,6 +551,7 @@ class CrismRatioWorkspace(QMainWindow):
             # box 2 px less than its text needs
             _row(self.lockCheck),
             self.chooseGeometryButton,
+            self.sensorButton,
             _row(self.joinCheck, self.joinStatus),
             _row(self.showRoisCheck),
             self.keysButton,
@@ -716,6 +740,87 @@ class CrismRatioWorkspace(QMainWindow):
         # bound methods (not partials), so Qt drops the connections with the tool
         tool.sigSelectionChanged.connect(self._syncViews)
         tool.sigSavePointRequested.connect(self._requestSavePoint)
+
+    # --- go to a sensor position ---------------------------------------------------
+
+    def _dataTool(self) -> RatioExplorerTool:
+        """The I/F view's Ratio Explorer (selected if another tool is on)."""
+        manager = self.toolManagers[1]
+        if not isinstance(manager.activeTool, RatioExplorerTool):
+            manager.select(RatioExplorerTool)
+        tool = manager.activeTool
+        assert isinstance(tool, RatioExplorerTool)
+        return tool
+
+    def _sensorOf(self, box: np.ndarray | None) -> tuple[float, float] | None:
+        if box is None or self.sensorGeometry is None:
+            return None
+        return imageToSensor(self.sensorGeometry, *centerPixel(box))
+
+    def openSensorGoto(self) -> None:
+        geometry = self.sensorGeometry
+        if geometry is None:
+            return
+        if self.sensorDialog is None:
+            assert geometry.ir_line is not None
+            self.sensorDialog = SensorGotoDialog(
+                int(np.nanmax(geometry.ir_sample)),
+                int(np.nanmax(geometry.ir_line)),
+                self.lockCheck.isChecked(),
+                parent=self,
+            )
+            self.sensorDialog.sigGo.connect(self.goToSensor)
+        selection = self._dataTool().selection
+        self.sensorDialog.setPositions(
+            self._sensorOf(selection.numerator), self._sensorOf(selection.denominator)
+        )
+        self.sensorDialog.show()
+        self.sensorDialog.raise_()
+
+    def goToSensor(self, targets: SensorTargets) -> str:
+        """Put the boxes on the image pixels nearest ``targets``, as clicks on
+        the I/F view would; what happened, as shown in the dialog."""
+        geometry = self.sensorGeometry
+        if geometry is None:
+            return ""
+        tool = self._dataTool()
+        lines = []
+        for role, target in (
+            ("Numerator", targets.numerator),
+            ("Denominator", targets.denominator),
+        ):
+            if target is None:
+                continue
+            pixel = sensorToImage(geometry, *target)
+            if pixel is None:
+                lines.append(f"{role}: no pixel of the image has a detector position.")
+                continue
+            if role == "Numerator":
+                tool.placeNumerator(pixel.col, pixel.row)
+            elif not tool.placeDenominator(pixel.col, pixel.row):
+                continue
+            box = (
+                tool.selection.numerator
+                if role == "Numerator"
+                else tool.selection.denominator
+            )
+            placed = self._sensorOf(box)
+            where = (
+                f"sample {placed[0]:.0f}, line {placed[1]:.0f}"
+                if placed is not None
+                else "a pixel without a detector position"
+            )
+            note = (
+                f" (nearest map pixel to {target[0]}, {target[1]}: "
+                f"{pixel.offset:.1f} detector pixels away)"
+                if pixel.offset > 0.5
+                else ""
+            )
+            lines.append(f"{role} at {where}{note}.")
+        text = " ".join(lines)
+        if self.sensorDialog is not None:
+            self.sensorDialog.showResult(text)
+        return text
 
     def _browseToData(self, x: float, y: float) -> tuple[float, float] | None:
         mapped = viewToData(self.browse, self.data, self.link, [[x, y]])

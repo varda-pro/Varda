@@ -143,19 +143,30 @@ class RatioExplorerTool(ViewportTool):
             x, y = mapped
         col, row = int(x), int(y)
         if event.button == Qt.MouseButton.LeftButton:
-            width, height = self._boxSize()
-            numerator = boxPolygonPixels(col, row, width, height)
-            denominator = self.selection.denominator
-            if denominator is not None and self._followDenominator is not None:
-                moved = self._followDenominator(numerator, denominator)
-                denominator = denominator if moved is None else moved
-            self._setSelection(numerator, denominator)
-            return True
+            self.placeNumerator(col, row)
+        else:
+            self.placeDenominator(col, row)
+        return True
 
+    def placeNumerator(self, col: int, row: int) -> None:
+        """A numerator box centered on the pixel (col, row) of the boxes'
+        image, as a click there makes: the denominator follows it."""
+        width, height = self._boxSize()
+        numerator = boxPolygonPixels(col, row, width, height)
+        denominator = self.selection.denominator
+        if denominator is not None and self._followDenominator is not None:
+            moved = self._followDenominator(numerator, denominator)
+            denominator = denominator if moved is None else moved
+        self._setSelection(numerator, denominator)
+
+    def placeDenominator(self, col: int, row: int) -> bool:
+        """A denominator box at the pixel (col, row), as a right-click there
+        makes (on the numerator's column, with the lock on); False without
+        a numerator."""
         numerator = self.selection.numerator
         if numerator is None:
             self.showText("Left-click a numerator box first", timeout=2000)
-            return True
+            return False
         if self._placeDenominator is not None:
             denominator = self._placeDenominator(numerator, row, col)
         else:
