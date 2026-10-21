@@ -39,6 +39,12 @@ can alter results.
   or faded uncertain plates), and exports OBJ, STL, plate CSV, web pages
   and stills. Plate data is matched to its model by content hash and plate
   count. Guide: Small bodies and shape models.
+- **Shape Geophysics** (Processing → Shape Models, or the shape panel): per
+  plate gravity, slope, geopotential elevation and tilt of a closed shape
+  model (constant-density polyhedron gravity, Werner & Scheeres 1997, plus
+  rotation), with slope and elevation also at ρ ± σ, since they aren't
+  linear in density. Models above 200,000 plates are evaluated on a
+  decimated model and the result says so.
 - **Irregular bodies.** Bennu, Ryugu, Didymos, Dimorphos and Arrokoth are
   known bodies (from a cited table; PROJ lacks them), as are Eros, Itokawa
   and 67P, with densities and rotation periods for Shape Geophysics. On an

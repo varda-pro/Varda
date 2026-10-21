@@ -42,6 +42,8 @@ from varda.shapes.formats import (
     writeObj,
     writeStl,
 )
+from varda.shapes.geophysics import GeophysicsSettings, geophysics
+from varda.shapes.gravity import CLOSED_ONLY
 from varda.shapes.mesh import ShapeModel, latLonRadius
 from varda.shapes.plate_data import (
     PlateData,
@@ -60,7 +62,8 @@ from varda.terrain.shape_scene import (
     shapeDisplay,
     shapePageHtml,
 )
-from varda.utilities.background import runInBackground
+from varda.utilities.background import onMainThread, runInBackground
+from varda.workspaces.terrain.geophysics_dialog import GeophysicsDialog
 from varda.workspaces.terrain.still_dialog import StillDialog
 from varda.workspaces.terrain.terrain_view import TerrainView
 
@@ -203,7 +206,12 @@ class ShapePanel(QWidget):
         menu.addAction("Still…", self.exportStill)
         export.setMenu(menu)
         self.geophysicsButton = QPushButton("Shape Geophysics…")
+        self.geophysicsButton.setToolTip(
+            "Per-plate gravity, slope, geopotential elevation and tilt of a "
+            "closed model, with bounds from the density's uncertainty"
+        )
         self.geophysicsButton.setEnabled(False)
+        self.geophysicsButton.clicked.connect(self.openGeophysics)
 
         self.form = form = QFormLayout()
         form.addRow("Body:", self.bodyBox)
@@ -456,6 +464,71 @@ class ShapePanel(QWidget):
             return
         payload = json.dumps(colorPayload(colors, legend))
         self.view.evaluate(f"window.viewer.setColors({payload})", lambda _: None)
+
+    # --- Shape Geophysics ----------------------------------------------------------------
+
+    def openGeophysics(self) -> None:
+        """The settings dialog, then the run; with no model open, the file
+        chooser first."""
+        if self.model is None:
+            self.status.setText("Open a closed shape model for Shape Geophysics.")
+            self.sigLoaded.connect(self._geophysicsOnceLoaded)
+            self._chooseShape()
+            return
+        if not self.model.isClosed:
+            self.status.setText(CLOSED_ONLY)
+            return
+        name = self.body()
+        body = bodyNamed(name) if name else None
+        dialog = GeophysicsDialog(body, self.model.plateCount, self)
+        if dialog.exec():
+            settings = dialog.settings()
+            if settings is not None:
+                self.runGeophysics(settings)
+
+    def _geophysicsOnceLoaded(self) -> None:
+        self.sigLoaded.disconnect(self._geophysicsOnceLoaded)
+        self.openGeophysics()
+
+    def runGeophysics(self, settings: GeophysicsSettings) -> None:
+        """Run Shape Geophysics in the background; its datasets join the
+        plate data and slope colors the plates."""
+        model = self.model
+        if model is None:
+            return
+        self.geophysicsButton.setEnabled(False)
+        progress = onMainThread(
+            lambda percent, message: self.status.setText(
+                f"Shape Geophysics {percent}%: {message}"
+            )
+        )
+
+        def done(results: list[PlateData]) -> None:
+            self.geophysicsButton.setEnabled(True)
+            if self.model is not model:
+                return  # another model was opened meanwhile
+            for data in results:
+                self.addPlateData(data)
+            self.colorBox.setCurrentText("slope")
+            evaluated = results[0].provenance["evaluatedOn"]
+            note = (
+                f" (gravity evaluated on {evaluated:,} plates and carried to all)"
+                if evaluated < model.plateCount
+                else ""
+            )
+            self.status.setText(f"Shape Geophysics done{note}.")
+
+        def failed(error: Exception) -> None:
+            self.geophysicsButton.setEnabled(True)
+            self.status.setText(f"Shape Geophysics failed: {error}")
+
+        runInBackground(
+            lambda: geophysics(model, settings, progress),
+            done,
+            failed,
+            description="Shape Geophysics",
+            owner=self,
+        )
 
     # --- the readout ------------------------------------------------------------------
 

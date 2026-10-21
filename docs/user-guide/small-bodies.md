@@ -135,6 +135,132 @@ a value are dark gray. **Uncertainty** shows the data's sigma:
   (0.5 by default) are faded toward gray, so only the well-determined
   values stand out.
 
+## Shape Geophysics
+
+**Shape Geophysics…** (in the shape panel, or **Processing → Shape Models →
+Shape Geophysics…**, which opens a 3D Terrain workspace on a shape model)
+computes, for every plate of a **closed** model, the gravity of the body
+and what it means for loose material on the surface. An open patch or a
+model with holes is refused: "Gravity needs a closed shape model; this one
+has holes or is a patch."
+
+### Method
+
+The body is a **constant-density polyhedron**, the shape model filled with
+density ρ, rotating about its +Z axis with period P (ω = 2π/P). At each
+plate's centroid:
+
+- **Gravity**: the exact potential and acceleration of the polyhedron
+  (Werner, 1994; Werner & Scheeres, 1997): sums over the model's edges
+  and plates, valid on and off the surface. Varda checks its
+  implementation against a uniform sphere (−GM/r outside), Poisson's
+  equation inside (∇²V = 4πGρ), and the closed-form potential of a cube
+  (to 10⁻¹⁰), Werner's own test body. G = 6.67430 × 10⁻¹¹ m³ kg⁻¹ s⁻²
+  (CODATA 2018).
+- **Centrifugal** acceleration ω²(x, y, 0) and potential −½ω²(x² + y²).
+- **Total acceleration** a = gravity + centrifugal; **effective potential**
+  V_eff = V + centrifugal potential.
+- **Slope**: the angle between a and the plate's inward normal (Scheeres
+  et al., 2016; Barnouin et al., 2019): 0° where the total acceleration
+  points straight into the surface; above the material's angle of repose,
+  loose material can slide.
+- **Geopotential elevation**: (V_eff − V_ref)/|a| (Scheeres et al., 2016;
+  "geopotential altitude" in Barnouin et al., 2019): how high a plate
+  stands in the combined gravitational and rotational potential, in m.
+  Material moves from high to low elevation, which isn't necessarily
+  toward the center.
+- **Tilt**: the angle between the surface normal and the radius vector
+  (zero on a sphere; Hergenrother et al., 2014, §2.3.5). The surface normal
+  is the area-weighted mean normal of the plates whose centroids lie within
+  the **tilt radius** of the plate's (each plate's own normal at 0 m). ALTWG
+  tilt products may define the surface differently: check before comparing.
+
+### Parameters
+
+| Parameter | Meaning | Units | Valid range | Default |
+|---|---|---|---|---|
+| Density ρ | bulk density of the body | kg/m³ | > 0 | the body's value (table below), else none: enter one |
+| Density σ | 1σ uncertainty of ρ | kg/m³ | 0 ≤ σ < ρ | the body's value |
+| Rotation period P | sidereal, about +Z | h | > 0 | the body's value |
+| Reference potential | V_ref: the **area-weighted mean** of V_eff over the plates (as ALTWG products), or its **minimum** (elevations then ≥ 0) | — | — | area-weighted mean |
+| Tilt radius | plates averaged for tilt's normal | m | ≥ 0 | 0 (the plate's own normal) |
+| Evaluate exactly up to | models with more plates are evaluated on a coarser model (below) | plates | ≥ 1000 | 200,000 |
+
+The defaults come from [the small-body
+table](coordinate-systems.md#the-small-body-table); the dialog shows each
+value's source. For Bennu: ρ = 1190 ± 13 kg/m³ (Barnouin et al., 2019),
+P = 4.296061 h (Hergenrother et al., 2019). The dialog estimates the run
+time: the gravity sums cost about 2.5 N² operations for N plates (on a
+14-core desktop, 20,000 plates take 2 s and 200,000 plates about 3 min;
+laptops take two to four times longer). It runs in the background, with
+progress in the status line.
+
+### Outputs
+
+Twelve plate datasets, added to the panel's plate data (and colored by
+slope), each carrying its provenance (the settings, G, the method, the
+mean edge, the plate counts):
+
+| Output | Units |
+|---|---|
+| area | m² |
+| gravitational acceleration (magnitude) | m/s² |
+| centrifugal acceleration (magnitude) | m/s² |
+| total acceleration (magnitude) | m/s² |
+| potential (V_eff, negative) | J/kg |
+| slope | ° |
+| geopotential elevation | m |
+| tilt | ° |
+| slope (ρ−σ), slope (ρ+σ) | ° |
+| geopotential elevation (ρ−σ), geopotential elevation (ρ+σ) | m |
+
+Export them with **Export → Plate Data as CSV…**.
+
+### Uncertainty and limitations
+
+- **Density.** Gravity scales with ρ, the centrifugal terms don't, so
+  slope and elevation are **not** linear in ρ: Varda recomputes them at
+  ρ − σ and ρ + σ. Report the range: a lower density means relatively
+  more spin and steeper slopes away from the poles and the equator. The
+  density σ itself usually comes from the mass and volume (e.g. Bennu's
+  ±13 kg/m³), not from the interior.
+- **Constant density.** The body is assumed uniform. Real rubble piles
+  aren't: Scheeres et al. (2019) found evidence for substantial density
+  heterogeneity within Bennu. Slopes near a denser or emptier region are
+  biased in ways the density σ doesn't capture.
+- **Resolution.** Slopes and tilts are of the plates, at the model's
+  **mean edge** (recorded in the provenance): a finer model shows steeper
+  local slopes. Compare slopes only between models of similar resolution,
+  and state it. Even on a perfect sphere the plates' facets tilt them by up
+  to a few degrees from the radius (about 2–3° for 20,000 plates on a
+  sphere).
+- **Coarse evaluation.** Above the exact limit, gravity is computed on a
+  decimated, closed model of at most that many plates; each plate takes the
+  gravity of the coarse plate nearest its centroid, and its potential is
+  carried to its own centroid to first order (V ≈ V_coarse − g·Δr).
+  Normals, centrifugal terms, slopes and tilts use every plate. The error
+  grows with the difference between the two surfaces near the plate (of
+  the order of the coarse mean edge). The status line and the provenance
+  ("evaluatedOn") say when this was done.
+- **Reference potential.** Elevations depend on V_ref: state which.
+- **Rotation.** Uniform rotation about +Z at the period given; precession,
+  tumbling (Dimorphos after DART) and YORP spin-up are not modeled.
+
+### Reporting your results
+
+> Surface slopes and geopotential elevations were computed in Varda
+> (version <X.Y>) from the <N>-plate (mean edge <e> m) shape model of
+> <body> (<source>), assuming a uniform bulk density of <ρ> ± <σ> kg m⁻³
+> (<source>) and a rotation period of <P> h (<source>), using the
+> constant-density polyhedron gravity of Werner & Scheeres (1997) with the
+> centrifugal term; slope is the angle between the total acceleration and
+> the inward surface normal, and elevation is measured from the
+> area-weighted mean effective potential (Scheeres et al., 2016). Slopes at
+> ρ ± σ span <a>–<b>° (mean).
+
+Add "gravity was evaluated on a <M>-plate decimated model" when the
+provenance's `evaluatedOn` is below the plate count.
+
 ## Exports
 
 - **Shape as OBJ**: vertices in km, to 17 significant digits; plates
@@ -186,10 +312,32 @@ machine.)
   https://doi.org/10.1007/s10569-017-9805-5
 - Barnouin, O. S., et al. (2019). Shape of (101955) Bennu indicative of a
   rubble pile with internal stiffness. *Nature Geoscience*, 12, 247–252.
+- Barnouin, O. S., et al. (2019), above: slope and geopotential altitude
+  as used for Bennu.
 - Ericson, C. (2005). *Real-Time Collision Detection*. Morgan Kaufmann,
   §5.1.5 (closest point on a triangle).
+- Hergenrother, C. W., et al. (2014). The Design Reference Asteroid for the
+  OSIRIS-REx mission target (101955) Bennu. arXiv:1409.4704, §2.3.5
+  (surface tilt).
+- Hergenrother, C. W., et al. (2019). The operational environment and
+  rotational acceleration of asteroid (101955) Bennu from OSIRIS-REx
+  observations. *Nature Communications*, 10, 1291.
 - Gaskell, R. W., et al. (2008). Characterizing and navigating small bodies
   with imaging data. *Meteoritics & Planetary Science*, 43, 1049–1061.
 - Möller, T., & Trumbore, B. (1997). Fast, minimum storage ray–triangle
   intersection. *Journal of Graphics Tools*, 2(1), 21–28.
 - NAIF. DSK Required Reading. https://naif.jpl.nasa.gov
+- Nagy, D. (1966). The gravitational attraction of a right rectangular
+  prism. *Geophysics*, 31, 362–371 (the cube check).
+- Scheeres, D. J., et al. (2016). The geophysical environment of Bennu.
+  *Icarus*, 276, 116–140.
+- Scheeres, D. J., et al. (2019). The dynamic geophysical environment of
+  (101955) Bennu based on OSIRIS-REx measurements. *Nature Astronomy*, 3,
+  352–361.
+- Werner, R. A. (1994). The gravitational potential of a homogeneous
+  polyhedron or don't cut corners. *Celestial Mechanics and Dynamical
+  Astronomy*, 59, 253–278.
+- Werner, R. A., & Scheeres, D. J. (1997). Exterior gravitation of a
+  polyhedron derived and compared with harmonic and mascon gravitation
+  representations of asteroid 4769 Castalia. *Celestial Mechanics and
+  Dynamical Astronomy*, 65, 313–344.
