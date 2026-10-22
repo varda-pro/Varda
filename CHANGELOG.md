@@ -6,6 +6,23 @@ can alter results.
 
 ## Unreleased
 
+### Added
+
+- **Browse products in the display settings.** **Render Settings → Browse
+  Product** shows CRISM's standard browse products (MTRDR SIS §3.12.3):
+  TRU, VNA, FAL, IRA, TAN, MAF, HYD, PHY, PFM, PAL and HYS, with the rest
+  listed and the parameters they still need named. **Custom** defines your
+  own from spectral parameters and reflectances (R1330 and the like), saved
+  for every image. Parameters come from HyPyRameter, computed in the
+  background once per image and shared by all its views. Each channel is
+  stretched as the PDS products are, to the default range their labels give
+  (from 40 scenes) or the scene's 0.1–99.9 % for reflectances, shown as a
+  manual stretch you can change. On FRT000047A3 the products match the PDS
+  ones within a few DN of 254. HyPyRameter 0.3.0's BDI1000VIS runs
+  opposite to CRISM's, so FEM and FM2 are unavailable for now; the [Band
+  Parameters guide](docs/user-guide/optional-features.md) says so too. See
+  [Browse products](docs/user-guide/viewing-and-measuring.md#browse-products).
+
 ### Changed
 
 - **A new start screen.** The window opens on a short list of ways in, each

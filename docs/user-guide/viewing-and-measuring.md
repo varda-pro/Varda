@@ -69,6 +69,181 @@ give:
 Sessions keep the display settings of Linked Images and 3D Terrain
 workspaces, but not those of General Image Analysis, so write them down.
 
+## Browse products
+
+A browse product shows three spectral quantities as red, green and blue:
+reflectances at chosen wavelengths, or spectral parameters such as the
+olivine index. Choose one under **Browse Product** at the top of **Render
+Settings** (shown for images with wavelengths). **None (choose bands)**
+goes back to the bands and to the stretch you had before. Choosing **Mono**
+also leaves the product. The product changes only the picture: pixel
+spectra, ROI statistics and every analysis still read the image's bands.
+
+The first time you show a product of an image, Varda computes it in the
+background, with a progress bar under the channels. For an 808 × 847 × 489
+CRISM MTRDR on an Apple M4 Pro, the reflectance products took about 1 s and
+the parameter products 2–8 s. Until it's ready, the view shows the bands. Each image keeps its six most recent products while it's open, so
+going back to one is instant, and every view of the image (main, zoom,
+linked) uses the same one.
+
+### CRISM's standard products
+
+The list holds the 18 browse products of the CRISM MTRDR (the Data Product
+SIS, Murchie et al. 2024, §3.12.3, after Viviano-Beck et al. 2014), with
+the channels the products' own labels name. Where the SIS text differs, the
+labels were followed: FEM's green is SH600_2 (the SIS text says BD600_2),
+FM2's red and green are BD530_2 and BD920_2 (BD530 and BD920), and CAR's
+green is BD2500_2 (BD2500H).
+
+| Product | Name | Red | Green | Blue | In Varda |
+| --- | --- | --- | --- | --- | --- |
+| TRU | True Color | R600 | R530 | R440 | Yes |
+| VNA | VNIR Albedo | R770 | R770 | R770 | Yes |
+| FEM | Fe Mineralogy | BD530_2 | SH600_2 | BDI1000VIS | No: SH600_2, BDI1000VIS |
+| FM2 | Fe Mineralogy, Version 2 | BD530_2 | BD920_2 | BDI1000VIS | No: BDI1000VIS |
+| FAL | False Color | R2529 | R1506 | R1080 | Yes |
+| IRA | IR Albedo | R1330 | R1330 | R1330 | Yes |
+| MAF | Mafic Mineralogy | OLINDEX3 | LCPINDEX2 | HCPINDEX2 | Yes |
+| HYD | Hydrated Mineralogy | SINDEX2 | BD2100_2 | BD1900_2 | Yes |
+| PHY | Phyllosilicates | D2300 | D2200 | BD1900R2 | Yes |
+| PFM | Phyllosilicate with Fe and Mg | BD2355 | D2300 | BD2290 | Yes |
+| PAL | Phyllosilicate with Al | BD2210_2 | BD2190 | BD2165 | Yes |
+| HYS | Hydrated Silica | MIN2250 | BD2250 | BD1900R2 | Yes |
+| ICE | Ices | BD1900_2 | BD1500_2 | BD1435 | No: BD1500_2, BD1435 |
+| IC2 | Ices, Version 2 | R3920 | BD1500_2 | BD1435 | No: BD1500_2, BD1435 |
+| CHL | Chloride | ISLOPE1 | BD3000 | IRR2 | No: ISLOPE1, BD3000 |
+| CAR | Carbonates | D2300 | BD2500_2 | BD1900_2 | No: BD2500_2 |
+| CR2 | Carbonates, Version 2 | MIN2295_2480 | MIN2345_2537 | CINDEX2 | No: CINDEX2 |
+| TAN | Tandem | R2529 | R1330 | R770 | Yes |
+
+A product the image can't show is grayed out, and its tooltip says why:
+a parameter Varda can't compute yet (it isn't in HyPyRameter 0.3), a
+wavelength the image doesn't cover, or BDI1000VIS (below). Each channel's
+tooltip gives the parameter's definition, or the bands an R channel reads.
+
+### Your own products
+
+**Custom → New Browse Product…** asks for a name and three channels. Each
+channel is one of the spectral parameters the image supports (the list
+offers them) or a reflectance written **R** and a wavelength in nm, such
+as **R1330**. Save is enabled once every channel can be shown on this
+image. Names can't contain "=" or ",", or reuse a standard product's name.
+**Custom → Edit** and **Delete** act on the product shown. Your products
+are kept in Varda's settings on this computer and are offered for every
+image. Sessions of Linked Images and 3D Terrain keep the product shown
+(with its definition), so a session opens even on a computer that doesn't
+have it.
+
+### How the channels are computed
+
+- **R<nm>** is the median of five bands: the band nearest the wavelength
+  and two on each side, in wavelength order (shifted inward at either end
+  of the spectrum), as HyPyRameter computes its R parameters. The nearest
+  band must lie within 10 nm, or within the image's median band spacing if
+  that is wider. No-data values and bands marked bad (ENVI `bbl`) are left
+  out of the median, and the scale factor, if any, is applied.
+- **Parameters** are computed with HyPyRameter (Phillips et al. 2024), the
+  definitions of Viviano-Beck et al. (2014), on the bands each parameter
+  reads plus a margin of three band spacings (at least 15 nm), prepared as
+  [Band Parameters](optional-features.md) prepares them: no-data and bad
+  bands set missing, the scale factor applied, |I/F| > 1 treated as
+  missing, and missing bands filled along each spectrum. They're computed
+  64 rows at a time, which gives the same values as computing the whole
+  cube at once.
+
+**BDI1000VIS is not offered.** HyPyRameter 0.3.0 integrates R/RPEAK1 over
+833–989 nm, where Viviano-Beck et al. (2014) integrate 1 − R/RPEAK1, so its
+values run opposite to CRISM's (r = −0.97 against the PDS FM2 product of
+FRT000047A3). FEM and FM2 stay unavailable until HyPyRameter is corrected.
+
+### The stretch
+
+When you choose a product, Varda switches the stretch to **Min-Max
+(Manual)** and sets each channel's range, so **Red Stretch**, **Green
+Stretch** and **Blue Stretch** show the exact values, in the parameter's
+units, that black and full color stand for. You can change them like any
+manual stretch. A session keeps your changes.
+
+The ranges follow the PDS products. The SIS (§3.12.3) says reflectance,
+slope and ratio channels are stretched by the scene's statistics, and the
+other parameters to "meaningful values". The labels of the browse products
+of 40 MTRDR scenes, read from PDS ODE in October 2026, give those values:
+
+- **Reflectances, slopes and ratios** (R channels, ISLOPE1, IRR2, and any
+  parameter not below): from the scene's 0.1st to its 99.9th percentile.
+  On FRT000047A3, the PDS FAL, IRA and TRU ranges lie at the 0.1st and
+  99.9th percentiles of Varda's values (within 0.1 percentile).
+- **Band depths and indices**: a default range per parameter, the most
+  common one in the 40 scenes' labels (55–100 % of them). In the other
+  scenes the PDS raised the top, never the floor. Varda raises the top to
+  the scene's 99.9th percentile when that is higher, which reproduces the
+  one raised top in FRT000047A3 (BD2290: 0.0123 in the PDS product, 0.0124
+  in Varda). A band depth or index (a name starting BD, BA, D followed by a
+  digit, or MIN, or containing INDEX) that has no default runs from 0 to
+  the scene's 99.9th percentile.
+
+| Parameter | Default range | Parameter | Default range |
+| --- | --- | --- | --- |
+| BD1435 | 0–0.01551 | BD920_2 | 0–0.02182 |
+| BD1500_2 | 0–0.0417 | BDI1000VIS | 0–0.03478 |
+| BD1900R2 | 0–0.04974 | D2200 | 0.0025–0.01993 |
+| BD1900_2 | 0–0.04694 | D2300 | 0–0.03393 |
+| BD2100_2 | 0–0.0195 | HCPINDEX2 | 0–0.02569 |
+| BD2165 | 0–0.00996 | LCPINDEX2 | 0–0.02022 |
+| BD2190 | 0–0.00996 | MIN2250 | 0–0.00996 |
+| BD2210_2 | 0.005–0.00942 | MIN2295_2480 | 0–0.00061 |
+| BD2250 | 0–0.0092 | MIN2345_2537 | 0–0.006 |
+| BD2290 | 0–0.00996 | OLINDEX3 | 0–0.25898 |
+| BD2355 | 0.005–0.01317 | SINDEX2 | 0.005–0.02938 |
+| BD2500_2 | 0–0.00404 | BD3000 | 0–0.87043 |
+| BD530_2 | 0–0.28169 | | |
+
+Each label gives a channel's value as OFFSET + DN × SCALING_FACTOR for DN
+0–254, so its range is OFFSET to OFFSET + 254 × SCALING_FACTOR.
+
+### Agreement with the PDS products
+
+Against the PDS browse products of FRT000047A3 (Jezero crater, MTRDR
+version 07), each channel of Varda's composite was stretched to 0–254 and
+compared pixel by pixel with the PDS image:
+
+| Products | Median difference | 95th percentile |
+| --- | --- | --- |
+| TRU, VNA, FAL, IRA, TAN (reflectances) | 1–3 DN (R440: 6) | 1–4 DN (R440: 16) |
+| MAF, HYD, PHY, PFM, PAL | 0–4 DN | 0–21 DN |
+| HYS | 7–8 DN (MIN2250, BD2250) | 26–37 DN |
+
+The parameters behind them agree closely with CAT's: fitted against the
+PDS values, Varda's OLINDEX3 is 0.97 × CAT's (r = 0.96), D2300, D2200 and
+BD1900R2 are 1.00 × (r = 0.96, 0.90 and 1.00), and HCPINDEX2 is 0.95 ×
+(r = 0.90). The differences come from three places. The MTRDR evaluates
+reflectances by polynomial fits over kernels of channels (SIS §3.12.3 and
+Table 3-12), where Varda takes a 5-band median. HyPyRameter's
+implementations differ in detail from CAT's. And the MTRDR browse
+products are made from CAT's refined summary parameters. This is one scene;
+check the products you rely on.
+
+### Reporting a browse product
+
+A browse product is a picture made in Varda, not the PDS product of the
+same name. In a caption, give:
+
+- the product name and its three channels (for example "MAF: R = OLINDEX3,
+  G = LCPINDEX2, B = HCPINDEX2"), and that it was computed in Varda with
+  HyPyRameter (give its version, from **Help → Copy System Info**);
+- each channel's range from **Min-Max (Manual)**, in the parameter's units
+  (for example "OLINDEX3 0–0.259");
+- for a custom product, the definition of each channel.
+
+**Uncertainty.** A browse product shows no uncertainty. A parameter near
+its floor is at the level of noise and unmodeled spectral shape: values
+below the floor draw black, and a weak color can be noise. To report a
+parameter's values, run **Band Parameters (HyPyRameter)** and measure the
+result with ROI statistics, which give the spread and the number of pixels
+(see [Uncertainty of a mean spectrum](#uncertainty-of-a-mean-spectrum)). Confirm any mineral
+identification from spectra, as Viviano-Beck et al. (2014) advise: a
+parameter can respond to things other than the mineral it targets.
+
 ## Overlays
 
 The **Overlay** bar under the main view of General Image Analysis (and under
@@ -612,8 +787,19 @@ for what applies to every process.
   H. A., Driscoll, R. L., & Klein, A. J. (2017). USGS Spectral Library
   Version 7. *U.S. Geological Survey Data Series 1035*.
   https://doi.org/10.3133/ds1035
-- CRISM MICA library: Viviano-Beck, C. E., Seelos, F. P., Murchie, S. L.,
-  et al. (2014). Revised CRISM spectral parameters and summary products
-  based on the currently detected mineral diversity on Mars. *Journal of
+- Browse products: Murchie, S., Stein, T., & Ward, J. (2024). *Mars
+  Reconnaissance Orbiter CRISM Data Product Software Interface
+  Specification*, Version 1.3.7.7, §3.12.3. PDS Geosciences Node.
+  https://pds-geosciences.wustl.edu/mro/mro-m-crism-3-rdr-targeted-v1/mrocr_2104/document/crism_dpsis.pdf
+- Browse product parameters: Phillips, M. S., Udovicic, C. T., Moersch,
+  J. E., Basu, U., & Hamilton, C. W. (2024). HyPyRameter: a Python toolbox
+  to calculate spectral parameters from hyperspectral reflectance data.
+  *The Planetary Science Journal*, 5, 258.
+  https://doi.org/10.3847/PSJ/ad81f8
+- CRISM MICA library, and the CRISM spectral parameters and browse
+  products: Viviano-Beck, C. E., Seelos, F. P., Murchie, S. L., et al.
+  (2014). Revised CRISM spectral parameters and summary products based on
+  the currently detected mineral diversity on Mars. *Journal of
   Geophysical Research: Planets*, 119(6), 1403–1431.
+  https://doi.org/10.1002/2014JE004627
 - Your own and loaded libraries: see [Spectral libraries](spectral-libraries.md#reporting-and-citing).
