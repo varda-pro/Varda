@@ -1,15 +1,33 @@
 # Finding data
 
 **Data → Find Data…** opens the **Find Data** workspace:
-search a catalog for observations of a place, see their footprints on a
-map, and download them. It has five panels: **Search** (left), **Map**
-(center), **Preview** (right), **Results** (below the map) and **Downloads**
-(beside the results).
+search for observations of a place, see their footprints on a map, and
+download them. It has five panels: **Search** (left), **Map** (center),
+**Preview** (right), and **Results** and **Downloads** (tabs below the map).
 
-## Catalogs
+## Choosing what to search
 
-Choose one under **Catalog**, then a **Collection** (click the box to search
-collections by body, mission or instrument). Plugins can add more catalogs.
+1. **The body.** The buttons at the top of **Search** are the bodies with
+   data (Mars, the Moon, Mercury, Venus, Earth first, then the rest), each
+   with how many collections it has. Choosing one turns the map to that
+   body and clears the previous body's results, footprints and previews:
+   they would be drawn on the wrong world.
+2. **The collection.** Below is every collection of that body from every
+   catalog, in one list grouped by mission and instrument. Each says which
+   catalog offers it (a small tag at the right: **PDS ODE**, **STAC**,
+   **File**). Type to narrow the list: every word must appear in the
+   collection's mission, instrument, title, description or catalog, so
+   `crism` lists every CRISM collection and `crism ode` only ODE's. Up,
+   Down and Enter work from the search field. A body with only one
+   collection chooses it for you; otherwise nothing is chosen until you
+   pick, and **Search** waits.
+3. The chosen collection's name, description and catalog appear below the
+   list, with **Log In to …** when its catalog needs a login.
+
+**Sources** (bottom of the panel) manages the catalogs: **STAC APIs…**,
+**Add Footprint File…**, logins, and **Reload the Catalogs** (for one that
+couldn't be reached; the panel says which). Plugins can add catalogs; their
+collections join the same list. The catalogs:
 
 - **STAC catalogs**: any STAC API. By default, USGS Astrogeology
   (`https://stac.astrogeology.usgs.gov/api`: Mars, the Moon, Europa and
@@ -42,8 +60,8 @@ collections by body, mission or instrument). Plugins can add more catalogs.
   `date`, `StartTime`. Its files are the row's web links, or ODE's file list
   when the row has ODE's `InstHostId`, `InstId`, `ProdType` and `Target`.
 
-A catalog that needs a login asks for it once (**Log In…**) and keeps it in
-your system's keychain. The three catalogs above don't need one.
+A catalog that needs a login asks for it once and keeps it in your
+system's keychain. The three catalogs above don't need one.
 
 ## Searching
 
@@ -58,7 +76,9 @@ your system's keychain. The three catalogs above don't need one.
   and reads them the same way (to 23:59:59.999). For footprint files, a
   product's time (the start-time column) must fall within the dates; STAC
   and ODE apply their own observation-time filters.
-- **At most:** results per search (100 by default, up to 1,000). **More
+- **Filters** (folded until opened): the chosen collection's catalog's own
+  filters (listed with each catalog above) and **At most**, results per
+  search (100 by default, up to 1,000). **More
   Results** fetches the next page. The status line says how many the catalog
   matched. STAC's cloud-cover filter is applied by Varda after the catalog
   returns a page, so a page can hold fewer products than asked for, and the
@@ -66,7 +86,7 @@ your system's keychain. The three catalogs above don't need one.
 
 ### The map and the results
 
-The map shows the collection's body in **Equirectangular**, **North Polar
+The map shows the chosen body in **Equirectangular**, **North Polar
 Stereographic** or **South Polar Stereographic** projection, on a sphere of
 the body's IAU mean radius (for drawing only; footprints and images keep
 their longitude and latitude). A body Varda doesn't know keeps its name and
@@ -75,16 +95,23 @@ is drawn at Earth's mean radius, so a polar view's meters are nominal.
 **Basemap** shows the body's global imagery (see below) or an open georeferenced image of the same body
 under the footprints; **Names** labels features with their IAU names;
 **Previews** draws the selected products' browse images over their
-footprints (see [Previews](#previews)); **Go to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
-traverse, a geologic map); **Whole Body** zooms out.
+footprints (see [Previews](#previews)); **Go to a feature** zooms to a feature by name; **Overlays** adds a vector
+file over the map (a traverse, a geologic map) or clears them; **Whole
+Body** zooms out.
 
 Click a footprint to select it, Shift-click to add, Ctrl-click (Cmd-click on
 a Mac) to remove, and Shift-drag to add every footprint in a box. The
 **Results** table lists each product with its catalog's metadata, sortable by
-column: for ODE, observation type, incidence, emission and phase angles,
-solar longitude, map resolution (px/°) and comment, rounded to four
-decimal places. **Preview** shows the selected product's browse image and
-details. **Show only selected** narrows the table to the selection.
+column, with each product's thumbnail beside its ID: for ODE, observation
+type, incidence, emission and phase angles, solar longitude, map resolution
+(px/°) and comment, rounded to four decimal places. **Show only selected**
+narrows the table to the selection.
+
+**Preview** is a gallery of the selected products (the first 40): the one in
+front large, its details below, and a strip of the others to click. Turn it
+with the round arrows, Left and Right, the scroll wheel or a trackpad swipe;
+the product in front is outlined in white on the map (the other selected in
+yellow), and double-clicking its picture zooms the map to it.
 
 ### Previews
 

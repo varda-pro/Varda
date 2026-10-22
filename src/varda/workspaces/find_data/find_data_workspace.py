@@ -380,25 +380,24 @@ class FindDataWorkspace(QMainWindow):
         completer.activated.connect(self.goToFeature)
         self.goTo.setCompleter(completer)
         self.goTo.returnPressed.connect(lambda: self.goToFeature(self.goTo.text()))
-        overlay = QPushButton("Add Overlay…")
-        overlay.setToolTip(
-            "A vector file (GeoJSON, shapefile, GeoPackage): a traverse, a geologic map, …"
+        self.overlaysButton = QPushButton("Overlays")
+        self.overlaysButton.setToolTip(
+            "Vector files over the map (GeoJSON, shapefile, GeoPackage): a "
+            "traverse, a geologic map, …"
         )
-        overlay.clicked.connect(self._chooseOverlay)
-        clear = QPushButton("Clear Overlays")
-        clear.clicked.connect(self._clearOverlays)
+        overlays = QMenu(self.overlaysButton)
+        overlays.addAction("Add Overlay…", self._chooseOverlay)
+        overlays.addAction("Clear Overlays", self._clearOverlays)
+        self.overlaysButton.setMenu(overlays)
         whole = QPushButton("Whole Body")
+        whole.setToolTip("Zoom out to the whole body")
         whole.clicked.connect(self.map.showWhole)
+        self.bodyLabel.hide()  # the body bar says which body
         # wraps onto more rows rather than making the map's panel wide
         bar = (
             FlowLayout(margins=2)
-            .withWidget(
-                WrapperWidget(
-                    HBoxBuilder(margins=0)
-                    .withWidget(self.bodyLabel)
-                    .withWidget(self.projectionBox)
-                )
-            )
+            .withWidget(self.goTo)
+            .withWidget(self.projectionBox)
             .withWidget(
                 WrapperWidget(
                     HBoxBuilder(margins=0)
@@ -408,9 +407,7 @@ class FindDataWorkspace(QMainWindow):
             )
             .withWidget(self.namesCheck)
             .withWidget(self.previewsCheck)
-            .withWidget(self.goTo)
-            .withWidget(overlay)
-            .withWidget(clear)
+            .withWidget(self.overlaysButton)
             .withWidget(whole)
         )
         self.mapPanel = QWidget()
