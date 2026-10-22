@@ -1,7 +1,8 @@
 """Product previews on the find-data map. A catalog's browse image is drawn
 over its footprint when it is a north-up map of the footprint's longitude-
-latitude box: simple cylindrical (or equirectangular), as ODE's and USGS's
-browse images of CTX, HiRISE and THEMIS VIS are. Two checks decide it: the
+latitude box: simple cylindrical (or equirectangular), as ODE's browse
+images of HiRISE, THEMIS VIS, Kaguya TC and MI, HRSC and CRISM's standard
+browse products are. Two checks decide it: the
 image's width over height matches the box's, and its picture (what is not
 black or white fill) covers the footprint. Anything else (a strip in sensor
 geometry, a figure with plots around the image) stays in the Preview panel.
@@ -22,8 +23,9 @@ from varda.workspaces.find_data.projection import Bounds
 # how far the image's width over height may be from the box's (a fraction)
 ASPECT_TOLERANCE = 0.05
 # the least intersection over union of the picture and the footprint; measured
-# 0.96 to 1.00 for CTX, HiRISE and THEMIS VIS, 0.25 to 0.72 for images that
-# aren't maps of the box
+# 0.93 to 1.00 for HiRISE, THEMIS VIS, Kaguya, HRSC and CRISM's browse
+# products, 0.25 to 0.80 for images that aren't maps of the box (CTX EDR and
+# THEMIS IR strips in sensor geometry, CRISM figures)
 MIN_OVERLAP = 0.85
 FILL_DARK, FILL_LIGHT = 8, 247  # gray levels taken for fill, not picture
 CHECK_PIXELS = 512  # the longer side the overlap is measured at

@@ -115,30 +115,44 @@ yellow), and double-clicking its picture zooms the map to it.
 
 ### Previews
 
-**Preview** shows the catalog's largest browse image of the selected
-product, as large as the panel and at the screen's full resolution: for ODE,
-its large browse image (`query=lgbrowse`; ODE's thumbnails are about 32
-pixels tall); for a STAC catalog, an overview or visual asset that is a PNG,
-JPEG or GIF, else the item's thumbnail. A product with none shows its
-thumbnail, or says "No preview." Browse images are fetched when you select a
-product and kept while the workspace is open (the latest 256 MB of them, at
-most 2048 pixels on a side); files over 25 MB aren't fetched.
+The **Preview** gallery shows, for each selected product, the picture drawn
+for it on the map (below) when there is one, else its first standard browse
+product (a color composite, see below), else the catalog's largest browse
+image: for ODE, its large browse image (`query=lgbrowse`; ODE's thumbnails
+are about 32 pixels tall); for a STAC catalog, an overview or visual asset
+that is a PNG, JPEG or GIF, else the item's thumbnail. A product with none
+shows its thumbnail, or says "No preview." Browse images are fetched when
+you select a product and kept while the workspace is open (the latest
+256 MB of them, at most 2048 pixels on a side); files over 25 MB aren't
+fetched.
 
-With **Previews** checked, the map draws the browse images of the selected
-products (the first 12) over their footprints, clipped to them. A browse
-image is drawn only when it is a north-up map of the footprint's longitude
-and latitude box, as ODE's and USGS's browse images of CTX, HiRISE and
-THEMIS VIS are. Two checks decide it:
+**Map preview** chooses what the map draws over the selected products'
+footprints (the first 12), clipped to them:
+
+- **Automatic** (the default): for each product, the first of its standard
+  browse products (below), then its catalog's browse image, that is a
+  north-up map of the footprint. For a CRISM MTRDR that's its infrared
+  false color; its large browse image is a figure with plots, which isn't.
+- **A kind** (listed once the selected products' browse products are known,
+  for example *Mafic mineralogy* or *Phyllosilicates*): that browse product
+  of each product. A product without it isn't drawn, and the Preview panel
+  says "this product has no …". The choice stays as the selection changes.
+- **Off:** nothing over the footprints.
+
+A browse image is drawn only when it is a north-up map of the footprint's
+longitude and latitude box, as ODE's and USGS's browse images of HiRISE,
+THEMIS VIS and CRISM's standard browse products are. Two checks decide it:
 
 1. **Shape:** its width over height is the box's, in degrees (simple
    cylindrical) or in ground lengths at a latitude within the box
    (equirectangular), within 5 %.
 2. **Overlap:** laid over the box, its picture (what isn't black or white
    fill) covers the footprint: an intersection over union of at least 0.85,
-   measured at 512 pixels on the longer side. Varda's measurements gave 0.96
-   to 0.99 for CTX, HiRISE and THEMIS VIS, and 0.25 to 0.72 for browse
-   images that aren't maps of the footprint (THEMIS IR strips in sensor
-   geometry, CRISM MTRDR figures).
+   measured at 512 pixels on the longer side. Varda's measurements gave
+   0.93 to 1.00 for HiRISE, THEMIS VIS, Kaguya TC and MI, HRSC and CRISM's
+   standard browse products, and 0.25 to 0.80 for browse images that aren't
+   maps of the footprint (CTX EDR and THEMIS IR strips in sensor geometry,
+   CRISM MTRDR figures).
 
 Anything else (a strip in sensor geometry, a figure with plots) stays in the
 Preview panel, which then says it isn't drawn on the map. Footprints across
