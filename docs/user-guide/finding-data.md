@@ -146,6 +146,37 @@ Preview panel, which then says it isn't drawn on the map. Footprints across
 can't place them. In a polar view the image is reprojected (nearest
 neighbor).
 
+#### Standard browse products
+
+Many products come with several browse images, each showing something
+different: a CRISM MTRDR has an infrared false color, a true color and a
+dozen mineral maps (Fe mineralogy, phyllosilicate with Fe and Mg, …), each a
+map-projected quicklook on the MTRDR's grid. Catalogs list them as the
+product's browse products, by kind, the most useful first:
+
+- **ODE:** the PNG, JPEG and GIF files of type Browse in the product's ODE
+  file list (one request per product, shared with its file list), named
+  from ODE's description ("INFRARED FALSE COLOR BROWSE QUICKLOOK" is
+  *Infrared false color*, "VERSION 2 CARBONATES BROWSE QUICKLOOK"
+  *Carbonates (version 2)*). Color composites come first (false color, true
+  color, other color), then the rest alphabetically, and HiRISE's browse
+  images in sensor geometry (*… (unprojected)*) last. Left out: annotated
+  copies, thumbnails when there is a larger image, and the browse images of
+  other products in the list (a HiRISE DTM's orthoimages). JPEG 2000 and
+  TIFF browse files (HiRISE, LROC) are not offered.
+- **STAC:** the item's overview and visual assets that are PNG, JPEG, GIF or
+  WebP, named by their titles, else the item's thumbnail.
+- **Footprint files:** ODE's, for rows with ODE's identifiers; none
+  otherwise.
+
+A browse product is a picture of the data, stretched and colored by the
+archive: CRISM's are color composites of summary parameters, defined with
+their stretches in Viviano-Beck et al. (2014), *Revised CRISM spectral
+parameters and summary products based on the currently detected mineral
+diversity on Mars*, JGR Planets 119, 1403–1431, and the MTRDR's label. Don't
+read band depths or abundances from them; download the product. The same
+overlap check decides whether one is drawn on the map.
+
 ### Basemaps, names and Go to
 
 The basemap and names are for finding your way around: where Isidis Planitia

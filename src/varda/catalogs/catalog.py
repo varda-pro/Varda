@@ -1,8 +1,8 @@
 """The catalog interface: how Varda finds and fetches data without knowing any
 mission. A catalog (STAC, PDS ODE, a footprint file, or one a plugin adds)
 lists collections, searches them by area, time and its own filters, and
-lists each product's files. The core does the rest: the map, the results,
-the downloads.
+lists each product's files and browse images. The core does the rest: the
+map, the results, the downloads.
 
 Catalogs are registered by plugins' ``registerCatalogs`` hook and exported
 from ``varda.api``. See docs/superpowers/specs/2026-10-15-find-and-fetch-design.md.
@@ -83,6 +83,17 @@ class RemoteFile:
     role: str = "data"  # one of ROLES
     essential: bool = True  # selected by default
     exactSize: bool = True  # False when ``size`` is the archive's rounded figure
+    description: str = ""  # the catalog's description of the file, if any
+
+
+@frozen
+class BrowseImage:
+    """One of a product's standard browse products (a quicklook PNG, JPEG,
+    GIF or WebP), which a user can pick to preview on the map."""
+
+    kind: str  # a short label in sentence case, e.g. "Infrared false color"
+    url: str
+    description: str = ""  # the catalog's own words for it
 
 
 def pageOffset(page: object) -> int:
@@ -93,8 +104,9 @@ def pageOffset(page: object) -> int:
 class Catalog(ParameterGroup):
     """A source of data. Subclasses declare their filters as class-level
     Parameters (the core builds the search form from them) and implement
-    ``collections``, ``search`` and ``files``. ``search`` and ``files`` run
-    in the background and may block on the network."""
+    ``collections``, ``search`` and ``files``, and optionally
+    ``browseImages``. ``search``, ``files`` and ``browseImages`` run in the
+    background and may block on the network."""
 
     catalogId: ClassVar[str] = "catalog"  # stable, snake_case
     name: ClassVar[str] = "Catalog"
@@ -120,6 +132,15 @@ class Catalog(ParameterGroup):
 
     def files(self, product: Product) -> list[RemoteFile]:
         raise NotImplementedError
+
+    def browseImages(self, product: Product) -> list[BrowseImage]:
+        """The product's standard browse products: the kinds of image a user
+        can pick to preview on the map (a false-color composite, a mineral
+        map, …), the most useful first. Each is drawn over the footprint
+        only when it is a north-up map of it, so offer every picture the
+        catalog has, map or not. Runs in the background and may block on
+        the network; none by default."""
+        return []
 
     def requestHeaders(self) -> dict[str, str]:
         """Headers downloads from this catalog need (an access token, say)."""

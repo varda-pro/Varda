@@ -16,7 +16,9 @@ from urllib.parse import urlparse
 import shapely
 from attrs import frozen
 
+from varda.catalogs.browse import ordered, sentenceCase
 from varda.catalogs.catalog import (
+    BrowseImage,
     Catalog,
     CatalogProgress,
     Collection,
@@ -31,6 +33,9 @@ from varda.geo.bodies import bodyNamed
 
 BROWSE_ROLES = {"thumbnail", "overview", "visual"}
 PICTURE_TYPES = {"image/png", "image/jpeg", "image/gif"}
+# browse images offered to pick from (the map shows WebP too)
+BROWSE_TYPES = PICTURE_TYPES | {"image/webp"}
+BROWSE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")  # when untyped
 MAX_PROPERTY_LENGTH = 80  # longer text (WKT, JSON) isn't shown in the table
 
 
@@ -65,6 +70,19 @@ def _checksum(multihash: str) -> str:
 def _nextLink(page: object) -> dict[str, object] | None:
     """A search page's "next" link (as SearchPage.nextPage carries it)."""
     return page if isinstance(page, dict) else None
+
+
+def _mediaType(asset: dict) -> str:
+    return str(asset.get("type", "")).split(";")[0].strip().lower()
+
+
+def _isBrowsePicture(asset: dict) -> bool:
+    """Whether an asset is a picture Varda can show: by its media type, or
+    its file name when it has none."""
+    if kind := _mediaType(asset):
+        return kind in BROWSE_TYPES
+    path = PurePosixPath(urlparse(asset.get("href", "")).path)
+    return path.suffix.lower() in BROWSE_SUFFIXES
 
 
 def _body(collection: dict) -> str:
@@ -185,7 +203,7 @@ class StacCatalog(Catalog):
                 a["href"]
                 for a in assets
                 if {"overview", "visual"} & set(a.get("roles", []))
-                and a.get("type", "").split(";")[0].strip() in PICTURE_TYPES
+                and _mediaType(a) in PICTURE_TYPES
             ),
             thumbnail,
         )
@@ -202,13 +220,44 @@ class StacCatalog(Catalog):
             preview,
         )
 
-    def files(self, product: Product) -> list[RemoteFile]:
+    def _item(self, product: Product) -> dict:
+        """The product's STAC item: as the search found it, else fetched."""
         item = self._items.get(product.id)
         if item is None:
             root, _, collection = product.collection.partition("#")
             item = fetchJson(
                 f"{root.rstrip('/')}/collections/{collection}/items/{product.id}"
             )
+            self._items[product.id] = item
+        return item
+
+    def browseImages(self, product: Product) -> list[BrowseImage]:
+        """The item's overview, visual and thumbnail assets that are PNG,
+        JPEG, GIF or WebP pictures, named by their titles (else their role);
+        thumbnails only when there is nothing larger."""
+        images: list[BrowseImage] = []
+        thumbnails: list[BrowseImage] = []
+        for asset in self._item(product).get("assets", {}).values():
+            roles = set(asset.get("roles", []))
+            href = asset.get("href", "")
+            if not (
+                href.startswith("http")
+                and roles & BROWSE_ROLES
+                and _isBrowsePicture(asset)
+            ):
+                continue
+            title = " ".join(str(asset.get("title") or "").split())
+            role = next(r for r in ("visual", "overview", "thumbnail") if r in roles)
+            image = BrowseImage(
+                sentenceCase(title) if title else role.capitalize(),
+                href,
+                str(asset.get("description") or title),
+            )
+            (images if roles & {"visual", "overview"} else thumbnails).append(image)
+        return ordered(images or thumbnails)
+
+    def files(self, product: Product) -> list[RemoteFile]:
+        item = self._item(product)
         files, names = [], set()
         for key, asset in item.get("assets", {}).items():
             href = asset.get("href", "")
