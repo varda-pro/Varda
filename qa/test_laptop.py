@@ -24,6 +24,7 @@ from varda.common.layout_audit import clippedWidgets
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_loading.export_image_dialog import ExportImageDialog
 from varda.image_loading.raster_writer import writeRaster
+from varda.workspaces.find_data.find_data_workspace import FindDataWorkspace
 from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
 
 pytestmark = [pytest.mark.qa, pytest.mark.qt_no_exception_capture]
@@ -280,3 +281,37 @@ def test_windows_150_percent_scaling(qaRun: QaRun, qaData: QaData) -> None:
                 audit(run, dialog, "the PCA dialog at 150 % scaling")
                 journeys.checkAnalysisDialog(run, dialog)
                 dialog.reject()
+
+
+def test_find_data_offline_at_laptop_sizes(qaRun: QaRun, qaData: QaData) -> None:
+    """Find Data, opened on a plane: it says its catalogs couldn't be listed
+    and how to try again (rather than an empty list), and nothing in it is cut
+    off at laptop sizes."""
+    run = qaRun
+    Network.offline = True
+    with run.step("Find Data offline", "Data > Find Data…"):
+        if not run.useMenu("Data", "Find Data", shot=False):
+            return
+        workspace = run.mainWindow.currentWorkspace()
+        if not isinstance(workspace, FindDataWorkspace):
+            run.finding("blocked", "Data > Find Data… opened no Find Data workspace")
+            return
+        if not run.waitFor(
+            lambda: not workspace._loading, "the catalogs to answer", 60
+        ):
+            return
+        run.qaShot(workspace, "find-data-offline")
+        status = workspace.sourcesStatus.text()
+        run.log("sources status", text=status)
+        if "Couldn't reach" not in status or "Reload" not in status:
+            run.finding(
+                "confused",
+                "Offline, Find Data doesn't say its catalogs couldn't be reached "
+                f"or how to try again (it says {status!r})",
+                widget=workspace,
+            )
+    for width, height in SIZES:
+        with run.step(f"Find Data at {width}×{height}"):
+            run.resizeWindow(width, height)
+            run.qaShot(run.mainWindow, f"find-data-{width}x{height}")
+            audit(run, run.mainWindow, f"Find Data at {width}×{height}")

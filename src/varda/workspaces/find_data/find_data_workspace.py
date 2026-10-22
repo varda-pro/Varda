@@ -324,11 +324,10 @@ class FindDataWorkspace(QMainWindow):
         about.addWidget(self.collectionAbout)
         about.addWidget(self.loginButton, alignment=Qt.AlignmentFlag.AlignLeft)
         buttons = FlowLayout().withWidget(self.searchButton).withWidget(self.moreButton)
-        footer = (
-            HBoxBuilder(margins=0)
-            .withWidget(self.sourcesStatus, 1)
-            .withWidget(self.sourcesButton)
-        )
+        footer = QVBoxLayout()
+        footer.setSpacing(4)
+        footer.addWidget(self.sourcesStatus)
+        footer.addWidget(self.sourcesButton, alignment=Qt.AlignmentFlag.AlignLeft)
         self.searchPanel = QWidget()
         layout = QVBoxLayout(self.searchPanel)
         layout.setSpacing(10)
@@ -578,16 +577,29 @@ class FindDataWorkspace(QMainWindow):
 
     def _sourceFailed(self, catalog: Catalog, error: Exception) -> None:
         self._loading.pop(catalog.catalogId, None)
-        self._failed[catalog.catalogId] = (
-            f"{catalog.name} couldn't be listed: {error} (Sources → Reload the Catalogs)"
-        )
+        self._failed[catalog.catalogId] = f"{catalog.name}: {error}"
         self._showSourcesStatus()
         self._refreshSources()
 
     def _showSourcesStatus(self) -> None:
-        notes = [*self._loading.values(), *self._failed.values()]
+        notes = list(self._loading.values())
+        if self._failed:
+            names = [
+                self._catalog(c).shortName or self._catalog(c).name
+                for c in self._failed
+            ]
+            listed = (
+                f"{', '.join(names[:-1])} and {names[-1]}"
+                if len(names) > 1
+                else names[0]
+            )
+            notes.append(
+                f"Couldn't reach {listed}. Check your connection, then "
+                "Sources → Reload the Catalogs."
+            )
         self.sourcesStatus.setText(" ".join(notes))
-        self.sourcesStatus.setToolTip("\n".join(notes))
+        # the catalogs' own words, for whoever wants them
+        self.sourcesStatus.setToolTip("\n".join(self._failed.values()))
 
     def _refreshSources(self) -> None:
         """The body bar and the finder, after the sources changed: the body

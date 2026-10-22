@@ -14,6 +14,7 @@ import numpy as np
 import pyqtgraph as pg
 import shapely
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFontMetricsF
 from PyQt6.QtWidgets import QGraphicsRectItem, QLabel, QVBoxLayout, QWidget
 
 from varda.common.keys import controlClick
@@ -210,8 +211,22 @@ class FootprintMap(QWidget):
         self.plot.showGrid(x=not polar, y=not polar, alpha=0.25)
         if not polar:
             self.plot.setLabel("bottom", "Longitude (°E)")
-            self.plot.setLabel("left", "Latitude (°)")
+            self._fitLatitudeLabel()
         self._drawGraticule()
+
+    def _fitLatitudeLabel(self) -> None:
+        """The vertical "Latitude (°)" title, while the map is tall enough for
+        it; a short map keeps just the degrees on the axis."""
+        axis = self.plot.getAxis("left")
+        title = "Latitude (°)"
+        needed = QFontMetricsF(axis.label.font()).horizontalAdvance(title) + 12
+        axis.setLabel(title)
+        axis.showLabel(self.viewBox.sceneBoundingRect().height() >= needed)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        if not self.projector.polar:
+            self._fitLatitudeLabel()
 
     def _drawGraticule(self) -> None:
         for label in self._labels:
