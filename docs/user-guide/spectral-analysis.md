@@ -56,6 +56,54 @@ either end can change the continuum across the whole feature. Choose a
 window that starts and ends on the continuum shoulders of the features you
 want, and report it.
 
+### In a spectral plot
+
+To look at continuum-removed spectra without making a new image, turn on
+**Continuum Removed** under **Continuum Removal** in any spectral plot's
+sidebar (pixel, ROI and ratio spectra, and the Spectral Hourglass). Every
+curve on the plot, and every curve added while it's on, is shown divided
+by its own continuum, with the same hull as the analysis above. The Y axis
+label ends in "continuum removed". Turning it off shows the curves as they
+were: the spectra themselves never change.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| **Continuum Removed** | Show the curves continuum removed | Off |
+| **Only Within Window** | Fit the hull to the samples within **Window** only, and show only those; otherwise to each whole curve | Off |
+| **Window** (**From**, **To**) | The window, in the plot's X unit, inclusive at both ends, in either order | 1000–2600 |
+
+**Use Visible Range** sets the window to the X range on screen and turns
+both on, so you can zoom to a feature and remove its continuum in one
+step.
+
+How the plot's version differs from the analysis:
+
+- **Each curve is used as plotted.** Bad bands are not dropped and missing
+  samples are not filled: a sample that isn't a number is left out of the
+  hull and shows as a gap. A spike in a bad band can lift the hull, so
+  mark bad bands in **Image Properties**, or use the analysis, when that
+  matters.
+- **The hull is drawn against wavelength in nm** when the X axis is a
+  spectral axis (µm or cm⁻¹ are converted first), as in the analysis, and
+  against band number otherwise. The window is in the axis's own unit.
+- **A mean's ±1 σ band** is divided by the mean's continuum, so it shows
+  σ / continuum. That leaves out the continuum's own uncertainty (see the
+  noise bias under [Uncertainty and quality](#uncertainty-and-quality)), so
+  it understates the uncertainty of a depth.
+- **Library spectra** are continuum removed too, after which the library
+  overlay's Y scale and offset apply. **Add to Library…** saves the curve's
+  own values, never the continuum-removed ones.
+- **Export…** as CSV writes the values shown, continuum removed, with a
+  first comment line saying so and over which window, a `continuum` column
+  per curve (value × continuum gives the original), and the standard
+  deviation divided by the continuum.
+
+A single pixel's noise shows clearly here: the hull rests on the noise
+peaks, so a noisy spectrum comes out jagged just below 1, with depths
+biased deeper by about the noise amplitude. Average first (a box in the
+pixel plot's sidebar, or an ROI mean) before reading a depth off the plot,
+and report the window and the number of pixels averaged.
+
 ## Spectral Derivative
 
 The derivative of each spectrum with respect to wavelength: the first
@@ -129,6 +177,8 @@ for what applies to every process.
 - For **Continuum Removal**, that the continuum is the upper convex hull,
   linear in wavelength (not in wavenumber or log reflectance), anchored at
   the first and last band of the window.
+  For a figure made with the plot's **Continuum Removed** option, the same,
+  and the window (or "whole spectrum").
 - For **Spectral Derivative**, the finite-difference scheme (central
   differences on the band centers, applied twice for the second
   derivative) and any smoothing you did beforehand.

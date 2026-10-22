@@ -104,15 +104,31 @@ def _pdf(plotItem: pg.PlotItem, target: Path) -> None:
 
 
 def _csv(widget: VardaPlotWidget, target: Path) -> None:
-    """The curves' own values (without any display Y scale/offset, which a
-    comment line records), and for mean spectra the standard deviation and
-    pixel count n behind each mean."""
+    """The curves' values as plotted, continuum removed if they're shown so
+    (with each sample's continuum, to get the values back), but without any
+    display Y scale/offset (comment lines record both); for mean spectra
+    also the standard deviation and pixel count n behind each mean."""
     names = [
         c.plotDataItem.name() or f"curve {i + 1}" for i, c in enumerate(widget.plots)
     ]
-    curves = [(name, c, *c.data()) for name, c in zip(names, widget.plots)]
+    curves = [(name, c, *c.shownData()) for name, c in zip(names, widget.plots)]
     xColumn = _UNIT_COLUMN.get(widget.spectralUnit, "x") if widget.spectralUnit else "x"
+    removed = widget.continuumConfig.enabled.value
     with target.open("w", newline="") as f:
+        if removed:
+            window = widget.continuumWindow()
+            over = (
+                "each whole curve"
+                if window is None
+                else (
+                    f"the samples from {min(window):g} to {max(window):g} ({xColumn})"
+                )
+            )
+            f.write(
+                "# Continuum removed: values are each curve divided by its "
+                f"continuum, the upper convex hull of {over}; 'continuum' "
+                "columns give it, and std is divided by it too\n"
+            )
         transformed = [(n, c) for n, c, _, _ in curves if c.isTransformed()]
         if transformed:
             f.write(
@@ -130,7 +146,9 @@ def _csv(widget: VardaPlotWidget, target: Path) -> None:
             for _, _, x, _ in curves
         )
         if sharedX:
-            columns = [col for name, c, _, y in curves for col in _columns(name, c, y)]
+            columns = [
+                col for name, c, _, y in curves for col in _columns(name, c, y, removed)
+            ]
             out.writerow([xColumn, *[header for header, _ in columns]])
             for row in zip(curves[0][2], *[values for _, values in columns]):
                 out.writerow([f"{v:.10g}" for v in row])
@@ -138,19 +156,35 @@ def _csv(widget: VardaPlotWidget, target: Path) -> None:
             spread = any(
                 c.std is not None or c.count is not None for _, c, _, _ in curves
             )
-            out.writerow(["curve", "x", "y", *(["std", "n"] if spread else [])])
+            out.writerow(
+                [
+                    "curve",
+                    "x",
+                    "y",
+                    *(["continuum"] if removed else []),
+                    *(["std", "n"] if spread else []),
+                ]
+            )
             for name, c, x, y in curves:
+                std, count = c.shownSpread()
                 for i, (xv, yv) in enumerate(zip(x, y)):
-                    extra = [_cell(c.std, i), _cell(c.count, i)] if spread else []
+                    extra = [_cell(c.continuum, i)] if removed else []
+                    if spread:
+                        extra += [_cell(std, i), _cell(count, i)]
                     out.writerow([name, f"{xv:.10g}", f"{yv:.10g}", *extra])
 
 
-def _columns(name: str, curve: Curve, y: np.ndarray) -> list[tuple[str, np.ndarray]]:
+def _columns(
+    name: str, curve: Curve, y: np.ndarray, removed: bool = False
+) -> list[tuple[str, np.ndarray]]:
     columns = [(name, y)]
-    if curve.std is not None:
-        columns.append((f"{name} std", curve.std))
-    if curve.count is not None:
-        columns.append((f"{name} n", curve.count))
+    if removed and curve.continuum is not None:
+        columns.append((f"{name} continuum", curve.continuum))
+    std, count = curve.shownSpread()
+    if std is not None:
+        columns.append((f"{name} std", std))
+    if count is not None:
+        columns.append((f"{name} n", count))
     return columns
 
 

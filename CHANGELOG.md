@@ -22,6 +22,14 @@ can alter results.
   opposite to CRISM's, so FEM and FM2 are unavailable for now; the [Band
   Parameters guide](docs/user-guide/optional-features.md) says so too. See
   [Browse products](docs/user-guide/viewing-and-measuring.md#browse-products).
+- **Continuum removal in spectral plots.** **Continuum Removal** in a
+  spectral plot's sidebar shows every curve (pixel, box and ROI means with
+  their ±1 σ bands, library spectra) divided by its upper convex hull, over
+  the whole curve or a window; **Use Visible Range** takes the window from
+  the view. The spectra themselves don't change, and **Add to Library…**
+  still saves their own values. A CSV export writes the values shown with
+  each curve's continuum and says so in its first line. See [Continuum
+  Removal in a spectral plot](docs/user-guide/spectral-analysis.md#in-a-spectral-plot).
 
 ### Changed
 

@@ -34,6 +34,7 @@ def test_sidebar_leads_with_view_and_ends_with_appearance(qtbot):
     qtbot.addWidget(widget)
     assert _sectionTitles(widget) == [
         "View",
+        "Continuum Removal",
         "Markers",
         "Library Spectra",
         "Selected Curve",

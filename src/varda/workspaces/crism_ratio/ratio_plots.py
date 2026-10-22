@@ -243,7 +243,7 @@ class RatioPlots(QObject):
                 y[(x >= x0) & (x <= x1) & np.isfinite(y)]
                 for x, y in (
                     (np.asarray(d[0], float), np.asarray(d[1], float))
-                    for d in (curve.data() for curve in plot.plots)
+                    for d in (curve.shownData() for curve in plot.plots)
                     if d[0] is not None and d[1] is not None
                 )
             ]
