@@ -33,6 +33,16 @@ can alter results.
 
 ### Changed
 
+- **CRISM Ratio plots fill with each new pair.** Each pair you click fits
+  the plots' Y ranges to the image's spectra alone, so features no longer
+  look flat because a library spectrum, still matched to the previous pair,
+  stretched the range. Library spectra are laid over each new pair again.
+  See [CRISM Ratio](docs/user-guide/crism-ratio.md).
+- **Up and Down move the selected curve** in every spectral plot, by 2 % of
+  the visible Y range (Shift: 10 %), through its Y offset, to line curves up
+  by eye. See [Moving around a spectral
+  plot](docs/user-guide/viewing-and-measuring.md#moving-around-a-spectral-plot).
+
 - **A new start screen.** The window opens on a short list of ways in, each
   saying what it does: **Import Image(s)…** (or drop files), **Open
   Session…**, **Restore Last Session** (shown only when there is one, with

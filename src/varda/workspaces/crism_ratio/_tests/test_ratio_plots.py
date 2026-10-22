@@ -11,6 +11,7 @@ from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import
 )
 from varda.workspaces.crism_ratio.blandness_readout import BlandnessReadout
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
+from varda.spectral_libraries.spectrum import LibrarySpectrum
 from varda.workspaces.ratio_explorer import RatioComponents
 
 WAVELENGTHS = np.linspace(1000, 2500, 60)
@@ -374,3 +375,52 @@ def test_zooming_out_to_the_whole_spectrum_is_not_a_window(qtbot):
     plots.showComponents(components(0.3))
     _zoomByHand(plots.ratioPlot, 900.0, 2600.0)
     assert plots.zoomX is None
+
+
+def _ratioFills(plots: RatioPlots, ratio: np.ndarray, x0=-np.inf, x1=np.inf) -> None:
+    """The ratio inside the window spans most of the Ratio plot's height."""
+    inside = ratio[(WAVELENGTHS >= x0) & (WAVELENGTHS <= x1)]
+    y0, y1 = plots.ratioPlot.viewBox.viewRange()[1]
+    assert y0 <= inside.min() and y1 >= inside.max()
+    assert y1 - y0 < 1.2 * (inside.max() - inside.min())
+
+
+def _mineral() -> LibrarySpectrum:
+    """A library spectrum on its own (reflectance) scale."""
+    return LibrarySpectrum(
+        "mineral", WAVELENGTHS, 0.4 + 0.1 * np.cos(WAVELENGTHS / 150)
+    )
+
+
+def test_a_library_spectrum_doesnt_flatten_the_next_pair(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3, slope=0.2))
+    plots.ratioPlot.addLibrarySpectrum(_mineral())
+    plots.showComponents(components(0.33, slope=0.05))  # a flatter ratio
+    _ratioFills(plots, 1.1 * (1 + 0.05 * (WAVELENGTHS - 1000) / 1000))
+
+
+def test_a_library_spectrum_follows_the_next_pair(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3, slope=0.2))
+    _zoomByHand(plots.ratioPlot, 1400.0, 1800.0)
+    plots.ratioPlot.addLibrarySpectrum(_mineral())
+    plots.showComponents(components(0.6, slope=-0.4))
+    ratio = 2.0 * (1 - 0.4 * (WAVELENGTHS - 1000) / 1000)
+    _ratioFills(plots, ratio, 1400.0, 1800.0)
+    # the library curve is laid over the new ratio inside the window again
+    library = next(c for c in plots.ratioPlot.plots if c.librarySpectrum is not None)
+    x, y = library.displayedData()
+    window = (x >= 1400) & (x <= 1800)
+    inside = ratio[(WAVELENGTHS >= 1400) & (WAVELENGTHS <= 1800)]
+    assert y[window].min() == pytest.approx(inside.min(), rel=1e-6)
+    assert y[window].max() == pytest.approx(inside.max(), rel=1e-6)
+
+
+def test_a_y_stretch_by_hand_gives_way_to_the_next_pair(qtbot):
+    plots = makePlots(qtbot)
+    plots.showComponents(components(0.3, slope=0.2))
+    plots.ratioPlot.viewBox.setYRange(-5.0, 5.0, padding=0)  # zoomed out by hand
+    plots.ratioPlot.viewBox.sigRangeChangedManually.emit([False, True])
+    plots.showComponents(components(0.36, slope=0.1))
+    _ratioFills(plots, 1.2 * (1 + 0.1 * (WAVELENGTHS - 1000) / 1000))
