@@ -1,6 +1,7 @@
 """The image list draws each image from a small cached thumbnail."""
 
 import numpy as np
+import pytest
 
 from varda.all_images_view_list import imageview_list
 from varda.all_images_view_list.imageview_list import ImageListWidget
@@ -12,9 +13,19 @@ from varda.image_rendering.image_renderer import ImageRenderer
 from varda.utilities.debug import generate_random_image
 
 
-def test_a_small_image_looks_as_a_new_view_shows_it():
-    image = generate_random_image((20, 30, 10))
-    np.testing.assert_array_equal(thumbnailRgba(image), ImageRenderer(image).render())
+@pytest.mark.parametrize("seed", range(0, 200, 25))
+def test_a_small_image_looks_as_a_new_view_shows_it(seed):
+    """Exactly, level for level: in float32 a value on a rounding edge landed a
+    level away from the view's, in about 1 image in 400 (24% once a stretch
+    returned float32). 25 seeded images per case, so it never flakes."""
+    for offset in range(25):
+        np.random.seed(seed + offset)
+        image = generate_random_image((20, 30, 10))
+        np.testing.assert_array_equal(
+            thumbnailRgba(image),
+            ImageRenderer(image).render(),
+            err_msg=f"seed {seed + offset}",
+        )
 
 
 def test_a_large_image_is_read_from_a_sample_of_rows_never_whole(monkeypatch):
