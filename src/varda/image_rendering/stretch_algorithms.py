@@ -120,10 +120,14 @@ def _scaled(image: np.ndarray, low, high) -> np.ndarray:
     """``image`` clipped to ``low``-``high`` and scaled to 0-1. A channel with
     no range (constant) is 0, as ``normalize_numba`` makes it: it is data,
     not no-data. NaN stays NaN."""
-    span = np.asarray(high, dtype=np.float64) - low
     with np.errstate(divide="ignore", invalid="ignore"):
-        scaled = (np.clip(image, low, high) - low) / np.where(span > 0, span, 1.0)
-    return scaled.astype(np.float32, copy=False)
+        scaled = (np.clip(image, low, high) - low) / (high - low)
+    # set apart, not folded into the division: that must round exactly as
+    # before, or thumbnails and views of one image differ by a level
+    flat = np.asarray(high) == low
+    if np.any(flat):
+        scaled = np.where(flat & ~np.isnan(image), 0.0, scaled)
+    return scaled
 
 
 @registerStretchAlgorithm("Min-Max (Auto Full Range)")
