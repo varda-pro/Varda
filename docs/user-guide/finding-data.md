@@ -1,15 +1,33 @@
 # Finding data
 
 **Data → Find Data…** opens the **Find Data** workspace:
-search a catalog for observations of a place, see their footprints on a
-map, and download them. It has five panels: **Search** (left), **Map**
-(center), **Preview** (right), **Results** (below the map) and **Downloads**
-(beside the results).
+search for observations of a place, see their footprints on a map, and
+download them. It has five panels: **Search** (left), **Map** (center),
+**Preview** (right), and **Results** and **Downloads** (tabs below the map).
 
-## Catalogs
+## Choosing what to search
 
-Choose one under **Catalog**, then a **Collection** (click the box to search
-collections by body, mission or instrument). Plugins can add more catalogs.
+1. **The body.** The buttons at the top of **Search** are the bodies with
+   data (Mars, the Moon, Mercury, Venus, Earth first, then the rest), each
+   with how many collections it has. Choosing one turns the map to that
+   body and clears the previous body's results, footprints and previews:
+   they would be drawn on the wrong world.
+2. **The collection.** Below is every collection of that body from every
+   catalog, in one list grouped by mission and instrument. Each says which
+   catalog offers it (a small tag at the right: **PDS ODE**, **STAC**,
+   **File**). Type to narrow the list: every word must appear in the
+   collection's mission, instrument, title, description or catalog, so
+   `crism` lists every CRISM collection and `crism ode` only ODE's. Up,
+   Down and Enter work from the search field. A body with only one
+   collection chooses it for you; otherwise nothing is chosen until you
+   pick, and **Search** waits.
+3. The chosen collection's name, description and catalog appear below the
+   list, with **Log In to …** when its catalog needs a login.
+
+**Sources** (bottom of the panel) manages the catalogs: **STAC APIs…**,
+**Add Footprint File…**, logins, and **Reload the Catalogs** (for one that
+couldn't be reached; the panel says which). Plugins can add catalogs; their
+collections join the same list. The catalogs:
 
 - **STAC catalogs**: any STAC API. By default, USGS Astrogeology
   (`https://stac.astrogeology.usgs.gov/api`: Mars, the Moon, Europa and
@@ -42,8 +60,8 @@ collections by body, mission or instrument). Plugins can add more catalogs.
   `date`, `StartTime`. Its files are the row's web links, or ODE's file list
   when the row has ODE's `InstHostId`, `InstId`, `ProdType` and `Target`.
 
-A catalog that needs a login asks for it once (**Log In…**) and keeps it in
-your system's keychain. The three catalogs above don't need one.
+A catalog that needs a login asks for it once and keeps it in your
+system's keychain. The three catalogs above don't need one.
 
 ## Searching
 
@@ -58,7 +76,9 @@ your system's keychain. The three catalogs above don't need one.
   and reads them the same way (to 23:59:59.999). For footprint files, a
   product's time (the start-time column) must fall within the dates; STAC
   and ODE apply their own observation-time filters.
-- **At most:** results per search (100 by default, up to 1,000). **More
+- **Filters** (folded until opened): the chosen collection's catalog's own
+  filters (listed with each catalog above) and **At most**, results per
+  search (100 by default, up to 1,000). **More
   Results** fetches the next page. The status line says how many the catalog
   matched. STAC's cloud-cover filter is applied by Varda after the catalog
   returns a page, so a page can hold fewer products than asked for, and the
@@ -66,7 +86,7 @@ your system's keychain. The three catalogs above don't need one.
 
 ### The map and the results
 
-The map shows the collection's body in **Equirectangular**, **North Polar
+The map shows the chosen body in **Equirectangular**, **North Polar
 Stereographic** or **South Polar Stereographic** projection, on a sphere of
 the body's IAU mean radius (for drawing only; footprints and images keep
 their longitude and latitude). A body Varda doesn't know keeps its name and
@@ -75,49 +95,101 @@ is drawn at Earth's mean radius, so a polar view's meters are nominal.
 **Basemap** shows the body's global imagery (see below) or an open georeferenced image of the same body
 under the footprints; **Names** labels features with their IAU names;
 **Previews** draws the selected products' browse images over their
-footprints (see [Previews](#previews)); **Go to** zooms to a feature by name; **Add Overlay…** draws a vector file (a
-traverse, a geologic map); **Whole Body** zooms out.
+footprints (see [Previews](#previews)); **Go to a feature** zooms to a feature by name; **Overlays** adds a vector
+file over the map (a traverse, a geologic map) or clears them; **Whole
+Body** zooms out.
 
 Click a footprint to select it, Shift-click to add, Ctrl-click (Cmd-click on
 a Mac) to remove, and Shift-drag to add every footprint in a box. The
 **Results** table lists each product with its catalog's metadata, sortable by
-column: for ODE, observation type, incidence, emission and phase angles,
-solar longitude, map resolution (px/°) and comment, rounded to four
-decimal places. **Preview** shows the selected product's browse image and
-details. **Show only selected** narrows the table to the selection.
+column, with each product's thumbnail beside its ID: for ODE, observation
+type, incidence, emission and phase angles, solar longitude, map resolution
+(px/°) and comment, rounded to four decimal places. **Show only selected**
+narrows the table to the selection.
+
+**Preview** is a gallery of the selected products (the first 40): the one in
+front large, its details below, and a strip of the others to click. Turn it
+with the round arrows, Left and Right, the scroll wheel or a trackpad swipe;
+the product in front is outlined in white on the map (the other selected in
+yellow), and double-clicking its picture zooms the map to it.
 
 ### Previews
 
-**Preview** shows the catalog's largest browse image of the selected
-product, as large as the panel and at the screen's full resolution: for ODE,
-its large browse image (`query=lgbrowse`; ODE's thumbnails are about 32
-pixels tall); for a STAC catalog, an overview or visual asset that is a PNG,
-JPEG or GIF, else the item's thumbnail. A product with none shows its
-thumbnail, or says "No preview." Browse images are fetched when you select a
-product and kept while the workspace is open (the latest 256 MB of them, at
-most 2048 pixels on a side); files over 25 MB aren't fetched.
+The **Preview** gallery shows, for each selected product, the picture drawn
+for it on the map (below) when there is one, else its first standard browse
+product (a color composite, see below), else the catalog's largest browse
+image: for ODE, its large browse image (`query=lgbrowse`; ODE's thumbnails
+are about 32 pixels tall); for a STAC catalog, an overview or visual asset
+that is a PNG, JPEG or GIF, else the item's thumbnail. A product with none
+shows its thumbnail, or says "No preview." Browse images are fetched when
+you select a product and kept while the workspace is open (the latest
+256 MB of them, at most 2048 pixels on a side); files over 25 MB aren't
+fetched.
 
-With **Previews** checked, the map draws the browse images of the selected
-products (the first 12) over their footprints, clipped to them. A browse
-image is drawn only when it is a north-up map of the footprint's longitude
-and latitude box, as ODE's and USGS's browse images of CTX, HiRISE and
-THEMIS VIS are. Two checks decide it:
+**Map preview** chooses what the map draws over the selected products'
+footprints (the first 12), clipped to them:
+
+- **Automatic** (the default): for each product, the first of its standard
+  browse products (below), then its catalog's browse image, that is a
+  north-up map of the footprint. For a CRISM MTRDR that's its infrared
+  false color; its large browse image is a figure with plots, which isn't.
+- **A kind** (listed once the selected products' browse products are known,
+  for example *Mafic mineralogy* or *Phyllosilicates*): that browse product
+  of each product. A product without it isn't drawn, and the Preview panel
+  says "this product has no …". The choice stays as the selection changes.
+- **Off:** nothing over the footprints.
+
+A browse image is drawn only when it is a north-up map of the footprint's
+longitude and latitude box, as ODE's and USGS's browse images of HiRISE,
+THEMIS VIS and CRISM's standard browse products are. Two checks decide it:
 
 1. **Shape:** its width over height is the box's, in degrees (simple
    cylindrical) or in ground lengths at a latitude within the box
    (equirectangular), within 5 %.
 2. **Overlap:** laid over the box, its picture (what isn't black or white
    fill) covers the footprint: an intersection over union of at least 0.85,
-   measured at 512 pixels on the longer side. Varda's measurements gave 0.96
-   to 0.99 for CTX, HiRISE and THEMIS VIS, and 0.25 to 0.72 for browse
-   images that aren't maps of the footprint (THEMIS IR strips in sensor
-   geometry, CRISM MTRDR figures).
+   measured at 512 pixels on the longer side. Varda's measurements gave
+   0.93 to 1.00 for HiRISE, THEMIS VIS, Kaguya TC and MI, HRSC and CRISM's
+   standard browse products, and 0.25 to 0.80 for browse images that aren't
+   maps of the footprint (CTX EDR and THEMIS IR strips in sensor geometry,
+   CRISM MTRDR figures).
 
 Anything else (a strip in sensor geometry, a figure with plots) stays in the
 Preview panel, which then says it isn't drawn on the map. Footprints across
 ±180° or reaching a pole aren't drawn either, since a longitude-latitude box
 can't place them. In a polar view the image is reprojected (nearest
 neighbor).
+
+#### Standard browse products
+
+Many products come with several browse images, each showing something
+different: a CRISM MTRDR has an infrared false color, a true color and a
+dozen mineral maps (Fe mineralogy, phyllosilicate with Fe and Mg, …), each a
+map-projected quicklook on the MTRDR's grid. Catalogs list them as the
+product's browse products, by kind, the most useful first:
+
+- **ODE:** the PNG, JPEG and GIF files of type Browse in the product's ODE
+  file list (one request per product, shared with its file list), named
+  from ODE's description ("INFRARED FALSE COLOR BROWSE QUICKLOOK" is
+  *Infrared false color*, "VERSION 2 CARBONATES BROWSE QUICKLOOK"
+  *Carbonates (version 2)*). Color composites come first (false color, true
+  color, other color), then the rest alphabetically, and HiRISE's browse
+  images in sensor geometry (*… (unprojected)*) last. Left out: annotated
+  copies, thumbnails when there is a larger image, and the browse images of
+  other products in the list (a HiRISE DTM's orthoimages). JPEG 2000 and
+  TIFF browse files (HiRISE, LROC) are not offered.
+- **STAC:** the item's overview and visual assets that are PNG, JPEG, GIF or
+  WebP, named by their titles, else the item's thumbnail.
+- **Footprint files:** ODE's, for rows with ODE's identifiers; none
+  otherwise.
+
+A browse product is a picture of the data, stretched and colored by the
+archive: CRISM's are color composites of summary parameters, defined with
+their stretches in Viviano-Beck et al. (2014), *Revised CRISM spectral
+parameters and summary products based on the currently detected mineral
+diversity on Mars*, JGR Planets 119, 1403–1431, and the MTRDR's label. Don't
+read band depths or abundances from them; download the product. The same
+overlap check decides whether one is drawn on the map.
 
 ### Basemaps, names and Go to
 

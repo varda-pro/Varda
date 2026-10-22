@@ -18,6 +18,35 @@ can alter results.
   headline says what a drop will open. It follows the system's light or
   dark appearance. The empty Image List says images will appear there. See
   [Sessions and saving](docs/user-guide/sessions-and-saving.md).
+- **Find Data, redesigned around the body.** Choose the body first (Mars,
+  the Moon, Mercury, Venus, Earth, …, each with its number of collections);
+  every catalog's collections of it (ODE, STAC, footprint files, plugins)
+  are then one list, grouped by mission and instrument with mission names
+  (Kaguya, Chandrayaan-1), each tagged with its catalog, and narrowed as you
+  type. The chosen collection says what it is and where it comes from; its
+  catalog's filters fold under **Filters**; STAC APIs, logins and footprint
+  files are under **Sources**. The results show thumbnails, and Downloads
+  is a tab beside them. See [Finding data](docs/user-guide/finding-data.md).
+- **Find Data: a gallery of the selected products.** The Preview panel turns
+  through every selected product's picture (arrows, keys, wheel or a strip
+  of thumbnails), with the one in front outlined on the map and its details
+  below; double-click zooms to it.
+- **Find Data: standard browse products on the map.** **Map preview**
+  replaces the Previews checkbox: **Automatic** draws each selected
+  product's first browse product that is a map of its footprint (CRISM's
+  infrared false color, not its statistics figure), or choose one kind for
+  all (mafic mineralogy, phyllosilicates, true color, …) or **Off**. The
+  gallery shows the same pictures. Catalogs list them through the plugin
+  API's new `BrowseImage` and `Catalog.browseImages`.
+
+### Fixed
+
+- **Find Data: switching bodies clears the old footprints.** Results,
+  footprints and previews from the previous body (SELENE on the Moon, say)
+  stayed on the new body's map until the next search.
+- **Downloading an LROC NAC product checks its files.** Its ID
+  (`nac.m1418637109lc`) isn't the start of its file names, so none was
+  checked for download by default.
 
 ## 0.12.1 (2026-10-21)
 

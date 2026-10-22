@@ -14,6 +14,7 @@ import numpy as np
 import pyqtgraph as pg
 import shapely
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFontMetricsF
 from PyQt6.QtWidgets import QGraphicsRectItem, QLabel, QVBoxLayout, QWidget
 
 from varda.common.keys import controlClick
@@ -29,6 +30,8 @@ from varda.workspaces.find_data.projection import (
 
 FOOTPRINT_PEN = pg.mkPen("#38c8ff", width=1)
 SELECTED_PEN = pg.mkPen("#ffd200", width=2.5)
+# the one the Preview panel is showing, among the selected
+FOCUSED_PEN = pg.mkPen("#ffffff", width=3.5)
 AREA_PEN = pg.mkPen("#ff4fd8", width=2, style=Qt.PenStyle.DashLine)
 BAND_PEN = pg.mkPen("#ffd200", width=1, style=Qt.PenStyle.DashLine)
 GRATICULE_PEN = pg.mkPen((255, 255, 255, 70), width=1)
@@ -107,6 +110,7 @@ class FootprintMap(QWidget):
         self._products: list[Product] = []
         self._shapes: list[shapely.Geometry] = []  # the footprints, projected
         self._selectedProducts: list[Product] = []
+        self._focused: Product | None = None
         self._overlayLayers: list[list[shapely.Geometry]] = []
         self._overlays: list[pg.GraphicsObject] = []
         self._previews: dict[str, pg.ImageItem] = {}  # by product id
@@ -133,8 +137,11 @@ class FootprintMap(QWidget):
         self.footprints = pg.PlotCurveItem(pen=FOOTPRINT_PEN, connect="finite")
         self.selected = pg.PlotCurveItem(pen=SELECTED_PEN, connect="finite")
         self.selected.setZValue(5)
+        self.focused = pg.PlotCurveItem(pen=FOCUSED_PEN, connect="finite")
+        self.focused.setZValue(6)
         self.plot.addItem(self.footprints)
         self.plot.addItem(self.selected)
+        self.plot.addItem(self.focused)
         self.area = pg.RectROI(
             [0, 0], [1, 1], pen=AREA_PEN, movable=True, resizable=True
         )
@@ -189,6 +196,7 @@ class FootprintMap(QWidget):
         self._showAxes()
         self.setFootprints(self._products)
         self.setSelected(self._selectedProducts)
+        self.setFocused(self._focused)
         layers, self._overlayLayers = self._overlayLayers, []
         self.clearOverlays()
         for geometries in layers:
@@ -203,8 +211,22 @@ class FootprintMap(QWidget):
         self.plot.showGrid(x=not polar, y=not polar, alpha=0.25)
         if not polar:
             self.plot.setLabel("bottom", "Longitude (°E)")
-            self.plot.setLabel("left", "Latitude (°)")
+            self._fitLatitudeLabel()
         self._drawGraticule()
+
+    def _fitLatitudeLabel(self) -> None:
+        """The vertical "Latitude (°)" title, while the map is tall enough for
+        it; a short map keeps just the degrees on the axis."""
+        axis = self.plot.getAxis("left")
+        title = "Latitude (°)"
+        needed = QFontMetricsF(axis.label.font()).horizontalAdvance(title) + 12
+        axis.setLabel(title)
+        axis.showLabel(self.viewBox.sceneBoundingRect().height() >= needed)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        if not self.projector.polar:
+            self._fitLatitudeLabel()
 
     def _drawGraticule(self) -> None:
         for label in self._labels:
@@ -290,6 +312,15 @@ class FootprintMap(QWidget):
         self._selectedProducts = list(products)
         shapes = [self.projector.geometry(p.footprint) for p in self._selectedProducts]
         self.selected.setData(*outlines(shapes))
+        if self._focused is not None and self._focused not in self._selectedProducts:
+            self.setFocused(None)
+
+    def setFocused(self, product: Product | None) -> None:
+        """Outline one selected product more strongly (the one in the Preview
+        panel), or none."""
+        self._focused = product
+        shapes = [self.projector.geometry(product.footprint)] if product else []
+        self.focused.setData(*outlines(shapes))
 
     def setBasemap(self, rgba: np.ndarray | None, bounds: Bounds | None = None) -> None:
         """An RGBA image (rows north to south) covering ``bounds`` in map

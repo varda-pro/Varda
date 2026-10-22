@@ -5,7 +5,8 @@ The body comes from the file's coordinate system (``varda.geo``'s
 ``identifyBody``: its names, else its radius); projected footprints are
 converted to degrees on that body's IAU 2015 sphere. A product's files are
 the row's URLs, or, when the row carries ODE's identifiers (as ODE's own
-footprint shapefiles do), ODE's file list.
+footprint shapefiles do), ODE's file list, which also gives its browse
+images.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import shapely
 
 from varda.catalogs.bodies import BodyChoice, toLongitudeLatitude
 from varda.catalogs.catalog import (
+    BrowseImage,
     Catalog,
     CatalogError,
     CatalogProgress,
@@ -70,6 +72,7 @@ def _shift(geometry: shapely.Geometry) -> shapely.Geometry:
 class FootprintFileCatalog(Catalog):
     catalogId = "footprint_file"
     name = "Footprint files"
+    shortName = "File"
     description = (
         "A vector file of footprints (shapefile, GeoJSON, GeoPackage), such as "
         "ODE's footprint shapefiles; works offline."
@@ -89,6 +92,7 @@ class FootprintFileCatalog(Catalog):
         super().__init__()
         self._frames: dict[str, gpd.GeoDataFrame] = {}
         self._rows: dict[str, pd.Series] = {}
+        self._ode = OdeCatalog()  # for rows with ODE's identifiers
 
     def collections(self) -> list[Collection]:
         return [
@@ -179,20 +183,30 @@ class FootprintFileCatalog(Catalog):
             tuple(products), offset + len(products) if more else None, len(frame)
         )
 
-    def files(self, product: Product) -> list[RemoteFile]:
+    def _row(self, product: Product) -> pd.Series:
         row = self._rows.get(f"{product.collection}#{product.id}")
         if row is None:
             raise CatalogError("Search again: Varda no longer has this product's row.")
-        if all(column in row.index and row[column] for column in ODE_COLUMNS):
-            target = str(row["Target"]).lower()
-            if target in DATABASES.values():
-                return OdeCatalog().filesFor(
-                    product.id,
-                    target,
-                    str(row["InstHostId"]),
-                    str(row["InstId"]),
-                    str(row["ProdType"]),
-                )
+        return row
+
+    def _odeIds(self, row: pd.Series) -> tuple[str, str, str, str] | None:
+        """ODE's target, instrument host, instrument and product type of a
+        row of an ODE footprint file; None for other files."""
+        if not all(column in row.index and row[column] for column in ODE_COLUMNS):
+            return None
+        target = str(row["Target"]).lower()
+        if target not in DATABASES.values():
+            return None
+        return target, str(row["InstHostId"]), str(row["InstId"]), str(row["ProdType"])
+
+    def browseImages(self, product: Product) -> list[BrowseImage]:
+        ids = self._odeIds(self._row(product))
+        return [] if ids is None else self._ode.browseImagesFor(product.id, *ids)
+
+    def files(self, product: Product) -> list[RemoteFile]:
+        row = self._row(product)
+        if (ids := self._odeIds(row)) is not None:
+            return self._ode.filesFor(product.id, *ids)
         files = []
         for column, value in row.items():
             if not (isinstance(value, str) and value.startswith("http")):

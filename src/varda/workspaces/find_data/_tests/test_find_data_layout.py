@@ -36,7 +36,7 @@ def workspace(qtbot, monkeypatch):
     monkeypatch.setattr(registry, "catalogRegistry", [LongCatalog])
     widget = FindDataWorkspace([])
     qtbot.addWidget(widget)
-    qtbot.waitUntil(lambda: widget.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: widget.source() is not None, timeout=5000)
     return widget
 
 

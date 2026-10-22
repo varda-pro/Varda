@@ -6,6 +6,8 @@ can add:
 - **analyses**: new items in the Processing menu that turn an image into a new
   image, such as a spectral index, a filter or a classifier
 - **file formats**: new kinds of image that File → Import Image(s)… can open
+- **catalogs**: new sources of data the Find Data workspace can search and
+  download from
 
 This guide walks through [`examples/band-depth`](examples/band-depth/), a
 complete plugin that adds **Processing → Spectral Parameters → Band Depth**.
@@ -63,6 +65,7 @@ can change in any release.
 | `DataSource` | The interface a new file format implements |
 | `AnalysisContext` | Extras the workspace provides, such as `context.rois` |
 | `ProgressCallback` | `reportProgress(percent, message)` |
+| `Catalog`, `Collection`, `SearchQuery`, `SearchPage`, `Product`, `RemoteFile`, `BrowseImage`, `CatalogError`, `CatalogProgress` | A source of data for Find Data (see below) |
 | `hookimpl` | Marks the functions that register your features |
 
 ## An analysis
@@ -132,6 +135,56 @@ class MyFormatDataSource:
 def registerDataSources():
     return [("My Format", (".myf",), MyFormatDataSource)]
 ```
+
+## A catalog
+
+A catalog lists collections, searches them, and lists each product's files
+and browse images; the Find Data workspace does the rest (the map, the
+results, the downloads).
+
+```python
+from varda.api import (
+    BrowseImage, Catalog, Collection, Product, RemoteFile, SearchPage, hookimpl,
+)
+
+
+class MyArchive(Catalog):
+    catalogId = "my_archive"     # stable, snake_case
+    name = "My Archive"
+
+    def collections(self):
+        return [Collection("dtms", "My DTMs", "Mars", group="My Mission")]
+
+    def search(self, query, progress):
+        # query.bbox (west, south, east, north, degrees), query.start/end,
+        # query.limit, query.page (your SearchPage.nextPage, to continue)
+        return SearchPage(tuple(products), nextPage=None, total=len(products))
+
+    def files(self, product):
+        return [RemoteFile("a.img", "https://…/a.img", role="data")]
+
+    def browseImages(self, product):   # optional; none by default
+        return [BrowseImage("Shaded relief", "https://…/a_shade.png", "SHADED RELIEF BROWSE")]
+
+
+@hookimpl
+def registerCatalogs():
+    return [MyArchive]
+```
+
+`search`, `files` and `browseImages` run in a background thread and may
+block on the network; raise `CatalogError` with a sentence for the user when
+something fails. Filters are class-level Parameters, as an analysis's
+settings are.
+
+`browseImages` returns the product's standard browse products, the kinds of
+picture a user can choose to preview on the map: `kind` is a short label in
+sentence case ("Infrared false color", "Fe mineralogy"), `url` a PNG, JPEG,
+GIF or WebP, and `description` the archive's own words for it. List the most
+useful first (color composites, then the rest). Offer every picture you
+have: Varda draws one over the footprint only when it is a north-up map of
+the footprint's longitude-latitude box, and shows the others in the Preview
+panel.
 
 ## Testing
 

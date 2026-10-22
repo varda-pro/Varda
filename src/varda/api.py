@@ -20,6 +20,7 @@ A plugin module implements one or more hooks::
 from varda.analysis.analysis import Analysis, AnalysisContext, ProgressCallback
 from varda.analysis.rasters import readCube, sameBandsRaster, singleBandRaster
 from varda.catalogs.catalog import (
+    BrowseImage,
     Catalog,
     CatalogError,
     CatalogProgress,
@@ -52,6 +53,7 @@ __all__ = [
     "ArrayDataSource",
     "BandModel",
     "BoolParameter",
+    "BrowseImage",
     "Catalog",
     "CatalogError",
     "CatalogProgress",
