@@ -161,6 +161,17 @@ missing data in, missing data out.
   (see [Reporting results from Varda](reporting-results.md#precision-is-not-accuracy)).
   A positive band depth is a candidate, not an identification: confirm it
   with spectra (e.g. ratioed spectra).
+- **Agreement with CRISM's own parameters.** Against the PDS browse
+  products of the CRISM MTRDR FRT000047A3, HyPyRameter's OLINDEX3, D2300,
+  D2200, BD1900R2 and HCPINDEX2 track CAT's closely (fitted slopes 0.95–1.00,
+  r = 0.90–1.00); see [Browse
+  products](viewing-and-measuring.md#agreement-with-the-pds-products). One
+  scene is not a validation of every parameter: compare with the MTRDR
+  summary products where they exist.
+- **BDI1000VIS (HyPyRameter 0.3.0) is not CRISM's.** It integrates R/RPEAK1
+  over 833–989 nm where Viviano-Beck et al. (2014) integrate 1 − R/RPEAK1,
+  so it runs opposite to CRISM's BDI1000VIS (r = −0.97 on FRT000047A3). Don't
+  report it as BDI1000VIS.
 - **Interpolated bands.** Where bad bands or missing values were filled, a
   parameter that uses them is computed from interpolated values. Check the
   bad bands list in **Image Properties** and say if any fall in a parameter's

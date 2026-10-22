@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QWidget,
 )
@@ -811,9 +812,15 @@ def alive(widget: QWidget | None) -> bool:
 def _busyFeedbackShown() -> bool:
     if QApplication.overrideCursor() is not None:
         return True
-    return any(
+    if any(
         isinstance(w, (BusyDialog, QProgressDialog)) and w.isVisible()
         for w in QApplication.topLevelWidgets()
+    ):
+        return True
+    return any(  # a progress bar in a panel (computing a browse product, say)
+        bar.isVisible()
+        for w in QApplication.topLevelWidgets()
+        for bar in w.findChildren(QProgressBar)
     )
 
 

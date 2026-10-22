@@ -39,6 +39,12 @@ def parameterDescription(name: str) -> str:
     return _require().PARAMETERS[name].description
 
 
+def parameterBounds(name: str) -> tuple[float, float]:
+    """The wavelength range (nm) the parameter reads."""
+    low, high = _require().PARAMETERS[name].bounds
+    return float(low), float(high)
+
+
 def validParameterNames(wavelengthsNm) -> list[str]:
     """The parameters an image with these wavelengths (nm) can support."""
     return _require().valid_parameters(np.asarray(wavelengthsNm, dtype=np.float64))

@@ -11,15 +11,24 @@ from PyQt6.QtWidgets import (
 )
 import numpy as np
 
+from varda.analysis.browse_products import (
+    BrowseProduct,
+    parseProduct,
+    productRanges,
+)
 from varda.common.parameter import (
     ParameterGroup,
     EnumParameter,
     FloatParameter,
     LabeledEnum,
+    StringParameter,
 )
 from varda.common.entities import VardaRaster
 from varda.common.vec2 import Vec2
 from varda.utilities import debug
+from varda.image_rendering.browse_composites import COMPOSITES
+from varda.image_rendering.browse_controls import BrowseChannels, BrowseProductPicker
+from varda.image_rendering.stretch_algorithms import ManualValueStretchRGB
 from varda.image_rendering.render_parameters import (
     BandParameter,
     ColorMapParameter,
@@ -88,10 +97,22 @@ class RendererSettings(ParameterGroup):
     opacity = FloatParameter(
         "Opacity", 1.0, (0.0, 1.0), "%", "Opacity of the rendered image."
     )
+    browse = StringParameter(
+        "Browse Product",
+        "",
+        "The browse product shown in place of the bands, as "
+        "'NAME = red, green, blue' ('' shows the bands)",
+    )
 
     def __init__(self, image: VardaRaster):
         super().__init__()
         self.image = image
+        # Choosing a browse product sets the stretch to its channels' ranges
+        # once its composite is ready; leaving it brings back the stretch
+        # chosen before
+        self.browseStretchPending = False
+        self._stretchBeforeBrowse: str | None = None
+        self.mode.sigParameterChanged.connect(self._onModeChanged)
         for bandParam in (self.rgb.red, self.rgb.green, self.rgb.blue, self.mono.band):
             bandParam.setImage(image)
         # seed band selections from the image's default bands
@@ -105,6 +126,36 @@ class RendererSettings(ParameterGroup):
         # RendererSettings needs the image at construction, unlike the base ParameterGroup
         # whose clone() calls self.__class__() with no image.
         return RendererSettings(self.image)
+
+    def browseProduct(self) -> BrowseProduct | None:
+        """The browse product shown, or None when the bands are."""
+        text = self.browse.get()
+        try:
+            return parseProduct(text) if text else None
+        except ValueError:
+            return None
+
+    def showBrowseProduct(self, product: BrowseProduct | None) -> None:
+        """Show a browse product in RGB, or (None) the chosen bands again."""
+        stretch = self.stretch
+        with self.sigParameterChanged.blocked():
+            if product is None:
+                self.browse.set("")
+                self.browseStretchPending = False
+                if self._stretchBeforeBrowse is not None:
+                    stretch.selectByName(self._stretchBeforeBrowse)
+                    self._stretchBeforeBrowse = None
+            else:
+                if self._stretchBeforeBrowse is None:
+                    self._stretchBeforeBrowse = stretch.nameOf(stretch.current)
+                self.browse.set(product.asText())
+                self.mode.set(RenderMode.RGB)
+                self.browseStretchPending = True
+        self.sigParameterChanged.emit(self)
+
+    def _onModeChanged(self, *args) -> None:
+        if self.mode.get() == RenderMode.MONO and self.browse.get():
+            self.showBrowseProduct(None)  # one band: the product's gone
 
 
 class ImageRenderer(QObject):
@@ -145,9 +196,11 @@ class ImageRenderer(QObject):
         self.transparentNoData = False
         self.settings.sigParameterChanged.connect(self._onSettingsChanged)
         self.image.sigMetadataChanged.connect(self._onImageEdited)
+        COMPOSITES.sigReady.connect(self._onCompositeReady)
 
     def _onImageEdited(self) -> None:
         """The image's metadata changed (a no-data value, say): read again."""
+        COMPOSITES.forget(self.image)
         self._rawBandData = self._rgb8 = self._stretchedData = None
         self._rawKey = self._sample = self._sampleKey = None
         self.cachedRender = None
@@ -162,9 +215,50 @@ class ImageRenderer(QObject):
             self._rgb8 = None
             self._stretchedData = None
         self.cachedRender = None
+        if self._applyBrowseStretch():
+            return  # that change refreshes
         self.sigShouldRefresh.emit()
 
+    def _onCompositeReady(self, image: VardaRaster, text: str) -> None:
+        if image is not self.image or self.settings.browse.get() != text:
+            return
+        if self._applyBrowseStretch():
+            return
+        self._rgb8 = self._stretchedData = self.cachedRender = None
+        self.sigShouldRefresh.emit()
+
+    def _composite(self) -> np.ndarray | None:
+        """The browse product's channels, once computed (asked for until
+        then, while the bands show)."""
+        product = self.settings.browseProduct()
+        if product is None:
+            return None
+        composite = COMPOSITES.get(self.image, product)
+        if composite is None:
+            COMPOSITES.request(self.image, product)
+        return composite
+
+    def _applyBrowseStretch(self) -> bool:
+        """Set the stretch to a newly chosen product's channel ranges once its
+        composite is ready; True if it did (a settings change follows)."""
+        product = self.settings.browseProduct()
+        if not self.settings.browseStretchPending or product is None:
+            return False
+        composite = COMPOSITES.get(self.image, product)
+        if composite is None:
+            return False
+        self.settings.browseStretchPending = False
+        self.setStretchRanges(productRanges(product, composite))
+        return True
+
+    def showsBrowseProduct(self) -> bool:
+        """Whether the picture is a browse product's composite (not yet,
+        while it's computed)."""
+        return self._rawKey is not None and self._rawKey[0] == "browse"
+
     def _bandKey(self) -> tuple:
+        if self.settings.browse.get() and self._composite() is not None:
+            return ("browse", self.settings.browse.get())
         mode = self.settings.mode.get()
         if mode == RenderMode.MONO:
             return (mode, int(self.settings.mono.band.get()))
@@ -176,11 +270,15 @@ class ImageRenderer(QObject):
         band selection (read-only: stretches must not modify it)."""
         key = self._bandKey()
         if self._rawBandData is None or self._rawKey != key:
-            raw = self.image.getBands(list(key[1:]))
-            data = np.asarray(
-                np.ma.filled(raw, np.nan) if np.ma.isMaskedArray(raw) else raw
-            )
-            data.setflags(write=False)
+            if key[0] == "browse":
+                data = self._composite()
+                assert data is not None
+            else:
+                raw = self.image.getBands(list(key[1:]))
+                data = np.asarray(
+                    np.ma.filled(raw, np.nan) if np.ma.isMaskedArray(raw) else raw
+                )
+                data.setflags(write=False)
             self._rawBandData, self._rawKey = data, key
         return self._rawBandData
 
@@ -238,10 +336,10 @@ class ImageRenderer(QObject):
     def _renderRgb8(self) -> tuple[np.ndarray, np.ndarray]:
         """The stretched (and, in mono, color-mapped) 8-bit RGB picture and
         the (rows, cols) mask of pixels with no data in any channel."""
-        mode = self.settings.mode.get()
         data = self.settings.stretch.current.apply(
             self._readBands(), self.getSampleData()
         )
+        mode = RenderMode.RGB if self.showsBrowseProduct() else self.settings.mode.get()
         self._stretchedData = data
         noData = np.asarray(np.isnan(data).all(axis=2))
         # a new array (the stretch's output may be the read-only bands); clip
@@ -275,13 +373,21 @@ class ImageRenderer(QObject):
 
     def setManualStretch(self, lo: float, hi: float) -> None:
         """Switch to the manual stretch and set every channel to [lo, hi]."""
+        self.setStretchRanges([(lo, hi)] * 3)
+
+    def setStretchRanges(self, ranges: list[tuple[float, float]]) -> None:
+        """Switch to the manual stretch with each channel's [lo, hi], in a
+        single refresh."""
         manual = self.settings.stretch.option(StretchParameter.MANUAL_NAME)
-        value = Vec2(float(lo), float(hi))
-        # batch the param edits into a single refresh
+        assert isinstance(manual, ManualValueStretchRGB)
+        channels = (
+            manual.config.redStretch,
+            manual.config.greenStretch,
+            manual.config.blueStretch,
+        )
         with self.settings.sigParameterChanged.blocked():
-            manual.config.redStretch.set(value)
-            manual.config.greenStretch.set(value)
-            manual.config.blueStretch.set(value)
+            for param, (lo, hi) in zip(channels, ranges):
+                param.set(Vec2(float(lo), float(hi)))
             self.settings.stretch.selectByName(StretchParameter.MANUAL_NAME)
         self.settings.sigParameterChanged.emit(self.settings)
 
@@ -345,6 +451,13 @@ class RendererSettingsPanel(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         layout.setSpacing(2)
 
+        # Browse products, for images with wavelengths
+        self.browsePicker: BrowseProductPicker | None = None
+        if settings.image.bandModel.centers is not None:
+            layout.addWidget(QLabel("Browse Product:"))
+            self.browsePicker = BrowseProductPicker(settings, self)
+            layout.addWidget(self.browsePicker)
+
         # Mode
         layout.addWidget(QLabel("Mode:"))
         layout.addWidget(parameterWidget(settings.mode, self))
@@ -356,9 +469,13 @@ class RendererSettingsPanel(QWidget):
         )
         self._rgbIndex = self.bandStack.addWidget(groupWidget(settings.rgb))
         self._monoIndex = self.bandStack.addWidget(groupWidget(settings.mono))
+        self._browseIndex = self.bandStack.addWidget(BrowseChannels(settings))
         layout.addLayout(self.bandStack)
         self._syncBandStack()
         connectWhileAlive(settings.mode.sigParameterChanged, self._syncBandStack, self)
+        connectWhileAlive(
+            settings.browse.sigParameterChanged, self._syncBandStack, self
+        )
 
         # Stretch (self-contained combo + stacked sub-form)
         layout.addWidget(QLabel("Stretch Algorithm:"))
@@ -375,10 +492,14 @@ class RendererSettingsPanel(QWidget):
     @property
     def essentialRows(self) -> QStackedLayout:
         """The rows a docked panel keeps in view (``keepInView``): Mode and
-        the bands, or the color map with its handles."""
+        the bands, the color map with its handles, or the browse product's
+        channels."""
         return self.bandStack
 
     def _syncBandStack(self, *args) -> None:
+        if self.settings.browse.get():
+            self.bandStack.setCurrentIndex(self._browseIndex)
+            return
         isRgb = self.settings.mode.get() == RenderMode.RGB
         self.bandStack.setCurrentIndex(self._rgbIndex if isRgb else self._monoIndex)
 
