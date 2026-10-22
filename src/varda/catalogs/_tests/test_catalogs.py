@@ -434,3 +434,47 @@ def test_a_geojson_on_mars_can_say_so(tmp_path, monkeypatch):
         SearchQuery(str(tmp_path / "mars.geojson"), (77.2, 18.2, 77.5, 18.5)), _progress
     ).products
     assert product.footprint.bounds == (77.0, 18.0, 78.0, 19.0)  # degrees as they were
+
+
+def _filesReply(*files: tuple[str, str]) -> dict:
+    return {
+        "ODEResults": {
+            "Products": {
+                "Product": {
+                    "Product_files": {
+                        "Product_file": [
+                            {
+                                "FileName": name,
+                                "URL": f"https://pds.example/{name}",
+                                "Type": kind,
+                            }
+                            for name, kind in files
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+
+def test_an_lroc_products_files_are_its_own_though_named_without_its_prefix(
+    monkeypatch,
+):
+    """Release check: an LROC NAC CDR's ID (nac.m1418637109lc) isn't the start
+    of its file names, so none of its files was checked for download."""
+    reply = _filesReply(
+        ("M1418637109LC.IMG", "Product"),
+        ("M1418637109LC.XML", "Product"),
+        ("M1418637109LC.TIF", "Browse"),
+    )
+    monkeypatch.setattr(ode, "fetchJson", FakeHttp(lambda *a: reply))
+    files = OdeCatalog().filesFor("nac.m1418637109lc", "moon", "LRO", "LROC", "CDRNAC")
+    essential = {f.name for f in files if f.essential}
+    assert essential == {"M1418637109LC.IMG", "M1418637109LC.XML"}
+
+
+def test_with_no_file_named_for_the_product_its_product_files_are_kept(monkeypatch):
+    reply = _filesReply(("DATA_001.IMG", "Product"), ("DATA_001.LBL", "Product"))
+    monkeypatch.setattr(ode, "fetchJson", FakeHttp(lambda *a: reply))
+    files = OdeCatalog().filesFor("odd_id", "mars", "X", "Y", "Z")
+    assert all(f.essential for f in files)

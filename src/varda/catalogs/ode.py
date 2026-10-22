@@ -193,6 +193,19 @@ def browseKind(description: str, name: str) -> str:
     return kind
 
 
+def _ownPrefix(pdsid: str, listing: list[dict]) -> str:
+    """How the product's own files' names start: its PDS ID, else the ID's
+    last part (an LROC NAC CDR "nac.m1418637109lc" names its files
+    "M1418637109LC.*"); "" (every file) when no product file starts with either."""
+    products = [
+        _name(f).lower() for f in listing if f.get("Type", "Product") == "Product"
+    ]
+    for prefix in (pdsid.lower(), pdsid.lower().rsplit(".", 1)[-1]):
+        if any(name.startswith(prefix) for name in products):
+            return prefix
+    return ""
+
+
 def _imageUrl(query: str, target: str, pdsid: str, **extra: str) -> str:
     """ODE's thumbnail or browse image of a product."""
     return f"{ODE_URL}?{urlencode({'query': query, 'target': target, 'pdsid': pdsid, **extra})}"
@@ -371,11 +384,13 @@ class OdeCatalog(Catalog):
         self, pdsid: str, target: str, ihid: str, iid: str, pt: str
     ) -> list[RemoteFile]:
         """A product's files by its PDS ID and IIPT (footprint files use this)."""
+        listing = self._listing(pdsid, target, ihid, iid, pt)
+        prefix = _ownPrefix(pdsid, listing)
         files = []
-        for f in self._listing(pdsid, target, ihid, iid, pt):
+        for f in listing:
             name = _name(f)
             kind = f.get("Type", "Product")
-            own = name.lower().startswith(pdsid.lower())  # not a sibling product's
+            own = name.lower().startswith(prefix)  # not a sibling product's
             role = FILE_ROLES.get(
                 kind, "label" if name.lower().endswith(LABELS) else "data"
             )
