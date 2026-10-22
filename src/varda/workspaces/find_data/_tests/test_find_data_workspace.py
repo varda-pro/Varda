@@ -93,7 +93,7 @@ def workspace(qtbot, monkeypatch):
     FakeCatalog.queries = []
     widget = FindDataWorkspace([])
     qtbot.addWidget(widget)
-    qtbot.waitUntil(lambda: widget.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: widget.source() is not None, timeout=5000)
     return widget
 
 
@@ -103,8 +103,11 @@ def _search(workspace, qtbot):
 
 
 def test_the_catalogs_collections_and_filters_are_offered(workspace):
-    assert workspace.catalogBox.currentText() == "Fake catalog"
-    assert workspace.collectionBox.currentText() == "Mars: Mars observations"
+    assert workspace.body() == "Mars"
+    assert workspace.source().catalogName == "Fake catalog"
+    assert workspace.collection().title == "Mars observations"
+    assert workspace.collectionTitle.text() == "Mars observations"
+    assert "From Fake catalog" in workspace.collectionAbout.text()
     assert workspace.bodyLabel.text() == "<b>Mars</b>"
     assert workspace.filters.layout().count() == 1  # the catalog's own filters
 
@@ -171,7 +174,7 @@ def test_a_mars_image_becomes_the_basemap(workspace, qtbot, monkeypatch):
         name="mars image",
     )
     workspace.projectImages.append(image)
-    workspace._onCollection()
+    workspace._showBody(workspace.body())
     # None, Mars's two imagery layers, the image
     assert workspace.basemapBox.count() == 4
     workspace.basemapBox.setCurrentIndex(0)
@@ -202,7 +205,7 @@ def test_the_workspace_comes_back_from_a_session(workspace, qtbot, tmp_path):
     reopened = FindDataWorkspace([])
     qtbot.addWidget(reopened)
     reopened.restoreSessionState(state)
-    qtbot.waitUntil(lambda: reopened.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: reopened.source() is not None, timeout=5000)
     assert reopened.areaBox.currentText() == AREA_BOX
     assert reopened.map.areaBounds() == pytest.approx((77.0, 18.0, 78.0, 19.0))
 
@@ -227,7 +230,7 @@ def test_a_catalog_that_needs_a_login_asks_before_searching(workspace, monkeypat
     finally:
         FakeCatalog.credentialFields = ()
     assert asked == [workspace.catalog()]
-    assert workspace.searchStatus.text() == "This catalog needs a login."
+    assert workspace.searchStatus.text() == "Fake catalog needs a login."
     assert FakeCatalog.queries == []
 
 
@@ -302,7 +305,7 @@ def test_images_loaded_later_become_basemaps_and_keep_the_choice(qtbot, monkeypa
     images = ProjectImages()
     workspace = FindDataWorkspace(images)
     qtbot.addWidget(workspace)
-    qtbot.waitUntil(lambda: workspace.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: workspace.source() is not None, timeout=5000)
     assert workspace.basemapBox.count() == 3  # None and Mars's two layers
     first = _marsImage("first")
     images.append(first)  # e.g. a download that opened
@@ -428,7 +431,7 @@ def test_the_basemap_choice_comes_back_from_a_session(workspace, qtbot):
     reopened = FindDataWorkspace([])
     qtbot.addWidget(reopened)
     reopened.restoreSessionState(state)
-    qtbot.waitUntil(lambda: reopened.collectionBox.count() == 1, timeout=5000)
+    qtbot.waitUntil(lambda: reopened.source() is not None, timeout=5000)
     qtbot.waitUntil(lambda: reopened.basemapBox.currentIndex() == 2, timeout=5000)
     assert not reopened.namesCheck.isChecked()
 
@@ -482,7 +485,7 @@ def test_a_late_loaded_image_basemap_never_replaces_a_newer_choice(
         "varda.workspaces.find_data.find_data_workspace.runInBackground", held
     )
     workspace.projectImages.append(_marsImage("mars image"))
-    workspace._onCollection()
+    workspace._showBody(workspace.body())
     workspace.basemapBox.setCurrentIndex(3)  # the image
     workspace.basemapBox.setCurrentIndex(0)  # None, before it's drawn
     for index in range(len(held.tasks)):
@@ -624,3 +627,76 @@ def test_without_a_browse_image_the_thumbnail_is_shown(workspace, qtbot, browseI
 def test_with_no_picture_at_all_it_says_so(workspace, qtbot, browseImages):
     _select(workspace, qtbot, "obs_a")
     qtbot.waitUntil(lambda: workspace.thumbnail.text() == "No preview.", timeout=5000)
+
+
+MOON_PRODUCTS = [
+    Product("selene_1", "SELENE strip", "moon_obs", shapely.box(10.0, 5.0, 10.5, 6.0)),
+]
+
+
+class FakeMoonCatalog(Catalog):
+    catalogId = "fake_moon"
+    name = "Fake Moon catalog"
+
+    def collections(self):
+        return [
+            Collection("moon_obs", "SELENE observations", "Moon", group="SELENE TC"),
+            Collection("mars_mosaic", "A Mars mosaic", "Mars"),
+        ]
+
+    def search(self, query, progress):
+        return SearchPage(tuple(MOON_PRODUCTS), total=1)
+
+    def files(self, product):
+        return []
+
+
+@pytest.fixture
+def twoCatalogs(qtbot, monkeypatch):
+    monkeypatch.setattr(registry, "catalogRegistry", [FakeCatalog, FakeMoonCatalog])
+    FakeCatalog.queries = []
+    widget = FindDataWorkspace([])
+    qtbot.addWidget(widget)
+    qtbot.waitUntil(lambda: len(widget._sources) == 3, timeout=5000)
+    return widget
+
+
+def test_a_bodys_collections_come_from_every_catalog(twoCatalogs):
+    workspace = twoCatalogs
+    assert workspace.body() == "Mars"
+    assert [b for b in workspace.bodyBar.buttons] == ["Mars", "Moon"]
+    keys = {s.catalogId for s in workspace.finder.sources}
+    assert keys == {"fake", "fake_moon"}  # both catalogs' Mars collections
+    assert workspace.source() is None  # two to choose from: none chosen for you
+    assert not workspace.searchButton.isEnabled()
+
+
+def test_switching_bodies_clears_the_old_footprints(twoCatalogs, qtbot):
+    """Release check: SELENE footprints stayed on the map after switching
+    from the Moon to Mars."""
+    workspace = twoCatalogs
+    workspace.bodyBar.buttons["Moon"].click()
+    assert workspace.body() == "Moon"
+    assert workspace.source().collection.id == "moon_obs"  # the only one
+    _search(workspace, qtbot)
+    assert len(workspace.results.products) == 1
+    assert workspace.map._shapes  # drawn
+    workspace.selectProducts(["selene_1"])
+    workspace.bodyBar.buttons["Mars"].click()
+    assert workspace.results.products == []
+    assert not workspace.map._shapes
+    assert workspace.selectedProducts() == []
+    assert workspace.map.previewIds() == []
+    # and the Moon's choice is remembered for coming back
+    workspace.bodyBar.buttons["Moon"].click()
+    assert workspace.source().collection.id == "moon_obs"
+
+
+def test_the_chosen_collection_says_where_it_comes_from(twoCatalogs):
+    workspace = twoCatalogs
+    assert workspace.finder.choose("fake_moon:mars_mosaic")
+    assert workspace.collectionTitle.text() == "A Mars mosaic"
+    assert workspace.collectionAbout.text() == "From Fake Moon catalog"
+    assert workspace.searchButton.isEnabled()
+    state = workspace.sessionState()
+    assert state["source"] == "fake_moon:mars_mosaic" and state["body"] == "Mars"

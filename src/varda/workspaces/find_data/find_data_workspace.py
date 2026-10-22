@@ -10,6 +10,7 @@ from datetime import datetime, time, timezone
 import geopandas as gpd
 import numpy as np
 import PyQt6Ads as ads
+from superqt import QCollapsible
 import shapely
 from PyQt6.QtCore import (
     QDate,
@@ -21,6 +22,8 @@ from PyQt6.QtCore import (
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QMenu,
+    QToolButton,
     QCompleter,
     QDateEdit,
     QFileDialog,
@@ -30,7 +33,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
-    QSizePolicy,
     QSpinBox,
     QStatusBar,
     QTableView,
@@ -57,6 +59,7 @@ from varda.catalogs.gazetteer import (
     search,
 )
 from varda.catalogs.registry import availableCatalogs
+from varda.catalogs.sources import Source, bodies, sourceKey, sourcesFor
 from varda.catalogs.stac import StacCatalog
 from varda.common.entities import VardaRaster
 from varda.common.observable_list import ObservableList
@@ -85,7 +88,7 @@ from varda.workspaces.find_data.catalog_dialogs import (
     StacApisDialog,
     applySavedStacApis,
 )
-from varda.workspaces.find_data.collection_picker import CollectionCombo
+from varda.workspaces.find_data.collection_picker import BodyBar, CollectionFinder
 from varda.workspaces.find_data.downloads_panel import DownloadsPanel
 from varda.workspaces.find_data.map_view import ADD, REMOVE, FootprintMap
 from varda.workspaces.find_data.imagery import ImageryStreamer
@@ -103,6 +106,8 @@ from varda.workspaces.find_data.projection import Bounds, MapProjection
 from varda.workspaces.find_data.results_model import SORT_ROLE, ResultsModel
 
 AREA_VIEW, AREA_BOX, AREA_IMAGE = "Map view", "Box on the map", "An image's footprint"
+DEFAULT_BODY = "Mars"
+CHOOSE_COLLECTION = "Choose what to search in the list above."
 DEFAULT_LIMIT = 100
 PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
 MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
@@ -148,7 +153,14 @@ class FindDataWorkspace(QMainWindow):
             # bound method, so Qt disconnects it when the workspace is deleted
             self.projectImages.sigDataChanged.connect(self._onProjectImagesChanged)
         self._catalogs: dict[str, Catalog] = {}  # one each, so filters persist
-        self._collections: list[Collection] = []
+        self._sources: list[Source] = []  # every catalog's collections
+        self._loading: dict[str, str] = {}  # catalog id: "Listing …"
+        self._failed: dict[str, str] = {}  # catalog id: why it couldn't list
+        self._chosen: dict[str, str] = {}  # body: the source key chosen there
+        self._filtersCatalog: Catalog | None = None  # whose filters are shown
+        self._pendingSource = ""  # a session's collection, once it's listed
+        self._body = ""
+        self._bodyPicked = False  # the user chose a body (or a session did)
         self._query: SearchQuery | None = None
         self._resultsCatalog: Catalog | None = None  # the catalog that found them
         self._nextPage: object | None = None
@@ -190,36 +202,28 @@ class FindDataWorkspace(QMainWindow):
             lambda text: self.status.showMessage(text, 8000)
         )
         self._buildDocks()
-        self._onCatalog()
+        self._showBody(DEFAULT_BODY)
+        self._loadSources()
 
     # --- layout ---------------------------------------------------------------------
 
     def _buildSearchPanel(self) -> None:
-        self.catalogBox = ElidingComboBox()
-        for catalog in availableCatalogs():
-            self.catalogBox.addItem(catalog.name, catalog.catalogId)
-        self.catalogBox.currentIndexChanged.connect(lambda _: self._onCatalog())
-        self.catalogAbout = MutedLabel("")
-        self.catalogAbout.setWordWrap(True)
+        # 1. the body, 2. what to search (every catalog's collections of it),
+        # 3. where and when, 4. the chosen catalog's own filters
+        self.bodyBar = BodyBar()
+        self.bodyBar.sigBodyChanged.connect(self._onBody)
+        self.finder = CollectionFinder()
+        self.finder.sigChosen.connect(self._onSource)
+        self.collectionTitle = QLabel()
+        self.collectionTitle.setWordWrap(True)
+        titleFont = self.collectionTitle.font()
+        titleFont.setBold(True)
+        self.collectionTitle.setFont(titleFont)
+        self.collectionAbout = MutedLabel(CHOOSE_COLLECTION)
+        self.collectionAbout.setWordWrap(True)
         self.loginButton = QPushButton("Log In…")
-        self.loginButton.clicked.connect(lambda: self.logIn(self.catalog()))
-        self.stacApisButton = QPushButton("STAC APIs…")
-        self.stacApisButton.setToolTip("Add, remove or edit the STAC APIs searched")
-        self.stacApisButton.clicked.connect(self._editStacApis)
-        # drops down a search field over the collections, by body and mission
-        self.collectionBox = CollectionCombo()
-        self.collectionBox.setToolTip(
-            "Click to search collections by body, mission or instrument"
-        )
-        self.collectionBox.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self.collectionBox.currentIndexChanged.connect(lambda _: self._onCollection())
-        self.addFileButton = QPushButton("Add Footprint File…")
-        self.addFileButton.clicked.connect(self._addFootprintFile)
-        self.filters = QWidget()
-        self.filtersLayout = QVBoxLayout(self.filters)
-        self.filtersLayout.setContentsMargins(0, 0, 0, 0)
+        self.loginButton.clicked.connect(self._logInToChosen)
+        self.loginButton.hide()
         self.areaBox = ElidingComboBox()
         self.areaBox.addItems([AREA_VIEW, AREA_BOX, AREA_IMAGE])
         self.areaBox.currentIndexChanged.connect(lambda _: self._onArea())
@@ -240,28 +244,36 @@ class FindDataWorkspace(QMainWindow):
         self.limit = QSpinBox()
         self.limit.setRange(1, 1000)
         self.limit.setValue(DEFAULT_LIMIT)
+        self.limit.setSuffix(" results")
+        self.filters = QWidget()
+        self.filtersLayout = QVBoxLayout(self.filters)
+        self.filtersLayout.setContentsMargins(0, 0, 0, 0)
         self.searchButton = QPushButton("Search")
         self.searchButton.setDefault(True)
+        self.searchButton.setEnabled(False)
+        self.searchButton.setMinimumHeight(32)
         self.searchButton.clicked.connect(self.search)
         self.moreButton = QPushButton("More Results")
         self.moreButton.clicked.connect(self.more)
         self.moreButton.setEnabled(False)
         self.searchStatus = MutedLabel("")
         self.searchStatus.setWordWrap(True)
-
-        form = QFormLayout()
-        # fields fill the panel on every platform (macOS keeps them narrow)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Catalog:", self.catalogBox)
-        form.addRow("", self.catalogAbout)
-        form.addRow(
-            "",
-            FlowLayout().withWidget(self.loginButton).withWidget(self.stacApisButton),
+        self.sourcesStatus = MutedLabel("")
+        self.sourcesStatus.setWordWrap(True)
+        self.sourcesButton = QToolButton()
+        self.sourcesButton.setText("Sources")
+        self.sourcesButton.setToolTip(
+            "The catalogs searched: STAC APIs, logins, and footprint files"
         )
-        form.addRow("Collection:", self.collectionBox)
-        form.addRow("", self.addFileButton)
-        form.addRow("Area:", self.areaBox)
-        form.addRow("Image:", self.areaImage)
+        self.sourcesButton.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.sourcesMenu = QMenu(self.sourcesButton)
+        self.sourcesMenu.aboutToShow.connect(self._fillSourcesMenu)
+        self.sourcesButton.setMenu(self.sourcesMenu)
+
+        where = QFormLayout()
+        where.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        where.addRow("Area:", self.areaBox)
+        where.addRow("Image:", self.areaImage)
         dates = FlowLayout()
         for check, edit in (
             (self.fromCheck, self.fromDate),
@@ -269,17 +281,41 @@ class FindDataWorkspace(QMainWindow):
         ):
             pair = HBoxBuilder(margins=0).withWidget(check).withWidget(edit)
             dates.addWidget(WrapperWidget(pair))
-        form.addRow("Dates:", dates)
-        form.addRow("At most:", self.limit)
+        where.addRow("Dates:", dates)
+        filtersBox = QWidget()
+        filtersBody = QVBoxLayout(filtersBox)
+        filtersBody.setContentsMargins(0, 0, 0, 0)
+        filtersBody.addWidget(self.filters)
+        limitRow = QFormLayout()
+        limitRow.addRow("At most:", self.limit)
+        filtersBody.addLayout(limitRow)
+        self.filtersSection = QCollapsible(
+            "Filters", expandedIcon="▼", collapsedIcon="▶"
+        )
+        self.filtersSection.setContent(filtersBox)
+        self.filtersSection.collapse(animate=False)
+        about = QVBoxLayout()
+        about.setSpacing(2)
+        about.addWidget(self.collectionTitle)
+        about.addWidget(self.collectionAbout)
+        about.addWidget(self.loginButton, alignment=Qt.AlignmentFlag.AlignLeft)
         buttons = FlowLayout().withWidget(self.searchButton).withWidget(self.moreButton)
+        footer = (
+            HBoxBuilder(margins=0)
+            .withWidget(self.sourcesStatus, 1)
+            .withWidget(self.sourcesButton)
+        )
         self.searchPanel = QWidget()
         layout = QVBoxLayout(self.searchPanel)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("<b>Filters</b>"))
-        layout.addWidget(self.filters)
+        layout.setSpacing(10)
+        layout.addWidget(self.bodyBar)
+        layout.addWidget(self.finder, 1)
+        layout.addLayout(about)
+        layout.addLayout(where)
+        layout.addWidget(self.filtersSection)
         layout.addLayout(buttons)
         layout.addWidget(self.searchStatus)
-        layout.addStretch(1)
+        layout.addLayout(footer)
 
     def _buildMapBar(self) -> None:
         self.bodyLabel = QLabel()
@@ -440,8 +476,8 @@ class FindDataWorkspace(QMainWindow):
 
     # --- catalogs and collections ----------------------------------------------------------
 
-    def catalog(self) -> Catalog:
-        catalogId = self.catalogBox.currentData()
+    def _catalog(self, catalogId: str) -> Catalog:
+        """The workspace's one instance of a catalog (its filters persist)."""
         if catalogId not in self._catalogs:
             cls = next(c for c in availableCatalogs() if c.catalogId == catalogId)
             catalog = self._catalogs[catalogId] = cls()
@@ -451,75 +487,201 @@ class FindDataWorkspace(QMainWindow):
                 except CatalogError as error:
                     self.status.showMessage(str(error))
             if isinstance(catalog, FootprintFileCatalog):
-                # the body the user picks changes the collections' map
+                # the body the user picks moves the files' collections
                 catalog.body.sigParameterChanged.connect(
-                    lambda _: self._onCatalog(
-                        select=self.collectionBox.currentData() or ""
-                    )
+                    lambda _: self._loadSources([FootprintFileCatalog.catalogId])
                 )
         return self._catalogs[catalogId]
 
+    def source(self) -> Source | None:
+        """The collection chosen on the current body, with its catalog."""
+        return self.finder.chosen()
+
+    def catalog(self) -> Catalog | None:
+        source = self.source()
+        return self._catalog(source.catalogId) if source is not None else None
+
     def collection(self) -> Collection | None:
-        index = self.collectionBox.currentIndex()
-        return self._collections[index] if 0 <= index < len(self._collections) else None
+        source = self.source()
+        return source.collection if source is not None else None
 
     def body(self) -> str:
-        collection = self.collection()
-        return collection.body if collection is not None else ""
+        return self.bodyBar.current() or self._body
 
-    def _onCatalog(self, select: str = "") -> None:
-        if self.catalogBox.count() == 0:
-            return
-        catalog = self.catalog()
-        self.catalogAbout.setText(catalog.description)
-        self.loginButton.setVisible(bool(catalog.credentialFields))
-        self.stacApisButton.setVisible(isinstance(catalog, StacCatalog))
-        self.addFileButton.setVisible(isinstance(catalog, FootprintFileCatalog))
-        layout = self.filtersLayout
-        while (item := layout.takeAt(0)) is not None:
-            if (widget := item.widget()) is not None:
-                widget.hide()  # not drawn under the new filters until deleted
-                widget.deleteLater()
-        if catalog.params:
-            layout.addWidget(groupWidget(catalog))
-        else:
-            layout.addWidget(MutedLabel("This catalog has no filters."))
-        self.collectionBox.setCollections([])
-        self._collections = []
-        self.searchStatus.setText("Loading collections…")
-        runInBackground(
-            catalog.collections,
-            lambda collections: self._showCollections(catalog, collections, select),
-            lambda error: self.searchStatus.setText(str(error)),
-            description="Listing a catalog's collections",
-            owner=self,
+    def _loadSources(self, catalogIds: list[str] | None = None) -> None:
+        """List every catalog's collections (or those of ``catalogIds``) in the
+        background; each catalog's arrive on their own."""
+        for cls in availableCatalogs():
+            if catalogIds is not None and cls.catalogId not in catalogIds:
+                continue
+            catalog = self._catalog(cls.catalogId)
+            self._loading[catalog.catalogId] = f"Listing {catalog.name}…"
+            self._failed.pop(catalog.catalogId, None)
+            runInBackground(
+                catalog.collections,
+                lambda collections, c=catalog: self._addSources(c, collections),
+                lambda error, c=catalog: self._sourceFailed(c, error),
+                description="Listing a catalog's collections",
+                owner=self,
+            )
+        self._showSourcesStatus()
+
+    def _addSources(self, catalog: Catalog, collections: list[Collection]) -> None:
+        self._loading.pop(catalog.catalogId, None)
+        self._sources = [s for s in self._sources if s.catalogId != catalog.catalogId]
+        self._sources += [
+            Source(catalog.catalogId, catalog.name, c) for c in collections
+        ]
+        if self._pendingSource:
+            pending = next(
+                (s for s in self._sources if s.key == self._pendingSource), None
+            )
+            if pending is not None:
+                self._pendingSource = ""
+                self._chosen[pending.body] = pending.key
+                if pending.body != self.body():
+                    self._showBody(pending.body)
+        self._refreshSources()
+        self._showSourcesStatus()
+
+    def _sourceFailed(self, catalog: Catalog, error: Exception) -> None:
+        self._loading.pop(catalog.catalogId, None)
+        self._failed[catalog.catalogId] = (
+            f"{catalog.name} couldn't be listed: {error} (Sources → Reload the Catalogs)"
         )
+        self._showSourcesStatus()
+        self._refreshSources()
 
-    def _showCollections(
-        self, catalog: Catalog, collections: list[Collection], select: str
-    ) -> None:
-        if catalog is not self.catalog():
-            return  # the user moved on
-        self._collections = list(collections)
-        self.collectionBox.setCollections(self._collections, select)
-        self.searchStatus.setText(
-            f"{len(collections)} collections."
-            if collections
-            else "This catalog has no collections yet."
-        )
-        self._onCollection()
+    def _showSourcesStatus(self) -> None:
+        notes = [*self._loading.values(), *self._failed.values()]
+        self.sourcesStatus.setText(" ".join(notes))
+        self.sourcesStatus.setToolTip("\n".join(notes))
 
-    def _onCollection(self) -> None:
+    def _refreshSources(self) -> None:
+        """The body bar and the finder, after the sources changed: the body
+        and the chosen collection stay. Until the user picks a body, a body
+        with no collections gives way to the first that has some."""
         body = self.body()
-        self.bodyLabel.setText(f"<b>{body}</b>" if body else "")
+        counts = bodies(self._sources)
+        if counts and body not in dict(counts) and not self._bodyPicked:
+            self._showBody(counts[0][0])
+            body = self.body()
+        if body not in dict(counts):
+            counts = [*counts, (body, 0)]
+        self.bodyBar.setBodies(counts, body)
+        chosen = self._chosen.get(body, "")
+        mine = sourcesFor(self._sources, body)
+        if not chosen and len(mine) == 1 and not self._loading:
+            chosen = mine[0].key  # the only one of every catalog: no need to ask
+        before = self.finder.chosenKey
+        self.finder.setSources(mine, body, chosen)
+        if self.finder.chosenKey != before or (chosen and self._filtersCatalog is None):
+            self._onSource(self.finder.chosenKey)
+
+    def _onBody(self, body: str) -> None:
+        self._bodyPicked = True
+        if body != self._body:
+            self._showBody(body)
+            self._refreshSources()
+
+    def _showBody(self, body: str) -> None:
+        """Change body: the old body's results, footprints and previews go
+        (they'd be drawn on the wrong world), and the map turns to the new one."""
+        self._body = body
+        self.bodyBar.setCurrent(body)
+        self.clearResults()
         self.map.setProjection(self.projectionBox.currentData(), body)
         gazetteer = loadGazetteer(body) if body else None
         self.map.setNames(gazetteer)
         self.goToNames.setStringList(list(gazetteer.names) if gazetteer else [])
         self.goTo.setEnabled(gazetteer is not None)
+        self.bodyLabel.setText(f"<b>{body}</b>" if body else "")
         self._refreshImageLists(keep=False)
         self._onArea()
         self._onBasemap()
+
+    def _onSource(self, key: str) -> None:
+        """A collection was chosen: say what it is and offer its catalog's filters."""
+        source = self.source()
+        if source is None or source.key != key:
+            self._showCollectionCard(None)
+            return
+        self._chosen[source.body] = key
+        self._showCollectionCard(source)
+        catalog = self._catalog(source.catalogId)
+        if catalog is not self._filtersCatalog:
+            self._filtersCatalog = catalog
+            layout = self.filtersLayout
+            while (item := layout.takeAt(0)) is not None:
+                if (widget := item.widget()) is not None:
+                    widget.hide()  # not drawn under the new filters until deleted
+                    widget.deleteLater()
+            if catalog.params:
+                layout.addWidget(groupWidget(catalog))
+            else:
+                layout.addWidget(MutedLabel(f"{catalog.name} has no other filters."))
+
+    def _showCollectionCard(self, source: Source | None) -> None:
+        if source is None:
+            self.collectionTitle.setText("")
+            self.collectionTitle.hide()
+            self.collectionAbout.setText(CHOOSE_COLLECTION)
+            self.loginButton.hide()
+            self.searchButton.setEnabled(False)
+            return
+        collection = source.collection
+        self.collectionTitle.setText(collection.title)
+        self.collectionTitle.show()
+        about = collection.description or ""
+        self.collectionAbout.setText(
+            f"{about}\nFrom {source.catalogName}"
+            if about
+            else f"From {source.catalogName}"
+        )
+        catalog = self._catalog(source.catalogId)
+        self.loginButton.setVisible(
+            bool(catalog.credentialFields) and not hasCredentials(catalog)
+        )
+        self.loginButton.setText(f"Log In to {catalog.name}…")
+        self.searchButton.setEnabled(True)
+
+    def _logInToChosen(self) -> None:
+        catalog = self.catalog()
+        if catalog is not None and self.logIn(catalog):
+            self._showCollectionCard(self.source())
+
+    def _fillSourcesMenu(self) -> None:
+        menu = self.sourcesMenu
+        menu.clear()
+        menu.addAction("STAC APIs…", self._editStacApis)
+        menu.addAction("Add Footprint File…", self._addFootprintFile)
+        needing = [
+            self._catalog(c.catalogId)
+            for c in availableCatalogs()
+            if c.credentialFields
+        ]
+        if needing:
+            menu.addSeparator()
+            for catalog in needing:
+                menu.addAction(
+                    f"Log In to {catalog.name}…", lambda c=catalog: self.logIn(c)
+                )
+        menu.addSeparator()
+        menu.addAction("Reload the Catalogs", lambda: self._loadSources())
+
+    def clearResults(self) -> None:
+        """No results, footprints, selection or previews (a new body)."""
+        self._query = None
+        self._nextPage = None
+        self._resultsCatalog = None
+        self.onlySelected.setChecked(False)
+        self.results.setProducts([])
+        self.map.setFootprints([])
+        self.map.setSelected([])
+        self.map.keepPreviews(set())
+        self.moreButton.setEnabled(False)
+        self.searchStatus.setText("")
+        self._onSelection()
 
     def _onProjectImagesChanged(self, _images: list) -> None:
         self._refreshImageLists()
@@ -603,7 +765,9 @@ class FindDataWorkspace(QMainWindow):
     def addFootprintFile(self, path: str) -> None:
         if path not in FootprintFileCatalog.paths:
             FootprintFileCatalog.paths.append(path)
-        self._onCatalog(select=path)
+        # chosen (on its body) once it's listed
+        self._pendingSource = sourceKey(FootprintFileCatalog.catalogId, path)
+        self._loadSources([FootprintFileCatalog.catalogId])
 
     # --- search -------------------------------------------------------------------------
 
@@ -651,23 +815,24 @@ class FindDataWorkspace(QMainWindow):
     def _editStacApis(self) -> None:
         if StacApisDialog(self).exec():
             self._catalogs.pop(StacCatalog.catalogId, None)  # it caches collections
-            self._onCatalog()
+            self._loadSources([StacCatalog.catalogId])
 
     def search(self) -> None:
-        query = self.query()
-        if query is None:
-            self.searchStatus.setText("Choose a collection first.")
+        query, catalog = self.query(), self.catalog()
+        if query is None or catalog is None:
+            self.searchStatus.setText(CHOOSE_COLLECTION)
             return
-        if not self._loggedIn(self.catalog()):
-            self.searchStatus.setText("This catalog needs a login.")
+        if not self._loggedIn(catalog):
+            self.searchStatus.setText(f"{catalog.name} needs a login.")
             return
         self._query = query
         self.onlySelected.setChecked(False)  # a new search lists everything
         self.results.setProducts([])
-        self._run(query, append=False)
+        self._run(catalog, query, append=False)
 
     def more(self) -> None:
-        if self._query is None or self._nextPage is None:
+        catalog = self._resultsCatalog  # the one that found them
+        if self._query is None or self._nextPage is None or catalog is None:
             return
         query = SearchQuery(
             self._query.collection,
@@ -677,10 +842,9 @@ class FindDataWorkspace(QMainWindow):
             self._query.limit,
             self._nextPage,
         )
-        self._run(query, append=True)
+        self._run(catalog, query, append=True)
 
-    def _run(self, query: SearchQuery, append: bool) -> None:
-        catalog = self.catalog()
+    def _run(self, catalog: Catalog, query: SearchQuery, append: bool) -> None:
         self.searchButton.setEnabled(False)
         self.moreButton.setEnabled(False)
         self.searchStatus.setText("Searching…")
@@ -693,7 +857,7 @@ class FindDataWorkspace(QMainWindow):
         )
 
     def _searchFailed(self, error: Exception) -> None:
-        self.searchButton.setEnabled(True)
+        self.searchButton.setEnabled(self.source() is not None)
         self.moreButton.setEnabled(self._nextPage is not None)
         self.searchStatus.setText(str(error))
 
@@ -704,7 +868,7 @@ class FindDataWorkspace(QMainWindow):
         self._nextPage = page.nextPage
         self.map.setFootprints(products)
         self.map.setSelected([])
-        self.searchButton.setEnabled(True)
+        self.searchButton.setEnabled(self.source() is not None)
         self.moreButton.setEnabled(page.nextPage is not None)
         total = f" of {page.total}" if page.total is not None else ""
         self.searchStatus.setText(
@@ -1053,10 +1217,13 @@ class FindDataWorkspace(QMainWindow):
     # --- sessions ---------------------------------------------------------------------------
 
     def sessionState(self) -> dict:
-        collection = self.collection()
+        source = self.source()
         return {
-            "catalog": self.catalogBox.currentData(),
-            "collection": collection.id if collection else "",
+            "body": self.body(),
+            "source": source.key if source else "",
+            # as Varda 0.12 wrote them, for older Vardas
+            "catalog": source.catalogId if source else "",
+            "collection": source.collection.id if source else "",
             "area": self.areaBox.currentText(),
             "projection": self.projectionBox.currentData().name,
             "box": list(self.map.areaBounds()),
@@ -1074,17 +1241,30 @@ class FindDataWorkspace(QMainWindow):
         for path in state.get("footprintFiles", []):
             if path not in FootprintFileCatalog.paths:
                 FootprintFileCatalog.paths.append(path)
-        index = self.catalogBox.findData(state.get("catalog"))
-        if index >= 0:
-            self.catalogBox.blockSignals(True)
-            self.catalogBox.setCurrentIndex(index)
-            self.catalogBox.blockSignals(False)
         if "basemapLayer" in state:  # chosen once the collection's body is known
             self._pendingLayer = state["basemapLayer"]
         projection = MapProjection.__members__.get(state.get("projection", ""))
         if projection is not None:
             self.projectionBox.setCurrentIndex(self.projectionBox.findData(projection))
-        self._onCatalog(select=state.get("collection", ""))
+        key = state.get("source") or (
+            sourceKey(state["catalog"], state["collection"])
+            if state.get("catalog") and state.get("collection")
+            else ""
+        )
+        body = state.get("body")
+        if body:
+            self._bodyPicked = True
+        # shown again even if it's the same: the session's basemap applies then
+        self._showBody(body or self.body())
+        if key:
+            listed = next((s for s in self._sources if s.key == key), None)
+            if listed is None:
+                self._pendingSource = key  # chosen once its catalog lists it
+            else:
+                self._chosen[listed.body] = key
+                if listed.body != self.body():
+                    self._showBody(listed.body)
+        self._refreshSources()
         area = self.areaBox.findText(state.get("area", AREA_VIEW))
         self.areaBox.setCurrentIndex(max(area, 0))
         if state.get("box"):
