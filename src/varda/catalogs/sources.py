@@ -23,6 +23,11 @@ class Source:
     catalogId: str
     catalogName: str
     collection: Collection
+    catalogTag: str = ""  # the catalog's short name, for tight spaces
+
+    @property
+    def tag(self) -> str:
+        return self.catalogTag or self.catalogName
 
     @property
     def key(self) -> str:

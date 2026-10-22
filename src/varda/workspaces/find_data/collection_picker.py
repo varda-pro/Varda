@@ -19,7 +19,14 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QFont, QKeyEvent, QPainter, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import (
+    QFont,
+    QFontMetrics,
+    QKeyEvent,
+    QPainter,
+    QStandardItem,
+    QStandardItemModel,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -95,7 +102,11 @@ class _SourceTagDelegate(QStyledItemDelegate):
             return
         small = QFont(option.font)
         small.setPointSizeF(max(7.0, option.font.pointSizeF() - 2))
-        tagWidth = option.fontMetrics.horizontalAdvance(source) + 12
+        smallMetrics = QFontMetrics(small)
+        # the tag never takes more than a third of the row: the title matters more
+        room = option.rect.width() // 3
+        source = smallMetrics.elidedText(source, Qt.TextElideMode.ElideRight, room - 12)
+        tagWidth = smallMetrics.horizontalAdvance(source) + 12
         title = QStyleOptionViewItem(option)
         self.initStyleOption(title, index)
         title.rect = option.rect.adjusted(0, 0, -tagWidth, 0)
@@ -184,7 +195,7 @@ class CollectionFinder(QWidget):
             item = QStandardItem(title)
             item.setData(searchText(collection, source.catalogName), SEARCH_ROLE)
             item.setData(source.key, KEY_ROLE)
-            item.setData(source.catalogName, SOURCE_ROLE)
+            item.setData(source.tag, SOURCE_ROLE)
             item.setToolTip(
                 f"{collection.title}\n{collection.description}\nFrom {source.catalogName}"
                 if collection.description

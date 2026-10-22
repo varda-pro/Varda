@@ -98,6 +98,9 @@ class Catalog(ParameterGroup):
 
     catalogId: ClassVar[str] = "catalog"  # stable, snake_case
     name: ClassVar[str] = "Catalog"
+    # A few letters for where space is short (the collection list tags each
+    # collection with it); the name when empty
+    shortName: ClassVar[str] = ""
     description: ClassVar[str] = ""
     # Login fields the catalog needs (e.g. ("username", "password")); the core
     # asks for them once, keeps them in the keychain and sets ``credentials``

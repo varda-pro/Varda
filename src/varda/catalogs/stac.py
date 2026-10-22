@@ -81,6 +81,7 @@ def _body(collection: dict) -> str:
 class StacCatalog(Catalog):
     catalogId = "stac"
     name = "STAC catalogs"
+    shortName = "STAC"
     description = (
         "Any STAC API: USGS Astrogeology (Mars, the Moon, Europa, …) and Earth "
         "Search (Sentinel-2, Landsat, …) by default; add others with the STAC APIs… button."

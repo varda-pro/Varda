@@ -121,6 +121,7 @@ def _imageUrl(query: str, target: str, pdsid: str, **extra: str) -> str:
 class OdeCatalog(Catalog):
     catalogId = "ode"
     name = "PDS Orbital Data Explorer (ODE)"
+    shortName = "PDS ODE"
     description = (
         "NASA PDS products of many missions to Mars, the Moon, Mercury and "
         "Venus, with footprints and viewing geometry."

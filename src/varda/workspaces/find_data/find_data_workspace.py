@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QMenu,
-    QToolButton,
     QCompleter,
     QDateEdit,
     QFileDialog,
@@ -260,12 +259,10 @@ class FindDataWorkspace(QMainWindow):
         self.searchStatus.setWordWrap(True)
         self.sourcesStatus = MutedLabel("")
         self.sourcesStatus.setWordWrap(True)
-        self.sourcesButton = QToolButton()
-        self.sourcesButton.setText("Sources")
+        self.sourcesButton = QPushButton("Sources")
         self.sourcesButton.setToolTip(
             "The catalogs searched: STAC APIs, logins, and footprint files"
         )
-        self.sourcesButton.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.sourcesMenu = QMenu(self.sourcesButton)
         self.sourcesMenu.aboutToShow.connect(self._fillSourcesMenu)
         self.sourcesButton.setMenu(self.sourcesMenu)
@@ -530,7 +527,8 @@ class FindDataWorkspace(QMainWindow):
         self._loading.pop(catalog.catalogId, None)
         self._sources = [s for s in self._sources if s.catalogId != catalog.catalogId]
         self._sources += [
-            Source(catalog.catalogId, catalog.name, c) for c in collections
+            Source(catalog.catalogId, catalog.name, c, catalog.shortName)
+            for c in collections
         ]
         if self._pendingSource:
             pending = next(
@@ -587,9 +585,12 @@ class FindDataWorkspace(QMainWindow):
     def _showBody(self, body: str) -> None:
         """Change body: the old body's results, footprints and previews go
         (they'd be drawn on the wrong world), and the map turns to the new one."""
+        changed = body != self._body
         self._body = body
         self.bodyBar.setCurrent(body)
         self.clearResults()
+        if changed:
+            self.finder.search.clear()  # another body's words would hide everything
         self.map.setProjection(self.projectionBox.currentData(), body)
         gazetteer = loadGazetteer(body) if body else None
         self.map.setNames(gazetteer)
@@ -599,6 +600,8 @@ class FindDataWorkspace(QMainWindow):
         self._refreshImageLists(keep=False)
         self._onArea()
         self._onBasemap()
+        if changed:
+            self.map.showWhole()  # not the old body's coordinates
 
     def _onSource(self, key: str) -> None:
         """A collection was chosen: say what it is and offer its catalog's filters."""

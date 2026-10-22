@@ -70,6 +70,7 @@ def _shift(geometry: shapely.Geometry) -> shapely.Geometry:
 class FootprintFileCatalog(Catalog):
     catalogId = "footprint_file"
     name = "Footprint files"
+    shortName = "File"
     description = (
         "A vector file of footprints (shapefile, GeoJSON, GeoPackage), such as "
         "ODE's footprint shapefiles; works offline."
