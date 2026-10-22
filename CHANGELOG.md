@@ -4,6 +4,21 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Changed
+
+- **A new start screen.** The window opens on a short list of ways in, each
+  saying what it does: **Import Image(s)…** (or drop files), **Open
+  Session…**, **Restore Last Session** (shown only when there is one, with
+  how many images and when it was saved) and **Find Data…** for anyone
+  without images yet, with their shortcuts and three numbered next steps.
+  It stands on a reflectance spectrum in Varda's spectral colors, whose
+  absorption bands deepen while files are dragged over the window, and the
+  headline says what a drop will open. It follows the system's light or
+  dark appearance. The empty Image List says images will appear there. See
+  [Sessions and saving](docs/user-guide/sessions-and-saving.md).
+
 ## 0.12.1 (2026-10-21)
 
 ### Changed

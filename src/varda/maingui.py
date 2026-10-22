@@ -10,17 +10,12 @@ from PyQt6.QtWidgets import QWidget
 from app_model.backends.qt import QModelMainWindow, QModelMenu
 from PyQt6.QtCore import QPoint
 from varda.branding.title_mark import addTitleMarkBar
-from varda.command_ids import (
-    IMPORT_IMAGE_ID,
-    OPEN_SESSION_ID,
-    RESTORE_LAST_SESSION_ID,
-)
-from varda.common.keys import shortcutText
-from varda.common.ui import DetachableTabWidget, FlowLayout
+from varda.common.ui import DetachableTabWidget
 from varda.all_images_view_list.imageview_list import ImageListWidget
 from varda.common.entities import VardaRaster
 from varda.context_keys import IMAGE_LIST_VISIBLE, WORKSPACE_COUNT
 from varda.geo.health import Severity, headline
+from varda.start_panel import StartPanel
 
 if TYPE_CHECKING:
     from varda.app import VardaApplication
@@ -38,46 +33,6 @@ def elidedTabTitle(title: str, maxChars: int = MAX_TAB_TITLE_CHARS) -> str:
         return title
     keep = (maxChars - 1) // 2
     return f"{title[:keep]}…{title[-keep:]}"
-
-
-class StartPanel(QtWidgets.QWidget):
-    """What the window shows before any workspace is open: how to start."""
-
-    def __init__(self, app: VardaApplication, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.app = app
-        title = QtWidgets.QLabel("<h2>Start by opening an image</h2>")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        buttons = QWidget()
-        row = FlowLayout(buttons)
-        row.setSpacing(8)
-        for name, label, command, keys in (
-            ("importButton", "Import Image(s)…", IMPORT_IMAGE_ID, "Ctrl+O"),
-            ("sessionButton", "Open Session…", OPEN_SESSION_ID, "Ctrl+Shift+O"),
-            ("restoreButton", "Restore Last Session", RESTORE_LAST_SESSION_ID, ""),
-        ):
-            text = f"{label}  ({shortcutText(keys)})" if keys else label
-            button = QtWidgets.QPushButton(text)
-            button.setObjectName(name)
-            button.clicked.connect(lambda _=False, c=command: self._run(c))
-            row.addWidget(button)
-        hint = QtWidgets.QLabel(
-            "Or drop image files anywhere on this window. Then double-click an "
-            "image in the Image List to view it; with Pixel Select on, click "
-            "a pixel to see its spectrum."
-        )
-        hint.setObjectName("startHint")
-        hint.setWordWrap(True)
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addStretch()
-        layout.addWidget(title)
-        layout.addWidget(buttons, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(hint)
-        layout.addStretch()
-
-    def _run(self, command: str) -> None:
-        self.app.commands.execute_command(command)
 
 
 # Right-click menu on a workspace's tab; actions add themselves to it
@@ -256,14 +211,21 @@ class MainGUI(QModelMainWindow):
     # --- Drag and drop of image files ---
 
     def dragEnterEvent(self, event):
-        if self._localFiles(event.mimeData()):
+        paths = self._localFiles(event.mimeData())
+        if paths:
             event.acceptProposedAction()
+            self.startPanel.setDropCount(len(paths))
 
     def dragMoveEvent(self, event):
         if self._localFiles(event.mimeData()):
             event.acceptProposedAction()
 
+    def dragLeaveEvent(self, event):
+        super().dragLeaveEvent(event)
+        self.startPanel.setDropCount(0)
+
     def dropEvent(self, event):
+        self.startPanel.setDropCount(0)
         paths = self._localFiles(event.mimeData())
         if paths:
             event.acceptProposedAction()

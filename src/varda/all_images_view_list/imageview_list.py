@@ -24,6 +24,7 @@ from varda.common.parameter_widgets import connectWhileAlive
 from varda.geo.health import flagged, headline
 
 ICON_SIZE = THUMBNAIL_SIZE
+EMPTY_TEXT = "Images you open appear here."
 LEFT_MARGIN = 4  # px between the item's edge and its thumbnail and name
 BADGE_DIAMETER = 10  # px: the dot for a coordinate-system finding
 # characters of a name the list is never too narrow for (with its title)
@@ -111,6 +112,25 @@ class ImageListWidget(QListWidget):
         self.imageList.sigDataChanged.connect(self._updateItems)
         self.itemDoubleClicked.connect(self._onItemDoubleClicked)
         self.customContextMenuRequested.connect(self._onContextMenuRequested)
+
+    def paintEvent(self, e: QtGui.QPaintEvent | None) -> None:
+        """The list, or while it's empty, a line saying what will appear."""
+        super().paintEvent(e)
+        viewport = self.viewport()
+        if self.count() or viewport is None:
+            return
+        painter = QtGui.QPainter(viewport)
+        color = self.palette().color(QtGui.QPalette.ColorRole.Text)
+        color.setAlphaF(0.55)
+        painter.setPen(color)
+        bounds = viewport.rect().adjusted(10, 14, -10, -10)
+        painter.drawText(
+            bounds,
+            Qt.AlignmentFlag.AlignHCenter
+            | Qt.AlignmentFlag.AlignTop
+            | Qt.TextFlag.TextWordWrap,
+            EMPTY_TEXT,
+        )
 
     def minimumSizeHint(self) -> QtCore.QSize:
         """Wide enough for the dock's title and a name of ``NAME_CHARACTERS``

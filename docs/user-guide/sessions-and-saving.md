@@ -2,8 +2,11 @@
 
 ## Opening images
 
-**File → Import Image(s)…** (⌘O on a Mac, Ctrl+O elsewhere), the buttons in
-the empty window, or dropping files on the window open images. Images chosen
+**File → Import Image(s)…** (⌘O on a Mac, Ctrl+O elsewhere), the start
+screen's **Import Image(s)…**, or dropping files on the window open images.
+The start screen, shown while no workspace is open, also opens a saved
+session, restores the last one (when there is one: it says how many images
+and when it was saved), or finds data online with **Find Data…**. Images chosen
 together join the Image List in the order you chose them, whichever finishes
 loading first. While any is still loading, a window says Varda is opening
 them. When a file can't be opened, the message says why in plain words (a
