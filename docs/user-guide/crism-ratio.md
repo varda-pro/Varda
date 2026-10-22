@@ -623,11 +623,19 @@ what it saves is ROIs and points.
   image's **Render Settings** and **Histogram**, and **Panels** for every
   panel of the workspace: one closed by mistake comes back from there.
 
-Each new pair replaces the curves and refits the Y ranges. The plots show
-the whole spectrum, or the wavelength range you zoomed or panned to, which
-stays while you click new pairs (Y refits to the data inside it); **Fit to
-Data** in a plot's sidebar, or zooming out to the whole spectrum, goes back to
-the whole spectrum for each pair. The plots always show the same wavelength
+Each new pair replaces the curves and fits each plot's Y range to them, so
+the new spectra fill the plot. The plots show the whole spectrum, or the
+wavelength range you zoomed or panned to, which stays while you click new
+pairs (Y fits the data inside it); **Fit to Data** in a plot's sidebar, or
+zooming out to the whole spectrum, goes back to the whole spectrum for each
+pair. A Y stretch you make by hand lasts until the next pair. Library spectra
+overlaid on a plot don't count toward its Y range: with each new pair they
+are scaled and offset again to span what the image's spectrum spans in the
+wavelengths shown (the newest spectrum on the plot: the ratio, or the
+denominator), as when you first added them. To line one up by eye, click it
+and press **Up** or **Down** to move it (see [Moving around a spectral
+plot](viewing-and-measuring.md#moving-around-a-spectral-plot)); the next pair
+lays it over again. The plots always show the same wavelength
 range, so zooming or panning one moves the others. The image's bad bands (ENVI `bbl`) are left out
 of the plots and the readout. An image without wavelengths is plotted by band
 number, and the readout says the check needs wavelengths.

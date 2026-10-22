@@ -1,7 +1,8 @@
 """The CRISM Ratio workspace's plots: the numerator and denominator spectra
 (overlaid on one plot, or separate), the ratio, and the denominator's
 blandness readout, each shown in its own dock. The plots share one wavelength
-range; every new selection replaces their spectra and refits their Y ranges.
+range; every new selection replaces their spectra, fits each plot's Y to them
+(library spectra don't count) and lays library spectra over them again.
 Each plot can keep a shape (square, or taller than wide), so a spectrum is
 never squashed into a strip."""
 
@@ -220,10 +221,9 @@ class RatioPlots(QObject):
     def _onSeparateToggled(self, separate: bool) -> None:
         self.numeratorBox.setVisible(separate)
         if self._components is not None:
-            xRange = self.ratioPlot.viewBox.viewRange()[0]
+            x0, x1 = self.ratioPlot.viewBox.viewRange()[0]
             self._drawSpectra(*self._curves(self._components))
-            for plot in (self.spectraPlot, self.numeratorPlot):
-                plot.viewBox.setXRange(*xRange, padding=0)
+            self._fit((float(x0), float(x1)))  # the range on screen stays
 
     def _onUserRange(self, plot: VardaPlotWidget, *_mask) -> None:
         x0, x1 = (float(v) for v in plot.viewBox.viewRange()[0])
@@ -235,21 +235,31 @@ class RatioPlots(QObject):
         if not self._refitting:
             self.zoomX = None
 
-    def _showWindow(self, x0: float, x1: float) -> None:
-        """Every plot on ``x0``-``x1``, its Y fitted to the curves there."""
-        for plot in self._plots:
-            plot.viewBox.setXRange(x0, x1, padding=0)
-            ys = [
-                y[(x >= x0) & (x <= x1) & np.isfinite(y)]
-                for x, y in (
-                    (np.asarray(d[0], float), np.asarray(d[1], float))
-                    for d in (curve.shownData() for curve in plot.plots)
-                    if d[0] is not None and d[1] is not None
-                )
-            ]
-            values = np.concatenate(ys) if ys else np.empty(0)
-            if values.size:
-                plot.viewBox.setYRange(values.min(), values.max(), padding=0.05)
+    def _fit(self, window: tuple[float, float] | None = None) -> None:
+        """Every plot on ``window``, by default the one you zoomed to (else
+        the whole spectrum), its Y fitted to the image's spectra there and
+        its library spectra laid over them."""
+        window = window or self.zoomX or self._fullX
+        if window is None:
+            return
+        x0, x1 = window
+        self._refitting = True
+        try:
+            for plot in self._plots:
+                plot.viewBox.setXRange(x0, x1, padding=0)
+                spectra = [c for c in plot.plots if c.librarySpectrum is None]
+                values = [
+                    y[(x >= x0) & (x <= x1) & np.isfinite(y)]
+                    for x, y in (c.displayedData() for c in spectra)
+                ]
+                values = np.concatenate(values) if values else np.empty(0)
+                if values.size:
+                    plot.viewBox.setYRange(values.min(), values.max(), padding=0.05)
+                if spectra:
+                    for library in (c for c in plot.plots if c.librarySpectrum):
+                        plot.overlay(library, spectra[-1])
+        finally:
+            self._refitting = False
 
     def _followX(self, source: pg.ViewBox, xRange) -> None:
         if self._syncingX:
@@ -286,13 +296,12 @@ class RatioPlots(QObject):
         unit: SpectralUnit | None,
     ) -> None:
         """Put ``curves`` (y, color, legend name) in place of the plot's
-        spectra (library spectra stay) and refit."""
+        spectra (library spectra stay); ``_fit`` frames them."""
         for curve in [p for p in plot.plots if p.librarySpectrum is None]:
             plot.removePlot(curve)
         plot.setSpectralUnit(unit)
         for y, color, name in curves:
             plot.plot(x, y, color, name=name)
-        plot.fitToData()
 
     def _drawSpectra(self, x: np.ndarray, good: np.ndarray, nm) -> None:
         c = self._components
@@ -319,17 +328,13 @@ class RatioPlots(QObject):
         self._components = c
         x, good, nm = self._curves(c)
         ratio = np.where(good, np.asarray(c.ratio, np.float64), np.nan)
-        self._refitting = True
-        try:
-            self._drawSpectra(x, good, nm)
-            self._replace(
-                self.ratioPlot,
-                x,
-                [(ratio, RATIO_COLOR, None)],
-                SpectralUnit.NANOMETRE if nm is not None else None,
-            )
-        finally:
-            self._refitting = False
+        self._drawSpectra(x, good, nm)
+        self._replace(
+            self.ratioPlot,
+            x,
+            [(ratio, RATIO_COLOR, None)],
+            SpectralUnit.NANOMETRE if nm is not None else None,
+        )
         self._denominatorCurve = (
             (nm[good], np.asarray(c.denominator, np.float64)[good])
             if nm is not None
@@ -341,10 +346,7 @@ class RatioPlots(QObject):
         self._fullX = (
             (float(x[finite].min()), float(x[finite].max())) if finite.any() else None
         )
-        if self.zoomX is not None:
-            self._showWindow(*self.zoomX)
-        elif self._fullX is not None:
-            self.spectraPlot.viewBox.setXRange(*self._fullX)
+        self._fit()
         if nm is None:
             self.readout.setUnavailable(NEEDS_WAVELENGTHS)
         else:

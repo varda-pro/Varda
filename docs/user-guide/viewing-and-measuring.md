@@ -427,6 +427,13 @@ Hourglass):
   gives it the focus), never while you are typing in a field of the sidebar.
   A plain drag that starts on the selected curve drags it to another plot;
   any other drag pans or zooms as above.
+- **Up** and **Down** move the selected curve up or down by 2 % of the Y
+  range on screen (**Shift** for 10 %), so you can line it up against another,
+  e.g. a library spectrum against your ratio after stretching Y. Each press
+  changes the curve's **Y Offset** under **Selected Curve**, where you can
+  read it or set it back to 0, and holds the view where it is (**Range**
+  becomes **Manual**). The values themselves don't change: an export writes
+  the curve's own values and records the offset.
 
 A Y stretch stays as new spectra arrive until you reset it with **Fit to
 Data** under **View** (or by setting **Range** back to **Auto**). Under

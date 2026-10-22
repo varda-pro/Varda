@@ -80,6 +80,11 @@ from varda.common.parameter_widgets import groupWidget
 CURVE_MIME_TYPE = "application/x-varda-curve"
 # Remove the selected curve while the plot has the keyboard focus
 DELETE_KEYS = (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
+# Up and Down move the selected curve by this fraction of the visible Y
+# range (Shift: this many times as far)
+NUDGE_KEYS = {Qt.Key.Key_Up: 1.0, Qt.Key.Key_Down: -1.0}
+NUDGE_FRACTION = 0.02
+NUDGE_SHIFT_FACTOR = 5
 # The plot never gets narrower than this, however wide the sidebar is dragged
 PLOT_MIN_WIDTH = 200
 # The sidebar's width until the user drags it (then remembered per plot kind)
@@ -501,6 +506,8 @@ class _PlotGraphicsView(pg.GraphicsView):
             elif ev.key() in DELETE_KEYS and plot.removeSelectedCurve():
                 ev.accept()
                 return
+            elif plot.nudgeFromKey(ev):
+                return  # before QGraphicsView, which scrolls on arrows
         super().keyPressEvent(ev)
 
     def _initiateDrag(self, curve: Curve) -> None:
@@ -1134,7 +1141,38 @@ class VardaPlotWidget(QWidget):
         ):
             a0.accept()
             return
+        if a0 is not None and not fromSidebar and self.nudgeFromKey(a0):
+            return
         super().keyPressEvent(a0)
+
+    def nudgeFromKey(self, event) -> bool:
+        """Up or Down moves the selected curve (``nudgeSelectedCurve``);
+        True if the key was one of them and a curve moved."""
+        direction = NUDGE_KEYS.get(event.key())
+        if direction is None:
+            return False
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            direction *= NUDGE_SHIFT_FACTOR
+        if not self.nudgeSelectedCurve(direction):
+            return False
+        event.accept()
+        return True
+
+    def nudgeSelectedCurve(self, steps: float) -> bool:
+        """Move the selected curve up (or, negative, down) by ``steps`` ×
+        ``NUDGE_FRACTION`` of the visible Y range, through its Y offset, with
+        the view held (Range goes Manual); False when no curve is selected."""
+        curve = self.selectedCurve
+        if curve is None:
+            return False
+        if self.viewConfig.rangeMode.value is not RangeMode.MANUAL:
+            # the view holds still while the curve moves, as after a pan
+            self._seedManualRangeFromView()
+            self.viewConfig.rangeMode.set(RangeMode.MANUAL)
+        low, high = self.viewBox.viewRange()[1]
+        offset = curve.config.offset
+        offset.set(offset.value + steps * NUDGE_FRACTION * (high - low))
+        return True
 
     def removeSelectedCurve(self) -> bool:
         """Remove the selected curve as its Remove Curve button does; False
@@ -1272,8 +1310,14 @@ class VardaPlotWidget(QWidget):
         if target is None:
             return self.plot(x, y, name=name)
 
-        targetX, targetY = target.displayedData()
         curve = self.plot(x, y, name=name)
+        self.overlay(curve, target)
+        return curve
+
+    def overlay(self, curve: Curve, target: Curve) -> None:
+        """Set ``curve``'s Y scale and offset so it spans what ``target``
+        does within the wavelengths on screen (``matchToReference``)."""
+        targetX, targetY = target.displayedData()
         visibleX = self.viewBox.viewRange()[0]
         shownX, shownY = curve.shownData()  # continuum removed, if it's on
         scale, offset = matchToReference(
@@ -1283,9 +1327,9 @@ class VardaPlotWidget(QWidget):
             targetY,
             (float(visibleX[0]), float(visibleX[1])),
         )
-        curve.config.scale.set(scale)
-        curve.config.offset.set(offset)
-        return curve
+        with curve.config.sigParameterChanged.blocked():
+            curve.config.scale.set(scale)
+        curve.config.offset.set(offset)  # one refresh, for both
 
     def _referenceCurve(self) -> Curve | None:
         """The curve a new reference spectrum is matched to: the selected one,
