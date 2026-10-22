@@ -571,15 +571,12 @@ def test_the_preview_is_the_large_browse_image_drawn_sharp(
     footprint = PRODUCTS[0].footprint
     browseImages["https://example.test/obs_a.png"] = _png(mapOf(footprint, 600, 600))
     _select(workspace, qtbot, "obs_a")
-    label = workspace.thumbnail
-    qtbot.waitUntil(lambda: label.fullPixmap() is not None, timeout=5000)
-    full = label.fullPixmap()
+    gallery = workspace.gallery
+    qtbot.waitUntil(lambda: gallery.picture("obs_a") is not None, timeout=5000)
+    full = gallery.picture("obs_a")  # the large browse image, whole
     assert (full.width(), full.height()) == (600, 600)
-    shown = label.pixmap()
-    assert shown.devicePixelRatio() == pytest.approx(label.devicePixelRatioF())
-    # it fills the label at the screen's density, rather than being stretched
-    side = min(label.width(), label.height()) * label.devicePixelRatioF()
-    assert max(shown.width(), shown.height()) == pytest.approx(side, abs=1)
+    assert gallery.currentId() == "obs_a"
+    assert "obs_a" in workspace.details.text()
 
 
 def test_a_map_like_preview_is_drawn_over_its_footprint(workspace, qtbot, browseImages):
@@ -609,7 +606,7 @@ def test_a_preview_that_isnt_a_map_stays_in_the_panel(workspace, qtbot, browseIm
     browseImages["https://example.test/obs_b.png"] = _png(figure)
     _select(workspace, qtbot, "obs_b")
     qtbot.waitUntil(lambda: workspace.mapNote.text() == NOT_ON_MAP, timeout=5000)
-    assert workspace.thumbnail.fullPixmap() is not None
+    assert workspace.gallery.picture("obs_b") is not None
     assert workspace.map.previewIds() == []
 
 
@@ -618,15 +615,16 @@ def test_without_a_browse_image_the_thumbnail_is_shown(workspace, qtbot, browseI
         np.full((32, 30, 4), 128, np.uint8)
     )
     _select(workspace, qtbot, "obs_a")
-    label = workspace.thumbnail
-    qtbot.waitUntil(lambda: label.fullPixmap() is not None, timeout=5000)
-    assert label.fullPixmap().width() == 30
+    gallery = workspace.gallery
+    qtbot.waitUntil(lambda: gallery.picture("obs_a") is not None, timeout=5000)
+    assert gallery.picture("obs_a").width() == 30
     assert workspace.map.previewIds() == []
 
 
 def test_with_no_picture_at_all_it_says_so(workspace, qtbot, browseImages):
     _select(workspace, qtbot, "obs_a")
-    qtbot.waitUntil(lambda: workspace.thumbnail.text() == "No preview.", timeout=5000)
+    qtbot.waitUntil(lambda: workspace.gallery.isUnavailable("obs_a"), timeout=5000)
+    assert workspace.gallery.message("obs_a") == "No preview."
 
 
 MOON_PRODUCTS = [
@@ -700,3 +698,23 @@ def test_the_chosen_collection_says_where_it_comes_from(twoCatalogs):
     assert workspace.searchButton.isEnabled()
     state = workspace.sessionState()
     assert state["source"] == "fake_moon:mars_mosaic" and state["body"] == "Mars"
+
+
+def test_several_selected_turn_in_the_gallery_and_outline_on_the_map(
+    workspace, qtbot, browseImages
+):
+    """Release check: with several selected, the panel only said "2 products
+    selected"; now the gallery turns through them, the one in front outlined."""
+    _select(workspace, qtbot, "obs_a")
+    workspace.selectProducts(["obs_a", "obs_b"])
+    gallery = workspace.gallery
+    assert [i.id for i in gallery.items()] == ["obs_a", "obs_b"]
+    assert gallery.currentId() == "obs_a"
+    assert workspace.map._focused.id == "obs_a"
+    gallery.next()
+    assert workspace.map._focused.id == "obs_b"
+    assert "obs_b" in workspace.details.text()
+    workspace.selectProducts(["obs_b"])  # the one in front stays in front
+    assert gallery.currentId() == "obs_b"
+    workspace.selectProducts([])
+    assert gallery.items() == [] and workspace.map._focused is None

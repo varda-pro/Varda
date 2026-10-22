@@ -68,7 +68,6 @@ from varda.common.ui import (
     FlowLayout,
     HBoxBuilder,
     MutedLabel,
-    ScaledPixmapLabel,
     VardaDockWidget,
     WrapperWidget,
 )
@@ -91,6 +90,7 @@ from varda.workspaces.find_data.collection_picker import BodyBar, CollectionFind
 from varda.workspaces.find_data.downloads_panel import DownloadsPanel
 from varda.workspaces.find_data.map_view import ADD, REMOVE, FootprintMap
 from varda.workspaces.find_data.imagery import ImageryStreamer
+from varda.workspaces.find_data.preview_gallery import GalleryItem, PreviewGallery
 from varda.workspaces.find_data.preview_images import (
     PictureCache,
     loadPicture,
@@ -110,10 +110,22 @@ CHOOSE_COLLECTION = "Choose what to search in the list above."
 DEFAULT_LIMIT = 100
 PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
 MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
+MAX_GALLERY = 40  # selected products the Preview panel turns through
 NOT_ON_MAP = (
     "Not drawn on the map: its browse image isn't a north-up map of the "
     "footprint (a strip in sensor geometry, or a figure)."
 )
+
+
+def _subtitle(product: Product) -> str:
+    """The gallery's second line: when, and the observation type if known."""
+    parts = []
+    if product.start:
+        parts.append(f"{product.start:%Y-%m-%d}")
+    kind = product.properties.get("Observation type")
+    if kind:
+        parts.append(str(kind))
+    return " · ".join(parts)
 
 
 class SelectedFilter(QSortFilterProxyModel):
@@ -399,9 +411,10 @@ class FindDataWorkspace(QMainWindow):
         layout.addWidget(self.map, 1)
 
     def _buildPreview(self) -> None:
-        self.thumbnail = ScaledPixmapLabel("Select a product to see it here.")
-        self.thumbnail.setWordWrap(True)
-        self.thumbnail.setMinimumSize(PREVIEW_MIN, PREVIEW_MIN)
+        self.gallery = PreviewGallery()
+        self.gallery.setMinimumSize(PREVIEW_MIN, PREVIEW_MIN)
+        self.gallery.sigCurrentChanged.connect(self._onGalleryCurrent)
+        self.gallery.sigActivated.connect(self._zoomToProduct)
         self.mapNote = MutedLabel()
         self.mapNote.setWordWrap(True)
         self.details = QLabel()
@@ -412,7 +425,7 @@ class FindDataWorkspace(QMainWindow):
         self.details.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.previewPanel = QWidget()
         layout = QVBoxLayout(self.previewPanel)
-        layout.addWidget(self.thumbnail, 3)
+        layout.addWidget(self.gallery, 3)
         layout.addWidget(self.mapNote)
         layout.addWidget(self.details, 2)
 
@@ -950,16 +963,42 @@ class FindDataWorkspace(QMainWindow):
         products = self.selectedProducts()
         self.map.setSelected(products)
         self._showMapPreviews()
-        self.mapNote.setText("")
-        if len(products) != 1:
-            self.thumbnail.setText(
-                "Select one product to see it here." if products else ""
+        shown = products[:MAX_GALLERY]
+        self._galleryProducts = {p.id: p for p in shown}
+        current = self.gallery.currentId()
+        self.gallery.setItems(
+            [GalleryItem(p.id, p.title, _subtitle(p)) for p in shown],
+            current if current in self._galleryProducts else None,
+        )
+        for product in shown:
+            self._loadGalleryPicture(product)
+        self._onGalleryCurrent(self.gallery.currentId() or "")
+        if len(products) > MAX_GALLERY:
+            self.mapNote.setText(
+                f"The first {MAX_GALLERY} of {len(products)} selected are in the gallery."
             )
-            self.details.setText(
-                f"{len(products)} products selected." if products else ""
-            )
+
+    def _loadGalleryPicture(self, product: Product) -> None:
+        """The product's larger browse image, else its thumbnail, into the gallery."""
+        urls = list(dict.fromkeys(u for u in (product.preview, product.thumbnail) if u))
+        if not urls:
+            self.gallery.setUnavailable(product.id, "No preview.")
             return
-        product = products[0]
+        self._withPicture(
+            urls,
+            lambda url, picture: self.gallery.setPicture(product.id, toPixmap(picture)),
+            lambda error: self.gallery.setUnavailable(product.id, "No preview."),
+        )
+
+    def _onGalleryCurrent(self, productId: str) -> None:
+        """The product in front of the gallery: its details, and its footprint
+        outlined on the map."""
+        product = getattr(self, "_galleryProducts", {}).get(productId)
+        self.map.setFocused(product)
+        if product is None:
+            self.details.setText("")
+            self.mapNote.setText("")
+            return
         lines = [f"<b>{product.id}</b>"]
         if product.title != product.id:
             lines.append(product.title)
@@ -968,17 +1007,11 @@ class FindDataWorkspace(QMainWindow):
         lines += [f"{key}: {value}" for key, value in product.properties.items()]
         self.details.setText("<br>".join(lines))
         self._showMapNote(product)
-        # the larger browse image, else the thumbnail
-        urls = list(dict.fromkeys(u for u in (product.preview, product.thumbnail) if u))
-        if not urls:
-            self.thumbnail.setText("No preview.")
-            return
-        self.thumbnail.setText("Loading the preview…")
-        self._withPicture(
-            urls,
-            lambda url, picture: self._showPicture(product, picture),
-            lambda error: self._noPicture(product),
-        )
+
+    def _zoomToProduct(self, productId: str) -> None:
+        product = getattr(self, "_galleryProducts", {}).get(productId)
+        if product is not None:
+            self.map.zoomTo(tuple(product.footprint.bounds))
 
     def _withPicture(
         self,
@@ -1009,14 +1042,6 @@ class FindDataWorkspace(QMainWindow):
         runInBackground(
             load, loaded, failed, description="Fetching a preview", owner=self
         )
-
-    def _showPicture(self, product: Product, picture: np.ndarray) -> None:
-        if self.selectedProducts() == [product]:
-            self.thumbnail.setFullPixmap(toPixmap(picture))
-
-    def _noPicture(self, product: Product) -> None:
-        if self.selectedProducts() == [product]:
-            self.thumbnail.setText("No preview.")
 
     def _showMapNote(self, product: Product) -> None:
         self.mapNote.setText(NOT_ON_MAP if product.id in self._notMapLike else "")
@@ -1080,7 +1105,7 @@ class FindDataWorkspace(QMainWindow):
     ) -> None:
         if rgba is None:
             self._notMapLike.add(product.id)
-            if self.selectedProducts() == [product]:
+            if self.gallery.currentId() == product.id:
                 self._showMapNote(product)
             return
         if request == self._mapPreviewRequest:
