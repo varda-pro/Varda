@@ -16,6 +16,7 @@ from PIL import Image
 from varda.catalogs import basemaps, registry
 from varda.catalogs.basemaps import BasemapLayer
 from varda.catalogs.catalog import (
+    BrowseImage,
     Catalog,
     CatalogError,
     Collection,
@@ -33,6 +34,8 @@ from varda.workspaces.find_data._tests.test_previews import mapOf
 from varda.workspaces.find_data.find_data_workspace import (
     AREA_BOX,
     NOT_ON_MAP,
+    PREVIEW_AUTO,
+    PREVIEW_OFF,
     FindDataWorkspace,
 )
 from varda.workspaces.find_data.map_view import ADD, REMOVE, REPLACE
@@ -585,10 +588,12 @@ def test_a_map_like_preview_is_drawn_over_its_footprint(workspace, qtbot, browse
     _select(workspace, qtbot, "obs_a")
     qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
     assert workspace.mapNote.text() == ""
-    workspace.previewsCheck.setChecked(False)
+    box = workspace.previewBox
+    box.setCurrentIndex(box.findData(PREVIEW_OFF))
     assert workspace.map.previewIds() == []
     assert workspace.sessionState()["previews"] is False
-    workspace.previewsCheck.setChecked(True)
+    assert workspace.sessionState()["mapPreview"] == PREVIEW_OFF
+    box.setCurrentIndex(box.findData(PREVIEW_AUTO))
     qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
     # a polar view draws it again, reprojected (obs_a is north of the equator)
     workspace.projectionBox.setCurrentIndex(
@@ -718,3 +723,80 @@ def test_several_selected_turn_in_the_gallery_and_outline_on_the_map(
     assert gallery.currentId() == "obs_b"
     workspace.selectProducts([])
     assert gallery.items() == [] and workspace.map._focused is None
+
+
+@pytest.fixture
+def standardBrowse(browseImages, monkeypatch):
+    """obs_a has three browse products, CRISM-like: a figure first, then two
+    maps of its footprint."""
+    footprint = PRODUCTS[0].footprint
+    figure = np.full((300, 400, 4), 255, np.uint8)
+    figure[50:120, 40:360, :3] = 30
+    falseColor = mapOf(footprint, 300, 300)
+    mafic = mapOf(footprint, 300, 300)
+    mafic[..., 0] = 250  # told apart from false color by its red
+    browseImages["https://example.test/a_rgb.png"] = _png(figure)
+    browseImages["https://example.test/a_fal.png"] = _png(falseColor)
+    browseImages["https://example.test/a_maf.png"] = _png(mafic)
+
+    def images(self, product):
+        if product.id != "obs_a":
+            return []
+        return [
+            BrowseImage("RGB display", "https://example.test/a_rgb.png"),
+            BrowseImage("Infrared false color", "https://example.test/a_fal.png"),
+            BrowseImage("Mafic mineralogy", "https://example.test/a_maf.png"),
+        ]
+
+    monkeypatch.setattr(FakeCatalog, "browseImages", images, raising=False)
+    return browseImages
+
+
+def test_automatic_drapes_the_first_browse_product_that_is_a_map(
+    workspace, qtbot, standardBrowse
+):
+    """Release check: CRISM's browse image is a figure, so nothing was drawn
+    on the map; its standard browse products are maps."""
+    _select(workspace, qtbot, "obs_a")
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    # the figure was skipped for the false color
+    assert workspace._pictures.get("https://example.test/a_fal.png") is not None
+    kinds = [
+        workspace.previewBox.itemData(i) for i in range(workspace.previewBox.count())
+    ]
+    assert kinds == [
+        PREVIEW_AUTO,
+        PREVIEW_OFF,
+        None,  # a separator
+        "RGB display",
+        "Infrared false color",
+        "Mafic mineralogy",
+    ]
+    # the gallery shows the browse product, not the catalog's figure
+    qtbot.waitUntil(
+        lambda: workspace.gallery.picture("obs_a") is not None
+        and workspace.gallery.picture("obs_a").width() == 300,
+        timeout=5000,
+    )
+
+
+def test_a_chosen_browse_product_is_drawn_and_a_missing_one_said(
+    workspace, qtbot, standardBrowse
+):
+    _select(workspace, qtbot, "obs_a")
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    box = workspace.previewBox
+    box.setCurrentIndex(box.findData("Mafic mineralogy"))
+    qtbot.waitUntil(lambda: workspace.map.previewIds() == ["obs_a"], timeout=5000)
+    assert workspace.sessionState()["mapPreview"] == "Mafic mineralogy"
+    box.setCurrentIndex(box.findData("RGB display"))  # a figure: not a map
+    qtbot.waitUntil(lambda: workspace.mapNote.text() == NOT_ON_MAP, timeout=5000)
+    assert workspace.map.previewIds() == []
+    box.setCurrentIndex(box.findData("Mafic mineralogy"))
+    workspace.selectProducts(["obs_b"])  # has none: the choice stays, and says so
+    assert workspace.previewChoice() == "Mafic mineralogy"
+    qtbot.waitUntil(
+        lambda: workspace.mapNote.text()
+        == "Not drawn on the map: this product has no Mafic mineralogy.",
+        timeout=5000,
+    )

@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 from varda.catalogs.basemaps import BasemapLayer, bundledImage, layersFor
 from varda.catalogs.bodies import toLongitudeLatitude
 from varda.catalogs.catalog import (
+    BrowseImage,
     Catalog,
     CatalogError,
     Collection,
@@ -113,6 +114,7 @@ PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
 MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
 MAX_GALLERY = 40  # selected products the Preview panel turns through
 THUMBNAIL_SIZE = QSize(48, 32)  # px, in the results
+PREVIEW_AUTO, PREVIEW_OFF = "Automatic", "Off"
 NOT_ON_MAP = (
     "Not drawn on the map: its browse image isn't a north-up map of the "
     "footprint (a strip in sensor geometry, or a figure)."
@@ -183,6 +185,10 @@ class FindDataWorkspace(QMainWindow):
         self._pictures = PictureCache()  # browse images, by URL
         self._mapPreviewRequest = 0  # the latest drawing of previews on the map
         self._notMapLike: set[str] = set()  # products whose image isn't a map
+        # each product's standard browse products, once its catalog said
+        self._browse: dict[str, list[BrowseImage]] = {}
+        self._browseAsked: set[str] = set()
+        self._mapUrl: dict[str, str] = {}  # the picture drawn on the map, by product
 
         self.map = FootprintMap()
         self.map.sigSelect.connect(self._onMapSelect)
@@ -356,14 +362,17 @@ class FindDataWorkspace(QMainWindow):
             "smaller ones as you zoom in"
         )
         self.namesCheck.toggled.connect(self._onNamesShown)
-        self.previewsCheck = QCheckBox("Previews")
-        self.previewsCheck.setChecked(True)
-        self.previewsCheck.setToolTip(
-            "Draw the selected products' browse images over their footprints "
-            f"(up to {MAX_MAP_PREVIEWS}), when the image is a north-up map of the "
-            "footprint, as for CTX, HiRISE and THEMIS VIS"
+        self.previewBox = ElidingComboBox()
+        self.previewBox.addItem(PREVIEW_AUTO, PREVIEW_AUTO)
+        self.previewBox.addItem(PREVIEW_OFF, PREVIEW_OFF)
+        self.previewBox.setToolTip(
+            "What to draw over the selected footprints (up to "
+            f"{MAX_MAP_PREVIEWS}): Automatic, the first browse image that is a "
+            "north-up map of the footprint; a standard browse product the "
+            "selected products have (for CRISM: false color, mafic "
+            "mineralogy, phyllosilicates, …); or nothing"
         )
-        self.previewsCheck.toggled.connect(lambda _: self._showMapPreviews())
+        self.previewBox.currentIndexChanged.connect(lambda _: self._onPreviewChoice())
         self.goTo = QLineEdit()
         self.goTo.setPlaceholderText("Go to a feature…")
         self.goTo.setClearButtonEnabled(True)
@@ -406,7 +415,13 @@ class FindDataWorkspace(QMainWindow):
                 )
             )
             .withWidget(self.namesCheck)
-            .withWidget(self.previewsCheck)
+            .withWidget(
+                WrapperWidget(
+                    HBoxBuilder(margins=0)
+                    .withWidget(QLabel("Map preview:"))
+                    .withWidget(self.previewBox)
+                )
+            )
             .withWidget(self.overlaysButton)
             .withWidget(whole)
         )
@@ -848,6 +863,10 @@ class FindDataWorkspace(QMainWindow):
             self.searchStatus.setText(f"{catalog.name} needs a login.")
             return
         self._query = query
+        self._browse.clear()
+        self._browseAsked.clear()
+        self._mapUrl.clear()
+        self._notMapLike.clear()
         self.onlySelected.setChecked(False)  # a new search lists everything
         self.results.setProducts([])
         self._run(catalog, query, append=False)
@@ -989,6 +1008,7 @@ class FindDataWorkspace(QMainWindow):
             [GalleryItem(p.id, p.title, _subtitle(p)) for p in shown],
             current if current in self._galleryProducts else None,
         )
+        self._askBrowse(shown)
         for product in shown:
             self._loadGalleryPicture(product)
         self._onGalleryCurrent(self.gallery.currentId() or "")
@@ -998,8 +1018,21 @@ class FindDataWorkspace(QMainWindow):
             )
 
     def _loadGalleryPicture(self, product: Product) -> None:
-        """The product's larger browse image, else its thumbnail, into the gallery."""
-        urls = list(dict.fromkeys(u for u in (product.preview, product.thumbnail) if u))
+        """The product's picture in the gallery: the chosen browse product (or
+        its first, a color composite), else the catalog's browse image, else
+        its thumbnail."""
+        urls = list(
+            dict.fromkeys(
+                u
+                for u in (
+                    self._mapUrl.get(product.id, ""),  # known to be a map
+                    *self._browseUrls(product, forMap=False)[:1],
+                    product.preview,
+                    product.thumbnail,
+                )
+                if u
+            )
+        )
         if not urls:
             self.gallery.setUnavailable(product.id, "No preview.")
             return
@@ -1008,6 +1041,92 @@ class FindDataWorkspace(QMainWindow):
             lambda url, picture: self.gallery.setPicture(product.id, toPixmap(picture)),
             lambda error: self.gallery.setUnavailable(product.id, "No preview."),
         )
+
+    def previewChoice(self) -> str:
+        return str(self.previewBox.currentData() or PREVIEW_AUTO)
+
+    def _browseUrls(self, product: Product, forMap: bool = True) -> list[str]:
+        """The product's browse products to try, best first: the chosen kind
+        alone, or (Automatic) all of them. Empty until its catalog has said."""
+        images = self._browse.get(product.id, [])
+        choice = self.previewChoice()
+        if choice not in (PREVIEW_AUTO, PREVIEW_OFF):
+            chosen = [b.url for b in images if b.kind == choice]
+            if chosen or forMap:
+                return chosen
+        return [b.url for b in images]
+
+    def _askBrowse(self, products: list[Product]) -> None:
+        """Ask the results' catalog for these products' browse products (once
+        each); when they arrive, the gallery and the map use them."""
+        catalog = self._resultsCatalog
+        if catalog is None:
+            return
+        for product in products:
+            if product.id in self._browseAsked:
+                continue
+            self._browseAsked.add(product.id)
+
+            def fetch(p: Product = product) -> list[BrowseImage]:
+                return catalog.browseImages(p)
+
+            runInBackground(
+                fetch,
+                lambda images, p=product: self._gotBrowse(p, images),
+                lambda error, p=product: self._gotBrowse(p, []),
+                description="Listing a product's browse images",
+                owner=self,
+            )
+
+    def _gotBrowse(self, product: Product, images: list[BrowseImage]) -> None:
+        self._browse[product.id] = list(images)
+        self._refreshPreviewKinds()
+        if product.id in getattr(self, "_galleryProducts", {}) and images:
+            self._loadGalleryPicture(product)
+        if product in self.selectedProducts()[:MAX_MAP_PREVIEWS]:
+            self._notMapLike.discard(product.id)
+            self.map.keepPreviews(set(self.map.previewIds()) - {product.id})
+            self._showMapPreviews()
+
+    def _refreshPreviewKinds(self) -> None:
+        """The chooser offers Automatic, Off, and every kind the selected
+        products have (in the catalog's order); a chosen kind stays."""
+        kinds: list[str] = []
+        for product in self.selectedProducts():
+            for image in self._browse.get(product.id, []):
+                if image.kind not in kinds:
+                    kinds.append(image.kind)
+        choice = self.previewChoice()
+        if choice not in (PREVIEW_AUTO, PREVIEW_OFF) and choice not in kinds:
+            kinds.append(choice)
+        wanted = [PREVIEW_AUTO, PREVIEW_OFF, *kinds]
+        if [
+            self.previewBox.itemData(i) for i in range(self.previewBox.count())
+        ] == wanted:
+            return
+        box = self.previewBox
+        box.blockSignals(True)
+        box.clear()
+        box.addItem(PREVIEW_AUTO, PREVIEW_AUTO)
+        box.addItem(PREVIEW_OFF, PREVIEW_OFF)
+        if kinds:
+            box.insertSeparator(box.count())
+        for kind in kinds:
+            box.addItem(kind, kind)
+        box.setCurrentIndex(max(box.findData(choice), 0))
+        box.blockSignals(False)
+
+    def _onPreviewChoice(self) -> None:
+        """Another browse product (or none): redraw the map and the gallery."""
+        self._notMapLike.clear()
+        self._mapUrl.clear()
+        self.map.keepPreviews(set())
+        self._showMapPreviews()
+        for product in getattr(self, "_galleryProducts", {}).values():
+            self._loadGalleryPicture(product)
+        current = self._galleryProducts.get(self.gallery.currentId() or "")
+        if current is not None:
+            self._showMapNote(current)
 
     def _onGalleryCurrent(self, productId: str) -> None:
         """The product in front of the gallery: its details, and its footprint
@@ -1063,57 +1182,95 @@ class FindDataWorkspace(QMainWindow):
         )
 
     def _showMapNote(self, product: Product) -> None:
-        self.mapNote.setText(NOT_ON_MAP if product.id in self._notMapLike else "")
+        if product.id not in self._notMapLike:
+            self.mapNote.setText("")
+            return
+        choice = self.previewChoice()
+        kinds = {b.kind for b in self._browse.get(product.id, [])}
+        if choice not in (PREVIEW_AUTO, PREVIEW_OFF) and choice not in kinds:
+            self.mapNote.setText(f"Not drawn on the map: this product has no {choice}.")
+        else:
+            self.mapNote.setText(NOT_ON_MAP)
 
     # --- previews on the map ------------------------------------------------------------
 
     def _showMapPreviews(self) -> None:
-        """Draw the selected products' browse images (the first
-        ``MAX_MAP_PREVIEWS``) over their footprints, those that are north-up
-        maps of them (``previews.isMapOfFootprint``); remove the others."""
+        """Draw the selected products' previews (the first
+        ``MAX_MAP_PREVIEWS``) over their footprints: the chosen browse product,
+        or (Automatic) the first browse image that is a north-up map of the
+        footprint (``previews.isMapOfFootprint``); remove the others."""
         self._mapPreviewRequest += 1
         request = self._mapPreviewRequest
-        selected = self.selectedProducts() if self.previewsCheck.isChecked() else []
-        products = selected[:MAX_MAP_PREVIEWS]
+        off = self.previewChoice() == PREVIEW_OFF
+        products = [] if off else self.selectedProducts()[:MAX_MAP_PREVIEWS]
         self.map.keepPreviews({p.id for p in products})
         shown = set(self.map.previewIds())
         projector = self.map.projector
         # pyproj objects stay on this thread: workers get plain values
         frame = MapFrame.of(projector)
+        automatic = self.previewChoice() == PREVIEW_AUTO
         for product in products:
             box = footprintBox(product.footprint)
-            if product.id in shown or not product.preview or box is None:
+            if product.id in shown or box is None:
+                continue
+            if product.id not in self._browse and self._resultsCatalog is not None:
+                continue  # drawn when its browse products arrive (_gotBrowse)
+            urls = self._browseUrls(product)
+            if automatic and product.preview:
+                urls = [*urls, product.preview]
+            urls = list(dict.fromkeys(urls))
+            if not urls:
+                self._notMapLike.add(product.id)
+                if self.gallery.currentId() == product.id:
+                    self._showMapNote(product)
                 continue
             bounds = projector.mapBounds(box)
             if bounds is None:  # in the other hemisphere
                 continue
-            self._withPicture(
-                [product.preview],
-                lambda url, picture, p=product, b=bounds: self._drapePreview(
-                    request, p, picture, frame, b
-                ),
-                lambda error: None,  # the Preview panel says so
-            )
+            self._drapeFirstMap(request, product, urls, frame, bounds)
 
-    def _drapePreview(
+    def _drapeFirstMap(
         self,
         request: int,
         product: Product,
-        picture: np.ndarray,
+        urls: list[str],
         frame: MapFrame,
         bounds: Bounds,
     ) -> None:
-        if request != self._mapPreviewRequest:
-            return
+        """In the background: the first of ``urls`` whose picture is a map of
+        the footprint, draped onto the map (pictures already fetched are
+        reused, those fetched now kept)."""
+        cached = {url: self._pictures.get(url) for url in urls}
 
-        def onMap() -> np.ndarray | None:
-            if not isMapOfFootprint(picture, product.footprint):
-                return None
-            return drape(picture, product.footprint, frame, bounds)
+        Drawn = tuple[str, np.ndarray | None, dict[str, np.ndarray]]
+
+        def onMap() -> Drawn:
+            fetched: dict[str, np.ndarray] = {}
+            for url in urls:
+                picture = cached[url]
+                if picture is None:
+                    try:
+                        picture = fetched[url] = loadPicture(url)
+                    except CatalogError:
+                        continue
+                if isMapOfFootprint(picture, product.footprint):
+                    rgba = drape(picture, product.footprint, frame, bounds)
+                    return url, rgba, fetched
+            return "", None, fetched
+
+        def done(result: Drawn) -> None:
+            url, rgba, fetched = result
+            for fetchedUrl, picture in fetched.items():
+                self._pictures.put(fetchedUrl, picture)
+            if url and self._mapUrl.get(product.id) != url:
+                self._mapUrl[product.id] = url
+                if product.id in getattr(self, "_galleryProducts", {}):
+                    self._loadGalleryPicture(product)  # the map, in the gallery too
+            self._placePreview(request, product, rgba, bounds)
 
         runInBackground(
             onMap,
-            lambda rgba: self._placePreview(request, product, rgba, bounds),
+            done,
             lambda error: None,
             description="Drawing a preview on the map",
             owner=self,
@@ -1281,7 +1438,8 @@ class FindDataWorkspace(QMainWindow):
             if isinstance(layer := self.basemapBox.currentData(), BasemapLayer)
             else "",
             "names": self.namesCheck.isChecked(),
-            "previews": self.previewsCheck.isChecked(),
+            "previews": self.previewChoice() != PREVIEW_OFF,
+            "mapPreview": self.previewChoice(),
         }
 
     def restoreSessionState(self, state: dict) -> None:
@@ -1321,4 +1479,9 @@ class FindDataWorkspace(QMainWindow):
         for path in state.get("overlays", []):
             self.addOverlay(path)
         self.namesCheck.setChecked(state.get("names", True))
-        self.previewsCheck.setChecked(state.get("previews", True))
+        choice = state.get("mapPreview") or (
+            PREVIEW_AUTO if state.get("previews", True) else PREVIEW_OFF
+        )
+        if self.previewBox.findData(choice) < 0:  # a kind: offered once seen
+            self.previewBox.addItem(choice, choice)
+        self.previewBox.setCurrentIndex(self.previewBox.findData(choice))

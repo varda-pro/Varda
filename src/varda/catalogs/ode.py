@@ -61,6 +61,30 @@ MISSIONS = {
     "MGN": "Magellan",
     "VEX": "Venus Express",
 }
+# What the collection list calls a mission: the name people use, where ODE's
+# code isn't it ("SLN" is Kaguya, "CH1-ORB" Chandrayaan-1)
+SHORT_MISSIONS = {
+    "EM16TGO": "ExoMars TGO",
+    "MEX": "Mars Express",
+    "ODY": "Mars Odyssey",
+    "VO": "Viking Orbiter",
+    "ARCB-NRAO": "Arecibo/NRAO",
+    "CE": "Chang'e",
+    "CH1-ORB": "Chandrayaan-1",
+    "CLEM": "Clementine",
+    "KPLO": "Danuri",
+    "LO": "Lunar Orbiter",
+    "LP": "Lunar Prospector",
+    "SLN": "Kaguya",
+    "MGN": "Magellan",
+    "VEX": "Venus Express",
+}
+
+
+def missionName(ihid: str) -> str:
+    return SHORT_MISSIONS.get(ihid, ihid)
+
+
 FILE_ROLES = {"Browse": "browse", "Derived": "auxiliary", "Referenced": "auxiliary"}
 LABELS = (".lbl", ".xml")
 # Browse images Varda can show (not JPEG 2000 or TIFF, which ODE also lists)
@@ -214,7 +238,7 @@ class OdeCatalog(Catalog):
                         key,
                         Collection(
                             key,
-                            f"{s['IHID']} {s['IID']} {s['PTName']}",
+                            f"{missionName(s['IHID'])} {s['IID']} {s['PTName']}",
                             body,
                             ", ".join(
                                 n
@@ -224,7 +248,7 @@ class OdeCatalog(Catalog):
                                 )
                                 if n
                             ),
-                            f"{s['IHID']} {s['IID']}",
+                            f"{missionName(s['IHID'])} {s['IID']}",
                         ),
                     )
             self._collections = sorted(found.values(), key=lambda c: (c.body, c.title))
