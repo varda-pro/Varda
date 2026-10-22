@@ -100,9 +100,9 @@ jobs:
           cp -R dist/Varda.app dmg/
           ln -s /Applications dmg/Applications
           hdiutil create -volname Varda -srcfolder dmg -fs HFS+ -format UDRW -ov rw.dmg
-          hdiutil attach -nobrowse -noautoopen -mountpoint rw-mount rw.dmg
+          device=$(hdiutil attach -nobrowse -noautoopen -mountpoint rw-mount rw.dmg | head -1 | cut -f1 | xargs)
           python3 packaging/macos/set_open_folder.py rw-mount
-          hdiutil detach rw-mount || hdiutil detach -force rw-mount
+          packaging/macos/detach_image.sh "$device"
           hdiutil convert rw.dmg -format UDZO -o Varda-${{ matrix.name }}.dmg
 
       - name: Self-test the download (macOS)
@@ -110,12 +110,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          hdiutil attach -nobrowse -mountpoint mounted Varda-${{ matrix.name }}.dmg
+          device=$(hdiutil attach -nobrowse -mountpoint mounted Varda-${{ matrix.name }}.dmg | head -1 | cut -f1 | xargs)
           python3 packaging/macos/set_open_folder.py --check mounted
           mounted/Varda.app/Contents/MacOS/Varda --self-test
           # The image can stay busy for a moment after Varda exits
-          sleep 3
-          hdiutil detach mounted || hdiutil detach -force mounted
+          packaging/macos/detach_image.sh "$device"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
