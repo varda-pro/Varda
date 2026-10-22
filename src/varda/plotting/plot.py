@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 import pyqtgraph as pg
 
+from varda.analysis.spectrum_continuum import spectrumContinuum
 from varda.common.entities import VardaRaster, Color
 
 from varda.common.ui import (
@@ -135,9 +136,19 @@ class Curve(QObject):
         self.plotDataItem = plotDataItem
         self.plotDataItem.sigClicked.connect(lambda: self.sigClicked.emit(self))
         self.config = config
+        # The curve's own data; the plot may show it continuum removed
+        x, y = plotDataItem.getData()
+        self._x = np.array([] if x is None else x, dtype=float)
+        self._y = np.array([] if y is None else y, dtype=float)
         # Extra graphics that belong to this curve (e.g. a +/- std-dev band):
         # they follow its Y offset/scale and are removed with it.
         self.bandItems: list[QGraphicsItem] = []
+        # The band's lower and upper edges, in the data's units
+        self.bandEdges: tuple[np.ndarray, np.ndarray] | None = None
+        # While shown continuum removed: the samples shown and the continuum
+        # at each (None: the curve's own data, all of it)
+        self.shownSamples: np.ndarray | None = None
+        self.continuum: np.ndarray | None = None
         # For a mean spectrum: per-sample standard deviation and pixel count,
         # in the data's units (before the Y scale/offset); exported with it.
         self.std: np.ndarray | None = None
@@ -185,16 +196,61 @@ class Curve(QObject):
         self.plotDataItem.setSymbolPen(None)
 
     def data(self) -> tuple[np.ndarray, np.ndarray]:
-        """The curve's own data, without its Y scale and offset."""
-        x, y = self.plotDataItem.getData()
-        if x is None or y is None:
-            return np.array([]), np.array([])
-        return np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        """The curve's own data, without continuum removal or its Y scale and
+        offset."""
+        return self._x, self._y
+
+    def shownData(self) -> tuple[np.ndarray, np.ndarray]:
+        """The data as plotted: continuum removed if the plot shows it so,
+        without the Y scale and offset."""
+        if self.shownSamples is None or self.continuum is None:
+            return self.data()
+        return self._x[self.shownSamples], _divided(
+            self._y[self.shownSamples], self.continuum
+        )
+
+    def shownSpread(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """The standard deviation and pixel count behind each shown sample
+        (the deviation divided by the continuum when it's removed)."""
+        if self.shownSamples is None or self.continuum is None:
+            return self.std, self.count
+        std = None
+        if self.std is not None:
+            std = _divided(self.std[self.shownSamples], self.continuum)
+        count = None if self.count is None else self.count[self.shownSamples]
+        return std, count
 
     def displayedData(self) -> tuple[np.ndarray, np.ndarray]:
         """The curve's data as shown, i.e. with its Y scale and offset applied."""
-        x, y = self.data()
+        x, y = self.shownData()
         return x, y * self.config.scale.value + self.config.offset.value
+
+    def showContinuumRemoved(
+        self,
+        on: bool,
+        window: tuple[float, float] | None = None,
+        hullX: np.ndarray | None = None,
+    ) -> None:
+        """Show the curve (and its band) divided by its continuum within
+        ``window`` (``spectrumContinuum``), or (``on`` False) as it is."""
+        if on:
+            self.shownSamples, self.continuum = spectrumContinuum(
+                self._x, self._y, window, hullX
+            )
+        else:
+            self.shownSamples = self.continuum = None
+        x, y = self.shownData()
+        self.plotDataItem.setData(x, y)
+        if self.bandEdges is not None and len(self.bandItems) >= 2:
+            upperItem, lowerItem = self.bandItems[:2]
+            assert isinstance(upperItem, pg.PlotDataItem)
+            assert isinstance(lowerItem, pg.PlotDataItem)
+            lower, upper = self.bandEdges
+            if self.shownSamples is not None and self.continuum is not None:
+                lower = _divided(lower[self.shownSamples], self.continuum)
+                upper = _divided(upper[self.shownSamples], self.continuum)
+            upperItem.setData(x, upper)
+            lowerItem.setData(x, lower)
 
     def isTransformed(self) -> bool:
         """Whether the curve is shown with a Y scale or offset."""
@@ -215,10 +271,10 @@ class Curve(QObject):
             self.plotDataItem.setShadowPen(None)
 
     def serialize(self) -> dict:
-        x, y = self.plotDataItem.getData()
+        x, y = self.data()
         return {
-            "x": x.tolist() if x is not None else [],
-            "y": y.tolist() if y is not None else [],
+            "x": x.tolist(),
+            "y": y.tolist(),
             "name": self.plotDataItem.name() or "",
             "color": self.config.color.value.toHexString(),
             "width": self.config.width.value,
@@ -249,6 +305,12 @@ class Curve(QObject):
         curve.config.color.set(color)
 
         return curve
+
+
+def _divided(values: np.ndarray, continuum: np.ndarray) -> np.ndarray:
+    """``values`` / ``continuum``, NaN where the continuum isn't positive."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(continuum > 0, values / continuum, np.nan)
 
 
 # The y axis's name when what the values are isn't known
@@ -283,6 +345,30 @@ class ViewConfig(ParameterGroup):
     dataPointSize = IntParameter(
         "Data Point Size", 6, range=(2, 20), description="Marker size in pixels"
     )
+
+
+class ContinuumConfig(ParameterGroup):
+    enabled = BoolParameter(
+        "Continuum Removed",
+        False,
+        "Show every curve divided by its continuum, the upper convex hull of "
+        "its samples, so absorptions are dips below 1. The spectra themselves "
+        "don't change.",
+    )
+    limited = BoolParameter(
+        "Only Within Window",
+        False,
+        "Fit the continuum to the samples within the window, and show only "
+        "those; otherwise to the whole curve",
+    )
+    window = Vec2Parameter(
+        "Window",
+        default=Vec2(1000.0, 2600.0),
+        valueNames=("From", "To"),
+        description="In the plot's x unit",
+        step=10.0,
+        decimals=2,
+    ).enabledWhen("limited")
 
 
 class AppearanceConfig(ParameterGroup):
@@ -501,6 +587,10 @@ class VardaPlotWidget(QWidget):
             lambda _: self._applyMarkerLabelStyle()
         )
 
+        self.continuumConfig = ContinuumConfig()
+        self.continuumConfig.sigParameterChanged.connect(self._onContinuumChanged)
+        self._valueLabel = DEFAULT_VALUE_LABEL
+
         self.appearanceConfig = AppearanceConfig()
         self.appearanceConfig.sigParameterChanged.connect(
             self.onAppearanceParamsChanged
@@ -543,6 +633,18 @@ class VardaPlotWidget(QWidget):
                 .withWidget(groupWidget(self.viewConfig))
                 .withWidget(groupWidget(self.rangeConfig))
                 .withWidget(hint),
+            )
+        )
+        sidebar.withWidget(
+            SectionBox(
+                "Continuum Removal",
+                VBoxBuilder()
+                .withWidget(groupWidget(self.continuumConfig))
+                .withWidget(
+                    ButtonBuilder("Use Visible Range")
+                    .onClick(self.removeContinuumInView)
+                    .withToolTip("Remove the continuum over the wavelengths in view")
+                ),
             )
         )
 
@@ -780,6 +882,42 @@ class VardaPlotWidget(QWidget):
         self._onUserViewChange()
         self.sigFitToData.emit()
 
+    # --- Continuum removal ---
+
+    def continuumWindow(self) -> tuple[float, float] | None:
+        """The window the continuum is removed over (None: whole curves)."""
+        if not self.continuumConfig.limited.value:
+            return None
+        window = self.continuumConfig.window.value
+        return float(window.x), float(window.y)
+
+    def removeContinuumInView(self) -> None:
+        """Remove the continuum over the x range in view."""
+        low, high = self.viewBox.viewRange()[0]
+        config = self.continuumConfig
+        with config.sigParameterChanged.blocked():
+            config.window.set(Vec2(float(low), float(high)))
+            config.limited.set(True)
+            config.enabled.set(True)
+        config.sigParameterChanged.emit(config)
+
+    def _showContinuum(self, curve: Curve) -> None:
+        x, _ = curve.data()
+        hullX = (
+            None if self.spectralUnit is None else toNanometres(x, self.spectralUnit)
+        )
+        curve.showContinuumRemoved(
+            self.continuumConfig.enabled.value, self.continuumWindow(), hullX
+        )
+
+    def _onContinuumChanged(self, *_) -> None:
+        for curve in self.plots:
+            self._showContinuum(curve)
+        self._showValueLabel()
+        self._curvesChanged()
+        if self.plots and self.viewConfig.rangeMode.value is RangeMode.MANUAL:
+            self.fitToData()  # the values are on another scale now
+
     @staticmethod
     def _curvePlaceholder() -> QLabel:
         label = MutedLabel("Click a curve to edit it.")
@@ -970,6 +1108,8 @@ class VardaPlotWidget(QWidget):
         # offset/scale changes shift visible y-bounds, so refresh limits.
         curve.config.sigParameterChanged.connect(self._updateViewLimits)
         curve.setDataPoints(self._dataPointSize())
+        if self.continuumConfig.enabled.value:
+            self._showContinuum(curve)
         self.plots.append(curve)
         self.plotItem.addItem(curve.plotDataItem)
         self._curvesChanged()
@@ -1135,8 +1275,13 @@ class VardaPlotWidget(QWidget):
         targetX, targetY = target.displayedData()
         curve = self.plot(x, y, name=name)
         visibleX = self.viewBox.viewRange()[0]
+        shownX, shownY = curve.shownData()  # continuum removed, if it's on
         scale, offset = matchToReference(
-            x, y, targetX, targetY, (float(visibleX[0]), float(visibleX[1]))
+            shownX,
+            shownY,
+            targetX,
+            targetY,
+            (float(visibleX[0]), float(visibleX[1])),
         )
         curve.config.scale.set(scale)
         curve.config.offset.set(offset)
@@ -1196,6 +1341,13 @@ class VardaPlotWidget(QWidget):
         # never shrink to the window; the band's own curves bound it instead
         self.plotItem.addItem(fill, ignoreBounds=True)
         curve.bandItems = [upperCurve, lowerCurve, fill]
+        curve.bandEdges = (
+            np.asarray(yLower, dtype=float),
+            np.asarray(yUpper, dtype=float),
+        )
+        if self.continuumConfig.enabled.value:
+            self._showContinuum(curve)
+            self._curvesChanged()
         curve.onConfigChanged()  # apply the curve's transform to the band
         return curve
 
@@ -1231,7 +1383,15 @@ class VardaPlotWidget(QWidget):
 
     def setValueLabel(self, label: str) -> None:
         """Name the y axis, e.g. "Value (I/F)"."""
-        self.plotItem.setLabel("left", label)
+        self._valueLabel = label
+        self._showValueLabel()
+
+    def _showValueLabel(self) -> None:
+        removed = self.continuumConfig.enabled.value
+        self.plotItem.setLabel(
+            "left",
+            f"{self._valueLabel}, continuum removed" if removed else self._valueLabel,
+        )
 
     def setSpectralUnit(self, unit: SpectralUnit | None) -> None:
         self.spectralUnit = unit

@@ -23,6 +23,7 @@ import attrs
 import numpy as np
 
 from varda.analysis import _spy
+from varda.analysis.spectrum_continuum import upperHull
 from varda.spectral_libraries.spectrum import LibrarySpectrum
 
 # Score ramps: a value at "best" scores 1, at "worst" 0, linear between
@@ -94,16 +95,7 @@ def continuumRemoved(wavelengths: np.ndarray, spectrum: np.ndarray) -> np.ndarra
     absorptions)."""
     x = np.asarray(wavelengths, dtype=np.float64)
     y = np.asarray(spectrum, dtype=np.float64)
-    hull: list[int] = []
-    for i in range(x.size):  # upper hull, monotone chain
-        while len(hull) >= 2:
-            a, b = hull[-2], hull[-1]
-            cross = (x[b] - x[a]) * (y[i] - y[a]) - (y[b] - y[a]) * (x[i] - x[a])
-            if cross >= 0:
-                hull.pop()
-            else:
-                break
-        hull.append(i)
+    hull = upperHull(x, y)
     continuum = np.interp(x, x[hull], y[hull])
     with np.errstate(divide="ignore", invalid="ignore"):
         return y / continuum

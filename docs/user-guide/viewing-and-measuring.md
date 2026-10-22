@@ -362,8 +362,9 @@ any curve is a mean, `std` and `n` (blank for single pixels).
 
 ### The plot's sidebar
 
-A spectral plot's settings (**View**, **Markers**, **Library Spectra**,
-**Selected Curve**, **Appearance**, and in some workspaces more) sit in a
+A spectral plot's settings (**View**, **Continuum Removal**, **Markers**,
+**Library Spectra**, **Selected Curve**, **Appearance**, and in some
+workspaces more) sit in a
 sidebar on its right. The arrow between the plot and the sidebar folds it
 away and back. Drag the divider beside the arrow to make the sidebar
 narrower or wider: its fields move under their labels and its buttons wrap,
@@ -454,7 +455,9 @@ removing curves with the keyboard). They have no
 fits it to the data again.
 
 A stretch changes only the view, never the values: the axis labels stay
-in the data's units, and an export writes the curves' own values. In a
+in the data's units, and an export writes the curves' own values. (Continuum removal is different: it changes the values
+shown, and an export writes those, with the continuum; see [Continuum
+Removal in a spectral plot](spectral-analysis.md#in-a-spectral-plot).) In a
 figure, give the Y range shown, because a stretched axis makes features
 look deeper than they do at full range.
 

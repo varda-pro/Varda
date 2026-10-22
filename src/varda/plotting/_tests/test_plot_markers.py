@@ -73,6 +73,7 @@ def test_markers_section_sits_in_the_sidebar(widget):
     ]
     assert titles == [
         "View",
+        "Continuum Removal",
         "Markers",
         "Library Spectra",
         "Selected Curve",
