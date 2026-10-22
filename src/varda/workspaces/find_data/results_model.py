@@ -1,5 +1,6 @@
-"""The search results as a table: a check (to download), the product ID, its
-start time and the catalog's properties (the most common ones as columns)."""
+"""The search results as a table: a check (to download), the product ID with
+its thumbnail, its start time and the catalog's properties (the most common
+ones as columns)."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 
 from varda.catalogs.catalog import Product
 
@@ -22,6 +24,7 @@ class ResultsModel(QAbstractTableModel):
         self.products: list[Product] = []
         self.checked: set[str] = set()
         self.properties: list[str] = []
+        self.thumbnails: dict[str, QPixmap] = {}  # by product id, as they arrive
 
     @property
     def headers(self) -> list[str]:
@@ -30,11 +33,20 @@ class ResultsModel(QAbstractTableModel):
     def setProducts(self, products: Sequence[Product]) -> None:
         self.beginResetModel()
         self.products = list(products)
-        self.checked &= {p.id for p in self.products}
+        ids = {p.id for p in self.products}
+        self.checked &= ids
+        self.thumbnails = {i: t for i, t in self.thumbnails.items() if i in ids}
         counts = Counter(key for p in self.products for key in p.properties)
         self.properties = [key for key, _ in counts.most_common(MAX_PROPERTY_COLUMNS)]
         self.endResetModel()
         self.sigChecksChanged.emit()
+
+    def setThumbnail(self, productId: str, pixmap: QPixmap) -> None:
+        self.thumbnails[productId] = pixmap
+        row = next((r for r, p in enumerate(self.products) if p.id == productId), -1)
+        if row >= 0:
+            index = self.index(row, 1)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
 
     def checkedProducts(self) -> list[Product]:
         return [p for p in self.products if p.id in self.checked]
@@ -92,6 +104,8 @@ class ResultsModel(QAbstractTableModel):
             return f"{value:g}" if isinstance(value, float) else str(value)
         if role == Qt.ItemDataRole.ToolTipRole and column == 1:
             return product.title
+        if role == Qt.ItemDataRole.DecorationRole and column == 1:
+            return self.thumbnails.get(product.id)
         return None
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole) -> bool:

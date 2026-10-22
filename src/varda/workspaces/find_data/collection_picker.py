@@ -154,6 +154,8 @@ class CollectionFinder(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.setUniformRowHeights(True)
+        # long names differ at their ends ("…Terrain Camera DTMs (USGS)")
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.tree.setItemDelegate(_SourceTagDelegate(self.tree))
         self.tree.setMinimumHeight(140)
         self.count = MutedLabel("")
@@ -181,17 +183,16 @@ class CollectionFinder(QWidget):
         current: QStandardItem | None = None
         for source in self.sources:
             collection = source.collection
-            parent = self.model.invisibleRootItem()
-            if collection.group:
-                if collection.group not in groups:
-                    group = QStandardItem(collection.group)
-                    group.setSelectable(False)
-                    parent.appendRow(group)
-                    groups[collection.group] = group
-                parent = groups[collection.group]
+            name = source.group
+            if name not in groups:
+                group = QStandardItem(name)
+                group.setSelectable(False)
+                self.model.invisibleRootItem().appendRow(group)
+                groups[name] = group
+            parent = groups[name]
             title = collection.title
-            if collection.group and title.startswith(collection.group + " "):
-                title = title[len(collection.group) + 1 :]  # "MRO CRISM" says it
+            if title.startswith(name + " "):
+                title = title[len(name) + 1 :]  # "MRO CRISM" says it
             item = QStandardItem(title)
             item.setData(searchText(collection, source.catalogName), SEARCH_ROLE)
             item.setData(source.key, KEY_ROLE)

@@ -14,6 +14,7 @@ from superqt import QCollapsible
 import shapely
 from PyQt6.QtCore import (
     QDate,
+    QSize,
     QModelIndex,
     QSortFilterProxyModel,
     QStringListModel,
@@ -111,6 +112,7 @@ DEFAULT_LIMIT = 100
 PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
 MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
 MAX_GALLERY = 40  # selected products the Preview panel turns through
+THUMBNAIL_SIZE = QSize(48, 32)  # px, in the results
 NOT_ON_MAP = (
     "Not drawn on the map: its browse image isn't a north-up map of the "
     "footprint (a strip in sensor geometry, or a figure)."
@@ -192,6 +194,13 @@ class FindDataWorkspace(QMainWindow):
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setIconSize(THUMBNAIL_SIZE)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        rows = self.table.verticalHeader()
+        assert rows is not None
+        rows.setDefaultSectionSize(THUMBNAIL_SIZE.height() + 6)
+        rows.hide()
         header = self.table.horizontalHeader()
         assert header is not None
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -480,9 +489,9 @@ class FindDataWorkspace(QMainWindow):
             mapDock.dockAreaWidget(),
         )
         self.downloadsDock = VardaDockWidget("Downloads").withWidget(self.downloads)
-        manager.addDockWidget(
-            ads.DockWidgetArea.RightDockWidgetArea, self.downloadsDock, resultsArea
-        )
+        # a tab beside the results: it comes forward when something is added
+        manager.addDockWidgetTabToArea(self.downloadsDock, resultsArea)
+        self.resultsDock.raise_()
 
     # --- catalogs and collections ----------------------------------------------------------
 
@@ -881,6 +890,7 @@ class FindDataWorkspace(QMainWindow):
         self._resultsCatalog = catalog
         products = (self.results.products if append else []) + list(page.products)
         self.results.setProducts(products)
+        self._loadThumbnails(page.products)
         self._nextPage = page.nextPage
         self.map.setFootprints(products)
         self.map.setSelected([])
@@ -894,6 +904,18 @@ class FindDataWorkspace(QMainWindow):
             self.map.zoomTo(
                 tuple(shapely.union_all([p.footprint for p in products]).bounds)
             )
+
+    def _loadThumbnails(self, products) -> None:
+        """Each product's thumbnail into the results, in the background."""
+        for product in products:
+            if product.thumbnail:
+                self._withPicture(
+                    [product.thumbnail],
+                    lambda url, picture, p=product: self.results.setThumbnail(
+                        p.id, toPixmap(picture)
+                    ),
+                    lambda error: None,  # the row just has no picture
+                )
 
     # --- downloads ----------------------------------------------------------------------
 

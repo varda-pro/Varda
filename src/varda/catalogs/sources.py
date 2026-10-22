@@ -37,6 +37,12 @@ class Source:
     def body(self) -> str:
         return self.collection.body or OTHER_BODY
 
+    @property
+    def group(self) -> str:
+        """Its mission and instrument, or (when the catalog gives none) the
+        catalog: a STAC API's collections sit together."""
+        return self.collection.group or self.catalogName
+
 
 def sourceKey(catalogId: str, collectionId: str) -> str:
     return f"{catalogId}:{collectionId}"
@@ -75,6 +81,4 @@ def sourcesFor(sources: Sequence[Source], body: str) -> list[Source]:
         return evolve(source, collection=evolve(c, title=f"{c.title} [{suffix}]"))
 
     distinct = [told(s) for s in mine]
-    return sorted(
-        distinct, key=lambda s: (s.collection.group.lower(), s.collection.title.lower())
-    )
+    return sorted(distinct, key=lambda s: (s.group.lower(), s.collection.title.lower()))

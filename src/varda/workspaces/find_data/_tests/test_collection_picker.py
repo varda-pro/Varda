@@ -69,9 +69,9 @@ def test_a_bodys_collections_come_from_every_catalog():
     mars = sourcesFor(SOURCES, "Mars")
     assert {s.catalogId for s in mars} == {"ode", "stac"}
     assert [s.collection.id for s in mars] == [
-        "api#crism_mosaic",  # ungrouped first, then by mission and instrument
-        "mars:MRO:CRISM:MTRDR",
-        "mars:MRO:CTX:EDR",
+        "mars:MRO:CRISM:MTRDR",  # by mission and instrument; a catalog that
+        "mars:MRO:CTX:EDR",  # gives none groups its own collections
+        "api#crism_mosaic",
     ]
 
 
@@ -120,8 +120,8 @@ def test_the_finder_groups_by_mission_and_tags_the_catalog(qtbot):
     finder = _finder(qtbot)
     model = finder.model
     rows = [model.item(r).text() for r in range(model.rowCount())]
-    assert rows == ["CRISM global mosaic (USGS)", "MRO CRISM (1)", "MRO CTX (1)"]
-    crism = model.item(1).child(0)
+    assert rows == ["MRO CRISM (1)", "MRO CTX (1)", "STAC catalogs (1)"]
+    crism = model.item(0).child(0)
     assert crism.text().startswith("PDS4 Map-Projected")  # the group isn't repeated
     assert "From " + ODE in crism.toolTip()
     assert finder.count.text() == "3 collections on Mars"
@@ -132,8 +132,8 @@ def test_every_word_must_match_including_the_catalog(qtbot):
     finder = _finder(qtbot)
     finder.search.setText("crism")
     assert _shown(finder) == [
-        sourceKey("stac", "api#crism_mosaic"),
         sourceKey("ode", "mars:MRO:CRISM:MTRDR"),
+        sourceKey("stac", "api#crism_mosaic"),
     ]
     finder.search.setText("crism ode")
     assert _shown(finder) == [sourceKey("ode", "mars:MRO:CRISM:MTRDR")]
@@ -155,7 +155,7 @@ def test_down_moves_through_matches_and_choose_finds_a_hidden_one(qtbot):
     qtbot.keyClick(finder.search, Qt.Key.Key_Down)
     qtbot.keyClick(finder.search, Qt.Key.Key_Down)
     assert finder.tree.currentIndex().data(KEY_ROLE) == sourceKey(
-        "ode", "mars:MRO:CRISM:MTRDR"
+        "stac", "api#crism_mosaic"
     )
     assert finder.choose(sourceKey("ode", "mars:MRO:CTX:EDR"))  # hidden by "crism"
     assert finder.search.text() == ""
