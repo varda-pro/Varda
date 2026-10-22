@@ -2,10 +2,9 @@
 
 import pytest
 from app_model import Application
-from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QWidget
 
 from varda.common.di_types import ProjectImages
-from varda.common.keys import shortcutText
 from varda.maingui import MainGUI, elidedTabTitle
 from varda.utilities.debug import generate_random_image
 from varda.workspaces.dual_image_workspace.dual_image_workspace import (
@@ -92,14 +91,14 @@ def test_a_new_workspace_tab_comes_to_the_front(gui):
 def test_the_empty_window_says_how_to_start(gui, monkeypatch):
     """Release QA #11: an empty window gave no hint of what to do first."""
     assert gui.centralWidget().currentWidget() is gui.startPanel
-    text = gui.startPanel.findChild(QLabel, "startHint").text()
-    assert "drop" in text.lower()
-    button = gui.startPanel.findChild(QPushButton, "importButton")
-    assert button.text() == f"Import Image(s)…  ({shortcutText('Ctrl+O')})"
-    assert "()" not in button.text()
+    button = gui.startPanel.findChild(QAbstractButton, "importButton")
+    assert button.text() == "Import Image(s)…"
+    assert "drop" in button.accessibleDescription().lower()
+    steps = gui.startPanel.findChild(QWidget, "startHint").accessibleName()
+    assert "Image List" in steps and "spectrum" in steps
     ran = []
     monkeypatch.setattr(gui.app.commands, "execute_command", ran.append)
-    gui.startPanel.findChild(QPushButton, "importButton").click()
+    button.click()
     assert ran == ["varda.file.import_image"]
 
 
