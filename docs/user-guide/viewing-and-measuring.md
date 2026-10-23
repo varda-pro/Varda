@@ -47,6 +47,27 @@ maximum.
 the same pixel value can look different in two figures. Other workspaces
 always use the full image.
 
+**Large images.** An image of more than 16 million pixels per band (a
+HiRISE or CTX product, say) is drawn differently, so that it opens in
+seconds and needs little more memory than the image itself:
+
+- **The statistics come from a subsample:** every k-th row and column, with
+  k chosen to give about 4 million pixels (for a 5,815 × 30,352 HiRISE color
+  image, every 7th). This applies to the stretch (minimum and maximum,
+  percentiles, histogram equalization) and to the **Histogram** panel, and to
+  **Main view** and **Zoom view** statistics when the area shown is larger
+  than that. A minimum or maximum can therefore miss a rare extreme value,
+  which then draws as full black or full brightness.
+- **Each view draws what it shows, at about the screen's resolution:**
+  zoomed out, every n-th pixel (so a view never needs a full-resolution
+  picture of the image); zoomed in, every pixel. Moving or zooming far enough
+  draws the new part. Clicks, readouts and everything measured still use the
+  image's own pixels.
+
+For a figure of a large image, give the stretch's limits in data units (they
+are under **Min-Max (Manual)** once you drag a limit on the histogram)
+rather than its name, since the limits come from the subsample.
+
 **The Histogram panel** shows each band's values with the stretch limits as
 a draggable region. Dragging a region switches to **Min-Max (Manual)**, filled
 in with the limits the previous stretch used, so the numbers then show in

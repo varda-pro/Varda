@@ -37,7 +37,7 @@ from varda.analysis.spectral_library import LibrarySpectrum, resampleTo
 from varda.branding.loader import RedrawSpinner
 from varda.common.entities import Color, VardaRaster
 from varda.common.provenance import setProvenance
-from varda.common.ui import VardaDockWidget
+from varda.common.ui import VardaDockWidget, showsBusyCursor
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.plotting.plot import VardaPlotWidget
@@ -67,6 +67,7 @@ _FADED_ALPHA = 0.35
 
 
 class SpectralHourglassWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(
         self,
         image: VardaRaster,

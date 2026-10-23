@@ -30,6 +30,11 @@ mesh itself.
 
 ## Opening a shape model
 
+Reading a large model takes a while (around 20 s for 3 million plates):
+the 3D view shows Varda's indicator and what it's doing ("Reading
+bennu.obj…", then "Drawing…") until the model appears, and the rest of the
+window stays usable.
+
 **Body** names the body the model is of (Varda guesses it from the file
 name, such as "bennu_g_00880mm.obj"). It's used to check the model's unit
 and, for Shape Geophysics, to fill in the body's density and rotation period

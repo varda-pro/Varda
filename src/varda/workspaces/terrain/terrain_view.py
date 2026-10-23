@@ -21,6 +21,8 @@ from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QWidget
 
+from varda.branding.loader import BusyOverlay
+
 logger = logging.getLogger(__name__)
 
 READY, ERROR, PICK = "varda:ready", "varda:error ", "varda:pick "
@@ -64,18 +66,37 @@ class TerrainView(QWebEngineView):
         self._folder = tempfile.TemporaryDirectory(prefix="varda-3d-")
         self.pagePath = Path(self._folder.name) / "terrain.html"
         self.ready = False
+        # Says what's being read, built or drawn until the page is ready
+        self.busy = BusyOverlay(self)
+        self.loadFinished.connect(self._onLoadFinished)
+
+    def working(self, message: str) -> None:
+        """Show that work for the view is under way (reading a model,
+        building a surface); it ends when a page is ready or fails, or with
+        ``idle``."""
+        self.busy.start(message)
+
+    def idle(self) -> None:
+        self.busy.stop()
 
     def showPage(self, html: str) -> None:
         """Load a viewer page (``pageHtml``); sigReady once it has drawn."""
         self.ready = False
+        self.busy.start("Drawing…")
         self.pagePath.write_text(html, encoding="utf-8")
         self.load(QUrl.fromLocalFile(str(self.pagePath)))
+
+    def _onLoadFinished(self, ok: bool) -> None:
+        if not ok:  # the page didn't load, so it will never say it's ready
+            self.busy.stop()
 
     def _onConsole(self, message: str) -> None:
         if message == READY:
             self.ready = True
+            self.busy.stop()
             self.sigReady.emit()
         elif message.startswith(ERROR):
+            self.busy.stop()
             self.sigFailed.emit(message.removeprefix(ERROR))
         elif message.startswith(PICK):
             self.sigPick.emit(json.loads(message.removeprefix(PICK)))

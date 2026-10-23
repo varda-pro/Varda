@@ -6,6 +6,22 @@ can alter results.
 
 ## Unreleased
 
+### Fixed
+
+- **Large images open in seconds.** An image of more than 16 million pixels
+  per band (HiRISE, CTX) used to freeze Varda while a workspace opened and
+  take many times its size in memory: a 0.5 GB HiRISE color image took 21 s
+  and almost 20 GB. Each view now draws only what it shows, at about the
+  screen's resolution, and the stretch and histogram take their statistics
+  from a regular subsample (about 4 million pixels): that image's workspace
+  opens in about 1 s, in 2.2 GB. Cutting a view's region out of the picture
+  no longer resamples it, and resizing a color bar no longer redraws the
+  image. See [Large images](docs/user-guide/viewing-and-measuring.md#display-stretches).
+- **Varda says when it's working.** The 3D view shows the animated
+  indicator and what it's doing while a shape model or a terrain is read,
+  built and drawn, until it appears. Building a workspace shows the wait
+  cursor.
+
 ### Added
 
 - **Browse products in the display settings.** **Render Settings → Browse

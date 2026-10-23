@@ -306,6 +306,7 @@ class ShapePanel(QWidget):
         self._loading += 1
         loading = self._loading
         self.status.setText(f"Reading {path.name}…")
+        self.view.working(f"Reading {path.name}…")
 
         def work() -> tuple[ShapeRead, ShapeDisplay, RayCaster]:
             read = readShape(path, body, unit)  # ty: ignore[invalid-argument-type]
@@ -321,10 +322,15 @@ class ShapePanel(QWidget):
         runInBackground(
             work,
             lambda result: self._onRead(loading, path, unit, *result),
-            lambda error: self.status.setText(f"{path.name} couldn't be read: {error}"),
+            lambda error: self._readFailed(loading, path, error),
             description="Reading a shape model",
             owner=self,
         )
+
+    def _readFailed(self, loading: int, path: Path, error: Exception) -> None:
+        if loading == self._loading:
+            self.view.idle()
+            self.status.setText(f"{path.name} couldn't be read: {error}")
 
     def _onRead(
         self,

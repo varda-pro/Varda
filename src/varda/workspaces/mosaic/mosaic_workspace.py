@@ -31,7 +31,7 @@ from varda.analysis.class_tools import classRaster
 from varda.analysis.rasters import bandMetadata
 from varda.common.entities import VardaRaster
 from varda.common.provenance import makeProvenance, setProvenance
-from varda.common.ui import VardaDockWidget
+from varda.common.ui import VardaDockWidget, showsBusyCursor
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.mosaicking.grid import TargetGrid, defaultGrid, pixelSize
 from varda.mosaicking.matching import (
@@ -94,6 +94,7 @@ class ExportDialog(QDialog):
 
 
 class MosaicWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(
         self,
         images: Sequence[VardaRaster],

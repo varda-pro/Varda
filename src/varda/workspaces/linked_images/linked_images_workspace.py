@@ -37,7 +37,12 @@ from PyQt6.QtWidgets import (
 
 from varda.common.entities import VardaRaster
 from varda.common.grid import compatibleImages
-from varda.common.ui import ElidingComboBox, PanelScrollArea, VardaDockWidget
+from varda.common.ui import (
+    ElidingComboBox,
+    PanelScrollArea,
+    VardaDockWidget,
+    showsBusyCursor,
+)
 from varda.geo.equivalence import canTransform
 from varda.image_rendering.image_renderer import ImageRenderer
 from varda.image_rendering.new_histogram_view import NewHistogramView
@@ -98,6 +103,7 @@ class ViewGroupLink(QObject):
 
 
 class LinkedImagesWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(
         self,
         images: Sequence[VardaRaster],

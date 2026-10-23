@@ -1,3 +1,4 @@
+import math
 import sys
 from enum import Enum, auto
 
@@ -56,6 +57,12 @@ class StretchSource(LabeledEnum):
 
 
 Window = tuple[slice, slice]  # rows, columns of the image
+# Images with more pixels than this are drawn a piece at a time (the part a
+# view shows, at about the screen's resolution: see ``renderPiece``), and
+# their stretch and histogram take their statistics from a regular subsample
+# of about SAMPLE_PIXELS pixels (every k-th row and column)
+LARGE_IMAGE_PIXELS = 16_000_000
+SAMPLE_PIXELS = 4_000_000
 # A view's window that moves less than this (pixels) keeps the stretch as it
 # is: re-deriving a view's region from another's can jitter by a pixel
 WINDOW_TOLERANCE = 1
@@ -308,8 +315,21 @@ class ImageRenderer(QObject):
             sample = data if window is None else data[window]
             if sample.size == 0 or not np.isfinite(sample).any():
                 sample = data
+            if self.isLarge():
+                sample = sample[(slice(None, None, self.sampleStep(sample)),) * 2]
             self._sample, self._sampleKey = sample, key
         return self._sample
+
+    def isLarge(self) -> bool:
+        """Whether the image is drawn a piece at a time, with statistics
+        from a subsample (``LARGE_IMAGE_PIXELS``)."""
+        return self.image.width * self.image.height > LARGE_IMAGE_PIXELS
+
+    @staticmethod
+    def sampleStep(data: np.ndarray) -> int:
+        """Every how many rows and columns a large image's statistics read."""
+        pixels = data.shape[0] * data.shape[1]
+        return max(1, math.ceil(math.sqrt(pixels / SAMPLE_PIXELS)))
 
     def render(self):
         """
@@ -320,27 +340,41 @@ class ImageRenderer(QObject):
             return self.cachedRender
         if self.image is None or self.settings is None:
             raise ValueError("Image and settings must be set before rendering.")
-        if self._rgb8 is None:
+        if self._rgb8 is None or self._noData is None:
             self._rgb8, self._noData = self._renderRgb8()
+        self.cachedRender = self._withAlpha(self._rgb8, self._noData)
+        return self.cachedRender
+
+    def renderPiece(self, rows: slice, cols: slice) -> np.ndarray:
+        """RGBA of ``rows`` and ``cols`` of the image (slices, with a step to
+        read every n-th pixel), stretched as the whole image is: how a view
+        draws a large image. Not cached."""
+        data = self._readBands()[rows, cols]
+        rgb8, noData = self._rgb8Of(data, keep=False)
+        return self._withAlpha(rgb8, noData)
+
+    def _withAlpha(self, rgb8: np.ndarray, noData: np.ndarray) -> np.ndarray:
         alpha = np.full(
-            (self._rgb8.shape[0], self._rgb8.shape[1], 1),
+            (rgb8.shape[0], rgb8.shape[1], 1),
             int(self.settings.opacity.get() * 255),
             dtype=np.uint8,
         )
         if self.transparentNoData:
-            alpha[self._noData] = 0
-        rgba = np.concatenate((self._rgb8, alpha), axis=2)
-        self.cachedRender = rgba
-        return rgba
+            alpha[noData] = 0
+        return np.concatenate((rgb8, alpha), axis=2)
 
     def _renderRgb8(self) -> tuple[np.ndarray, np.ndarray]:
         """The stretched (and, in mono, color-mapped) 8-bit RGB picture and
         the (rows, cols) mask of pixels with no data in any channel."""
-        data = self.settings.stretch.current.apply(
-            self._readBands(), self.getSampleData()
-        )
+        return self._rgb8Of(self._readBands(), keep=True)
+
+    def _rgb8Of(self, bands: np.ndarray, keep: bool) -> tuple[np.ndarray, np.ndarray]:
+        """``bands`` stretched to 8 bits (``keep``: as the image's stretched
+        data, ``getStretchedData``)."""
+        data = self.settings.stretch.current.apply(bands, self.getSampleData())
         mode = RenderMode.RGB if self.showsBrowseProduct() else self.settings.mode.get()
-        self._stretchedData = data
+        if keep:
+            self._stretchedData = data
         noData = np.asarray(np.isnan(data).all(axis=2))
         # a new array (the stretch's output may be the read-only bands); clip
         # so values outside 0-1 saturate instead of wrapping in the 8-bit cast
@@ -367,8 +401,12 @@ class ImageRenderer(QObject):
         return self._rawBandData
 
     def getMinMaxValues(self):
+        """The current stretch's limits. They come from the statistics
+        sample alone, so a large image isn't drawn whole to find them."""
         if self.cachedRender is None:
-            self.render()
+            self.settings.stretch.current.apply(
+                self._readBands()[:1, :1], self.getSampleData()
+            )
         return self.settings.stretch.current.minMaxVals()
 
     def setManualStretch(self, lo: float, hi: float) -> None:
