@@ -59,22 +59,31 @@ def test_reflectance_channels_need_a_band_nearby():
     assert channelProblem("R600", None) == "needs wavelengths"
     # a multispectral image's bands stand in within one band spacing
     assert channelProblem("R600", np.array([450.0, 550.0, 650.0])) == ""
+    assert "no band near 1080" in channelProblem(
+        "R1080", np.array([450.0, 550.0, 650.0])
+    )
+    # an MTRDR ends at 3897 nm: its last bands stand in for R3920
+    mtrdr = np.arange(436.0, 3900.0, 6.55)
+    assert mtrdr[-1] < 3898
+    assert channelProblem("R3920", mtrdr) == ""
+    assert "no band near 3960" in channelProblem("R3960", mtrdr)
 
 
 def test_parameters_need_hypyrameter_their_range_and_a_definition(monkeypatch):
     pytest.importorskip("hypyrameter")
     assert channelProblem("OLINDEX3", CRISM_NM) == ""
     assert channelProblem("bd1900r2", CRISM_NM) == ""  # HyPyRameter's BD1900r2
-    assert channelProblem("BD1435", CRISM_NM) == "Varda can't compute BD1435 yet"
+    assert channelProblem("BD9999", CRISM_NM) == "Varda can't compute BD9999 yet"
     assert "needs" in channelProblem("OLINDEX3", np.arange(400.0, 1000.0, 6.55))
-    ice = next(p for p in CRISM_STANDARD if p.name == "ICE")
-    assert productProblem(ice, CRISM_NM) == (
-        "Varda can't compute BD1500_2 yet; Varda can't compute BD1435 yet"
-    )
-    fm2 = next(p for p in CRISM_STANDARD if p.name == "FM2")
-    assert productProblem(fm2, CRISM_NM) == ""  # BDI1000VIS, from HyPyRameter 0.3.1
+    # HyPyRameter 0.4 computes every channel of the 18 CRISM products
+    for product in CRISM_STANDARD:
+        assert productProblem(product, CRISM_NM) == "", product.name
     fem = next(p for p in CRISM_STANDARD if p.name == "FEM")
     assert fem.channels[1] == "SH600_2"  # as the products' labels name it
+    cr2 = next(p for p in CRISM_STANDARD if p.name == "CR2")
+    assert productProblem(cr2, np.arange(436.0, 2600.0, 6.55)) == (
+        "CINDEX2 needs 3450-3875 nm"
+    )
     monkeypatch.setattr(browse_products, "HYPYRAMETER_AVAILABLE", False)
     assert channelProblem("OLINDEX3", CRISM_NM) == (
         "OLINDEX3 needs HyPyRameter, which isn't installed"
@@ -84,12 +93,21 @@ def test_parameters_need_hypyrameter_their_range_and_a_definition(monkeypatch):
 
 def test_a_reflectance_channel_is_the_median_of_five_bands():
     image = _image()
-    composite = computeProduct(image, parseProduct("x = R770, R1330, R2529"))
+    composite = computeProduct(image, parseProduct("x = R770, R1506, R2529"))
     cube = np.asarray(image.getData())
-    for i, nm in enumerate((770, 1330, 2529)):
+    for i, nm in enumerate((770, 1506, 2529)):
         nearest = int(np.argmin(np.abs(CRISM_NM - nm)))
         expected = np.median(cube[:, :, nearest - 2 : nearest + 3], axis=2)
         np.testing.assert_allclose(composite[:, :, i], expected, rtol=1e-6)
+
+
+def test_r1330_is_the_median_of_eleven_bands_as_the_sis_has_it():
+    image = _image()
+    composite = computeProduct(image, parseProduct("IRA = R1330, R1330, R1330"))
+    cube = np.asarray(image.getData())
+    nearest = int(np.argmin(np.abs(CRISM_NM - 1330)))
+    expected = np.median(cube[:, :, nearest - 5 : nearest + 6], axis=2)
+    np.testing.assert_allclose(composite[:, :, 0], expected, rtol=1e-6)
 
 
 def test_no_data_and_bad_bands_are_left_out(monkeypatch):
@@ -116,15 +134,20 @@ def test_no_data_and_bad_bands_are_left_out(monkeypatch):
     np.testing.assert_allclose(composite[0, 1:, 0], 0.3)
 
 
-def test_parameters_match_hypyrameter_on_the_whole_cube_whatever_the_chunk(monkeypatch):
+# MAF's parameters read no others; FM2's BDI1000VIS needs RPEAK1, which reads
+# bands (442-989 nm) BDI1000VIS itself doesn't
+@pytest.mark.parametrize("name", ["MAF", "FM2"])
+def test_parameters_match_hypyrameter_on_the_whole_cube_whatever_the_chunk(
+    monkeypatch, name
+):
     pytest.importorskip("hypyrameter")
     image = _image(rows=9)
     monkeypatch.setattr(browse_products, "CHUNK_ROWS", 4)  # three chunks
-    maf = next(p for p in CRISM_STANDARD if p.name == "MAF")
+    product = next(p for p in CRISM_STANDARD if p.name == name)
     reports = []
-    composite = computeProduct(image, maf, lambda p, m: reports.append(p))
+    composite = computeProduct(image, product, lambda p, m: reports.append(p))
     whole = computeParameterCube(
-        np.asarray(image.getData(), dtype=np.float64), CRISM_NM, list(maf.channels)
+        np.asarray(image.getData(), dtype=np.float64), CRISM_NM, list(product.channels)
     )
     np.testing.assert_allclose(composite, whole, rtol=1e-5, atol=1e-7)
     assert reports == [44, 88, 100]

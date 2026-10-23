@@ -40,9 +40,14 @@ def parameterDescription(name: str) -> str:
 
 
 def parameterBounds(name: str) -> tuple[float, float]:
-    """The wavelength range (nm) the parameter reads."""
-    low, high = _require().PARAMETERS[name].bounds
-    return float(low), float(high)
+    """The wavelength range (nm) the parameter reads, with that of the
+    parameters it's computed from (BDI1000VIS reads RPEAK1's 442-989 nm)."""
+    parameter = _require().PARAMETERS[name]
+    low, high = (float(v) for v in parameter.bounds)
+    for dependency in parameter.depends:
+        depLow, depHigh = parameterBounds(dependency)
+        low, high = min(low, depLow), max(high, depHigh)
+    return low, high
 
 
 def validParameterNames(wavelengthsNm) -> list[str]:
