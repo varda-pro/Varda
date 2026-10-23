@@ -4,6 +4,19 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Fixed
+
+- **Find Data's map keeps its room on a small screen.** At 1024×700 the
+  map's settings wrapped onto five rows and left the map a strip about 60
+  pixels tall. **Projection**, **Basemap**, **Names** and **Map preview** are
+  now under **Map Settings**, which folds away when the panel is short. See
+  [Finding data](docs/user-guide/finding-data.md#the-map-and-the-results).
+- **Browse products and CRISM processing say what their abbreviations
+  mean.** The list reads "TRU (True Color)", its heading "CRISM standard
+  products", and the tooltips spell out VNIR, IR, CDR and ADR.
+
 ## 0.12.2 (2026-10-22)
 
 ### Fixed

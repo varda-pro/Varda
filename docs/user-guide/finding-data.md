@@ -92,9 +92,15 @@ the body's IAU mean radius (for drawing only; footprints and images keep
 their longitude and latitude). A body Varda doesn't know keeps its name and
 is drawn at Earth's mean radius, so a polar view's meters are nominal.
 
+Above the map, **Go to a feature**, **Overlays** and **Whole Body** are always
+shown; **Projection**, **Basemap**, **Names** and **Map preview** are under
+**Map Settings**, which folds away by itself when the panel is too short to
+leave the map 200 pixels (a small screen), and opens again when there's
+room. Once you fold or open it yourself, it stays as you left it.
+
 **Basemap** shows the body's global imagery (see below) or an open georeferenced image of the same body
 under the footprints; **Names** labels features with their IAU names;
-**Previews** draws the selected products' browse images over their
+**Map preview** draws the selected products' browse images over their
 footprints (see [Previews](#previews)); **Go to a feature** zooms to a feature by name; **Overlays** adds a vector
 file over the map (a traverse, a geologic map) or clears them; **Whole
 Body** zooms out.

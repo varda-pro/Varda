@@ -3,6 +3,8 @@ wrap, elide (with the full text in a tooltip) or scroll instead."""
 
 import pytest
 import shapely
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QPushButton
 
 from varda.catalogs import registry
 from varda.catalogs.catalog import Catalog, Collection, Product
@@ -71,3 +73,41 @@ def test_the_map_panel_fits_at_1280_by_800(workspace, qtbot):
     assert workspace.basemapBox.currentData() is not None  # the Moon's imagery
     assert workspace.map.credit.isVisible()
     assertNothingClipped(workspace.mapPanel)
+
+
+# What a 1024×700 window leaves the workspace beside the Image List
+SMALL = (760, 620)
+
+
+def test_the_map_keeps_room_on_a_small_screen(workspace, qtbot):
+    """Release QA 0.12.2: at 1024×700 the map's settings wrapped onto five
+    rows and left the map a strip about 60 pixels tall."""
+    workspace.resize(*SMALL)
+    workspace.show()
+    qtbot.waitExposed(workspace)
+    qtbot.wait(100)
+    assert workspace.map.plot.height() >= 180
+    assertNothingClipped(workspace.mapPanel)
+
+
+def test_the_map_settings_fold_away_and_open_on_request(workspace, qtbot):
+    workspace.resize(*SMALL)
+    workspace.show()
+    qtbot.waitExposed(workspace)
+    qtbot.wait(100)
+    section = workspace.mapSettings
+    assert not section.isExpanded()  # folded: the panel is short
+    qtbot.mouseClick(section.findChild(QPushButton), Qt.MouseButton.LeftButton)
+    qtbot.wait(400)  # the section opens (animated): it stays open
+    workspace.resize(SMALL[0], SMALL[1] - 20)
+    qtbot.wait(100)
+    assert section.isExpanded()
+    assert workspace.previewBox.isVisible()  # Map preview, in the section
+
+
+def test_the_map_settings_are_open_on_a_large_screen(workspace, qtbot):
+    workspace.resize(1440, 800)
+    workspace.show()
+    qtbot.waitExposed(workspace)
+    qtbot.wait(100)
+    assert workspace.mapSettings.isExpanded()

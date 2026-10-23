@@ -92,7 +92,7 @@ class BrowseProduct:
 
     @property
     def label(self) -> str:
-        return f"{self.name}  {self.title}" if self.title else self.name
+        return f"{self.name} ({self.title})" if self.title else self.name
 
 
 def _crism(name: str, title: str, red: str, green: str, blue: str) -> BrowseProduct:

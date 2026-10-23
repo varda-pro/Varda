@@ -71,7 +71,9 @@ class AtmosphereStep(ParameterGroup):
         "Transmission source",
         TransmissionSource,
         TransmissionSource.PDS_AT,
-        "Which atmospheric transmission spectra to choose from.",
+        "Which atmospheric transmission spectra to choose from: the PDS's "
+        "CDR (calibration data record) files, the CRISM Analysis Toolkit's "
+        "volcano-scan ADR (ancillary data record) files, or both.",
     )
     scan = StringParameter(
         "Scan",

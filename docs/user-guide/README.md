@@ -11,7 +11,7 @@ Detailed guides to Varda's features. For an overview, see the
 - [Small bodies and shape models](small-bodies.md): plate shape models of irregular bodies in 3D, picking plates, plate data with uncertainty
 - [Linked Images](linked-images.md): any number of images linked by pixel or map location, with every image's spectrum and profile at once
 - [Lines and profiles](lines-and-profiles.md): drawing lines and plotting topographic and band profiles along them
-- [Viewing and measuring](viewing-and-measuring.md): display stretches, pixel spectra and library overlays, ROI statistics, the Ratio Explorer
+- [Viewing and measuring](viewing-and-measuring.md): display stretches (and how large images are drawn), browse products, pixel spectra and library overlays, ROI statistics, the Ratio Explorer
 - [FITS images and ALTWG/SPC terrain cubes](fits-images.md): what FITS files open, how planes become named, unit-bearing bands, no-data, uncertainty planes, and what isn't supported yet
 - [Coordinate systems](coordinate-systems.md): what Varda shows about an image's coordinate system, planetary conventions (IAU 2015, planetocentric and planetographic, east and west, 0–360), and how Varda identifies the body
 - [Importing vector data](importing-vector-data.md): ROIs, points and lines from shapefiles, GeoPackages, GeoJSON, KML and CSV; coordinate systems and accuracy
