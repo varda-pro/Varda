@@ -104,8 +104,8 @@ repository** button (from [CITATION.cff](CITATION.cff)) gives APA and BibTeX,
 and so does **Help → Cite Varda** in the app. Varda is archived on Zenodo:
 [10.5281/zenodo.23447208](https://doi.org/10.5281/zenodo.23447208) cites
 every version (it resolves to the latest), and each release has its own DOI
-on the [Zenodo record](https://doi.org/10.5281/zenodo.23447208) (v0.12.1:
-[10.5281/zenodo.23549417](https://doi.org/10.5281/zenodo.23549417)). Cite
+on the [Zenodo record](https://doi.org/10.5281/zenodo.23447208) (v0.12.2:
+[10.5281/zenodo.23583185](https://doi.org/10.5281/zenodo.23583185)). Cite
 the version you used.
 
 ## Contributing and license
