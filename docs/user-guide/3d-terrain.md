@@ -11,9 +11,19 @@ Workspace** with the DEM loaded.
 - **Drape**: what covers the surface:
   - **None (shaded relief)**: a neutral surface, shaded by the sun;
   - **Elevation colors**, with a **Color map**;
-  - any loaded image on the DEM's pixel grid, such as the orthoimage that
-    comes with a USGS CTX or HiRISE DTM, rendered as it is in 2D (its bands,
-    a 2-98 % stretch).
+  - any loaded image on the DEM's pixel grid, rendered as it is in 2D (its
+    bands, a 2-98 % stretch);
+  - any georeferenced image of the DEM's body that overlaps it, whatever its
+    name, pixel size or map projection, such as the 25 cm orthoimage that
+    comes with a 1 m HiRISE DTM. It's placed by its georeferencing alone and
+    is transparent where it doesn't reach. To correct a georeferencing
+    error, add it as an [overlay](#overlays) and Auto Align it instead.
+    Images that can't be placed are named under the list, with the reason.
+
+  A large image is drawn at texture size: only the part over the DEM, at
+  most 8192 pixels a side, read from the file's overviews when it has them
+  (JPEG 2000 and tiled GeoTIFFs do), so a HiRISE orthoimage drapes in
+  seconds.
 - **Detail**: how finely the surface follows the DEM: at most 512 (Low),
   1024 (Medium) or 2048 (High) points on the longer side. Each point is the
   mean height of a block of DEM pixels, placed at the block's center. The
@@ -221,9 +231,9 @@ How the surface is made, beyond the panel's settings:
 | Height storage | In the view and the web page, heights are stored in 16 bits: 65,535 levels from the lowest to the highest point, so one step is (highest − lowest) / 65,534. 3D-printing exports use the heights unrounded. |
 | Gap filling | Gaps enclosed by data take the nearest grid point's height, then are smoothed by 4 passes of a 3 × 3 mean (over valid neighbors). Done on the decimated grid. The count and this method are saved with the session (`filled`) and the web page. |
 | Ground size | Projected DEM: pixel size × pixel count, in meters. Geographic DEM: degrees × π*a*/180, with *a* the body's equatorial radius, and the east–west size multiplied by the cosine of the center latitude. |
-| Drape | The image's own rendering with a 2–98 % linear stretch (also for elevation colors, whose color bar shows that range), resized to at most 8192 px a side (Lanczos). |
+| Drape | The image's own rendering with a 2–98 % linear stretch (also for elevation colors, whose color bar shows that range), drawn at most 8192 px a side: every *n*-th pixel, *n* the longer side over 8192 rounded up, read from the file's overviews where it has them (the nearest overview pixels). The stretch's statistics come from the pixels drawn. A drape off the DEM's grid is drawn over the DEM's extent plus 2 % on each side, then resampled by map location (bilinear, GDAL's warper, transparency kept) onto a texture covering the DEM's extent, no finer than the image's pixels and at most 8192 px a side. |
 | Lighting defaults | Sun azimuth 315°, elevation 35°, sky light 0.35, shadows on, exaggeration 1. |
-| Overlays | Reprojected to the DEM's projection with bilinear resampling, at about their own resolution; textures at most 8192 px a side. |
+| Overlays | The part over the DEM, plus 10 % of the DEM's extent on each side (room for an alignment to move it), drawn as for a drape, with the Overlay Display's settings (and, once those have read the image's bands, their statistics); reprojected to the DEM's projection with bilinear resampling at about that resolution; textures at most 8192 px a side. |
 | Overlay Auto Align | Matches the overlay's highest-SNR band (SNR as in [Mosaicking](mosaicking.md#what-to-state); the band and its SNR are shown and saved), reprojected as above, against band 1 of the reference (or a hillshade of the band shown, its heights converted to meters by the height unit: sun azimuth 315°, elevation 45°), with the Mosaic workspace's matching (see [Mosaicking](mosaicking.md#reporting-your-results)). The fit leaves out points more than 1 pixel (of the reprojected overlay) off. |
 | Height unit | Heights × 1 (m), 1000 (km) or 0.3048 (ft) give meters; the exaggeration multiplies the result. |
 | Smooth edges | Outline points move toward their neighbors, by at most half a grid cell. |

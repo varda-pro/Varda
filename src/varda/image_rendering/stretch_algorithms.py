@@ -280,6 +280,8 @@ def rgb_hist_percentiles_numba(
     if vmax is None:
         vmax = np.nanmax(flat)
 
+    if not vmax > vmin:  # one value throughout (or none): it is every percentile
+        return np.full(3, vmin, rgb.dtype), np.full(3, vmin, rgb.dtype)
     hist = np.zeros((3, bins), dtype=np.int64)
     histogram(flat, hist, vmin, vmax)
 
@@ -317,6 +319,8 @@ def mono_hist_percentiles_numba(
     if vmax is None:
         vmax = np.nanmax(flat)
 
+    if not vmax > vmin:  # one value throughout (or none): it is every percentile
+        return vmin, vmin
     hist = np.zeros((1, bins), dtype=np.int64)
     histogram(flat, hist, vmin, vmax)
 

@@ -33,3 +33,9 @@ def test_rgb_histogram_bins_span_all_three_bands():
         for got, p in ((lows[c], 1), (highs[c], 99)):
             exact = at_or_below(rgb[..., c], p)
             assert exact - binWidth <= got <= exact
+
+
+def test_one_value_throughout_is_every_percentile():
+    assert mono_hist_percentiles_numba(np.full((5, 5, 1), 7.0), 2, 98) == (7.0, 7.0)
+    lows, highs = rgb_hist_percentiles_numba(np.ones((5, 5, 3)), 2, 98)
+    assert list(lows) == [1, 1, 1] and list(highs) == [1, 1, 1]

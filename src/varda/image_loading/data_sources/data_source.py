@@ -74,6 +74,19 @@ class DataSource(Protocol):
         """
         ...
 
+    def getDataReduced(
+        self,
+        bandIndices: npt.ArrayLike | None,
+        window: tuple[int, int, int, int] | None,
+        step: int,
+    ) -> np.ndarray:
+        """Every ``step``-th row and column of ``getData(bandIndices,
+        window)`` (no data as NaN): ``ceil(height / step)`` by ``ceil(width /
+        step)`` pixels. Files with overviews override this to read from them
+        (nearest pixels), so a texture of a large image doesn't decode all of
+        it."""
+        return self.getData(bandIndices, window)[::step, ::step]
+
     def readAllBands(self) -> np.ndarray:
         """Read the entire raster into memory.
 
