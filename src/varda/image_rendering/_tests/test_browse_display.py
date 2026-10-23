@@ -146,9 +146,7 @@ def test_the_picker_lists_crism_s_products_and_greys_out_what_cant_be_shown(qtbo
     rows = [picker.model.item(r) for r in range(picker.model.rowCount())]
     assert rows[0].text() == BANDS_LABEL and picker.combo.currentIndex() == 0
     byName = {r.text().split()[0]: r for r in rows[2:]}
-    assert byName["MAF"].isEnabled() and byName["FAL"].isEnabled()
-    assert not byName["ICE"].isEnabled()
-    assert "Varda can't compute BD1500_2 yet" in byName["ICE"].toolTip()
+    assert all(row.isEnabled() for row in byName.values())  # all 18, from 436 nm
 
     picker.combo.setCurrentIndex(rows.index(byName["MAF"]))
     picker.combo.activated.emit(picker.combo.currentIndex())
@@ -159,6 +157,27 @@ def test_the_picker_lists_crism_s_products_and_greys_out_what_cant_be_shown(qtbo
     assert "olivine" in channels.rows[0].toolTip().lower()
     _ready(qtbot, renderer)
     qtbot.waitUntil(lambda: "stretched" in channels.status.text())
+
+
+def test_products_beyond_the_image_s_wavelengths_are_greyed_out(qtbot):
+    pytest.importorskip("hypyrameter")
+    wavelengths = np.arange(436.0, 2600.0, 6.55)  # no 3 µm
+    image = VardaRaster(
+        ArrayDataSource(
+            np.full((6, 5, wavelengths.size), 0.2),
+            wavelengths=wavelengths,
+            wavelengthUnits="nm",
+        ),
+        name="short",
+    )
+    panel = ImageRenderer(image).getSettingsPanel()
+    qtbot.addWidget(panel)
+    model = panel.browsePicker.model
+    rows = [model.item(r) for r in range(model.rowCount())]
+    byName = {r.text().split()[0]: r for r in rows[2:]}
+    greyed = {name for name, row in byName.items() if not row.isEnabled()}
+    assert greyed == {"IC2", "CHL", "CR2"}  # R3920, BD3000, CINDEX2
+    assert "CINDEX2 needs 3450-3875 nm" in byName["CR2"].toolTip()
 
 
 def test_an_image_without_wavelengths_has_no_picker(qtbot):

@@ -6,7 +6,23 @@ can alter results.
 
 ## Unreleased
 
+### Added
+
+- **All 18 CRISM browse products.** FEM, ICE, IC2, CHL, CAR and CR2 join
+  the list, with SH600_2, BD1435, BD1500_2, BD2500_2, BD3000, CINDEX2 and
+  ISLOPE1 from HyPyRameter 0.4.0, which Varda now requires. On the PDS
+  products of FRT000047A3 the new parameters are 0.94–1.01 × CRISM's
+  values (r = 0.90–0.99). IRA's R1330 is an 11-band median, as the SIS has
+  it, and an MTRDR's last bands stand in for R3920. See [Browse
+  products](docs/user-guide/viewing-and-measuring.md#browse-products).
+
 ### Fixed
+
+- **BDI1000VIS in the FM2 and FEM browse products** was computed from too
+  few bands for the RPEAK1 it depends on (the bands between the products'
+  other channels were left out), so it differed from CRISM's by a median 17
+  DN in FM2. Parameters are now computed with the bands of the parameters
+  they depend on: 9 DN.
 
 - **BDI1000VIS is CRISM's integrated band depth.** HyPyRameter 0.3.0 and
   earlier integrated R/RPEAK1 instead of 1 − R/RPEAK1, over 833–989 nm

@@ -120,7 +120,7 @@ green is BD2500_2 (BD2500H).
 | --- | --- | --- | --- | --- | --- |
 | TRU | True Color | R600 | R530 | R440 | Yes |
 | VNA | VNIR Albedo | R770 | R770 | R770 | Yes |
-| FEM | Fe Mineralogy | BD530_2 | SH600_2 | BDI1000VIS | No: SH600_2 |
+| FEM | Fe Mineralogy | BD530_2 | SH600_2 | BDI1000VIS | Yes |
 | FM2 | Fe Mineralogy, Version 2 | BD530_2 | BD920_2 | BDI1000VIS | Yes |
 | FAL | False Color | R2529 | R1506 | R1080 | Yes |
 | IRA | IR Albedo | R1330 | R1330 | R1330 | Yes |
@@ -130,16 +130,17 @@ green is BD2500_2 (BD2500H).
 | PFM | Phyllosilicate with Fe and Mg | BD2355 | D2300 | BD2290 | Yes |
 | PAL | Phyllosilicate with Al | BD2210_2 | BD2190 | BD2165 | Yes |
 | HYS | Hydrated Silica | MIN2250 | BD2250 | BD1900R2 | Yes |
-| ICE | Ices | BD1900_2 | BD1500_2 | BD1435 | No: BD1500_2, BD1435 |
-| IC2 | Ices, Version 2 | R3920 | BD1500_2 | BD1435 | No: BD1500_2, BD1435 |
-| CHL | Chloride | ISLOPE1 | BD3000 | IRR2 | No: ISLOPE1, BD3000 |
-| CAR | Carbonates | D2300 | BD2500_2 | BD1900_2 | No: BD2500_2 |
-| CR2 | Carbonates, Version 2 | MIN2295_2480 | MIN2345_2537 | CINDEX2 | No: CINDEX2 |
+| ICE | Ices | BD1900_2 | BD1500_2 | BD1435 | Yes |
+| IC2 | Ices, Version 2 | R3920 | BD1500_2 | BD1435 | Yes (R3920: see below) |
+| CHL | Chloride | ISLOPE1 | BD3000 | IRR2 | Yes |
+| CAR | Carbonates | D2300 | BD2500_2 | BD1900_2 | Yes |
+| CR2 | Carbonates, Version 2 | MIN2295_2480 | MIN2345_2537 | CINDEX2 | Yes |
 | TAN | Tandem | R2529 | R1330 | R770 | Yes |
 
-A product the image can't show is grayed out, and its tooltip says why:
-a parameter Varda can't compute yet (it isn't in HyPyRameter), or a
-wavelength the image doesn't cover. Each channel's
+All 18 need HyPyRameter 0.4.0 or later, which Varda requires. A product
+the image can't show is grayed out, and its tooltip says why: usually a
+wavelength the image doesn't cover (CHL and CR2 need 3 µm; IC2, 3.9 µm), or
+a parameter Varda can't compute. Each channel's
 tooltip gives the parameter's definition, or the bands an R channel reads.
 
 ### Your own products
@@ -159,13 +160,20 @@ have it.
 
 - **R<nm>** is the median of five bands: the band nearest the wavelength
   and two on each side, in wavelength order (shifted inward at either end
-  of the spectrum), as HyPyRameter computes its R parameters. The nearest
-  band must lie within 10 nm, or within the image's median band spacing if
-  that is wider. No-data values and bands marked bad (ENVI `bbl`) are left
-  out of the median, and the scale factor, if any, is applied.
+  of the spectrum), as HyPyRameter computes its R parameters. R1330 is the
+  median of eleven, the SIS's kernel width for IRA (Table 3-12). The
+  nearest band must lie within 10 nm, or the image's median band spacing if
+  that is wider, or four spacings up to 30 nm, which only an end of the
+  spectrum or a gap can need. That is how R3920 is read from an MTRDR,
+  whose last band is at 3897 nm: on FRT000047A3, the median of its last
+  five bands (3870–3897 nm) is 0.997 × the PDS's R3920 (r = 0.996). No-data
+  values and bands marked bad (ENVI `bbl`) are left out of the median, and
+  the scale factor, if any, is applied.
 - **Parameters** are computed with HyPyRameter (Phillips et al. 2024), the
-  definitions of Viviano-Beck et al. (2014), on the bands each parameter
-  reads plus a margin of three band spacings (at least 15 nm), prepared as
+  definitions of Viviano-Beck et al. (2014) and the SIS's Table 3-12, on
+  the bands each parameter reads, and those of the parameters it's
+  computed from (BDI1000VIS's RPEAK1), plus a margin of three band spacings
+  (at least 15 nm), prepared as
   [Band Parameters](optional-features.md) prepares them: no-data and bad
   bands set missing, the scale factor applied, |I/F| > 1 treated as
   missing, and missing bands filled along each spectrum. They're computed
@@ -175,9 +183,10 @@ have it.
 **BDI1000VIS needs HyPyRameter 0.3.1 or later.** Earlier versions
 integrated R/RPEAK1 over 833–989 nm, where Viviano-Beck et al. (2014)
 integrate 1 − R/RPEAK1 over 833–1023 nm, so their values ran opposite to
-CRISM's (r = −0.97 against the PDS FM2 product of FRT000047A3). From 0.3.1
-they are 0.990 × CRISM's − 0.0011 (r = 0.987, median difference 0.0013).
-Varda requires 0.3.1.
+CRISM's (r = −0.97 against the PDS FM2 product of FRT000047A3). Varda
+0.12.2 also computed RPEAK1, which BDI1000VIS depends on, from too few
+bands in FM2 and FEM. Both are fixed: in FM2 and FEM, BDI1000VIS is now
+0.985 × CRISM's − 0.0010 (r = 0.988).
 
 ### The stretch
 
@@ -235,16 +244,22 @@ compared pixel by pixel with the PDS image:
 | TRU, VNA, FAL, IRA, TAN (reflectances) | 1–3 DN (R440: 6) | 1–4 DN (R440: 16) |
 | MAF, HYD, PHY, PFM, PAL | 0–4 DN | 0–21 DN |
 | HYS | 7–8 DN (MIN2250, BD2250) | 26–37 DN |
-| FM2 | 0–1 DN (BD530_2, BD920_2); 17 DN (BDI1000VIS) | 0–3 DN; 23 DN |
+| FEM, FM2 | 0–4 DN; 9 DN (BDI1000VIS) | 0–13 DN |
+| ICE, IC2 | 0–6 DN | 0–16 DN |
+| CHL | 1–5 DN | 5–14 DN |
+| CAR, CR2 | 0–3 DN; 9 DN (CINDEX2) | 0–11 DN; 25–33 DN (MIN2345_2537, CINDEX2) |
 
 The parameters behind them agree closely with CAT's: fitted against the
 PDS values, Varda's OLINDEX3 is 0.97 × CAT's (r = 0.96), D2300, D2200 and
 BD1900R2 are 1.00 × (r = 0.96, 0.90 and 1.00), HCPINDEX2 is 0.95 ×
-(r = 0.90), and BDI1000VIS is 0.99 × − 0.0011 (r = 0.99). BDI1000VIS's
-default range is narrow (0–0.035), so that small offset is the 17 DN in the
-table above. The differences come from three places. The MTRDR evaluates
+(r = 0.90), and BDI1000VIS is 0.985 × − 0.0010 (r = 0.99). The parameters
+added in HyPyRameter 0.4.0 agree as well: SH600_2 0.99 × (r = 0.99),
+BD1435 1.01 × (r = 0.95), BD1500_2 0.98 × (r = 0.93), BD2500_2 0.98 ×
+(r = 0.91), BD3000 0.97 × (r = 0.93), ISLOPE1 0.98 × (r = 0.99) and
+CINDEX2 0.94 × (r = 0.92). (Jezero has no ice, so BD1435 and BD1500_2 are
+compared over their noise.) The differences come from three places. The MTRDR evaluates
 reflectances by polynomial fits over kernels of channels (SIS §3.12.3 and
-Table 3-12), where Varda takes a 5-band median. HyPyRameter's
+Table 3-12), where Varda takes a median over the kernel. HyPyRameter's
 implementations differ in detail from CAT's. And the MTRDR browse
 products are made from CAT's refined summary parameters. This is one scene;
 check the products you rely on.

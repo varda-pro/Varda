@@ -537,7 +537,7 @@ wheels = [
 
 [[package]]
 name = "hypyrameter"
-version = "0.3.1"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
@@ -545,9 +545,9 @@ dependencies = [
     { name = "scipy" },
     { name = "spectral" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/ac/84cb3de69c4047750a3db1d05fdd856e06b394be1c67ae2404c14b4e779e/hypyrameter-0.3.1.tar.gz", hash = "sha256:2d88b494777adaffe343a4c8bb68bb16303e3b2d04187f5c5d1c8ead16c280fe", size = 41785, upload-time = "2026-10-23T14:48:20.01Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/6e/b5e6d631fc8ff681d18dcd14e678144c1ddf948b6944ab4088cc7c3323ea/hypyrameter-0.4.0.tar.gz", hash = "sha256:ad3f2184721e57cf8fdbf0a1c5ec3bb529a5ab9ba0eab703777c3a6ae603a432", size = 44903, upload-time = "2026-10-23T15:48:38.877Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/5e/843e7eb8d570459f67c43d748721995631f1706b3ebf308d73147ae93a3a/hypyrameter-0.3.1-py3-none-any.whl", hash = "sha256:a9e6b86ccfe577a51a5e0c40f2276257122a63e4528b67d728bf3558c0016bdc", size = 36085, upload-time = "2026-10-23T14:48:18.685Z" },
+    { url = "https://files.pythonhosted.org/packages/65/b1/0e048acfd0142e0b4adb778ae5cd3a0b1ee96716e1c31836e399f0448486/hypyrameter-0.4.0-py3-none-any.whl", hash = "sha256:cd7f07671f31aefde4e977aa98e798409cb863dc67c19848060cb6abe8b27c3f", size = 37333, upload-time = "2026-10-23T15:48:37.467Z" },
 ]
 
 [[package]]
@@ -2120,7 +2120,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2024.2.2" },
     { name = "geopandas", specifier = ">=1.1.1" },
     { name = "h5py", specifier = ">=3.15.1" },
-    { name = "hypyrameter", marker = "extra == 'hypyrameter'", specifier = ">=0.3.1" },
+    { name = "hypyrameter", marker = "extra == 'hypyrameter'", specifier = ">=0.4.0" },
     { name = "in-n-out", specifier = ">=0.2.1" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "matplotlib", specifier = ">=3.9.2" },

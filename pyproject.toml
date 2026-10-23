@@ -57,7 +57,7 @@ dependencies = [
 #   uv sync --extra hypyrameter      or      pip install "varda[hypyrameter]"
 # Varda runs without it and simply lists that analysis as unavailable.
 hypyrameter = [
-    "hypyrameter>=0.3.1",
+    "hypyrameter>=0.4.0",
 ]
 # Processing > Classification > CNN / ViT classifiers need PyTorch (large;
 # platform-specific wheels). Install with `uv sync --extra ml`; without it

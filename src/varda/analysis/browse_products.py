@@ -31,8 +31,17 @@ from varda.analysis.rasters import fillAlongSpectrum
 from varda.common.entities import VardaRaster
 
 KERNEL_BANDS = 5  # an R<nm> channel is the median of this many bands
+# ...except where the CRISM Data Product SIS (Table 3-12) gives another
+# kernel width for the browse products' reflectance (IRA's R1330)
+KERNEL_WIDTHS = {1330.0: 11}
 # A band this close (nm), or one band spacing away, stands in for an R<nm>
 MIN_TOLERANCE_NM = 10.0
+# Up to this many band spacings, and at most END_TOLERANCE_NM, also stand in
+# at the ends of a hyperspectral image: an MTRDR ends at 3897 nm, and the
+# median of its last five bands is the PDS's R3920 (FRT000047A3: 0.997 x,
+# r = 0.996)
+END_SPACINGS = 4
+END_TOLERANCE_NM = 30.0
 CHUNK_ROWS = 64  # rows read at a time, so a large cube never sits in memory
 # Reflectances, slopes and ratios are stretched between these percentiles of
 # the scene, as the PDS products are (FRT000047A3's FAL, IRA and TRU span
@@ -280,27 +289,33 @@ def productRanges(
 
 
 def _nearestBand(centersNm: np.ndarray, nm: float) -> int | None:
-    """The band nearest ``nm``, if within the tolerance (the larger of
-    ``MIN_TOLERANCE_NM`` and the image's typical band spacing)."""
+    """The band nearest ``nm``, if within the tolerance: the largest of
+    ``MIN_TOLERANCE_NM``, the image's typical band spacing, and
+    ``END_SPACINGS`` spacings up to ``END_TOLERANCE_NM`` (which only an end
+    of the spectrum, or a gap, can call on)."""
     centers = np.asarray(centersNm, dtype=np.float64)
     if not np.isfinite(centers).any():
         return None
     nearest = int(np.nanargmin(np.abs(centers - nm)))
     spacing = np.diff(np.sort(centers[np.isfinite(centers)]))
-    allowed = max(MIN_TOLERANCE_NM, float(np.median(spacing)) if spacing.size else 0.0)
+    typical = float(np.median(spacing)) if spacing.size else 0.0
+    allowed = max(
+        MIN_TOLERANCE_NM, typical, min(END_SPACINGS * typical, END_TOLERANCE_NM)
+    )
     return nearest if abs(centers[nearest] - nm) <= allowed else None
 
 
 def _kernel(centersNm: np.ndarray, nm: float) -> list[int]:
-    """The KERNEL_BANDS bands centered on the one nearest ``nm`` (in
-    wavelength order, shifted inward at the ends of the spectrum)."""
+    """The KERNEL_BANDS (or KERNEL_WIDTHS) bands centered on the one nearest
+    ``nm`` (in wavelength order, shifted inward at the ends of the spectrum)."""
+    width = KERNEL_WIDTHS.get(float(nm), KERNEL_BANDS)
     order = np.argsort(centersNm)
     nearest = _nearestBand(centersNm, nm)
     assert nearest is not None
     position = int(np.flatnonzero(order == nearest)[0])
-    half = KERNEL_BANDS // 2
-    first = min(max(position - half, 0), max(len(order) - KERNEL_BANDS, 0))
-    return [int(b) for b in order[first : first + KERNEL_BANDS]]
+    half = width // 2
+    first = min(max(position - half, 0), max(len(order) - width, 0))
+    return [int(b) for b in order[first : first + width]]
 
 
 def _parameterBands(centersNm: np.ndarray, names: list[str]) -> list[int]:

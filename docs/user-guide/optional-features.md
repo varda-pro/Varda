@@ -171,8 +171,9 @@ missing data in, missing data out.
 - **BDI1000VIS from HyPyRameter 0.3.0 or earlier is wrong.** Those versions
   integrated R/RPEAK1 over 833–989 nm where Viviano-Beck et al. (2014)
   integrate 1 − R/RPEAK1 over 833–1023 nm, so the values ran opposite to
-  CRISM's (r = −0.97 on FRT000047A3). HyPyRameter 0.3.1 fixes it, and Varda
-  requires 0.3.1; compute BDI1000VIS again if you made it with an earlier
+  CRISM's (r = −0.97 on FRT000047A3). HyPyRameter 0.3.1 fixes it (Varda
+  requires 0.4.0, which also adds SH600_2, BD1435, BD1500_2, BD2500_2,
+  BD3000, CINDEX2 and ISLOPE1); compute BDI1000VIS again if you made it with an earlier
   Varda (0.12.2 or before). **Help → Copy System Info** gives the
   HyPyRameter version, and a result's provenance gives the Varda version.
 - **Interpolated bands.** Where bad bands or missing values were filled, a
