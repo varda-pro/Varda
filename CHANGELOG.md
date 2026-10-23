@@ -8,6 +8,12 @@ can alter results.
 
 ### Fixed
 
+- **The main and zoom views' boxes resize freely.** A box kept its
+  starting shape (the image's: a tall rectangle for a HiRISE strip), and
+  dragging its corner did nothing until the box became square, then kept it
+  square. Dragging the corner now changes width and height independently.
+  See [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#display-stretches).
+
 - **Find Data's Map Settings show every setting in a narrow panel.** Opened
   in 0.13.0, the section kept one row's height, so where the panel is
   narrow (a laptop screen) only **Projection** showed: **Basemap**,

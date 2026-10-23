@@ -47,6 +47,9 @@ class TripleRasterView(QWidget):
         imageShape = self.viewport1.imageEntity.shape
         height, width = imageShape[0], imageShape[1]
 
+        # The boxes start with the image's shape and are free-form: dragging a
+        # corner changes width and height independently (zooming a view
+        # scales both, keeping the shape)
         startPoint = width // 3, height // 3
         size = width // 3, height // 3
         roiTempIndex = -1  # temp -- ROIs probably dont need an index field at all
@@ -55,7 +58,6 @@ class TripleRasterView(QWidget):
             size,
             roiTempIndex,
             QColor(255, 0, 0, 0),
-            aspectLocked=True,
         )
 
         startPoint = startPoint[0] // 3, startPoint[1] // 3
@@ -65,7 +67,6 @@ class TripleRasterView(QWidget):
             size,
             roiTempIndex,  # temp -- ROIs probably dont need an index field at all
             QColor(255, 0, 0, 0),
-            aspectLocked=True,
         )
 
         self.mainController = RegionController(
