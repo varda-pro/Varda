@@ -60,7 +60,7 @@ from varda.rois.roi_drawing_state import ROIDrawingState
 from varda.rois.roi_drawing_widgets import ROIDrawingController
 from varda.rois.roi_manager_widget import ROIManagerWidget
 from varda.common.keys import controlClick
-from varda.common.ui import VardaDockWidget
+from varda.common.ui import VardaDockWidget, showsBusyCursor
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,7 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
     - Metadata editing
     """
 
+    @showsBusyCursor
     def __init__(self, config: GeneralImageAnalysisConfig, parent=None):
         super().__init__(parent)
         self.config = config

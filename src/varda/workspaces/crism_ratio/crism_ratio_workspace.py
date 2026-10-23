@@ -64,6 +64,7 @@ from varda.common.ui import (
     MutedLabel,
     PanelScrollArea,
     VardaDockWidget,
+    showsBusyCursor,
 )
 from varda.image_loading.crism_geometry import (
     IMAGE_COLUMNS,
@@ -223,6 +224,7 @@ class _ColumnLock:
 
 
 class CrismRatioWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(
         self,
         browse: VardaRaster,

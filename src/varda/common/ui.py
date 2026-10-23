@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import functools
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing_extensions import override
 from typing import Callable
 
@@ -1062,3 +1065,26 @@ class ScaledPixmapLabel(QLabel):
         )
         scaled.setDevicePixelRatio(ratio)
         super().setPixmap(scaled)
+
+
+@contextmanager
+def busyCursor() -> Iterator[None]:
+    """The system's wait cursor while work blocks the GUI thread (building a
+    workspace and drawing its views): nothing repaints then, so the animated
+    indicator can't say Varda is busy."""
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
+def showsBusyCursor[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    """Run ``method`` (e.g. a workspace's ``__init__``) under ``busyCursor``."""
+
+    @functools.wraps(method)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        with busyCursor():
+            return method(*args, **kwargs)
+
+    return wrapper

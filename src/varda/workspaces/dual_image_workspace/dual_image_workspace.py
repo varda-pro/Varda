@@ -27,7 +27,7 @@ from varda.image_rendering.new_histogram_view import NewHistogramView
 from varda.image_rendering.raster_view.viewport_context_menu_controller import (
     ViewportContextMenuController,
 )
-from varda.common.ui import SectionBox, VardaDockWidget
+from varda.common.ui import SectionBox, VardaDockWidget, showsBusyCursor
 from varda.image_rendering.raster_view.viewport_tools.pixel_select_tool import (
     PixelSelectTool,
 )
@@ -120,6 +120,7 @@ class DualImageWorkspaceConfig(ParameterGroup):
 
 
 class DualImageWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(self, config: DualImageWorkspaceConfig, parent=None):
         super().__init__(parent)
         self.projectImages = config.imageList

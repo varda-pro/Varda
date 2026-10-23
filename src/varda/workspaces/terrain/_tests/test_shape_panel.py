@@ -98,6 +98,24 @@ def test_plate_data_for_another_model_shows_the_message(qtbot, panel, tmp_path):
     assert panel.colorBox.findText("slope") == -1
 
 
+def test_the_view_shows_the_model_being_read(qtbot, panel, tmp_path):
+    path = tmp_path / "ball.obj"
+    writeObj(icosphere(1.0, 3), path)
+    panel.openShape(path)
+    assert panel.view.busy.isBusy()
+    assert panel.view.busy.message() == "Reading ball.obj…"
+    qtbot.waitUntil(lambda: panel.model is not None, timeout=10000)
+    assert panel.view.busy.message() == "Drawing…"  # until the page is ready
+
+
+def test_a_model_that_cant_be_read_ends_the_wait(qtbot, panel, tmp_path):
+    path = tmp_path / "broken.obj"
+    path.write_text("not a model")
+    panel.openShape(path)
+    qtbot.waitUntil(lambda: "couldn't be read" in panel.status.text(), timeout=10000)
+    assert not panel.view.busy.isBusy()
+
+
 def test_the_reader_runs_in_the_background(qtbot, panel, tmp_path, monkeypatch):
     calls = []
     real = shapePanelModule.runInBackground

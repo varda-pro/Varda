@@ -1,17 +1,22 @@
 # third-party imports
 import logging
+import math
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QTransform
 from affine import Affine
 
 from varda.image_rendering.image_renderer import ImageRenderer
-from varda.utilities import roi_utils
+from varda.utilities.roi_utils import RegionCoordinateTransform
 from varda.common.entities import VardaRaster
 
 logger = logging.getLogger(__name__)
+
+# A large image's view draws the part on screen plus this fraction of it on
+# each side, so a small pan needs no new piece
+PIECE_MARGIN = 0.5
 
 
 def affine_to_qtransform(affine: Affine) -> QTransform:
@@ -54,6 +59,12 @@ class VardaImageItem(pg.ImageItem):
         self._regionalData = None
         self._coordinateTransform = None
         self._isShowingRegion = False
+        # The region shown, in image pixels: rows r0:r1, columns c0:c1
+        self._box = (0, self._imageEntity.height, 0, self._imageEntity.width)
+        # A large image draws a piece of the region (see renderPiece): where
+        # it sits in local coordinates, and every how many pixels it reads
+        self._pieceRect: QRectF | None = None
+        self._pieceStep = 1
         # Base/world transform from image affine and the current composed QTransform
         self._baseQTransform = self._buildImageQTransformFromAffine()
         self._qtransform = QTransform(self._baseQTransform)
@@ -139,9 +150,106 @@ class VardaImageItem(pg.ImageItem):
     def _updateImage(self):
         """Update the displayed image data."""
         self._calculateRegionalData()
-        # self._updateQTransform()
-        # self.setImage(self._regionalData, levels=self._stretch.toList())
-        self.setImage(self._regionalData, levels=(0, 255))
+        if self._imageRenderer.isLarge():
+            self._showPiece(force=True)
+        else:
+            self._pieceRect = None
+            self.setImage(self._regionalData, levels=(0, 255))
+
+    # --- a large image, a piece at a time ---
+
+    def width(self):
+        """The region's width in image pixels, whatever piece is drawn."""
+        if not self._imageRenderer.isLarge():
+            return super().width()
+        return self._box[3] - self._box[2]
+
+    def height(self):
+        if not self._imageRenderer.isLarge():
+            return super().height()
+        return self._box[1] - self._box[0]
+
+    def paint(self, p, *args):
+        if self._pieceRect is None:
+            super().paint(p, *args)
+            return
+        if self.image is None:
+            return
+        if self._renderRequired:
+            self.render()
+            if self._unrenderable:
+                return
+        p.drawImage(self._pieceRect, self.qimage)
+
+    def viewRangeChanged(self):
+        super().viewRangeChanged()
+        if self._pieceRect is not None:
+            self._showPiece()
+
+    def viewTransformChanged(self):
+        super().viewTransformChanged()
+        if self._pieceRect is not None:
+            self._showPiece()
+
+    def _wantedPiece(self) -> tuple[int, int, int, int, int, QRectF]:
+        """The part of the region on screen (local coordinates, clipped to
+        the region) and the step that draws it at about one pixel per
+        screen pixel."""
+        height, width = self.height(), self.width()
+        whole = QRectF(0, 0, width, height)
+        viewBox = self.getViewBox()
+        if viewBox is None or viewBox.width() <= 0 or viewBox.height() <= 0:
+            step = max(1, math.ceil(max(width, height) / 2048))
+            return 0, height, 0, width, step, whole
+        shown = self.mapRectFromView(viewBox.viewRect()).intersected(whole)
+        if shown.isEmpty():
+            shown = whole
+        views = viewBox.scene().views() if viewBox.scene() else []
+        ratio = views[0].devicePixelRatioF() if views else 1.0
+        perPixel = min(
+            shown.width() / (viewBox.width() * ratio),
+            shown.height() / (viewBox.height() * ratio),
+        )
+        step = max(1, int(perPixel))
+        return (
+            max(0, math.floor(shown.top())),
+            min(height, math.ceil(shown.bottom())),
+            max(0, math.floor(shown.left())),
+            min(width, math.ceil(shown.right())),
+            step,
+            shown,
+        )
+
+    def _showPiece(self, force: bool = False) -> None:
+        """Draw the part of a large image's region on screen (with a margin),
+        unless the piece drawn already covers it at the right step."""
+        top, bottom, left, right, step, shown = self._wantedPiece()
+        if (
+            not force
+            and self._pieceRect is not None
+            and step == self._pieceStep
+            and self._pieceRect.contains(shown)
+        ):
+            return
+        height, width = self.height(), self.width()
+        marginY = int((bottom - top) * PIECE_MARGIN)
+        marginX = int((right - left) * PIECE_MARGIN)
+        top = max(0, top - marginY) // step * step
+        left = max(0, left - marginX) // step * step
+        bottom, right = min(height, bottom + marginY), min(width, right + marginX)
+        r0, _r1, c0, _c1 = self._box
+        piece = self._imageRenderer.renderPiece(
+            slice(r0 + top, r0 + bottom, step), slice(c0 + left, c0 + right, step)
+        )
+        self._pieceStep = step
+        self._pieceRect = QRectF(
+            left, top, piece.shape[1] * step, piece.shape[0] * step
+        )
+        # a new piece of the same region: the overlays needn't hear of it
+        wasBlocked = self.blockSignals(not force or self.signalsBlocked())
+        self.setImage(piece, levels=(0, 255))
+        self.blockSignals(wasBlocked)
+        self.update()
 
     def _buildImageQTransformFromAffine(self) -> QTransform:
         """Build a QTransform from the image's affine (pixel -> world)."""
@@ -187,28 +295,27 @@ class VardaImageItem(pg.ImageItem):
         self.setTransform(self._qtransform)
 
     def _calculateRegionalData(self):
-        """Get the current regional data being displayed."""
-        rgb_data = self._imageRenderer.render()
-        # bandSlice = image_utils.getRasterFromBand(self._imageEntity, self._band)
-
-        if self._isShowingRegion:
-            # get the region
-            self._regionalData, self._coordinateTransform = (
-                roi_utils.getRectImageRegion(self._roi, rgb_data, returnTransform=True)
+        """The region shown: the ROI's bounding box in whole image pixels
+        (the image's pixels, sliced, not resampled), or the whole image. A
+        large image is drawn later, a piece at a time."""
+        image = self._imageEntity
+        if self._isShowingRegion and self._roi is not None:
+            x0, y0, x1, y1 = self._roi.getBounds()
+            r0 = min(max(0, math.floor(y0)), image.height - 1)
+            c0 = min(max(0, math.floor(x0)), image.width - 1)
+            r1 = max(r0 + 1, min(image.height, math.ceil(y1)))
+            c1 = max(c0 + 1, min(image.width, math.ceil(x1)))
+            self._coordinateTransform = RegionCoordinateTransform(
+                origin=(r0, c0), basisVectors=((1.0, 0.0), (0.0, 1.0))
             )
-            # self._regionalData = self._regionalData.filled(
-            #     0
-            # )  # Fill NaNs to avoid display issues
         else:
-            # Show full image
-            # if isinstance(rgb_data, np.ma.MaskedArray):
-            #     self._regionalData = rgb_data.filled(np.nan)
-            # else:
-            self._regionalData = rgb_data
-            # self._regionalData = bandSlice.filled(
-            #     np.nan
-            # )  # Fill NaNs to avoid display issues
+            r0, r1, c0, c1 = 0, image.height, 0, image.width
             self._coordinateTransform = None
+        self._box = (r0, r1, c0, c1)
+        if self._imageRenderer.isLarge():
+            self._regionalData = None
+        else:
+            self._regionalData = self._imageRenderer.render()[r0:r1, c0:c1]
 
     @property
     def imageEntity(self) -> VardaRaster:

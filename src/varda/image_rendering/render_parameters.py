@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QSignalBlocker
 from PyQt6.QtWidgets import (
@@ -178,6 +179,20 @@ class BandParameterWidget(QWidget):
                 self.comboBox.setCurrentIndex(value)
 
 
+def sameColorMap(a: pg.ColorMap, b: pg.ColorMap) -> bool:
+    """Whether two color maps have the same stops. The gradient editor
+    reports its map again whenever it's resized: that must not redraw the
+    image (three times for a workspace's views)."""
+    positionsA, colorsA = a.getStops()
+    positionsB, colorsB = b.getStops()
+    return (
+        np.shape(positionsA) == np.shape(positionsB)
+        and np.shape(colorsA) == np.shape(colorsB)
+        and np.allclose(positionsA, positionsB)
+        and np.allclose(np.asarray(colorsA, float), np.asarray(colorsB, float))
+    )
+
+
 @widgetFor(ColorMapParameter)
 class ColorMapParameterWidget(QWidget):
     def __init__(self, param: ColorMapParameter, parent=None):
@@ -205,7 +220,8 @@ class ColorMapParameterWidget(QWidget):
             with QSignalBlocker(self.gradient):
                 self.gradient.setColorMap(self.param.get())  # revert
             return
-        self.param.set(colorMap)
+        if not sameColorMap(colorMap, self.param.get()):  # not just resized
+            self.param.set(colorMap)
 
     def onParamChanged(self, colorMap: pg.ColorMap) -> None:
         with QSignalBlocker(self.gradient):

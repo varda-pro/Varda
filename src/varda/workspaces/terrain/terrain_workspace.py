@@ -50,7 +50,7 @@ from varda.common.entities import VardaRaster
 from varda.common.grid import compatibleImages, sameGridChoices
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
-from varda.common.ui import MutedLabel, PanelScrollArea, notListedLabel
+from varda.common.ui import MutedLabel, PanelScrollArea, notListedLabel, showsBusyCursor
 from varda.image_rendering.image_renderer import ImageRenderer, RenderMode
 from varda.lines.line_collection import (
     LineCollection,
@@ -353,6 +353,7 @@ class PrintDialog(QDialog):
 
 
 class TerrainWorkspace(QMainWindow):
+    @showsBusyCursor
     def __init__(
         self,
         projectImages: MutableSequence[VardaRaster],
@@ -1019,6 +1020,7 @@ class TerrainWorkspace(QMainWindow):
             except Exception as error:  # one broken overlay shouldn't stop the rest
                 self.status.setText(f"{overlay.image.name} couldn't be drawn: {error}")
         self.status.setText("Building the surface…")
+        self.view.working("Building the surface…")
 
         fill = self.fillGaps.isChecked()
         trim = self.settings.edges == "rectangle"
@@ -1048,12 +1050,15 @@ class TerrainWorkspace(QMainWindow):
         runInBackground(
             work,
             lambda result: self._show(build, title, *result),
-            lambda error: self.status.setText(
-                f"The surface couldn't be built: {error}"
-            ),
+            lambda error: self._buildFailed(build, error),
             description="Building a 3D surface",
             owner=self,
         )
+
+    def _buildFailed(self, build: int, error: Exception) -> None:
+        if build == self._building:
+            self.view.idle()
+            self.status.setText(f"The surface couldn't be built: {error}")
 
     def _show(
         self,

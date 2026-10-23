@@ -4,7 +4,9 @@ resources/brand/loader/loader-motion.json.
 
 ``RedrawSpinner`` is the widget. ``BusyDialog`` puts it beside a message,
 with a percentage bar when the work reports progress, and replaces
-QProgressDialog across the app.
+QProgressDialog across the app. ``BusyOverlay`` lays it over one view or
+panel while work for it runs in the background, leaving the rest of the
+window usable.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import json
 from functools import cache
 from pathlib import Path
 
-from PyQt6.QtCore import QElapsedTimer, QPointF, QSize, Qt, QTimer
+from PyQt6.QtCore import QElapsedTimer, QEvent, QObject, QPointF, QSize, Qt, QTimer
 from PyQt6.QtGui import (
     QColor,
     QHideEvent,
@@ -193,3 +195,71 @@ class BusyDialog(QDialog):
     def close(self) -> bool:
         self._closed = True
         return super().close()
+
+
+class BusyOverlay(QWidget):
+    """The indicator and a message over ``target`` (a view or panel) while
+    work for it runs in the background. ``start`` shows it after
+    ``delayMs`` (quick work shows nothing) and can change the message as the
+    work moves on; ``stop`` hides it."""
+
+    DELAY_MS = 300
+    BACKDROP_ALPHA = 200  # of 255: the view stays faintly visible under it
+
+    def __init__(self, target: QWidget, delayMs: int = DELAY_MS):
+        super().__init__(target)
+        self._target = target
+        self.spinner = RedrawSpinner(48, self)
+        self.label = QLabel(self)
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout = QVBoxLayout(self)
+        layout.addStretch()
+        layout.addWidget(self.spinner, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.label)
+        layout.addStretch()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(delayMs)
+        self._timer.timeout.connect(self._appear)
+        self._busy = False
+        target.installEventFilter(self)
+        self.hide()
+
+    def isBusy(self) -> bool:
+        return self._busy
+
+    def message(self) -> str:
+        return self.label.text()
+
+    def start(self, message: str) -> None:
+        self.label.setText(message)
+        if not self._busy:
+            self._busy = True
+            self._timer.start()
+
+    def stop(self) -> None:
+        self._busy = False
+        self._timer.stop()
+        self.hide()
+
+    def _appear(self) -> None:
+        if self._busy:
+            self.setGeometry(self._target.rect())
+            self.show()
+            self.raise_()
+
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a0 is self._target and a1 is not None:
+            if a1.type() == QEvent.Type.Resize:
+                self.setGeometry(self._target.rect())
+            elif a1.type() == QEvent.Type.ChildAdded and self.isVisible():
+                QTimer.singleShot(0, self.raise_)  # stay above the view's own
+        return super().eventFilter(a0, a1)
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        backdrop = QColor(self.palette().color(QPalette.ColorRole.Window))
+        backdrop.setAlpha(self.BACKDROP_ALPHA)
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), backdrop)
+        painter.end()

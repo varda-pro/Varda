@@ -30,3 +30,21 @@ def test_the_shape_page_loads_and_draws(qtbot, view):
     view.evaluate("window.viewer.info()", info.append)
     qtbot.waitUntil(lambda: bool(info), timeout=5000)
     assert info[0]["plates"] == 1280
+
+
+def test_the_view_says_it_is_busy_until_the_page_is_ready(qtbot, view):
+    view.working("Reading bennu.obj…")
+    assert view.busy.isBusy() and view.busy.message() == "Reading bennu.obj…"
+    view.showPage("<html></html>")
+    assert view.busy.message() == "Drawing…"
+    view._onConsole("varda:ready")
+    assert not view.busy.isBusy()
+
+
+def test_a_page_that_fails_or_doesnt_load_ends_the_wait(qtbot, view):
+    view.showPage("<html></html>")
+    view._onConsole("varda:error WebGL unavailable")
+    assert not view.busy.isBusy()
+    view.showPage("<html></html>")
+    view._onLoadFinished(False)
+    assert not view.busy.isBusy()
