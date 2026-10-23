@@ -8,6 +8,15 @@ can alter results.
 
 ### Fixed
 
+- **BDI1000VIS is CRISM's integrated band depth.** HyPyRameter 0.3.0 and
+  earlier integrated R/RPEAK1 instead of 1 − R/RPEAK1, over 833–989 nm
+  instead of 833–1023 nm, so **Band Parameters (HyPyRameter)** gave
+  BDI1000VIS values that ran opposite to CRISM's. Varda now requires
+  HyPyRameter 0.3.1, whose BDI1000VIS is 0.99 × CRISM's (r = 0.99 on
+  FRT000047A3). **BDI1000VIS from Varda 0.12.2 or earlier is wrong: compute
+  it again.** The FM2 browse product, which uses it, is now offered. See
+  [Band Parameters](docs/user-guide/optional-features.md).
+
 - **Find Data's map keeps its room on a small screen.** At 1024×700 the
   map's settings wrapped onto five rows and left the map a strip about 60
   pixels tall. **Projection**, **Basemap**, **Names** and **Map preview** are

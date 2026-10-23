@@ -120,8 +120,8 @@ green is BD2500_2 (BD2500H).
 | --- | --- | --- | --- | --- | --- |
 | TRU | True Color | R600 | R530 | R440 | Yes |
 | VNA | VNIR Albedo | R770 | R770 | R770 | Yes |
-| FEM | Fe Mineralogy | BD530_2 | SH600_2 | BDI1000VIS | No: SH600_2, BDI1000VIS |
-| FM2 | Fe Mineralogy, Version 2 | BD530_2 | BD920_2 | BDI1000VIS | No: BDI1000VIS |
+| FEM | Fe Mineralogy | BD530_2 | SH600_2 | BDI1000VIS | No: SH600_2 |
+| FM2 | Fe Mineralogy, Version 2 | BD530_2 | BD920_2 | BDI1000VIS | Yes |
 | FAL | False Color | R2529 | R1506 | R1080 | Yes |
 | IRA | IR Albedo | R1330 | R1330 | R1330 | Yes |
 | MAF | Mafic Mineralogy | OLINDEX3 | LCPINDEX2 | HCPINDEX2 | Yes |
@@ -138,8 +138,8 @@ green is BD2500_2 (BD2500H).
 | TAN | Tandem | R2529 | R1330 | R770 | Yes |
 
 A product the image can't show is grayed out, and its tooltip says why:
-a parameter Varda can't compute yet (it isn't in HyPyRameter 0.3), a
-wavelength the image doesn't cover, or BDI1000VIS (below). Each channel's
+a parameter Varda can't compute yet (it isn't in HyPyRameter), or a
+wavelength the image doesn't cover. Each channel's
 tooltip gives the parameter's definition, or the bands an R channel reads.
 
 ### Your own products
@@ -172,10 +172,12 @@ have it.
   64 rows at a time, which gives the same values as computing the whole
   cube at once.
 
-**BDI1000VIS is not offered.** HyPyRameter 0.3.0 integrates R/RPEAK1 over
-833–989 nm, where Viviano-Beck et al. (2014) integrate 1 − R/RPEAK1, so its
-values run opposite to CRISM's (r = −0.97 against the PDS FM2 product of
-FRT000047A3). FEM and FM2 stay unavailable until HyPyRameter is corrected.
+**BDI1000VIS needs HyPyRameter 0.3.1 or later.** Earlier versions
+integrated R/RPEAK1 over 833–989 nm, where Viviano-Beck et al. (2014)
+integrate 1 − R/RPEAK1 over 833–1023 nm, so their values ran opposite to
+CRISM's (r = −0.97 against the PDS FM2 product of FRT000047A3). From 0.3.1
+they are 0.990 × CRISM's − 0.0011 (r = 0.987, median difference 0.0013).
+Varda requires 0.3.1.
 
 ### The stretch
 
@@ -233,11 +235,14 @@ compared pixel by pixel with the PDS image:
 | TRU, VNA, FAL, IRA, TAN (reflectances) | 1–3 DN (R440: 6) | 1–4 DN (R440: 16) |
 | MAF, HYD, PHY, PFM, PAL | 0–4 DN | 0–21 DN |
 | HYS | 7–8 DN (MIN2250, BD2250) | 26–37 DN |
+| FM2 | 0–1 DN (BD530_2, BD920_2); 17 DN (BDI1000VIS) | 0–3 DN; 23 DN |
 
 The parameters behind them agree closely with CAT's: fitted against the
 PDS values, Varda's OLINDEX3 is 0.97 × CAT's (r = 0.96), D2300, D2200 and
-BD1900R2 are 1.00 × (r = 0.96, 0.90 and 1.00), and HCPINDEX2 is 0.95 ×
-(r = 0.90). The differences come from three places. The MTRDR evaluates
+BD1900R2 are 1.00 × (r = 0.96, 0.90 and 1.00), HCPINDEX2 is 0.95 ×
+(r = 0.90), and BDI1000VIS is 0.99 × − 0.0011 (r = 0.99). BDI1000VIS's
+default range is narrow (0–0.035), so that small offset is the 17 DN in the
+table above. The differences come from three places. The MTRDR evaluates
 reflectances by polynomial fits over kernels of channels (SIS §3.12.3 and
 Table 3-12), where Varda takes a 5-band median. HyPyRameter's
 implementations differ in detail from CAT's. And the MTRDR browse

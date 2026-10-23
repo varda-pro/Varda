@@ -70,12 +70,6 @@ PDS_RANGES = {
     "SINDEX2": (0.005, 0.02938),
 }
 
-# Parameters HyPyRameter computes differently from CRISM's definition
-DIFFERENT = {
-    "BDI1000VIS": "HyPyRameter 0.3's BDI1000VIS integrates R/RPEAK1, not "
-    "1 - R/RPEAK1, so it runs opposite to CRISM's",
-}
-
 _REFLECTANCE = re.compile(r"R(\d+(?:\.\d+)?)", re.IGNORECASE)
 _STARTS_AT_ZERO = re.compile(r"^(BD|BA|D\d|MIN)|INDEX", re.IGNORECASE)
 
@@ -170,8 +164,6 @@ def channelProblem(channel: str, centersNm: np.ndarray | None) -> str:
     name = parameterName(channel)
     if name is None:
         return f"Varda can't compute {channel} yet"
-    if name.upper() in DIFFERENT:
-        return DIFFERENT[name.upper()]
     if name not in validParameterNames(centersNm):
         low, high = parameterBounds(name)
         return f"{channel} needs {low:g}-{high:g} nm"
