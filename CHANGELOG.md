@@ -4,7 +4,7 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
-## Unreleased
+## 0.13.0 (2026-10-23)
 
 ### Added
 
@@ -27,8 +27,8 @@ can alter results.
 - **BDI1000VIS is CRISM's integrated band depth.** HyPyRameter 0.3.0 and
   earlier integrated R/RPEAK1 instead of 1 − R/RPEAK1, over 833–989 nm
   instead of 833–1023 nm, so **Band Parameters (HyPyRameter)** gave
-  BDI1000VIS values that ran opposite to CRISM's. Varda now requires
-  HyPyRameter 0.3.1, whose BDI1000VIS is 0.99 × CRISM's (r = 0.99 on
+  BDI1000VIS values that ran opposite to CRISM's. HyPyRameter 0.3.1 fixed
+  it, and Varda now requires 0.4.0; BDI1000VIS is 0.99 × CRISM's (r = 0.99 on
   FRT000047A3). **BDI1000VIS from Varda 0.12.2 or earlier is wrong: compute
   it again.** The FM2 browse product, which uses it, is now offered. See
   [Band Parameters](docs/user-guide/optional-features.md).
