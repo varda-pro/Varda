@@ -30,6 +30,15 @@ can alter results.
   and finding a large image's stretch no longer scans all its pixels.
 - **The Linear Percentile stretch of an image with one value throughout**
   (a flat mask, say) failed with a division by zero.
+- **HiRISE JPEG 2000 orthoimages are placed where they are.** GDAL reads
+  their projection's standard parallel as its latitude of origin, which put
+  PSP_002932_1445_RED_A_01_ORTHO.JP2 near 70° S instead of 35° S, so it
+  didn't line up with its DTM, couldn't be draped on it in 3D Terrain and
+  missed it as an overlay. When an image's label states its latitude and
+  longitude range and only the label's map projection puts the image
+  there, Varda now uses the label's automatically (recorded as a `crsFix`,
+  with **Undo**). Before, the label's was only offered. See [A label's
+  range decides](docs/user-guide/coordinate-systems.md#a-labels-range-decides).
 
 - **Find Data's Map Settings show every setting in a narrow panel.** Opened
   in 0.13.0, the section kept one row's height, so where the panel is
