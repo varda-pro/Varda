@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 
 import pytest
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QAbstractButton, QLabel, QMenu, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QLabel, QMenu, QWidget, QComboBox
 
 from qa import journeys
 from qa.data import QaData
@@ -76,6 +76,12 @@ def widgetTexts(widget: QWidget, where: str) -> list[tuple[str, str]]:
             continue
         if isinstance(child, (QLabel, QAbstractButton)) and child.text():
             texts.append((where, plain(child.text())))
+        if isinstance(child, QComboBox):  # what its list offers, opened or not
+            texts += [
+                (f"{where} (a list)", plain(child.itemText(i)))
+                for i in range(child.count())
+                if child.itemText(i)
+            ]
         if child.toolTip():
             texts.append((f"{where} (tool tip)", child.toolTip()))
     return texts

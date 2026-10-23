@@ -283,6 +283,10 @@ def test_windows_150_percent_scaling(qaRun: QaRun, qaData: QaData) -> None:
                 dialog.reject()
 
 
+# Find Data's map needs at least this much height to find a place on
+MIN_MAP_PIXELS = 150
+
+
 def test_find_data_offline_at_laptop_sizes(qaRun: QaRun, qaData: QaData) -> None:
     """Find Data, opened on a plane: it says its catalogs couldn't be listed
     and how to try again (rather than an empty list), and nothing in it is cut
@@ -313,5 +317,16 @@ def test_find_data_offline_at_laptop_sizes(qaRun: QaRun, qaData: QaData) -> None
     for width, height in SIZES:
         with run.step(f"Find Data at {width}×{height}"):
             run.resizeWindow(width, height)
+            run.settle(0.3)
             run.qaShot(run.mainWindow, f"find-data-{width}x{height}")
             audit(run, run.mainWindow, f"Find Data at {width}×{height}")
+            mapHeight = workspace.map.plot.height()
+            run.log("map height", pixels=mapHeight)
+            if mapHeight < MIN_MAP_PIXELS:
+                run.finding(
+                    "annoyed",
+                    f"At {width}×{height}, Find Data's map is a strip "
+                    f"{mapHeight} pixels tall: there's no room to find a place",
+                    widget=workspace.mapPanel,
+                    reproduce=f"Data > Find Data… at {width}×{height}",
+                )

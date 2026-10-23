@@ -14,7 +14,10 @@ from superqt import QCollapsible
 import shapely
 from PyQt6.QtCore import (
     QDate,
+    QEvent,
+    QObject,
     QSize,
+    QTimer,
     QModelIndex,
     QSortFilterProxyModel,
     QStringListModel,
@@ -111,6 +114,7 @@ DEFAULT_BODY = "Mars"
 CHOOSE_COLLECTION = "Choose what to search in the list above."
 DEFAULT_LIMIT = 100
 PREVIEW_MIN = 160  # px: the Preview panel's picture at its smallest
+MIN_MAP_HEIGHT = 200  # px: below this, the map's settings fold away
 MAX_MAP_PREVIEWS = 12  # selected products whose browse images go on the map
 MAX_GALLERY = 40  # selected products the Preview panel turns through
 THUMBNAIL_SIZE = QSize(48, 32)  # px, in the results
@@ -405,6 +409,11 @@ class FindDataWorkspace(QMainWindow):
         bar = (
             FlowLayout(margins=2)
             .withWidget(self.goTo)
+            .withWidget(self.overlaysButton)
+            .withWidget(whole)
+        )
+        settings = WrapperWidget(
+            FlowLayout(margins=2)
             .withWidget(self.projectionBox)
             .withWidget(
                 WrapperWidget(
@@ -421,14 +430,48 @@ class FindDataWorkspace(QMainWindow):
                     .withWidget(self.previewBox)
                 )
             )
-            .withWidget(self.overlaysButton)
-            .withWidget(whole)
         )
+        # Projection, basemap, names and map preview: open while the panel
+        # leaves the map room, folded on a small screen (unless you open it)
+        self.mapSettings = QCollapsible(
+            "Map Settings", expandedIcon="▼", collapsedIcon="▶"
+        )
+        self.mapSettings.setContent(settings)
+        self.mapSettings.expand(animate=False)
+        self._mapSettingsChosen = False
+        toggle = self.mapSettings.findChild(QPushButton)
+        if toggle is not None:  # a click is the user's choice, to be kept
+            toggle.clicked.connect(self._onMapSettingsClicked)
         self.mapPanel = QWidget()
+        self.mapPanel.installEventFilter(self)
         layout = QVBoxLayout(self.mapPanel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(bar)
+        layout.addWidget(self.mapSettings)
         layout.addWidget(self.map, 1)
+
+    def _onMapSettingsClicked(self) -> None:
+        self._mapSettingsChosen = True
+
+    def _fitMapSettings(self) -> None:
+        """Fold the map's settings when the panel is too short to leave the
+        map MIN_MAP_HEIGHT, and open them again when it's tall enough; once
+        you fold or open them yourself, they stay as you left them."""
+        if self._mapSettingsChosen:
+            return
+        if self.mapSettings.isExpanded():
+            if self.map.plot.height() < MIN_MAP_HEIGHT:
+                self.mapSettings.collapse(animate=False)
+            return
+        settings = self.mapSettings.content()
+        needed = settings.sizeHint().height() if settings is not None else 0
+        if self.map.plot.height() - needed >= MIN_MAP_HEIGHT:
+            self.mapSettings.expand(animate=False)
+
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a0 is self.mapPanel and a1 is not None and a1.type() == QEvent.Type.Resize:
+            QTimer.singleShot(0, self._fitMapSettings)  # once the layout has settled
+        return super().eventFilter(a0, a1)
 
     def _buildPreview(self) -> None:
         self.gallery = PreviewGallery()

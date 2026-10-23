@@ -38,7 +38,7 @@ def test_the_standard_products_are_the_sis_eighteen_in_order():
     )
     maf = next(p for p in CRISM_STANDARD if p.name == "MAF")
     assert maf.channels == ("OLINDEX3", "LCPINDEX2", "HCPINDEX2")
-    assert maf.label == "MAF  Mafic Mineralogy"
+    assert maf.label == "MAF (Mafic Mineralogy)"
 
 
 def test_a_product_round_trips_through_text_and_finds_the_standard_one():

@@ -87,7 +87,9 @@ class BrowseProductPicker(QWidget):
         self.combo = ElidingComboBox(self, minimumCharacters=14)
         self.combo.setToolTip(
             "Show three spectral parameters or reflectances as red, green and "
-            "blue: CRISM's standard browse products, or your own"
+            "blue: CRISM's standard browse products, or your own. In their "
+            "names, VNIR (visible and near-infrared) and IR (infrared) say "
+            "which part of the spectrum they show"
         )
         self.model = QStandardItemModel(self)
         self.combo.setModel(self.model)
@@ -109,7 +111,7 @@ class BrowseProductPicker(QWidget):
         self.model.clear()
         centers = self.image.bandModel.centers
         self.model.appendRow(self._item(BANDS_LABEL, None))
-        self._heading("CRISM standard (MTRDR SIS)")
+        self._heading("CRISM standard products")
         for product in CRISM_STANDARD:
             self.model.appendRow(self._productItem(product, centers))
         custom = customProducts()
