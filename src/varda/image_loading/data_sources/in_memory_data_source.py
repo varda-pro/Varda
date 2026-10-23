@@ -111,8 +111,16 @@ class InMemoryDataSource(DelegatingDataSource):
             row_off, col_off, h, w = window
             data = data[row_off : row_off + h, col_off : col_off + w, :]
         if bandIndices is not None:
-            indices = list(np.asarray(bandIndices, dtype=np.uint))
-            data = data[:, :, indices]
+            indices = [int(i) for i in np.asarray(bandIndices, dtype=np.uint)]
+            # all bands in order (a one-band image, an RGB product) as they are
+            # held, not a copy; others copied, so a band kept after the pixels
+            # are let go (``demote``) doesn't keep the whole cube alive
+            # (a view: whoever takes it may mark it read-only)
+            data = (
+                data[...]
+                if indices == list(range(data.shape[2]))
+                else data[:, :, indices]
+            )
         return data
 
     def readAllBands(self) -> np.ndarray:

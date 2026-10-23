@@ -8,6 +8,28 @@ can alter results.
 
 ### Fixed
 
+- **The main and zoom views' boxes resize freely.** A box kept its
+  starting shape (the image's: a tall rectangle for a HiRISE strip), and
+  dragging its corner did nothing until the box became square, then kept it
+  square. Dragging the corner now changes width and height independently.
+  See [Viewing and measuring](docs/user-guide/viewing-and-measuring.md#display-stretches).
+- **3D Terrain drapes and overlays of large images in seconds.** A HiRISE
+  orthoimage (1.2 billion pixels) over its DTM never finished as an overlay
+  and slowed the workspace: each build drew the whole image at full
+  resolution. Drapes and overlays are now drawn at texture size (at most
+  8192 pixels a side), only over the DEM, and read from the file's
+  overviews where it has them: 2.5 s for the drape, 6 s for the overlay. The
+  drape's stretch now takes its statistics from the pixels drawn.
+- **Any georeferenced image over the DEM can be draped.** The Drape list
+  offered only images on the DEM's pixel grid, so a HiRISE orthoimage
+  (25 cm) over its DTM (1 m) wasn't there. Images of the DEM's body that
+  overlap it are now offered, whatever their pixel size or projection, and
+  placed by their georeferencing.
+- **Less memory for large images.** A one-band image held in memory, or
+  one shown with all its bands in order, is no longer copied for each view,
+  and finding a large image's stretch no longer scans all its pixels.
+- **The Linear Percentile stretch of an image with one value throughout**
+  (a flat mask, say) failed with a division by zero.
 - **HiRISE JPEG 2000 orthoimages are placed where they are.** GDAL reads
   their projection's standard parallel as its latitude of origin, which put
   PSP_002932_1445_RED_A_01_ORTHO.JP2 near 70° S instead of 35° S, so it

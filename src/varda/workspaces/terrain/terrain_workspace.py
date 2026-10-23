@@ -18,6 +18,7 @@ import numpy as np
 import shapely
 from pyproj import CRS
 from rasterio.crs import CRS as RasterioCRS
+from affine import Affine
 from rasterio.transform import array_bounds
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QIcon, QPixmap
@@ -47,7 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages, sameGridChoices
+from varda.common.grid import compatibleImages, placeableChoices, sameGrid
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
 from varda.common.ui import MutedLabel, PanelScrollArea, notListedLabel, showsBusyCursor
@@ -62,6 +63,7 @@ from varda.plotting.profile_plot import ProfilePlotWidget
 from varda.image_rendering.render_state import restoreSettings, settingsState
 from varda.image_rendering.stretch_algorithms import LinearPercentileStretch
 from varda.terrain.overlays import (
+    MAX_TEXTURE,
     Alignment,
     align,
     asRaster,
@@ -69,7 +71,9 @@ from varda.terrain.overlays import (
     bandLabel,
     bestBand,
     hillshade,
+    onExtent,
     toProjection,
+    windowOver,
 )
 from varda.terrain.overlays import drape as drapeOverlay
 from varda.terrain.animation import FORMATS as ANIMATION_FORMATS
@@ -155,18 +159,46 @@ def swatch(color: str) -> QIcon:
 LEGEND_STOPS = 16  # color bar samples of the color map
 
 
-def drapeRgba(image: VardaRaster, elevation: str | None = None) -> np.ndarray:
-    """An image as RGBA (no data transparent): its usual rendering, or for
-    ``elevation`` (a color map name) its first band through that map,
-    stretched 2-98 %."""
-    return renderDrape(image, elevation)[0]
+def windowOverDem(
+    image: VardaRaster, dem: VardaRaster, margin: float
+) -> tuple[slice, slice] | None:
+    """The part of ``image`` over the DEM, with ``margin`` (``windowOver``);
+    None when it misses it."""
+    return windowOver(
+        image.transform,
+        image.width,
+        image.height,
+        wktOf(image),
+        wktOf(dem),
+        mapBounds(dem),
+        margin,
+    )
 
 
-def renderDrape(
-    image: VardaRaster, elevation: str | None = None
-) -> tuple[np.ndarray, Legend | None]:
-    """``drapeRgba``, and for ``elevation`` the color bar that goes with it
-    (the map's colors over the stretch's range)."""
+def renderOver(
+    renderer: ImageRenderer, dem: VardaRaster, margin: float = 0.1
+) -> tuple[np.ndarray, Affine]:
+    """The renderer's image drawn over the DEM: the part under it (with
+    ``margin``, ``windowOver``; all of it when that can't be told) at most
+    ``MAX_TEXTURE`` pixels on a side, and that drawing's map transform. The
+    rest of a large image is never read."""
+    image = renderer.image
+    rows, cols = windowOverDem(image, dem, margin) or (
+        slice(0, image.height),
+        slice(0, image.width),
+    )
+    rgba = renderer.renderReduced(MAX_TEXTURE, (rows, cols))
+    scale = Affine.scale(
+        (cols.stop - cols.start) / rgba.shape[1],
+        (rows.stop - rows.start) / rgba.shape[0],
+    )
+    return rgba, image.transform * Affine.translation(cols.start, rows.start) * scale
+
+
+def drapeRenderer(image: VardaRaster, elevation: str | None = None) -> ImageRenderer:
+    """How a drape is drawn (no data transparent): the image's usual
+    rendering, or for ``elevation`` (a color map name) its first band through
+    that map, stretched 2-98 %."""
     renderer = ImageRenderer(image=image)
     renderer.transparentNoData = True
     settings = renderer.settings
@@ -182,10 +214,21 @@ def renderDrape(
         percentile.config.lowPercent.set(2)
         percentile.config.highPercent.set(98)
         settings.stretch.selectByName("Linear Percentile")
-    rgba = np.asarray(renderer.render())
+    return renderer
+
+
+def renderDrape(
+    image: VardaRaster, elevation: str | None = None
+) -> tuple[np.ndarray, Legend | None]:
+    """A drape on the DEM's own grid (``drapeRenderer``) at most
+    ``MAX_TEXTURE`` pixels on a side, and for ``elevation`` the color bar
+    that goes with it (the map's colors over the stretch's range)."""
+    renderer = drapeRenderer(image, elevation)
+    rgba = renderer.renderReduced(MAX_TEXTURE)
     legend = None
-    if elevation is not None:
-        low, high = (float(np.ravel(v)[0]) for v in renderer.getMinMaxValues())
+    limits = renderer.settings.stretch.current.minMaxVals()  # set by the render
+    if elevation is not None and limits is not None:
+        low, high = (float(np.ravel(v)[0]) for v in limits)
         lut = colorMap(elevation).getLookupTable(0, 1, LEGEND_STOPS, alpha=False)
         colors = tuple("#%02x%02x%02x" % tuple(int(c) for c in rgb[:3]) for rgb in lut)
         legend = Legend(colors, low, high)
@@ -824,7 +867,7 @@ class TerrainWorkspace(QMainWindow):
         self.drapeBox.addItem(PLAIN, PLAIN)
         self.drapeBox.addItem(ELEVATION, ELEVATION)
         choices = (
-            sameGridChoices(list(self.projectImages), dem) if dem is not None else None
+            placeableChoices(list(self.projectImages), dem) if dem is not None else None
         )
         for image in choices.images if choices else []:
             self.drapeBox.addItem(image.name, image)
@@ -986,6 +1029,7 @@ class TerrainWorkspace(QMainWindow):
         band = int(self.bandBox.currentData() or 0)
         drape = self.drapeBox.currentData()
         rgba, self._legend = None, None
+        placed = None  # a drape off the DEM's grid: (rgba, its transform, WKT)
         try:  # rendering the drape uses Qt-side objects: here, on the GUI thread
             if drape == ELEVATION:
                 rgba, legend = renderDrape(dem, self.colorMapBox.currentText())
@@ -993,8 +1037,10 @@ class TerrainWorkspace(QMainWindow):
                     unit = self.settings.heightUnit
                     legend = attrs.evolve(legend, label=f"Elevation ({unit})")
                 self._legend = legend
+            elif drape != PLAIN and sameGrid(drape, dem):
+                rgba, _ = renderDrape(drape)
             elif drape != PLAIN:
-                rgba = drapeRgba(drape)
+                placed = (*renderOver(drapeRenderer(drape), dem, 0.02), wktOf(drape))
         except Exception as error:  # a broken image shouldn't break the workspace
             self.status.setText(f"The drape couldn't be drawn: {error}")
         maxSide = DETAIL[self.detailBox.currentText()]
@@ -1009,8 +1055,7 @@ class TerrainWorkspace(QMainWindow):
                 layers.append(
                     (
                         overlay.image.name,
-                        np.asarray(overlay.renderer.render()),
-                        overlay.image.transform,
+                        *renderOver(overlay.renderer, dem),
                         wktOf(overlay.image),
                         Alignment.fromState(overlay.alignment.state()),
                         overlay.opacity,
@@ -1027,7 +1072,8 @@ class TerrainWorkspace(QMainWindow):
 
         def work() -> tuple[Terrain, str | None, list[PageOverlay]]:
             terrain = buildTerrain(dem, band, maxSide, size, fill, trim)
-            texture = None if rgba is None else pngDataUrl(rgba)
+            drapeRgba = rgba if placed is None else onExtent(*placed, demWkt, bounds)
+            texture = None if drapeRgba is None else pngDataUrl(drapeRgba)
             crs = RasterioCRS.from_wkt(demWkt)
             draped = []
             for name, layer, transform, wkt, alignment, opacity, visible in layers:

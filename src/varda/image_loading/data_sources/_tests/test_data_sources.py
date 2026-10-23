@@ -169,6 +169,15 @@ class TestInMemoryDataSource:
         """Create an InMemoryDataSource wrapping the source."""
         return InMemoryDataSource(source)
 
+    def test_all_bands_in_order_arent_copied(self, ds):
+        held = ds.readAllBands()
+        everything = ds.getBands([0, 1, 2, 3, 4])
+        assert np.shares_memory(everything, held)
+        everything.setflags(write=False)  # as a renderer does
+        assert held.flags.writeable
+        assert not np.shares_memory(ds.getBands([0]), held)
+        npt.assert_array_equal(ds.getBands([4, 0]), held[:, :, [4, 0]])
+
     def test_delegates_metadata(self, ds, source):
         assert ds.filePath == source.filePath
         assert ds.wavelengthUnits == source.wavelengthUnits
