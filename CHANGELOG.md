@@ -4,7 +4,7 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
-## Unreleased
+## 0.13.1 (2026-10-23)
 
 ### Fixed
 
@@ -39,6 +39,8 @@ can alter results.
   there, Varda now uses the label's automatically (recorded as a `crsFix`,
   with **Undo**). Before, the label's was only offered. See [A label's
   range decides](docs/user-guide/coordinate-systems.md#a-labels-range-decides).
+  **Results change:** positions, distances and areas measured on such an
+  image in 0.13.0 or earlier used GDAL's misread projection; redo them.
 
 - **Find Data's Map Settings show every setting in a narrow panel.** Opened
   in 0.13.0, the section kept one row's height, so where the panel is
