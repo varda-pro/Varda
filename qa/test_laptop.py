@@ -320,6 +320,32 @@ def test_find_data_offline_at_laptop_sizes(qaRun: QaRun, qaData: QaData) -> None
             run.settle(0.3)
             run.qaShot(run.mainWindow, f"find-data-{width}x{height}")
             audit(run, run.mainWindow, f"Find Data at {width}×{height}")
+            section = workspace.mapSettings
+            folded = not section.isExpanded()
+            if folded:
+                run.click(section.header, "Map Settings")
+                run.settle(0.2)
+            cut = [
+                name
+                for name, widget in (
+                    ("Projection", workspace.projectionBox),
+                    ("Basemap", workspace.basemapBox),
+                    ("Names", workspace.namesCheck),
+                    ("Map preview", workspace.previewBox),
+                )
+                if widget.visibleRegion().boundingRect().size() != widget.size()
+            ]
+            if cut:
+                run.finding(
+                    "confused",
+                    f"At {width}×{height}, Find Data's open Map Settings cut off "
+                    + ", ".join(cut),
+                    widget=workspace.mapPanel,
+                    reproduce=f"Data > Find Data… at {width}×{height}, open Map Settings",
+                )
+            if folded:
+                run.click(section.header, "Map Settings")
+                run.settle(0.2)
             mapHeight = workspace.map.plot.height()
             run.log("map height", pixels=mapHeight)
             if mapHeight < MIN_MAP_PIXELS:

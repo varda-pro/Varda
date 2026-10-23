@@ -8,6 +8,7 @@ from typing import Callable
 
 from PyQt6.QtCore import Qt, QEvent, QPoint, QRect, QSize, pyqtSignal
 from PyQt6.QtWidgets import (
+    QToolButton,
     QComboBox,
     QLayoutItem,
     QStyle,
@@ -507,6 +508,52 @@ class ButtonBuilder(QPushButton):
     def withToolTip(self, text: str) -> ButtonBuilder:
         self.setToolTip(text)
         return self
+
+
+class FoldingSection(QWidget):
+    """A titled section whose content folds away under its header. The
+    content is shown or hidden through the layout, so content that wraps
+    (a ``FlowLayout``) gets the height its rows need. ``sigToggledByUser``
+    says the user clicked the header (not ``expand``/``collapse``)."""
+
+    sigToggledByUser = pyqtSignal(bool)
+
+    def __init__(self, title: str, content: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._title = title
+        self._content = content
+        self.header = QToolButton(self)
+        self.header.setCheckable(True)
+        self.header.setAutoRaise(True)
+        self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.header.clicked.connect(self._onClicked)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.header, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(content)
+        self.collapse()
+
+    def content(self) -> QWidget:
+        return self._content
+
+    def isExpanded(self) -> bool:
+        return self.header.isChecked()
+
+    def expand(self) -> None:
+        self._show(True)
+
+    def collapse(self) -> None:
+        self._show(False)
+
+    def _show(self, expanded: bool) -> None:
+        self.header.setChecked(expanded)
+        self.header.setText(f"{'▼' if expanded else '▶'} {self._title}")
+        self._content.setVisible(expanded)
+
+    def _onClicked(self, checked: bool) -> None:
+        self._show(checked)
+        self.sigToggledByUser.emit(checked)
 
 
 class SectionBox(QWidget):

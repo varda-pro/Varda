@@ -4,7 +4,6 @@ wrap, elide (with the full text in a tooltip) or scroll instead."""
 import pytest
 import shapely
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QPushButton
 
 from varda.catalogs import registry
 from varda.catalogs.catalog import Catalog, Collection, Product
@@ -97,8 +96,8 @@ def test_the_map_settings_fold_away_and_open_on_request(workspace, qtbot):
     qtbot.wait(100)
     section = workspace.mapSettings
     assert not section.isExpanded()  # folded: the panel is short
-    qtbot.mouseClick(section.findChild(QPushButton), Qt.MouseButton.LeftButton)
-    qtbot.wait(400)  # the section opens (animated): it stays open
+    qtbot.mouseClick(section.header, Qt.MouseButton.LeftButton)
+    qtbot.wait(100)  # the user opened it: it stays open
     workspace.resize(SMALL[0], SMALL[1] - 20)
     qtbot.wait(100)
     assert section.isExpanded()
@@ -111,3 +110,32 @@ def test_the_map_settings_are_open_on_a_large_screen(workspace, qtbot):
     qtbot.waitExposed(workspace)
     qtbot.wait(100)
     assert workspace.mapSettings.isExpanded()
+
+
+def _whole(widget) -> bool:
+    """The widget is shown in full, not cut by its parents."""
+    return widget.isVisible() and widget.visibleRegion().boundingRect().size() == (
+        widget.size()
+    )
+
+
+@pytest.mark.parametrize("size", [(1000, 700), SMALL])
+def test_open_map_settings_show_every_setting_in_a_narrow_panel(workspace, qtbot, size):
+    """Release QA 0.13.0: the open section kept one row's height, so in a
+    narrow panel only Projection showed; Basemap, Names and Map preview,
+    wrapped onto the next rows, were cut off."""
+    workspace.resize(*size)
+    workspace.show()
+    qtbot.waitExposed(workspace)
+    qtbot.wait(100)
+    section = workspace.mapSettings
+    if not section.isExpanded():
+        qtbot.mouseClick(section.header, Qt.MouseButton.LeftButton)
+        qtbot.wait(100)
+    for widget in (
+        workspace.projectionBox,
+        workspace.basemapBox,
+        workspace.namesCheck,
+        workspace.previewBox,
+    ):
+        assert _whole(widget), widget
