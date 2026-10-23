@@ -4,6 +4,15 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Fixed
+
+- **Find Data's Map Settings show every setting in a narrow panel.** Opened
+  in 0.13.0, the section kept one row's height, so where the panel is
+  narrow (a laptop screen) only **Projection** showed: **Basemap**,
+  **Names** and **Map preview** wrap onto the rows below and were cut off.
+
 ## 0.13.0 (2026-10-23)
 
 ### Added

@@ -69,6 +69,7 @@ from varda.common.entities import VardaRaster
 from varda.common.observable_list import ObservableList
 from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import (
+    FoldingSection,
     ElidingComboBox,
     FlowLayout,
     HBoxBuilder,
@@ -433,15 +434,11 @@ class FindDataWorkspace(QMainWindow):
         )
         # Projection, basemap, names and map preview: open while the panel
         # leaves the map room, folded on a small screen (unless you open it)
-        self.mapSettings = QCollapsible(
-            "Map Settings", expandedIcon="▼", collapsedIcon="▶"
-        )
-        self.mapSettings.setContent(settings)
-        self.mapSettings.expand(animate=False)
+        self.mapSettings = FoldingSection("Map Settings", settings)
+        self.mapSettings.expand()
         self._mapSettingsChosen = False
-        toggle = self.mapSettings.findChild(QPushButton)
-        if toggle is not None:  # a click is the user's choice, to be kept
-            toggle.clicked.connect(self._onMapSettingsClicked)
+        # a click is the user's choice, to be kept
+        self.mapSettings.sigToggledByUser.connect(self._onMapSettingsClicked)
         self.mapPanel = QWidget()
         self.mapPanel.installEventFilter(self)
         layout = QVBoxLayout(self.mapPanel)
@@ -450,7 +447,7 @@ class FindDataWorkspace(QMainWindow):
         layout.addWidget(self.mapSettings)
         layout.addWidget(self.map, 1)
 
-    def _onMapSettingsClicked(self) -> None:
+    def _onMapSettingsClicked(self, _expanded: bool) -> None:
         self._mapSettingsChosen = True
 
     def _fitMapSettings(self) -> None:
@@ -461,12 +458,14 @@ class FindDataWorkspace(QMainWindow):
             return
         if self.mapSettings.isExpanded():
             if self.map.plot.height() < MIN_MAP_HEIGHT:
-                self.mapSettings.collapse(animate=False)
+                self.mapSettings.collapse()
             return
         settings = self.mapSettings.content()
-        needed = settings.sizeHint().height() if settings is not None else 0
+        needed = settings.heightForWidth(self.mapPanel.width())
+        if needed <= 0:
+            needed = settings.sizeHint().height()
         if self.map.plot.height() - needed >= MIN_MAP_HEIGHT:
-            self.mapSettings.expand(animate=False)
+            self.mapSettings.expand()
 
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
         if a0 is self.mapPanel and a1 is not None and a1.type() == QEvent.Type.Resize:
