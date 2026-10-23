@@ -8,10 +8,15 @@ IAU 2015 sphere. An image with no CRS whose own label has a complete map
 projection group (``label_crs.labelCrs``, nothing assumed) gets the label's
 CRS, and its pixel grid when the file has none. A label CRS built with an
 assumption is offered, and so is one that disagrees with the CRS GDAL built
-(``label-crs-mismatch``): GDAL may be right. Hints from Varda provenance
-never raise a label issue, since a result's grid may differ from its
-inputs'. Everything else is reported, never changed: Varda can't know which
-of the CRS and the label is right."""
+(``label-crs-mismatch``): GDAL may be right. The label decides only when it
+states the image's latitude and longitude range too, and the image's center
+falls within that range under its label's CRS but not under its file's
+(HiRISE's JPEG 2000 orthoimages, whose files take the label's center
+latitude, the standard parallel, for the latitude of origin): then the
+label's CRS is used automatically. Hints from Varda provenance never raise a
+label issue, since a result's grid may differ from its inputs'. Everything
+else is reported, never changed: Varda can't know which of the CRS and the
+label is right."""
 
 from __future__ import annotations
 
@@ -67,6 +72,11 @@ _GLOBAL_SPAN_DEG = 359.0
 # How far (pixels, else degrees) a label's longitude bound may be from an edge
 BOUNDS_TOLERANCE_PX = 3.0
 BOUNDS_TOLERANCE_DEG = 1e-4
+# How far outside its label's latitude and longitude range an image's center
+# may fall and still be within it: this fraction of the range, at least
+# RANGE_SPARE_DEG
+RANGE_SPARE = 0.25
+RANGE_SPARE_DEG = 0.01
 
 type Transform = tuple[float, float, float, float, float, float]
 
@@ -175,9 +185,15 @@ def _check(
                 effective = earth.fix.wkt
                 used = describeCrs(effective, transform, width, height)
                 body = identifyBody(effective, hints.target)
-        mismatch = _labelMismatch(effective, used, transform, label)
+        mismatch = _labelMismatch(
+            effective, used, transform, width, height, hints, label, applyFix
+        )
         if mismatch is not None:
             issues.append(mismatch)
+            if mismatch.fix is not None and mismatch.fix.automatic:
+                effective = mismatch.fix.wkt
+                used = describeCrs(effective, transform, width, height)
+                body = identifyBody(effective, hints.target)
     if used.kind in ("geographic", "projected") and body.body is None:
         issues.append(_unknownBody(body))
     if body.body is not None and body.body.shape is BodyShape.IRREGULAR:
@@ -299,23 +315,51 @@ def _labelMismatch(
     crs: CRS | str,
     used: CrsDescription,
     transform: Affine,
+    width: int,
+    height: int,
+    hints: LabelHints,
     label: LabelCrs | None,
+    applyFix: bool,
 ) -> CrsIssue | None:
     """The CRS in use (after any Earth fix) against the one its own label
-    describes: offered, never automatic, since GDAL may be right."""
+    describes: offered, since GDAL may be right, unless the label's latitude
+    and longitude range settles it (``_rangeDecides``): then automatic (when
+    ``applyFix``)."""
     if label is None or label.wkt is None or sameCrs(crs, label.wkt):
         return None
     labelText = describeCrs(label.wkt).text
     grid = label.transform if transform.is_identity else None
+    decided = label.complete and _rangeDecides(
+        crs, label.wkt, transform, width, height, hints
+    )
+    source = label.source.split(";")[0]
     fix = CrsFix(
         wkt=label.wkt,
         reason=(
-            f"Its label ({label.source.split(';')[0]}) describes {labelText}, but "
-            f"its CRS was {used.text}; the label's map projection group used"
+            f"Its label ({source}) describes {labelText}, but its CRS was "
+            f"{used.text}; the label's map projection group used"
+            + (
+                f", the only one that puts it within its label's range ({_rangeText(hints)})"
+                if decided
+                else ""
+            )
         ),
-        automatic=False,
+        automatic=decided and applyFix,
         transform=grid,
     )
+    if decided:
+        message = (
+            f"Its file's CRS puts it outside the range its label states "
+            f"({_rangeText(hints)}); Varda uses its label's ({labelText})."
+        )
+        if applyFix:
+            suggestion = f"Varda uses it; {SET_CRS} to use another"
+        else:
+            message = f"{message.removesuffix('.')}; you chose to keep its file's."
+            suggestion = f"Apply to use its label's CRS, or {SET_CRS}"
+        return CrsIssue(
+            "label-crs-mismatch", Severity.PROBLEM, message, suggestion, fix
+        )
     assumes = f" (it assumes {'; '.join(label.assumed)})" if label.assumed else ""
     return CrsIssue(
         "label-crs-mismatch",
@@ -324,6 +368,70 @@ def _labelMismatch(
         "Check a known feature's position, then Apply to use its label's CRS"
         f"{assumes}, or keep this one: GDAL may be right",
         fix,
+    )
+
+
+def _rangeDecides(
+    crs: CRS | str,
+    labelWkt: str,
+    transform: Affine,
+    width: int,
+    height: int,
+    hints: LabelHints,
+) -> bool:
+    """Whether the latitude and longitude range the label states (with
+    ``RANGE_SPARE``) holds the image's center under the label's CRS and not
+    under ``crs``. False when the label states no range or either center
+    can't be found."""
+    if transform.is_identity or width <= 0 or height <= 0:
+        return False
+    inLabel = _centerInRange(labelWkt, transform, width, height, hints)
+    return (
+        inLabel is True
+        and _centerInRange(crs, transform, width, height, hints) is False
+    )
+
+
+def _centerInRange(
+    crs: CRS | str, transform: Affine, width: int, height: int, hints: LabelHints
+) -> bool | None:
+    """Whether the image's center, under ``crs``, is within the label's
+    latitude and longitude range (``RANGE_SPARE``); None when the label
+    states none or the center isn't a place."""
+    longitudes, latitudes = _labelBounds(hints), _labelLatitudes(hints)
+    if longitudes is None or latitudes is None:
+        return None
+    x, y = transform * (width / 2, height / 2)
+    try:
+        with PROJ_LOCK:
+            parsed = CRS.from_user_input(crs)
+            (lon,), (lat,) = transformPoints(parsed, geodeticLonLat(parsed), [x], [y])
+    except Exception:
+        return None
+    lon, lat = float(lon), float(lat)
+    if not (math.isfinite(lon) and math.isfinite(lat)):
+        return None
+    south, north = sorted(latitudes)
+    spare = max(RANGE_SPARE * (north - south), RANGE_SPARE_DEG)
+    if not south - spare <= lat <= north + spare:
+        return False
+    east = hints.longitudeDirection != "west"
+    west, eastern = (b if east else -b for b in longitudes)  # east-positive
+    span = (eastern - west) % 360.0 or 360.0
+    spare = max(RANGE_SPARE * span, RANGE_SPARE_DEG)
+    offset = (lon - west) % 360.0
+    return offset <= span + spare or offset >= 360.0 - spare
+
+
+def _rangeText(hints: LabelHints) -> str:
+    """The label's range, as people read it: latitudes, then longitudes."""
+    latitudes, longitudes = _labelLatitudes(hints), _labelBounds(hints)
+    assert latitudes is not None and longitudes is not None
+    south, north = sorted(latitudes)
+    word = "W" if hints.longitudeDirection == "west" else "E"
+    first, second = longitudes
+    return (
+        f"latitude {south:g}° to {north:g}°, longitude {first:g}° to {second:g}° {word}"
     )
 
 
@@ -422,9 +530,27 @@ _BOUNDS = (
 )
 
 
+# The label's latitude range: PDS3, ISIS, PDS4
+_LATITUDES = (
+    ("MINIMUM_LATITUDE", "MAXIMUM_LATITUDE"),
+    ("MINIMUMLATITUDE", "MAXIMUMLATITUDE"),
+    ("SOUTH_BOUNDING_COORDINATE", "NORTH_BOUNDING_COORDINATE"),
+)
+
+
+def _labelLatitudes(hints: LabelHints) -> tuple[float, float] | None:
+    return _pairOf(hints, _LATITUDES)
+
+
 def _labelBounds(hints: LabelHints) -> tuple[float, float] | None:
+    return _pairOf(hints, _BOUNDS)
+
+
+def _pairOf(
+    hints: LabelHints, names: tuple[tuple[str, str], ...]
+) -> tuple[float, float] | None:
     group = hints.projectionGroup
-    for keys in _BOUNDS:
+    for keys in names:
         values = [_number(group.get(key)) for key in keys]
         if values[0] is not None and values[1] is not None:
             return values[0], values[1]
@@ -538,7 +664,7 @@ def fixRecord(health: CrsHealth, declared: CRS | str | None) -> FixRecord | None
         "reason": fix.reason,
         "automatic": True,
     }
-    if issue.code == "no-crs":
+    if issue.code in ("no-crs", "label-crs-mismatch"):
         record["source"] = "label"
     if fix.transform is not None:
         record["transform"] = list(fix.transform)

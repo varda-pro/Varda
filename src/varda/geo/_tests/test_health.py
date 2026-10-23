@@ -719,3 +719,86 @@ def test_a_failing_bounds_check_skips_only_itself(
     assert "unreadable-crs" not in codes(result)
     assert "label-crs-mismatch" in codes(result)
     assert "Skipped the label longitude range check" in caplog.text
+
+
+# A HiRISE orthoimage's label (PSP_002932_1445_RED_A_01_ORTHO.LBL) and the
+# CRS GDAL reads from its JPEG 2000 file: the center latitude, which PDS3
+# makes the standard parallel, taken for the latitude of origin
+HIRISE_ORTHO_GROUP = {
+    "MAP_PROJECTION_TYPE": "EQUIRECTANGULAR",
+    "A_AXIS_RADIUS": "3389.5743490888",
+    "B_AXIS_RADIUS": "3389.5743490888",
+    "C_AXIS_RADIUS": "3389.5743490888",
+    "COORDINATE_SYSTEM_NAME": "PLANETOCENTRIC",
+    "POSITIVE_LONGITUDE_DIRECTION": "EAST",
+    "CENTER_LATITUDE": "-35.0",
+    "CENTER_LONGITUDE": "324.68",
+    "MAP_SCALE": "0.25097893960038",
+    "MAP_SCALE_UNIT": "METERS/PIXEL",
+    "LINE_PROJECTION_OFFSET": "-8261816.5",
+    "SAMPLE_PROJECTION_OFFSET": "12226.5",
+    "MAXIMUM_LATITUDE": "-35.050187044255",
+    "MINIMUM_LATITUDE": "-35.262121931122",
+    "EASTERNMOST_LONGITUDE": "324.74079276",
+    "WESTERNMOST_LONGITUDE": "324.61668268",
+}
+HIRISE_JP2_WKT = (
+    'PROJCS["Equirectangular MARS",GEOGCS["GCS_MARS",DATUM["unnamed",'
+    'SPHEROID["unnamed",3389574.3490888,0]],PRIMEM["Reference meridian",0],'
+    'UNIT["degree",0.0174532925199433]],PROJECTION["Equirectangular"],'
+    'PARAMETER["latitude_of_origin",-35],PARAMETER["central_meridian",324.68],'
+    'PARAMETER["standard_parallel_1",0],PARAMETER["false_easting",0],'
+    'PARAMETER["false_northing",0],UNIT["metre",1]]'
+)
+HIRISE_JP2_GRID = (
+    Affine(0.25097893960038, 0, -3068.343, 0, -0.25097893960038, -2073542.195),
+    23964,
+    49956,
+)
+
+
+def test_a_label_whose_range_only_its_own_crs_fits_is_used_automatically():
+    label = labelled(HIRISE_ORTHO_GROUP, latitudeType="planetocentric")
+    health = checkCrs(HIRISE_JP2_WKT, *HIRISE_JP2_GRID, label)
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.fix is not None and issue.fix.automatic
+    assert issue.fix.transform is None  # the file's pixel grid is kept
+    assert "(latitude -35.2621° to -35.0502°, longitude 324.617° to 324.741° E)" in (
+        issue.message
+    )
+    assert "Varda uses its label's" in issue.message
+    assert "standard parallel" not in issue.message  # nothing PDS-specific
+    # the other checks are of the label's CRS: near 35° S, little distortion
+    assert "high-distortion" not in codes(health)
+    record = fixRecord(health, HIRISE_JP2_WKT)
+    assert record is not None and record["source"] == "label"
+
+
+def test_a_label_range_fix_kept_from_is_offered_again():
+    label = labelled(HIRISE_ORTHO_GROUP, latitudeType="planetocentric")
+    health = checkCrs(HIRISE_JP2_WKT, *HIRISE_JP2_GRID, label, applyFix=False)
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.fix is not None and not issue.fix.automatic
+
+
+def test_without_a_range_a_label_only_disagrees():
+    group = {
+        key: value
+        for key, value in HIRISE_ORTHO_GROUP.items()
+        if "LATITUDE" not in key or key == "CENTER_LATITUDE"
+    }
+    health = checkCrs(HIRISE_JP2_WKT, *HIRISE_JP2_GRID, labelled(group))
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.fix is not None and not issue.fix.automatic
+
+
+def test_a_range_both_crss_fit_doesnt_decide():
+    # the label's CRS against the same CRS on another sphere: both put the
+    # image within its range, so the label can't say which is right
+    other = HIRISE_JP2_WKT.replace('latitude_of_origin",-35', 'latitude_of_origin",0')
+    other = other.replace('standard_parallel_1",0', 'standard_parallel_1",-35')
+    other = other.replace("3389574.3490888", "3396190")
+    label = labelled(HIRISE_ORTHO_GROUP, latitudeType="planetocentric")
+    health = checkCrs(other, *HIRISE_JP2_GRID, label)
+    issue = next(i for i in health.issues if i.code == "label-crs-mismatch")
+    assert issue.fix is not None and not issue.fix.automatic
