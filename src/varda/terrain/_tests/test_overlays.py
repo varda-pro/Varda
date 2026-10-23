@@ -1,6 +1,8 @@
 """Overlays: brought into the DEM's projection, aligned with the mosaic core,
 and draped as a texture over their footprint."""
 
+import math
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -17,7 +19,9 @@ from varda.terrain.overlays import (
     bestBand,
     drape,
     hillshade,
+    onExtent,
     toProjection,
+    windowOver,
 )
 from varda.utilities.debug import generate_perlin_noise_3d
 
@@ -134,3 +138,65 @@ def test_the_matched_band_is_named_and_recorded():
     )
     assert restored.bandSnr == pytest.approx(snr) and restored.phaseSnr == 0.9
     assert np.isnan(Alignment.fromState(Alignment().state()).bandSnr)
+
+
+def _window(*args) -> tuple[slice, slice]:
+    window = windowOver(*args)
+    assert window is not None
+    return window
+
+
+def _halves(rows, cols) -> np.ndarray:
+    """RGBA: black west half, white east half, opaque."""
+    rgba = np.zeros((rows, cols, 4), np.uint8)
+    rgba[:, cols // 2 :, :3] = 255
+    rgba[..., 3] = 255
+    return rgba
+
+
+def test_an_image_is_placed_on_the_dems_extent_by_map_location():
+    wkt = MARS.to_wkt()
+    # 10 m pixels from x 0 to 2000, y 1000 down to 0: the DEM covers its
+    # eastern half (x 1000 to 2000), where the image is white from x 1000
+    rgba = _halves(100, 200)
+    transform = Affine(10, 0, 0, 0, -10, 1000)
+    texture = onExtent(rgba, transform, wkt, wkt, (1000, 0, 2000, 1000), 64)
+    assert texture.shape == (64, 64, 4)
+    assert (texture[..., 3] == 255).all()
+    assert (texture[:, 1:, 0] > 250).all()  # the first column blends a little
+    # west of the image's footprint, nothing: transparent
+    texture = onExtent(rgba, transform, wkt, wkt, (-1000, 0, 1000, 1000), 64)
+    assert (texture[:, :28, 3] == 0).all() and (texture[:, 36:, 3] == 255).all()
+
+
+def test_a_texture_isnt_finer_than_the_image():
+    wkt = MARS.to_wkt()
+    texture = onExtent(
+        _halves(10, 20), Affine(100, 0, 0, 0, -100, 1000), wkt, wkt,
+        (0, 0, 2000, 1000), 8192,
+    )  # fmt: skip
+    assert texture.shape == (10, 20, 4)
+
+
+def test_the_window_over_the_dem_has_a_margin_and_stays_in_the_image():
+    wkt = MARS.to_wkt()
+    transform = Affine(10, 0, 0, 0, -10, 1000)  # 100 rows, 200 columns
+    rows, cols = _window(transform, 200, 100, wkt, wkt, (1000, 200, 1500, 600))
+    # 50 × 40 pixels, and 10 % of that on each side
+    assert (cols.start, cols.stop) == (95, 155)
+    assert (rows.start, rows.stop) == (36, 84)
+    rows, cols = _window(transform, 200, 100, wkt, wkt, (1800, -500, 9000, 500))
+    assert (cols.stop, rows.stop) == (200, 100)
+    assert windowOver(transform, 200, 100, wkt, wkt, (5000, 0, 6000, 900)) is None
+
+
+def test_the_window_comes_through_another_projection():
+    geographic = CRS.from_user_input("+proj=longlat +R=3389500 +no_defs").to_wkt()
+    metersPerDegree = math.pi * 3389500 / 180
+    transform = Affine(0.01, 0, 0, 0, -0.01, 1)  # 1° × 2°, 0.01° pixels
+    side = 0.5 * metersPerDegree
+    rows, cols = _window(
+        transform, 200, 100, geographic, MARS.to_wkt(), (0, 0, side, side), 0
+    )
+    assert (cols.start, cols.stop) == (0, 50)
+    assert (rows.start, rows.stop) == (50, 100)

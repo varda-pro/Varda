@@ -2,12 +2,16 @@
 web page export (rendering itself needs WebGL, which offscreen test runs may
 not have, so those checks are skipped there)."""
 
+import base64
+import io
+
 import geopandas as gpd
 import numpy as np
 import pytest
 import shapely
 from affine import Affine
 from pytestqt.exceptions import TimeoutError as QtTimeoutError
+from PIL import Image
 from pyproj import CRS
 
 from varda.common.di_types import ProjectImages
@@ -19,6 +23,7 @@ from varda.lines.line_collection import LineCollection, shareLines, unshareLines
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.terrain.scene import FILL_METHOD
 from varda.utilities.debug import generate_perlin_noise_3d
+from varda.workspaces.terrain import terrain_workspace
 from varda.workspaces.terrain.overlay_panel import MATCH_ITSELF
 from varda.workspaces.terrain.terrain_workspace import (
     ELEVATION,
@@ -72,12 +77,64 @@ def test_images_loaded_later_can_be_draped(workspace, images):
     assert workspace.drapeBox.findText("color") >= 0
 
 
-def test_images_off_the_dems_grid_are_named_under_the_drapes(workspace, images):
+def test_images_that_cant_be_placed_are_named_under_the_drapes(workspace, images):
     assert workspace.drapeNotListed.isHidden()
-    images.append(_image(np.zeros((20, 30, 3)), "smaller"))
-    assert workspace.drapeBox.findText("smaller") < 0
-    assert "smaller (different pixel grid" in workspace.drapeNotListed.text()
+    elsewhere = VardaRaster(
+        ArrayDataSource(
+            np.zeros((20, 30, 3), np.float32),
+            transform=Affine(20, 0, 90000, 0, -20, 90000),
+            crs=CRS_,
+        ),
+        name="elsewhere",
+    )
+    images.append(elsewhere)
+    assert workspace.drapeBox.findText("elsewhere") < 0
+    assert "elsewhere (doesn't overlap" in workspace.drapeNotListed.text()
     assert not workspace.drapeNotListed.isHidden()
+
+
+def _textureOf(dataUrl: str | None) -> np.ndarray:
+    assert dataUrl is not None
+    png = base64.b64decode(dataUrl.split(",", 1)[1])
+    return np.asarray(Image.open(io.BytesIO(png)))
+
+
+def test_an_image_on_another_grid_is_draped_by_map_location(workspace, images, qtbot):
+    """An orthoimage at 10 m over a 20 m DEM (named differently, as HiRISE
+    DTMs and orthoimages are): offered, and placed by its georeferencing."""
+    ortho = np.zeros((80, 120, 1), np.float32)
+    ortho[:, 60:] = 1  # bright east half
+    finer = VardaRaster(
+        ArrayDataSource(ortho, transform=Affine(10, 0, 0, 0, -10, 0), crs=CRS_),
+        name="PSP_ortho",
+    )
+    images.append(finer)
+    index = workspace.drapeBox.findText("PSP_ortho")
+    assert index >= 0
+    before = workspace._texture  # the elevation colors'
+    workspace.drapeBox.setCurrentIndex(index)
+    qtbot.waitUntil(lambda: workspace._texture != before, timeout=10000)
+    texture = _textureOf(workspace._texture)
+    rows, cols = texture.shape[:2]
+    assert cols / rows == pytest.approx(60 / 40, rel=0.05)  # the DEM's extent
+    assert texture[:, : cols // 2 - 2, 0].max() < 30
+    assert texture[:, cols // 2 + 2 :, 0].min() > 225
+    assert (texture[..., 3] == 255).all()
+
+
+def test_drapes_and_overlays_are_drawn_at_texture_size(qtbot, monkeypatch):
+    """A drape or overlay larger than a texture is read reduced, never whole."""
+    monkeypatch.setattr(terrain_workspace, "MAX_TEXTURE", 32)
+    dem = np.random.default_rng(1).random((40, 60, 1)) * 100
+    images = ProjectImages([_image(dem, "dem"), _image(np.ones((40, 60, 3)), "color")])
+    workspace = TerrainWorkspace(images, images[0])
+    qtbot.addWidget(workspace)
+    qtbot.waitUntil(lambda: workspace._texture is not None, timeout=10000)
+    assert _textureOf(workspace._texture).shape[:2] == (20, 30)  # elevation colors
+    before = workspace._texture
+    workspace.drapeBox.setCurrentIndex(workspace.drapeBox.findText("color"))
+    qtbot.waitUntil(lambda: workspace._texture != before, timeout=10000)
+    assert _textureOf(workspace._texture).shape[:2] == (20, 30)
 
 
 def test_the_web_page_export_has_controls_for_readers(workspace, tmp_path):

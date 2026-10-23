@@ -215,6 +215,19 @@ class VardaRaster:
             return self._readEdited(bandIndices, window)
         return self._dataSource.getData(bandIndices, window, masked=masked)
 
+    def getDataReduced(
+        self,
+        bandIndices: list[int] | None,
+        window: tuple[int, int, int, int] | None,
+        step: int,
+    ) -> np.ndarray:
+        """Every ``step``-th row and column of ``getData(bandIndices,
+        window)``, read from the file's overviews where it has them: how a
+        texture or preview of a large image is read."""
+        if "nodata" in self._overrides:
+            return self._readEdited(bandIndices, window)[::step, ::step]
+        return self._dataSource.getDataReduced(bandIndices, window, step)
+
     def __getitem__(self, key) -> np.ndarray:
         """Numpy-like indexing: ``raster[y, x, :]``."""
         return self._dataSource[key]

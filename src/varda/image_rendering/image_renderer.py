@@ -312,11 +312,16 @@ class ImageRenderer(QObject):
         window = self._windows.get(self.settings.stretchFrom.get())
         key = (id(data), window)
         if self._sample is None or self._sampleKey != key:
-            sample = data if window is None else data[window]
+
+            def thinned(part: np.ndarray) -> np.ndarray:
+                if not self.isLarge():
+                    return part
+                return part[(slice(None, None, self.sampleStep(part)),) * 2]
+
+            # thinned first: the check for data doesn't scan a large image
+            sample = thinned(data if window is None else data[window])
             if sample.size == 0 or not np.isfinite(sample).any():
-                sample = data
-            if self.isLarge():
-                sample = sample[(slice(None, None, self.sampleStep(sample)),) * 2]
+                sample = thinned(data)
             self._sample, self._sampleKey = sample, key
         return self._sample
 
@@ -353,6 +358,33 @@ class ImageRenderer(QObject):
         rgb8, noData = self._rgb8Of(data, keep=False)
         return self._withAlpha(rgb8, noData)
 
+    def renderReduced(
+        self, maxSide: int, window: tuple[slice, slice] | None = None
+    ) -> np.ndarray:
+        """RGBA of the image, or of ``window`` (rows, cols) of it, at most
+        ``maxSide`` pixels on a side (every n-th pixel): how a 3D texture is
+        drawn. Once the bands are read (the image is shown), a slice of them
+        stretched as the views are; otherwise read reduced
+        (``VardaRaster.getDataReduced``, from the file's overviews) and
+        stretched from that reading, so the whole image is never read for
+        it. Not cached."""
+        rows, cols = window or (slice(0, self.image.height), slice(0, self.image.width))
+        r0, r1, _ = rows.indices(self.image.height)
+        c0, c1, _ = cols.indices(self.image.width)
+        step = max(1, math.ceil(max(r1 - r0, c1 - c0) / maxSide))
+        key = self._bandKey()
+        if (self._rawBandData is not None and self._rawKey == key) or (
+            key[0] == "browse"
+        ):
+            return self.renderPiece(slice(r0, r1, step), slice(c0, c1, step))
+        raw = self.image.getDataReduced(list(key[1:]), (r0, c0, r1 - r0, c1 - c0), step)
+        data = np.asarray(
+            np.ma.filled(raw, np.nan) if np.ma.isMaskedArray(raw) else raw
+        )
+        sample = data[(slice(None, None, self.sampleStep(data)),) * 2]
+        rgb8, noData = self._rgb8Of(data, keep=False, sample=sample)
+        return self._withAlpha(rgb8, noData)
+
     def _withAlpha(self, rgb8: np.ndarray, noData: np.ndarray) -> np.ndarray:
         alpha = np.full(
             (rgb8.shape[0], rgb8.shape[1], 1),
@@ -368,10 +400,15 @@ class ImageRenderer(QObject):
         the (rows, cols) mask of pixels with no data in any channel."""
         return self._rgb8Of(self._readBands(), keep=True)
 
-    def _rgb8Of(self, bands: np.ndarray, keep: bool) -> tuple[np.ndarray, np.ndarray]:
-        """``bands`` stretched to 8 bits (``keep``: as the image's stretched
-        data, ``getStretchedData``)."""
-        data = self.settings.stretch.current.apply(bands, self.getSampleData())
+    def _rgb8Of(
+        self, bands: np.ndarray, keep: bool, sample: np.ndarray | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``bands`` stretched to 8 bits, with statistics from ``sample`` (by
+        default ``getSampleData``) (``keep``: as the image's stretched data,
+        ``getStretchedData``)."""
+        if sample is None:
+            sample = self.getSampleData()
+        data = self.settings.stretch.current.apply(bands, sample)
         mode = RenderMode.RGB if self.showsBrowseProduct() else self.settings.mode.get()
         if keep:
             self._stretchedData = data

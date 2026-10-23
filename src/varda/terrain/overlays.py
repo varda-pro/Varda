@@ -18,7 +18,13 @@ import numpy as np
 from affine import Affine
 from attrs import define, field, frozen
 from rasterio.crs import CRS as RasterioCRS
-from rasterio.warp import Resampling, calculate_default_transform, reproject
+from rasterio.warp import (
+    Resampling,
+    calculate_default_transform,
+    reproject,
+    transform_bounds,
+)
+from rasterio.windows import from_bounds
 
 from varda.common.spectral_axis import bandWavelengthLabels
 from varda.common.entities import VardaRaster
@@ -238,6 +244,89 @@ def align(
         rms,
         phaseSnr=float(np.median(snr)) if snr.size else math.nan,
     )
+
+
+def windowOver(
+    transform: Affine,
+    width: int,
+    height: int,
+    wkt: str,
+    demWkt: str,
+    demBounds: tuple[float, float, float, float],
+    margin: float = 0.1,
+) -> tuple[slice, slice] | None:
+    """The rows and columns of an image (``transform``, ``width`` ×
+    ``height``, map projection ``wkt``) under the DEM's bounds (west, south,
+    east, north, in ``demWkt``), with ``margin`` (a fraction of the DEM's
+    extent) on each side for an alignment to move it by; None when the image
+    misses them. Only that part of a large image need be drawn over the
+    DEM."""
+    west, south, east, north = demBounds
+    padX, padY = margin * (east - west), margin * (north - south)
+    bounds = (west - padX, south - padY, east + padX, north + padY)
+    if not sameCrs(wkt, demWkt):
+        bounds = transform_bounds(
+            RasterioCRS.from_wkt(demWkt), RasterioCRS.from_wkt(wkt), *bounds
+        )
+    window = from_bounds(*bounds, transform=transform)
+    tolerance = 1e-6  # of a pixel: edges that land on a pixel's edge stay there
+    r0 = max(
+        0, math.floor(min(window.row_off, window.row_off + window.height) + tolerance)
+    )
+    r1 = min(
+        height,
+        math.ceil(max(window.row_off, window.row_off + window.height) - tolerance),
+    )
+    c0 = max(
+        0, math.floor(min(window.col_off, window.col_off + window.width) + tolerance)
+    )
+    c1 = min(
+        width, math.ceil(max(window.col_off, window.col_off + window.width) - tolerance)
+    )
+    if r1 <= r0 or c1 <= c0:
+        return None
+    return slice(r0, r1), slice(c0, c1)
+
+
+def onExtent(
+    rgba: np.ndarray,
+    transform: Affine,
+    wkt: str,
+    demWkt: str,
+    demBounds: tuple[float, float, float, float],
+    maxSide: int = MAX_TEXTURE,
+) -> np.ndarray:
+    """An image's rendering (``rgba``, alpha 0 for no data; ``transform`` and
+    map projection ``wkt``) resampled by map location (bilinear) onto a
+    north-up texture that covers the DEM's bounds exactly: a drape for a DEM
+    whose pixel grid it isn't on. At most ``maxSide`` pixels on a side, and
+    no finer than the image. Transparent where the image doesn't reach.
+    Takes WKT so a worker thread can call it."""
+    west, south, east, north = demBounds
+    same = sameCrs(wkt, demWkt)
+    source = RasterioCRS.from_wkt(wkt)
+    target = source if same else RasterioCRS.from_wkt(demWkt)
+    longest = max(east - west, north - south)
+    size = longest / maxSide
+    if same:  # the image's own pixels, when they are coarser
+        size = max(size, math.hypot(transform.a, transform.d))
+    width = max(1, min(maxSide, round((east - west) / size)))
+    height = max(1, min(maxSide, round((north - south) / size)))
+    out = np.zeros((4, height, width), np.uint8)
+    reproject(
+        source=np.moveaxis(np.asarray(rgba, np.uint8), 2, 0),
+        destination=out,
+        src_transform=transform,
+        src_crs=source,
+        dst_transform=Affine(
+            (east - west) / width, 0, west, 0, -(north - south) / height, north
+        ),
+        dst_crs=target,
+        src_alpha=4,
+        dst_alpha=4,
+        resampling=Resampling.bilinear,
+    )
+    return np.moveaxis(out, 0, 2)
 
 
 def hillshade(

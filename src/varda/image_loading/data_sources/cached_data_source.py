@@ -57,6 +57,15 @@ class CachedDataSource(DelegatingDataSource):
                 bandIndices=bandIndices, window=window, masked=masked
             )
 
+    def getDataReduced(
+        self,
+        bandIndices: npt.ArrayLike | None,
+        window: tuple[int, int, int, int] | None,
+        step: int,
+    ) -> np.ndarray:
+        with self._lock:  # from the file's overviews, not kept
+            return self._source.getDataReduced(bandIndices, window, step)
+
     def getPixelSpectrum(self, x: int, y: int) -> np.ndarray:
         with self._lock:
             return self._source.getPixelSpectrum(x, y)

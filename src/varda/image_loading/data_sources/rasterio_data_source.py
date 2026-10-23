@@ -141,6 +141,26 @@ class RasterioDataSource(DataSource):
         window: tuple[int, int, int, int] | None = None,
         masked=True,
     ) -> np.ndarray:
+        return self._read(bandIndices, window, masked)
+
+    def getDataReduced(
+        self,
+        bandIndices: npt.ArrayLike | None,
+        window: tuple[int, int, int, int] | None,
+        step: int,
+    ) -> np.ndarray:
+        """Read at the reduced size: GDAL takes the nearest pixels from the
+        file's overviews (JPEG 2000 resolution levels, GeoTIFF overviews)
+        when it has them."""
+        return self._read(bandIndices, window, True, max(1, int(step)))
+
+    def _read(
+        self,
+        bandIndices: npt.ArrayLike | None,
+        window: tuple[int, int, int, int] | None,
+        masked: bool,
+        step: int = 1,
+    ) -> np.ndarray:
         """Pixels as (h, w, bands); with ``masked``, GDAL's no-data mask as NaN
         (integer data holding no-data becomes float first: NaN has no integer
         form).
@@ -167,7 +187,8 @@ class RasterioDataSource(DataSource):
         if len({reader.dtypes[i - 1] for i in indexes}) > 1:
             raise ValueError(f"The bands of {self.filePath} have different data types")
         data = np.empty(
-            (len(indexes), height, width), dtype=reader.dtypes[indexes[0] - 1]
+            (len(indexes), -(-height // step), -(-width // step)),
+            dtype=reader.dtypes[indexes[0] - 1],
         )
         if data.size:
             rioWindow = Window.from_slices(
