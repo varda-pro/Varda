@@ -41,6 +41,15 @@ together, so a band with a narrow range gets coarser limits. **High
 Percent** at 100 gives the lower edge of the top bin, a little under the
 maximum.
 
+**The overview, main and zoom views.** The General Image Analysis
+workspace shows the image three times: the overview (top right) has a box
+marking what the main view shows, and the main view has a box marking what
+the zoom view shows. Each box starts with the image's shape (a tall
+rectangle for a HiRISE strip). Drag a box to move it, or drag its corner
+to resize it: width and height change independently, so it can be square
+or any rectangle. Scrolling or dragging in the view a box drives zooms or
+moves the box, keeping its shape.
+
 **Where the statistics come from.** In the General Image Analysis workspace,
 **Stretch From** chooses **Full image** (the default), **Main view** or
 **Zoom view**. The view choices recompute the stretch as you pan and zoom, so
