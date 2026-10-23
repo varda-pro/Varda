@@ -14,6 +14,7 @@ from varda.analysis.browse_products import (
     parseProduct,
     productProblem,
 )
+from varda.analysis.hypyrameter_adapter import computeParameterCube
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 
@@ -71,7 +72,7 @@ def test_parameters_need_hypyrameter_their_range_and_a_definition(monkeypatch):
         "Varda can't compute BD1500_2 yet; Varda can't compute BD1435 yet"
     )
     fm2 = next(p for p in CRISM_STANDARD if p.name == "FM2")
-    assert "runs opposite to CRISM's" in productProblem(fm2, CRISM_NM)
+    assert productProblem(fm2, CRISM_NM) == ""  # BDI1000VIS, from HyPyRameter 0.3.1
     fem = next(p for p in CRISM_STANDARD if p.name == "FEM")
     assert fem.channels[1] == "SH600_2"  # as the products' labels name it
     monkeypatch.setattr(browse_products, "HYPYRAMETER_AVAILABLE", False)
@@ -117,8 +118,6 @@ def test_no_data_and_bad_bands_are_left_out(monkeypatch):
 
 def test_parameters_match_hypyrameter_on_the_whole_cube_whatever_the_chunk(monkeypatch):
     pytest.importorskip("hypyrameter")
-    from varda.analysis.hypyrameter_adapter import computeParameterCube
-
     image = _image(rows=9)
     monkeypatch.setattr(browse_products, "CHUNK_ROWS", 4)  # three chunks
     maf = next(p for p in CRISM_STANDARD if p.name == "MAF")
@@ -156,3 +155,12 @@ def test_ranges_follow_the_pds_products_then_the_scene():
     assert channelRange("BD1300", np.full(5, -0.1)) == (0.0, 1e-6)  # nothing detected
     assert channelRange("R770", np.full(5, np.nan)) == (0.0, 1.0)
     assert channelRange("OLINDEX3", np.full(5, np.nan)) == (0.0, 0.25898)
+
+
+def test_bdi1000vis_is_a_band_depth():
+    """HyPyRameter 0.3.0 integrated R/RPEAK1, not 1 - R/RPEAK1: a flat
+    spectrum, with no 1 µm band, gave about 0.19 instead of 0."""
+    pytest.importorskip("hypyrameter")
+    flat = np.full((2, 2, CRISM_NM.size), 0.3)
+    value = computeParameterCube(flat, CRISM_NM, ["BDI1000VIS"])
+    np.testing.assert_allclose(value, 0.0, atol=1e-6)
