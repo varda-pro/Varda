@@ -150,7 +150,12 @@ class VardaRaster:
         """The raw values with the edited no-data value (not the file's) as
         NaN, as file reads give no-data; whole numbers become float where
         some are no-data."""
-        raw = self._dataSource.getData(bandIndices, window, masked=False)
+        return self._withEditedNoData(
+            self._dataSource.getData(bandIndices, window, masked=False)
+        )
+
+    def _withEditedNoData(self, raw: np.ndarray) -> np.ndarray:
+        """``_readEdited`` of values read as they are in the file."""
         values = np.asarray(np.ma.getdata(raw))
         nodata = self._overrides["nodata"]
         if nodata is None or np.isnan(nodata):
@@ -225,7 +230,9 @@ class VardaRaster:
         window)``, read from the file's overviews where it has them: how a
         texture or preview of a large image is read."""
         if "nodata" in self._overrides:
-            return self._readEdited(bandIndices, window)[::step, ::step]
+            return self._withEditedNoData(
+                self._dataSource.getDataReduced(bandIndices, window, step, masked=False)
+            )
         return self._dataSource.getDataReduced(bandIndices, window, step)
 
     def __getitem__(self, key) -> np.ndarray:

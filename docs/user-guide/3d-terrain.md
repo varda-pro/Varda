@@ -167,7 +167,10 @@ a CTX DEM say, on top of the surface:
    view at once.
 3. **Auto Align** matches the overlay's band with the best signal against
    **Align to**: an image on the DEM's grid (its orthoimage works best) or a
-   hillshade of the DEM. It uses the Mosaic workspace's matching (phase
+   hillshade of the DEM, lit from the direction that makes it look most
+   like the overlay. Only the part of the overlay over the DEM is read, at
+   about the reference's pixel size, so a HiRISE orthoimage over its DTM
+   aligns in seconds. It uses the Mosaic workspace's matching (phase
    correlation refined to a fraction of a pixel, with features as a
    fallback), and fits the **Model**: Translation by default, as
    map-projected products are mostly just offset, or rigid, similarity,
@@ -175,9 +178,16 @@ a CTX DEM say, on top of the surface:
    The panel reports the tie points the fit kept and their RMS residual,
    in the DEM's map units and labeled with them (m for a DEM projected in
    meters, ° for a geographic one), the image and band matched (with the
-   band's wavelength, or its name, and its SNR) and the tie points' median
-   phase-plane SNR. All of it is saved with the overlay's alignment in the
-   session.
+   band's wavelength, or its name, and its SNR), the tie points' median
+   phase-plane SNR and, for a hillshade, the sun it was lit by and how well
+   it correlated with the overlay. All of it is saved with the overlay's
+   alignment in the session. Fewer than 3 tie points is reported as too few
+   to trust, and the overlay stays where it was: two points fit a shift
+   exactly, so their RMS says nothing.
+   Mark a scene's fill as no data before aligning it: HiRISE's JPEG 2000
+   products leave theirs (0, the label's `CORE_NULL`) undeclared, and tiles
+   across the black border match poorly. Set **No-data** to 0 in Image
+   Properties.
    **Match using** chooses the image that is matched: the overlay itself,
    or another loaded image with the same georeferencing. A parameter map
    often has little texture to match, but a scene made from the same
@@ -234,7 +244,7 @@ How the surface is made, beyond the panel's settings:
 | Drape | The image's own rendering with a 2–98 % linear stretch (also for elevation colors, whose color bar shows that range), drawn at most 8192 px a side: every *n*-th pixel, *n* the longer side over 8192 rounded up, read from the file's overviews where it has them (the nearest overview pixels). The stretch's statistics come from the pixels drawn. A drape off the DEM's grid is drawn over the DEM's extent plus 2 % on each side, then resampled by map location (bilinear, GDAL's warper, transparency kept) onto a texture covering the DEM's extent, no finer than the image's pixels and at most 8192 px a side. |
 | Lighting defaults | Sun azimuth 315°, elevation 35°, sky light 0.35, shadows on, exaggeration 1. |
 | Overlays | The part over the DEM, plus 10 % of the DEM's extent on each side (room for an alignment to move it), drawn as for a drape, with the Overlay Display's settings (and, once those have read the image's bands, their statistics); reprojected to the DEM's projection with bilinear resampling at about that resolution; textures at most 8192 px a side. |
-| Overlay Auto Align | Matches the overlay's highest-SNR band (SNR as in [Mosaicking](mosaicking.md#what-to-state); the band and its SNR are shown and saved), reprojected as above, against band 1 of the reference (or a hillshade of the band shown, its heights converted to meters by the height unit: sun azimuth 315°, elevation 45°), with the Mosaic workspace's matching (see [Mosaicking](mosaicking.md#reporting-your-results)). The fit leaves out points more than 1 pixel (of the reprojected overlay) off. |
+| Overlay Auto Align | Matches the overlay's highest-SNR band (SNR as in [Mosaicking](mosaicking.md#what-to-state); the band and its SNR are shown and saved): the part over the DEM plus 10 % of its extent on each side, read reduced by *n*, the number of the overlay's pixels that fit in one of the DEM's (at least 1; the pixels at the centers of *n* × *n* blocks, from the file's overviews where it has them), reprojected as above. It is matched against band 1 of the reference, or a hillshade of the band shown (heights converted to meters by the height unit) lit by the sun, of azimuths 0–330° every 30° and elevations 20°, 35°, 50° and 65°, whose hillshade correlates best (Pearson r) with the overlay on a grid of at most 512 px a side; the sun and r are shown and saved. Matching is the Mosaic workspace's (see [Mosaicking](mosaicking.md#reporting-your-results)). The fit leaves out points more than 1 pixel (of the reduced, reprojected overlay) off, and needs at least 3. |
 | Height unit | Heights × 1 (m), 1000 (km) or 0.3048 (ft) give meters; the exaggeration multiplies the result. |
 | Smooth edges | Outline points move toward their neighbors, by at most half a grid cell. |
 | Vector files | Geographic coordinates beyond ±360° longitude or ±90° latitude are taken to be in the DEM's projection already. |
@@ -278,6 +288,9 @@ How the surface is made, beyond the panel's settings:
   manual shift isn't part of the RMS. The median phase-plane SNR (0–1; see
   [Mosaicking](mosaicking.md#uncertainty-and-quality)) says how cleanly the
   tiles matched; it's blank when the matching fell back to features.
+  Matching against a hillshade compares shading with brightness: albedo,
+  shadows and a sun that isn't one of those tried all blur the match, so
+  check the result against a sharp feature, and report the sun and r.
 - **Draped images are for display.** The drape and overlays are stretched,
   resampled (bilinear) and, when large, downsampled. Don't read values from
   them.

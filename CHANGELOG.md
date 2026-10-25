@@ -4,6 +4,32 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Fixed
+
+- **3D Terrain's Auto Align works on large overlays.** A HiRISE
+  orthoimage over its DTM ran for minutes, used about 21 GB and then
+  failed: the whole image was matched at its own 25 cm pixels. Only the
+  part over the DEM is now read, at about the DEM's pixel size, from the
+  file's overviews where it has them: 17 s.
+- **A hillshade reference is lit like the overlay.** It was always lit
+  from 315° at 45°; Auto Align now tries suns every 30° in azimuth at four
+  elevations and uses the one whose hillshade correlates best with the
+  overlay, shown and saved with the alignment. On that orthoimage: 9 tie
+  points instead of 6.
+- **Too few tie points aren't trusted.** Two tie points fit a shift
+  exactly, so Auto Align could report a shift of tens of meters with a
+  small RMS; fewer than 3 is now an error that says so.
+- **Matching skips featureless tiles in either image.** A tile of a
+  scene's black border made the sub-pixel refinement fail with "Method 'lm'
+  doesn't work when the number of residuals is less than the number of
+  variables", ending Auto Align and mosaic alignment.
+- **Reduced reads of an image with an edited no-data value** read the
+  whole image first; they now read at the reduced size. All reduced reads
+  take the pixels at the centers of their blocks, from a file or from
+  memory alike.
+
 ## 0.13.1 (2026-10-23)
 
 ### Fixed

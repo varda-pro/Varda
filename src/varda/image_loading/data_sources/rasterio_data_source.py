@@ -148,11 +148,12 @@ class RasterioDataSource(DataSource):
         bandIndices: npt.ArrayLike | None,
         window: tuple[int, int, int, int] | None,
         step: int,
+        masked: bool = True,
     ) -> np.ndarray:
         """Read at the reduced size: GDAL takes the nearest pixels from the
         file's overviews (JPEG 2000 resolution levels, GeoTIFF overviews)
         when it has them."""
-        return self._read(bandIndices, window, True, max(1, int(step)))
+        return self._read(bandIndices, window, masked, max(1, int(step)))
 
     def _read(
         self,

@@ -66,3 +66,11 @@ def test_unrelated_tiles_score_low():
     _, snr = refineShift(ref, other, initial=(0.0, 0.0))
     assert quality < 0.5
     assert snr < 0.7  # random phases score about 0.5 by construction
+
+
+def test_a_featureless_tile_has_no_signal():
+    """A constant tile (a scene's fill, its black border) has no frequency to
+    fit: the refinement says so instead of failing."""
+    ref, _ = _pair(0, 0, seed=1)
+    shift, snr = refineShift(ref, np.zeros_like(ref), initial=(0.25, 0.0))
+    assert snr == 0.0 and tuple(shift) == (0.25, 0.0)

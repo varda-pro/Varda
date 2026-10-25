@@ -151,6 +151,8 @@ def _phasePlane(
         indexing="ij",
     )
     keep = weight > 0
+    if not keep.any():  # a featureless patch: nothing to fit
+        return np.asarray(shift, dtype=np.float64), 0.0
     qk, wxk, wyk, root = q[keep], wx[keep], wy[keep], np.sqrt(weight[keep])
 
     def residual(d: np.ndarray) -> np.ndarray:
@@ -489,7 +491,8 @@ def _tileMatches(
         if not np.isfinite(tile).all() or bandSnr(tile[:, :, None])[0] < MIN_TILE_SNR:
             continue
         other = _tile(b, x + coarse[0], y + coarse[1], size)
-        if other is None:
+        # both tiles need texture: the moving one may be a scene's fill
+        if other is None or bandSnr(other[:, :, None])[0] < MIN_TILE_SNR:
             continue
         shift, quality = tileShift(tile, other)
         if np.abs(shift).max() > size / 4:  # beyond what phase correlation can trust
