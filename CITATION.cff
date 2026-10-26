@@ -26,8 +26,8 @@ repository-code: "https://github.com/varda-pro/Varda"
 # Zenodo's concept DOI: every version, resolving to the latest. Each release
 # also gets its own DOI, listed on the Zenodo record.
 doi: "10.5281/zenodo.23447208"
-version: "0.13.1"
-date-released: "2026-10-23"
+version: "0.13.2"
+date-released: "2026-10-26"
 keywords:
   - hyperspectral
   - multispectral
