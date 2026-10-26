@@ -4,7 +4,7 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
-## Unreleased
+## 0.13.2 (2026-10-26)
 
 ### Fixed
 
@@ -17,7 +17,9 @@ can alter results.
   from 315° at 45°; Auto Align now tries suns every 30° in azimuth at four
   elevations and uses the one whose hillshade correlates best with the
   overlay, shown and saved with the alignment. On that orthoimage: 9 tie
-  points instead of 6.
+  points instead of 6. **Results change:** Auto Align against a
+  hillshade can give a different shift than in 0.13.1; redo alignments you
+  report.
 - **Too few tie points aren't trusted.** Two tie points fit a shift
   exactly, so Auto Align could report a shift of tens of meters with a
   small RMS; fewer than 3 is now an error that says so.
