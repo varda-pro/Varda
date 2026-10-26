@@ -26,6 +26,7 @@ from varda.common.parameter import (
 )
 from varda.common.entities import VardaRaster
 from varda.common.vec2 import Vec2
+from varda.image_loading.data_sources.data_source import reducedIndices
 from varda.utilities import debug
 from varda.image_rendering.browse_composites import COMPOSITES
 from varda.image_rendering.browse_controls import BrowseChannels, BrowseProductPicker
@@ -375,8 +376,11 @@ class ImageRenderer(QObject):
         key = self._bandKey()
         if (self._rawBandData is not None and self._rawKey == key) or (
             key[0] == "browse"
-        ):
-            return self.renderPiece(slice(r0, r1, step), slice(c0, c1, step))
+        ):  # the pixels a reduced read takes (``reducedIndices``)
+            rows = r0 + reducedIndices(r1 - r0, step)
+            cols = c0 + reducedIndices(c1 - c0, step)
+            data = self._readBands()[np.ix_(rows, cols)]
+            return self._withAlpha(*self._rgb8Of(data, keep=False))
         raw = self.image.getDataReduced(list(key[1:]), (r0, c0, r1 - r0, c1 - c0), step)
         data = np.asarray(
             np.ma.filled(raw, np.nan) if np.ma.isMaskedArray(raw) else raw

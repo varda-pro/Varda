@@ -7,6 +7,7 @@ import numpy as np
 
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
+from varda.image_loading.data_sources.data_source import reducedIndices
 from varda.image_rendering.image_renderer import ImageRenderer
 
 
@@ -54,7 +55,8 @@ def test_an_image_already_read_is_sliced_and_stretched_as_shown():
     reads = source.fullReads
     rgba = renderer.renderReduced(64, (slice(0, 300), slice(100, 200)))
     assert source.fullReads == reads
-    np.testing.assert_array_equal(rgba, full[0:300:5, 100:200:5])
+    rows, cols = reducedIndices(300, 5), 100 + reducedIndices(100, 5)
+    np.testing.assert_array_equal(rgba, full[np.ix_(rows, cols)])
 
 
 def test_small_images_are_rendered_whole():

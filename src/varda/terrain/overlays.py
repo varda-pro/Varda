@@ -13,6 +13,7 @@ through it onto a texture that covers its footprint over the DEM.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 from affine import Affine
@@ -38,6 +39,13 @@ from varda.mosaicking.render import sampleOnGrid
 from varda.mosaicking.transforms import TransformModel, Warp, applyMatrix, translation
 
 MAX_TEXTURE = 8192  # px on a side for one overlay's texture
+# Fewer fit a shift (or a 3-point model) exactly: their RMS says nothing
+MIN_TIE_POINTS = 3
+# The suns tried for a hillshade lit like the overlay (degrees), on a grid
+# of at most SUN_FIT_SIDE px a side
+SUN_AZIMUTHS = tuple(range(0, 360, 30))
+SUN_ELEVATIONS = (20, 35, 50, 65)
+SUN_FIT_SIDE = 512
 # Map-projected products (CRISM MTRDR, say) are mostly offset; scale and
 # rotation from a handful of noisy tie points do more harm than good
 DEFAULT_MODEL = TransformModel.TRANSLATION
@@ -65,6 +73,9 @@ class Alignment:
     bandLabel: str = ""
     bandSnr: float = float("nan")
     phaseSnr: float = float("nan")
+    # A hillshade reference's sun (azimuth, elevation, degrees) and how well
+    # its hillshade correlated with the overlay (Pearson r); None otherwise
+    sun: tuple[float, float, float] | None = None
 
     def matrix(self) -> np.ndarray:
         """The correction with the manual shift after it."""
@@ -89,12 +100,14 @@ class Alignment:
             "bandLabel": self.bandLabel,
             "bandSnr": _orNone(self.bandSnr),
             "phaseSnr": _orNone(self.phaseSnr),
+            "sun": None if self.sun is None else [_orNone(v) for v in self.sun],
         }
 
     @classmethod
     def fromState(cls, state: dict) -> Alignment:
         warp = state.get("warp")
         band = state.get("band")
+        sun = state.get("sun")
         return cls(
             TransformModel[state.get("model", DEFAULT_MODEL.name)],
             np.asarray(state.get("correction", np.eye(3).tolist()), float),
@@ -107,6 +120,7 @@ class Alignment:
             str(state.get("bandLabel", "")),
             _orNan(state.get("bandSnr")),
             _orNan(state.get("phaseSnr")),
+            None if sun is None else (float(sun[0]), float(sun[1]), _orNan(sun[2])),
         )
 
 
@@ -179,10 +193,55 @@ def toProjection(
 
 def bandArray(image: VardaRaster, band: int) -> np.ndarray:
     """One band as float32 (rows, cols), NaN for no data."""
-    raw = image.getBands([band])
+    return _asFloat(image.getBands([band]), image.nodata)
+
+
+def bandOver(
+    image: VardaRaster, band: int, window: tuple[slice, slice], step: int
+) -> tuple[np.ndarray, Affine]:
+    """``bandArray`` of ``window`` (rows, cols) of the image, reduced by
+    ``step`` (``VardaRaster.getDataReduced``: from the file's overviews
+    where it has them), and its map transform."""
+    rows, cols = window
+    raw = image.getDataReduced(
+        [band],
+        (rows.start, cols.start, rows.stop - rows.start, cols.stop - cols.start),
+        step,
+    )
+    data = _asFloat(raw, image.nodata)
+    return data, reducedTransform(image.transform, window, data.shape)
+
+
+def reducedTransform(
+    transform: Affine, window: tuple[slice, slice], shape: tuple[int, ...]
+) -> Affine:
+    """The map transform of ``window`` (rows, cols) of an image read
+    reduced to ``shape`` (rows, cols, ...): the window's, scaled by its size
+    over the result's (``data_source.reducedIndices``)."""
+    rows, cols = window
+    return (
+        transform
+        * Affine.translation(cols.start, rows.start)
+        * Affine.scale(
+            (cols.stop - cols.start) / shape[1], (rows.stop - rows.start) / shape[0]
+        )
+    )
+
+
+def matchStep(overlayPixel: float, referencePixel: float) -> int:
+    """How many of the overlay's pixels to a side make one it is matched on:
+    as many as fit in one of the reference's (at least 1), since the match
+    can't be finer than the reference."""
+    if not (overlayPixel > 0 and referencePixel > 0):
+        return 1
+    return max(1, math.floor(referencePixel / overlayPixel + 1e-6))
+
+
+def _asFloat(raw: np.ndarray, nodata: float | None) -> np.ndarray:
+    """One band read (rows, cols, 1) as float32 (rows, cols), NaN for no
+    data."""
     data = np.ma.filled(raw, np.nan) if np.ma.isMaskedArray(raw) else raw
     data = np.asarray(data, dtype=np.float32)[:, :, 0]
-    nodata = image.nodata
     if nodata is not None and np.isfinite(nodata):
         data = np.where(data == nodata, np.nan, data)
     return data
@@ -232,6 +291,12 @@ def align(
     project.fit(1)
     fitted = project.input(1)
     inliers = [p.residual for p in project.tiePointsOf(1) if p.inlier]
+    if len(inliers) < MIN_TIE_POINTS:
+        raise AlignmentError(
+            f"Only {len(inliers)} tie point{'s' if len(inliers) != 1 else ''} "
+            f"matched, too few to trust (at least {MIN_TIE_POINTS} are needed); "
+            "try another reference, or align by hand."
+        )
     rms = float(np.sqrt(np.mean(np.square(inliers)))) if inliers else math.nan
     snr = np.array([p.phaseSnr for p in project.tiePointsOf(1)], float)
     snr = snr[np.isfinite(snr)]
@@ -244,6 +309,55 @@ def align(
         rms,
         phaseSnr=float(np.median(snr)) if snr.size else math.nan,
     )
+
+
+def sunLike(
+    heights: np.ndarray,
+    pixelMeters: float,
+    transform: Affine,
+    moving: np.ndarray,
+    movingTransform: Affine,
+    wkt: str,
+) -> tuple[float, float, float]:
+    """The sun (azimuth, elevation; degrees) from ``SUN_AZIMUTHS`` ×
+    ``SUN_ELEVATIONS`` whose hillshade of ``heights`` (meters, on
+    ``transform``, whose pixels are ``pixelMeters`` on the ground) correlates best with ``moving`` (one band, NaN for no
+    data, on ``movingTransform``, both in the map projection ``wkt``), and
+    that correlation (Pearson r): a reference lit like the overlay. Compared
+    on a grid of at most ``SUN_FIT_SIDE`` px a side (block means). The
+    default sun (315°, 45°) and NaN when they share too little."""
+    step = max(1, math.ceil(max(heights.shape) / SUN_FIT_SIDE))
+    rows, cols = heights.shape[0] // step, heights.shape[1] // step
+    blocks = heights[: rows * step, : cols * step].reshape(rows, step, cols, step)
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN blocks
+        coarse = np.nanmean(blocks, axis=(1, 3))
+    grid = transform * Affine.scale(step)
+    seen = np.full((rows, cols), np.nan, np.float32)
+    crs = RasterioCRS.from_wkt(wkt)
+    reproject(
+        source=np.asarray(moving, np.float32),
+        destination=seen,
+        src_transform=movingTransform,
+        src_crs=crs,
+        dst_transform=grid,
+        dst_crs=crs,
+        src_nodata=np.nan,
+        dst_nodata=np.nan,
+        resampling=Resampling.average,
+    )
+    pixel = pixelMeters * step
+    best = (315.0, 45.0, math.nan)
+    for elevation in SUN_ELEVATIONS:
+        for azimuth in SUN_AZIMUTHS:
+            shade = hillshade(coarse, pixel, azimuth, elevation)
+            both = np.isfinite(shade) & np.isfinite(seen)
+            if both.sum() < 100 or np.ptp(seen[both]) == 0 or np.ptp(shade[both]) == 0:
+                continue
+            r = float(np.corrcoef(shade[both], seen[both])[0, 1])
+            if not math.isnan(r) and not r <= best[2]:
+                best = (float(azimuth), float(elevation), r)
+    return best
 
 
 def windowOver(

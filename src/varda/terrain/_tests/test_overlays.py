@@ -9,8 +9,10 @@ from affine import Affine
 from pyproj import CRS
 
 from varda.geo._tests.fixtures import MARS_EQC_PDS3_WKT
+from varda.mosaicking.model import MosaicProject
 from varda.mosaicking.transforms import TransformModel
 from varda.terrain.overlays import (
+    MIN_TIE_POINTS,
     Alignment,
     AlignmentError,
     align,
@@ -20,6 +22,7 @@ from varda.terrain.overlays import (
     drape,
     hillshade,
     onExtent,
+    sunLike,
     toProjection,
     windowOver,
 )
@@ -200,3 +203,41 @@ def test_the_window_comes_through_another_projection():
     )
     assert (cols.start, cols.stop) == (0, 50)
     assert (rows.start, rows.stop) == (50, 100)
+
+
+def test_a_hillshade_is_lit_like_the_overlay():
+    """The sun whose hillshade of the DEM looks most like the overlay (its
+    Pearson r), from the azimuths and elevations tried."""
+    heights = _scene() * 300  # meters
+    transform = Affine(10, 0, 0, 0, -10, 4000)
+    lit = hillshade(heights, 10, azimuth=120, altitude=35)
+    azimuth, elevation, r = sunLike(
+        heights, 10, transform, lit, transform, MARS.to_wkt()
+    )
+    assert (azimuth, elevation) == (120, 35) and r > 0.99
+
+
+def test_too_few_tie_points_arent_trusted(monkeypatch):
+    """Two points fit a shift exactly, so their RMS says nothing: fewer than
+    MIN_TIE_POINTS is an error for the user."""
+    scene = _scene()
+    reference = asRaster(scene[..., None], Affine(10, 0, 0, 0, -10, 4000), MARS)
+    moving = asRaster(
+        scene[50:300, 80:330, None], Affine(10, 0, 860, 0, -10, 3460), MARS
+    )
+    assert align(reference, moving).points >= MIN_TIE_POINTS
+    tiePointsOf = MosaicProject.tiePointsOf
+    monkeypatch.setattr(
+        MosaicProject,
+        "tiePointsOf",
+        lambda self, key: tiePointsOf(self, key)[: MIN_TIE_POINTS - 1],
+    )
+    with pytest.raises(AlignmentError, match="too few to trust"):
+        align(reference, moving)
+
+
+def test_a_hillshades_sun_is_kept_with_the_alignment():
+    alignment = Alignment(sun=(270.0, 35.0, 0.79))
+    assert Alignment.fromState(alignment.state()).sun == (270.0, 35.0, 0.79)
+    assert Alignment.fromState(Alignment().state()).sun is None
+    assert Alignment.fromState({}).sun is None  # a session from before

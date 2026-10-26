@@ -234,6 +234,48 @@ def test_an_overlay_is_draped_and_auto_aligned(qtbot):
     assert saved["band"] == added.alignment.band and saved["matchedOn"] == "crism"
 
 
+def test_a_finer_overlay_is_matched_at_the_references_pixel_size(qtbot, monkeypatch):
+    """An overlay 4 × finer than the DEM (an orthoimage at 5 m over a 20 m
+    DEM) is read every 4th pixel, only over the DEM, for Auto Align, and
+    still recovers its georeferencing error."""
+    rows, cols = 240, 320
+    yy, xx = np.mgrid[0:rows, 0:cols]
+    dem = -1500 + 100 * np.sin(xx / 30.0) * np.cos(yy / 25.0)
+    images = ProjectImages([_image(dem[..., None], "dem")])
+    texture = generate_perlin_noise_3d((rows, cols, 2), (rows // 10, cols // 10, 2))
+    texture = texture[:, :, :1].astype(np.float32)
+    images.append(_image(texture, "ortho"))
+    top, left = rows // 8, cols // 8
+    fine = np.kron(texture[top:-top, left:-left], np.ones((4, 4, 1), np.float32))
+    overlay = VardaRaster(
+        ArrayDataSource(
+            fine,
+            transform=Affine(5, 0, left * 20 + 60, 0, -5, -top * 20 - 40),
+            crs=CRS_,
+        ),
+        name="hirise",
+    )
+    images.append(overlay)
+    matched = []
+    align = terrain_workspace.align
+
+    def recording(reference, moving, *args):
+        matched.append((moving.width, moving.height))
+        return align(reference, moving, *args)
+
+    monkeypatch.setattr(terrain_workspace, "align", recording)
+    workspace = TerrainWorkspace(images, images[0])
+    qtbot.addWidget(workspace)
+    added = workspace.overlayPanel.add(overlay)
+    qtbot.waitUntil(lambda: len(workspace._overlays) == 1, timeout=10000)
+    workspace.autoAlign(0)
+    qtbot.waitUntil(lambda: added.alignment.points > 0, timeout=30000)
+    assert matched == [(fine.shape[1] // 4, fine.shape[0] // 4)]
+    moved = added.alignment.correct(np.array([[3000.0, -2400.0]]))[0]
+    assert moved == pytest.approx([3000 - 60, -2400 + 40], abs=4)
+    _finishBackgroundWork(qtbot)
+
+
 def test_overlays_come_back_from_a_session(workspace, images, qtbot):
     overlay = _offsetOverlay(images)
     added = workspace.overlayPanel.add(overlay)
@@ -371,7 +413,7 @@ def test_auto_align_shades_the_band_shown(qtbot, monkeypatch):
     workspace.bandBox.setCurrentIndex(1)
     shaded = []
 
-    def hillshade(heights, pixelSize):
+    def hillshade(heights, pixelSize, *sun):
         shaded.append(np.asarray(heights))
         raise RuntimeError("enough")
 

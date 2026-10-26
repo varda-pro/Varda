@@ -316,6 +316,11 @@ class OverlayPanel(QWidget):
             )
             if math.isfinite(a.phaseSnr):
                 matched += f"; median phase-plane SNR {a.phaseSnr:.2f}"
+            if a.sun is not None:
+                azimuth, elevation, r = a.sun
+                matched += f"; hillshade lit from {azimuth:g}° at {elevation:g}°" + (
+                    f" (r {r:.2f})" if math.isfinite(r) else ""
+                )
             fitted += f" {matched}."
         self.alignment.setText(f"{message} {fitted}".strip())
 

@@ -46,8 +46,8 @@ it overlaps, and fits them:
 2. **Matching:** both images are resampled onto their overlap. A coarse
    offset comes from phase correlation on a reduced copy, then a grid of
    tiles (64 px by default, overlapping) is phase-correlated to about
-   0.1 px. Tiles without enough texture, or that correlate poorly once
-   aligned, are dropped.
+   0.1 px. Tiles without enough texture in either image (a scene's fill,
+   say), or that correlate poorly once aligned, are dropped.
 3. **Sub-pixel refinement** (on by default) refines each tile to about
    1/50 px with the phase-plane fit of Leprince et al. (2007), the method
    behind COSI-Corr, re-implemented from the paper.
@@ -241,7 +241,7 @@ Settings Auto Align uses that aren't in the dialog:
 | Band choice | SNR = signal over noise; noise is 1.4826 × the median absolute deviation of neighboring-pixel differences, divided by √2; signal is the standard deviation with that noise removed |
 | Coarse offset | Phase correlation on copies reduced to at most 512 px |
 | Tiles | 64 px, stepping a quarter of a tile (tiles overlap); the step grows to keep at most 400 tiles per band |
-| Tiles skipped | Tile SNR below 2 (too little texture), or a shift larger than a quarter of the tile |
+| Tiles skipped | Tile SNR below 2 in either image (too little texture), or a shift larger than a quarter of the tile |
 | Tiles dropped | Correlation coefficient of the two tiles, once aligned, below 0.6 |
 | Fallback to features | **Auto** switches to ORB when phase correlation gives fewer than 6 points (800 keypoints, ratio test 0.8, cross-checked) |
 | RANSAC | 99.9 % confidence; for a thin-plate spline, outliers are found with a cubic (or quadratic) polynomial at 3 × the threshold, then the spline is fitted to the rest |

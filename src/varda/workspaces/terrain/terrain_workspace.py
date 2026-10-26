@@ -48,7 +48,13 @@ from PyQt6.QtWidgets import (
 )
 
 from varda.common.entities import VardaRaster
-from varda.common.grid import compatibleImages, placeableChoices, sameGrid
+from varda.common.grid import (
+    compatibleImages,
+    placeableChoices,
+    sameGrid,
+    sourcePixelSize,
+    targetPixelSize,
+)
 from varda.common.observable_list import ObservableList
 from varda.common.palette import classColor
 from varda.common.ui import MutedLabel, PanelScrollArea, notListedLabel, showsBusyCursor
@@ -69,9 +75,13 @@ from varda.terrain.overlays import (
     asRaster,
     bandArray,
     bandLabel,
+    bandOver,
     bestBand,
     hillshade,
+    matchStep,
     onExtent,
+    reducedTransform,
+    sunLike,
     toProjection,
     windowOver,
 )
@@ -188,11 +198,7 @@ def renderOver(
         slice(0, image.width),
     )
     rgba = renderer.renderReduced(MAX_TEXTURE, (rows, cols))
-    scale = Affine.scale(
-        (cols.stop - cols.start) / rgba.shape[1],
-        (rows.stop - rows.start) / rgba.shape[0],
-    )
-    return rgba, image.transform * Affine.translation(cols.start, rows.start) * scale
+    return rgba, reducedTransform(image.transform, (rows, cols), rgba.shape)
 
 
 def drapeRenderer(image: VardaRaster, elevation: str | None = None) -> ImageRenderer:
@@ -755,9 +761,15 @@ class TerrainWorkspace(QMainWindow):
         demWkt, overlayWkt = wktOf(dem), wktOf(image)
         width, _ = groundSize(dem)
         pixelMeters = width / dem.width
+        # only the part over the DEM, at about the reference's pixel size
+        window = windowOverDem(image, dem, 0.1) or (
+            slice(0, image.height),
+            slice(0, image.width),
+        )
+        step = matchStep(sourcePixelSize(image, dem), targetPixelSize(dem))
         demBand = int(self.bandBox.currentData() or 0)
         metersPerHeightUnit = self.settings.metersPerHeightUnit
-        demTransform, overlayTransform = dem.transform, image.transform
+        demTransform = dem.transform
         model = overlay.alignment.model
         self.overlayPanel.showAlignment(
             overlay,
@@ -766,16 +778,26 @@ class TerrainWorkspace(QMainWindow):
 
         def work() -> Alignment:
             crs = RasterioCRS.from_wkt(demWkt)
-            if reference is None:  # a hillshade of the DEM
+            band, snr = bestBand(image)  # the overlay's
+            data, transform = bandOver(image, band, window, step)
+            moved, movedTransform = toProjection(
+                data[..., None], transform, overlayWkt, demWkt
+            )
+            sun = None
+            if reference is None:  # a hillshade of the DEM, lit like the overlay
                 heights = bandArray(dem, demBand) * metersPerHeightUnit
-                referenceData = hillshade(heights, pixelMeters)
+                sun = sunLike(
+                    heights,
+                    pixelMeters,
+                    demTransform,
+                    moved[..., 0],
+                    movedTransform,
+                    demWkt,
+                )
+                referenceData = hillshade(heights, pixelMeters, sun[0], sun[1])
             else:
                 referenceData = bandArray(reference, 0)
             fixed = asRaster(referenceData[..., None], demTransform, crs, "reference")
-            band, snr = bestBand(image)  # the overlay's
-            moved, movedTransform = toProjection(
-                bandArray(image, band)[..., None], overlayTransform, overlayWkt, demWkt
-            )
             alignment = align(
                 fixed, asRaster(moved, movedTransform, crs, image.name), model
             )
@@ -785,6 +807,7 @@ class TerrainWorkspace(QMainWindow):
                 band=band,
                 bandLabel=bandLabel(image, band),
                 bandSnr=snr,
+                sun=sun,
             )
 
         def done(alignment: Alignment) -> None:

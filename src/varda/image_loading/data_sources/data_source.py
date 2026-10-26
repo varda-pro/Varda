@@ -79,13 +79,20 @@ class DataSource(Protocol):
         bandIndices: npt.ArrayLike | None,
         window: tuple[int, int, int, int] | None,
         step: int,
+        masked: bool = True,
     ) -> np.ndarray:
-        """Every ``step``-th row and column of ``getData(bandIndices,
-        window)`` (no data as NaN): ``ceil(height / step)`` by ``ceil(width /
-        step)`` pixels. Files with overviews override this to read from them
-        (nearest pixels), so a texture of a large image doesn't decode all of
-        it."""
-        return self.getData(bandIndices, window)[::step, ::step]
+        """``getData(bandIndices, window, masked)`` reduced by
+        ``step``: ``ceil(height / step)`` by ``ceil(width / step)`` pixels,
+        each the pixel at the center of its part of the window
+        (``reducedIndices``), as GDAL's nearest-neighbor reduced read takes
+        them. So the result's map transform is the window's scaled by its
+        size over the result's, however it was read. Files with overviews
+        override this to read from them, so a texture of a large image
+        doesn't decode all of it."""
+        data = self.getData(bandIndices, window, masked)
+        rows = reducedIndices(data.shape[0], step)
+        cols = reducedIndices(data.shape[1], step)
+        return data[np.ix_(rows, cols)]
 
     def readAllBands(self) -> np.ndarray:
         """Read the entire raster into memory.
@@ -219,6 +226,15 @@ class DataSource(Protocol):
     def close(self) -> None:
         """Release any underlying file handles or resources."""
         ...
+
+
+def reducedIndices(count: int, step: int) -> np.ndarray:
+    """The pixels (0-based) a reduced read by ``step`` takes from ``count``:
+    the one at the center of each of ``ceil(count / step)`` equal parts,
+    ``floor((k + 0.5) * count / parts)``, as GDAL's nearest-neighbor
+    resampling picks them."""
+    parts = -(-count // max(1, int(step)))
+    return ((np.arange(parts) + 0.5) * count / parts).astype(np.intp)
 
 
 def pixelCenterToGeo(transform: Affine, col: int, row: int) -> tuple[float, float]:
