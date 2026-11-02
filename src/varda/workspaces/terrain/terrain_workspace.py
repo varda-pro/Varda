@@ -417,6 +417,10 @@ class TerrainWorkspace(QMainWindow):
         self.views: dict[str, dict] = {}  # name -> camera
         self._camera: dict | None = None  # kept across page rebuilds
         self._building = 0  # the latest build (older results are dropped)
+        # What went wrong in the latest build, kept in the status below what
+        # follows it, and what to report with the next build
+        self._problems: list[str] = []
+        self._pendingProblems: list[str] = []
         # the last built page's parts, for Export Web Page
         self._texture: str | None = None
         self._legend: Legend | None = None
@@ -1052,6 +1056,7 @@ class TerrainWorkspace(QMainWindow):
         band = int(self.bandBox.currentData() or 0)
         drape = self.drapeBox.currentData()
         rgba, self._legend = None, None
+        problems, self._pendingProblems = self._pendingProblems, []
         placed = None  # a drape off the DEM's grid: (rgba, its transform, WKT)
         try:  # rendering the drape uses Qt-side objects: here, on the GUI thread
             if drape == ELEVATION:
@@ -1065,7 +1070,7 @@ class TerrainWorkspace(QMainWindow):
             elif drape != PLAIN:
                 placed = (*renderOver(drapeRenderer(drape), dem, 0.02), wktOf(drape))
         except Exception as error:  # a broken image shouldn't break the workspace
-            self.status.setText(f"The drape couldn't be drawn: {error}")
+            problems.append(f"The drape couldn't be drawn: {error}")
         maxSide = DETAIL[self.detailBox.currentText()]
         title = dem.name
         # pyproj objects aren't thread-safe: what needs them is taken here
@@ -1086,8 +1091,9 @@ class TerrainWorkspace(QMainWindow):
                     )
                 )
             except Exception as error:  # one broken overlay shouldn't stop the rest
-                self.status.setText(f"{overlay.image.name} couldn't be drawn: {error}")
-        self.status.setText("Building the surface…")
+                problems.append(f"{overlay.image.name} couldn't be drawn: {error}")
+        self._problems = problems
+        self._setStatus("Building the surface…")
         self.view.working("Building the surface…")
 
         fill = self.fillGaps.isChecked()
@@ -1127,7 +1133,7 @@ class TerrainWorkspace(QMainWindow):
     def _buildFailed(self, build: int, error: Exception) -> None:
         if build == self._building:
             self.view.idle()
-            self.status.setText(f"The surface couldn't be built: {error}")
+            self._setStatus(f"The surface couldn't be built: {error}")
 
     def _show(
         self,
@@ -1160,7 +1166,7 @@ class TerrainWorkspace(QMainWindow):
             return
         low, high = self.terrain.zRange
         rows, cols = self.terrain.heights.shape
-        self.status.setText(
+        self._setStatus(
             f"{self.terrain.widthM / 1000:.3g} × {self.terrain.heightM / 1000:.3g} km, "
             f"heights {low:.6g} to {high:.6g} {self.settings.heightUnit}; "
             f"a {cols} × {rows} grid"
@@ -1172,6 +1178,11 @@ class TerrainWorkspace(QMainWindow):
             )
         )
         self.view.setSettings(self.settings.toDict())  # changed while it loaded
+
+    def _setStatus(self, text: str) -> None:
+        """``text``, with the latest build's problems below it so a later
+        message doesn't hide them."""
+        self.status.setText("\n".join([text, *self._problems]))
 
     def _onFailed(self, reason: str) -> None:
         self.status.setText(
@@ -1362,7 +1373,7 @@ class TerrainWorkspace(QMainWindow):
                 line = self._placeLines(dem, source, color)
             except Exception as error:  # unreadable files, or lines off the DEM
                 name = Path(source["path"]).name if "path" in source else source["name"]
-                self.status.setText(f"{name}: {error}")
+                self._pendingProblems.append(f"{name}: {error}")
                 placed = False
                 continue
             self.lineLayers.append((source, attrs.evolve(line, visible=visible)))
