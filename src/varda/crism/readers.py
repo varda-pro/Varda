@@ -15,8 +15,8 @@ from attrs import define
 from varda.crism.labels import ArrayLayout, ProductLabel, readLabel
 from varda.crism.products import ProductId
 
-_INVALID = 65535.0
-_FLOOR = 1e-6
+NODATA = 65535.0  # the PDS products' invalid sample
+TRR_FLOOR = 1e-6  # a TRR3 sample below this is invalid
 _ROWNUM_MASK = 0x1FF  # the label's 9-bit BIT_MASK
 _MARS_RADIUS_M = 3396190.0
 _SLEW_FACTOR = 4.0
@@ -53,7 +53,7 @@ def _detectorRows(layout: ArrayLayout) -> np.ndarray:
 def _nodataToNan(values: np.ndarray, floor: float | None = None) -> np.ndarray:
     """float64 copy with 65535, non-finite and (optionally) tiny samples as NaN."""
     result = np.array(values, dtype=np.float64)
-    bad = ~np.isfinite(result) | (result == _INVALID)
+    bad = ~np.isfinite(result) | (result == NODATA)
     if floor is not None:
         bad |= result < floor
     result[bad] = np.nan
@@ -101,7 +101,7 @@ class Trr3:
         """float64 ``(line, sample, band)``, ascending wavelength, NaN for
         invalid samples. Only the requested lines are read from disk."""
         chunk = self.label.image.memmap()[rows]  # (l, band, sample)
-        cube = _nodataToNan(chunk, _FLOOR).transpose(0, 2, 1)
+        cube = _nodataToNan(chunk, TRR_FLOOR).transpose(0, 2, 1)
         return cube[:, :, ::-1] if self.flipped else cube
 
 

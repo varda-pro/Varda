@@ -21,7 +21,13 @@ from rasterio.errors import NotGeoreferencedWarning
 
 from varda.crism.labels import readLabel
 from varda.crism.products import CdrId, ProductId
-from varda.crism.readers import Trr3, readDetectorFrame, readTrr3
+from varda.crism.readers import (
+    NODATA,
+    TRR_FLOOR,
+    Trr3,
+    readDetectorFrame,
+    readTrr3,
+)
 
 from .delegating_data_source import DelegatingDataSource
 from .envi_data_source import ENVIDataSource, findEnviHeader
@@ -33,8 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-NODATA = 65535.0
-TRR_FLOOR = 1e-6  # a TRR3 sample below this is invalid, as in varda.crism.readers
 SWEET_SPOT_COLUMNS = 100  # the central columns of an unbinned frame
 LABEL_SUFFIXES = (".lbl", ".xml")
 IMAGE_TYPES = ("TRR", "DDR")

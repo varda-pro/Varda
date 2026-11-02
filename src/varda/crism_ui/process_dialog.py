@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 from superqt import QCollapsible
 
-from varda.common.parameter import Parameter, ParameterGroup
+from varda.common.parameter import ParameterGroup, copyValues
 from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import MutedLabel
 from varda.crism import CrismObservation, ProcessResult, Recipe, process
@@ -68,17 +68,6 @@ HINT = (
     "report it: Help → Documentation → CRISM processing."
 )
 _log = logging.getLogger(__name__)
-
-
-def _copyValues(source: ParameterGroup, target: ParameterGroup) -> None:
-    for key, param in source.params.items():
-        other = target.params[key]
-        if isinstance(param, ParameterGroup):
-            assert isinstance(other, ParameterGroup)
-            _copyValues(param, other)
-        else:
-            assert isinstance(other, Parameter)
-            other.set(param.get())
 
 
 class ProcessCrismDialog(QDialog):
@@ -225,7 +214,7 @@ class ProcessCrismDialog(QDialog):
         data = json.loads(Path(path).read_text())
         if not isinstance(data, dict):
             raise ValueError("A recipe file holds a JSON object")
-        _copyValues(recipeFromDict(data), self.recipe)
+        copyValues(recipeFromDict(data), self.recipe)
 
     def _browseSaveRecipe(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -401,7 +390,7 @@ class ProcessCrismDialog(QDialog):
             self._finish()
             return
         recipe = Recipe()
-        _copyValues(self.recipe, recipe)  # the batch keeps the settings it started with
+        copyValues(self.recipe, recipe)  # the batch keeps the settings it started with
         output = Path(self.outputFolder.text())
         skip = set(missing)
         runInBackground(
