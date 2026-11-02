@@ -190,7 +190,12 @@ class VardaRaster:
         Returns:
             Spectrum with values and wavelengths.
         """
-        values = self._dataSource.getPixelSpectrum(x, y)
+        if "nodata" in self._overrides:
+            if not (0 <= x < self.width and 0 <= y < self.height):
+                raise IndexError(f"Pixel ({x}, {y}) is outside the image")
+            values = self._readEdited(None, (y, x, 1, 1)).reshape(-1)
+        else:
+            values = self._dataSource.getPixelSpectrum(x, y)
         return Spectrum(
             values=values, wavelengths=self.wavelengths, pixel_coordinates=(x, y)
         )
