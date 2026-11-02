@@ -1,6 +1,8 @@
 """Auto Align in the Mosaic workspace: match, fit, review bands, add the
 displacement field."""
 
+import json
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -104,13 +106,16 @@ def test_the_displacement_field_joins_the_images(workspace, qtbot):
 
 
 def test_the_automatic_points_survive_a_session(workspace, qtbot):
-    _align(workspace, qtbot)
-    state = workspace.sessionState()
+    dialog = _align(workspace, qtbot)
+    state = json.loads(json.dumps(workspace.sessionState()))  # as a .varda file
     reopened = MosaicWorkspace(workspace.images, [])
     qtbot.addWidget(reopened)
     reopened.restoreSessionState(state)
     points = reopened.project.tiePointsOf(1)
     assert points and all(p.auto for p in points)
+    # the outlier threshold refits with, and the provenance of the alignment
+    assert reopened._thresholds == {1: dialog.threshold.value()}
+    assert reopened._alignments[1]["method"] == dialog.alignment.method.name
 
 
 def _column(table, name):
