@@ -14,6 +14,26 @@ analyses, without writing code. It is developed at the Space Imagery Center
 Earth remote sensing work such as CRISM, and its design follows tools like
 ENVI Classic and napari.
 
+## Getting Varda
+
+**Download:** the
+[latest release](https://github.com/varda-pro/Varda/releases/latest) has a
+ready-to-run build for Windows, macOS (Apple silicon) and Linux; no Python
+needed. Earlier versions are on the
+[Releases page](https://github.com/varda-pro/Varda/releases).
+
+**From source:** with Python 3.13 and [uv](https://docs.astral.sh/uv/):
+
+```bash
+git clone https://github.com/varda-pro/Varda.git
+cd Varda
+uv sync --extra hypyrameter
+uv run varda
+```
+
+See [Installing Varda](docs/user-guide/installing.md) for details, including
+the first launch on macOS and the optional extras.
+
 ## See it in action
 
 <p align="center">
@@ -70,25 +90,6 @@ https://github.com/user-attachments/assets/58862020-51f0-4161-bc46-391e288d789b
 Varda is under active development, so expect rough edges and frequent
 changes. Bug reports and feature requests are welcome on the
 [issue tracker](https://github.com/varda-pro/Varda/issues/new/choose).
-
-## Getting Varda
-
-**Download:** each release on the
-[Releases page](https://github.com/varda-pro/Varda/releases) has a
-ready-to-run build for Windows, macOS (Apple silicon) and Linux; no Python
-needed.
-
-**From source:** with Python 3.13 and [uv](https://docs.astral.sh/uv/):
-
-```bash
-git clone https://github.com/varda-pro/Varda.git
-cd Varda
-uv sync --extra hypyrameter
-uv run varda
-```
-
-See [Installing Varda](docs/user-guide/installing.md) for details, including
-the first launch on macOS and the optional extras.
 
 ## Documentation
 
