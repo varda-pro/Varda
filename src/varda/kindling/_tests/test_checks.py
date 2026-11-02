@@ -74,6 +74,18 @@ def test_a_wrong_result_shape_fails(tmp_path):
     assert "2×2 pixels" in report.describe()
 
 
+def test_a_hook_without_hookimpl_fails_as_it_would_when_enabled(tmp_path):
+    folder = tmp_path / "band-depth"
+    shutil.copytree(
+        EXAMPLES / "band-depth", folder, ignore=shutil.ignore_patterns("__pycache__")
+    )
+    entry = folder / "plugin.py"
+    entry.write_text(entry.read_text().replace("@hookimpl\n", ""))
+    report = runChecks(folder, None)
+    assert not report.passed
+    assert "registerAnalyses isn't marked @hookimpl" in report.error
+
+
 def test_a_plugin_that_hangs_is_stopped(tmp_path):
     folder = _plugin(tmp_path, "while True:\n    pass\n")
     report = runChecks(folder, None, timeout=5)

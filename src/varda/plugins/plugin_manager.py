@@ -121,6 +121,75 @@ def _moduleName(name: str) -> str:
     return "varda_plugin_" + name.replace("-", "_")
 
 
+def newHookManager() -> PluginManager:
+    """A pluggy manager that knows Varda's hooks."""
+    pm = PluginManager("varda")
+    pm.add_hookspecs(varda.plugins._hooks)
+    pm.register(varda.plugins._hooks)
+    return pm
+
+
+def importPlugin(manifest: PluginManifest, folder: Path) -> ModuleType:
+    """Import an installed plugin's entry module, refusing one whose
+    requirements Varda doesn't meet."""
+    missing = manifest.missingRequirements()
+    if missing:
+        raise PluginError(f"Needs {', '.join(missing)}, which Varda doesn't have.")
+    # No bytecode cache: reload always reads the source (a cached .pyc can
+    # look current within the same second), and the folder stays clean for
+    # zipping and sharing
+    writeBytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        return _importFromPath(_moduleName(manifest.name), folder / manifest.entry)
+    finally:
+        sys.dont_write_bytecode = writeBytecode
+
+
+def collectContributions(
+    pm: PluginManager, module: object, plugin: str
+) -> Contributions:
+    """What ``module``, registered with ``pm``, adds through its hook
+    implementations; ``plugin`` (name and version) labels its analyses and
+    catalogs."""
+    analyses: list[type[Analysis]] = []
+    for analysis in _returned(pm, module, "registerAnalyses"):
+        if not (isinstance(analysis, type) and issubclass(analysis, Analysis)):
+            raise PluginError(
+                f"registerAnalyses returned {analysis!r}, not an Analysis."
+            )
+        analysis.plugin = plugin
+        analyses.append(analysis)
+    dataSources = []
+    for entry in _returned(pm, module, "registerDataSources"):
+        formatName, extensions, cls = entry
+        exts = (extensions,) if isinstance(extensions, str) else extensions
+        dataSources.append((str(formatName), tuple(exts), cls))
+    catalogs: list[type[Catalog]] = []
+    for catalog in _returned(pm, module, "registerCatalogs"):
+        if not (isinstance(catalog, type) and issubclass(catalog, Catalog)):
+            raise PluginError(f"registerCatalogs returned {catalog!r}, not a Catalog.")
+        catalog.plugin = plugin
+        catalogs.append(catalog)
+    return Contributions(tuple(analyses), tuple(dataSources), tuple(catalogs))
+
+
+def _returned(pm: PluginManager, module: object, hookName: str) -> list:
+    """Everything ``module``'s implementation of a registration hook returned
+    (a list or tuple), or nothing if it doesn't implement it."""
+    items: list = []
+    for impl in getattr(pm.hook, hookName).get_hookimpls():
+        if impl.plugin is not module:
+            continue
+        returned = impl.function()
+        if returned is None:
+            continue
+        if not isinstance(returned, (list, tuple)):
+            raise PluginError(f"{hookName} must return a list, not {returned!r}.")
+        items.extend(returned)
+    return items
+
+
 def defaultPluginsFolder() -> Path:
     """``plugins`` in Varda's app-data folder (beside the logs and autosave)."""
     base = QStandardPaths.writableLocation(
@@ -133,9 +202,7 @@ class VardaPluginManager:
     """Discovers, loads and manages Varda's plugins."""
 
     def __init__(self, pluginsFolder: Path | None = None):
-        self.pm = PluginManager("varda")
-        self.pm.add_hookspecs(varda.plugins._hooks)
-        self.pm.register(varda.plugins._hooks)
+        self.pm = newHookManager()
         self.pluginsFolder = pluginsFolder
         self.records: list[PluginRecord] = []
         self._sink: ContributionSink | None = None
@@ -312,22 +379,7 @@ class VardaPluginManager:
         try:
             manifest = readManifest(record.folder)
             record.manifest = manifest
-            missing = manifest.missingRequirements()
-            if missing:
-                raise PluginError(
-                    f"Needs {', '.join(missing)}, which Varda doesn't have."
-                )
-            # No bytecode cache: reload always reads the source (a cached .pyc
-            # can look current within the same second), and the folder stays
-            # clean for zipping and sharing
-            writeBytecode = sys.dont_write_bytecode
-            sys.dont_write_bytecode = True
-            try:
-                module = _importFromPath(
-                    _moduleName(manifest.name), record.folder / manifest.entry
-                )
-            finally:
-                sys.dont_write_bytecode = writeBytecode
+            module = importPlugin(manifest, record.folder)
             self.pm.register(module, name=manifest.name)
             record.module = module
             self._contribute(record)
@@ -343,43 +395,9 @@ class VardaPluginManager:
             record._remove = self._sink.add(record.name, contributions)
 
     def _collect(self, record: PluginRecord) -> Contributions:
-        analyses: list[type[Analysis]] = []
-        for analysis in self._returned(record, "registerAnalyses"):
-            if not (isinstance(analysis, type) and issubclass(analysis, Analysis)):
-                raise PluginError(
-                    f"registerAnalyses returned {analysis!r}, not an Analysis."
-                )
-            analysis.plugin = f"{record.name} {record.version}".strip()
-            analyses.append(analysis)
-        dataSources = []
-        for entry in self._returned(record, "registerDataSources"):
-            formatName, extensions, cls = entry
-            exts = (extensions,) if isinstance(extensions, str) else extensions
-            dataSources.append((str(formatName), tuple(exts), cls))
-        catalogs: list[type[Catalog]] = []
-        for catalog in self._returned(record, "registerCatalogs"):
-            if not (isinstance(catalog, type) and issubclass(catalog, Catalog)):
-                raise PluginError(
-                    f"registerCatalogs returned {catalog!r}, not a Catalog."
-                )
-            catalog.plugin = f"{record.name} {record.version}".strip()
-            catalogs.append(catalog)
-        return Contributions(tuple(analyses), tuple(dataSources), tuple(catalogs))
-
-    def _returned(self, record: PluginRecord, hookName: str) -> list:
-        """Everything ``record``'s implementation of a registration hook
-        returned (a list or tuple), or nothing if it doesn't implement it."""
-        items: list = []
-        for impl in getattr(self.pm.hook, hookName).get_hookimpls():
-            if impl.plugin is not record.module:
-                continue
-            returned = impl.function()
-            if returned is None:
-                continue
-            if not isinstance(returned, (list, tuple)):
-                raise PluginError(f"{hookName} must return a list, not {returned!r}.")
-            items.extend(returned)
-        return items
+        return collectContributions(
+            self.pm, record.module, f"{record.name} {record.version}".strip()
+        )
 
     def _unload(self, record: PluginRecord) -> None:
         if record._remove is not None:
