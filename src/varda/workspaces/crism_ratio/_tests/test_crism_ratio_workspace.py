@@ -35,7 +35,7 @@ from varda.workspaces.crism_ratio.crism_ratio_workspace import (
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape
 from varda.workspaces.crism_ratio.sensor_dialog import SensorTargets
 from varda.workspaces.linked_images.linking import Link
-from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 CTRL = Qt.KeyboardModifier.ControlModifier
 MARS = CRS.from_user_input("+proj=eqc +R=3396190 +units=m +no_defs")
@@ -351,9 +351,7 @@ def test_the_session_keeps_the_link_box_size_lock_and_check(
     workspace.lockCheck.setChecked(False)
     workspace.plots.readout.checkCombo.setCurrentText("Olivine")
 
-    described = describeWorkspace(workspace)
-    assert described is not None
-    kind, images = described
+    kind, images = workspace.kind, workspace.sessionImages()
     assert (kind, images) == ("crism_ratio", [browse, data])
     copy = buildWorkspace(kind, images, [browse, data], workspace.sessionState())
     assert isinstance(copy, CrismRatioWorkspace)

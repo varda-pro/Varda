@@ -18,7 +18,7 @@ from varda.utilities.debug import generate_random_image
 from varda.workspaces.crism_ratio.crism_ratio_workspace import CrismRatioWorkspace
 from varda.workspaces.find_data.find_data_workspace import FindDataWorkspace
 from varda.workspaces.linked_images.linking import Link
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 MARS = CRS.from_user_input("+proj=eqc +R=3396190 +units=m +no_defs")
 

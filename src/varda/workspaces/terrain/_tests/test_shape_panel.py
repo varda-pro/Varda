@@ -12,7 +12,7 @@ from varda.shapes.plate_data import plateData, writePlateCsv
 from varda.workspaces.terrain import shape_panel as shapePanelModule
 from varda.workspaces.terrain.shape_panel import ShapePanel
 from varda.workspaces.terrain.terrain_workspace import TerrainWorkspace
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 
 @pytest.fixture

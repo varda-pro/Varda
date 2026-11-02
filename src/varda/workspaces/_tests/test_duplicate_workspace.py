@@ -15,7 +15,7 @@ from varda.workspaces.general_image_analysis import (
     GeneralImageAnalysisConfig,
     GeneralImageAnalysisWorkflow,
 )
-from varda.workspaces.workspace_kinds import duplicateWorkspace
+from varda.workspaces.registry import duplicateWorkspace
 
 RED = Color(1.0, 0.0, 0.0, 0.5)
 

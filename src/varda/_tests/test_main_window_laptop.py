@@ -19,7 +19,7 @@ from varda.image_rendering.raster_view.viewport_tools.pixel_select_tool import (
 from varda.maingui import MainGUI
 from varda.utilities.debug import generate_random_image
 from varda.workspaces.general_image_analysis import GeneralImageAnalysisWorkflow
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 APP_NAME = "varda-test-main-window-laptop"
 SMALLEST = (0, 0)  # the window's minimum size

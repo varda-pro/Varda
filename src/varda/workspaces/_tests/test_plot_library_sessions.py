@@ -17,14 +17,12 @@ from varda.workspaces.general_image_analysis import (
     GeneralImageAnalysisConfig,
     GeneralImageAnalysisWorkflow,
 )
-from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 
 def _reopen(qtbot, workspace, images, tmp_path):
     """Save the workspace in a session file, read it back and rebuild it."""
-    described = describeWorkspace(workspace)
-    assert described is not None
-    kind, shown = described
+    kind, shown = workspace.kind, workspace.sessionImages()
     paths = [f"/data/{i}.img" for i in range(len(shown))]
     state = SessionState(
         paths, [WorkspaceState(kind, paths, {}, workspace.sessionState())]

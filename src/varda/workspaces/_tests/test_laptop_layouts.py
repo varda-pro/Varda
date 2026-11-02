@@ -11,7 +11,7 @@ from varda.common.entities import VardaRaster
 from varda.common.layout_audit import assertNothingClipped
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.utilities.debug import generate_random_image
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 LAPTOP = (1280, 700)
 

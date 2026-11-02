@@ -15,9 +15,8 @@ from varda.common.provenance import CRS_FIX_KEY
 from varda.image_loading import ImageLoadingService
 from varda.image_loading.crism_geometry import GEOMETRY_KEYS, setGeometryOverride
 from varda.image_loading.crs_check import checkImageCrs
-from varda.rois.roi_json import roisFromJson
 from varda.session import SessionState
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 logger = logging.getLogger(__name__)
 _NO_CRS = object()  # no "crs" override
@@ -100,12 +99,10 @@ class SessionRestorer(QObject):
                 [image for image in images if image],
                 self._images,
                 workspace.extra,
+                workspace.rois,
             )
             if widget is None:
                 continue
-            rois = getattr(widget, "roiCollection", None)
-            if rois is not None and workspace.rois:
-                roisFromJson(workspace.rois, rois)
             self._mainGui.addTab(widget)
             count += 1
         self.sigFinished.emit(

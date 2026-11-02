@@ -1,8 +1,9 @@
 # standard library
 import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import MutableSequence, Sequence
 from enum import Enum
+from typing import ClassVar, Self
 
 # third party imports
 from PyQt6.QtCore import QPointF, QRect
@@ -120,6 +121,9 @@ class DualImageWorkspaceConfig(ParameterGroup):
 
 
 class DualImageWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "dual"
+
     @showsBusyCursor
     def __init__(self, config: DualImageWorkspaceConfig, parent=None):
         super().__init__(parent)
@@ -538,6 +542,29 @@ class DualImageWorkspace(QMainWindow):
         return self.pixelSpectraDocks.activeDock
 
     # --- sessions --------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self | None:
+        if len(images) != 2:
+            logger.warning("A dual image workspace needs two images; skipped")
+            return None
+        config = DualImageWorkspaceConfig(projectImages)
+        config.image1Param.set(images[0])
+        config.image2Param.set(images[1])
+        workspace = cls(config)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return [self.image1, self.image2]
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return [self.primaryRenderer, self.secondaryRenderer]
 
     def sessionState(self) -> dict:
         return plotLibrariesState(self.plotWidget, self.pixelSpectraDocks)

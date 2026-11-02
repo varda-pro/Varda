@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import shutil
 import tempfile
 from collections.abc import MutableSequence, Sequence
 from pathlib import Path
+from typing import ClassVar, Self
 
 import attrs
 import geopandas as gpd
@@ -111,6 +113,8 @@ from varda.workspaces.terrain.overlay_panel import OverlayPanel, TerrainOverlay
 from varda.workspaces.terrain.shape_panel import ShapePanel
 from varda.workspaces.terrain.still_dialog import StillDialog
 from varda.workspaces.terrain.terrain_view import TerrainView
+
+logger = logging.getLogger(__name__)
 
 PLAIN, ELEVATION = "None (shaded relief)", "Elevation colors"
 DETAIL = {"Low": 512, "Medium": 1024, "High": 2048}
@@ -402,6 +406,10 @@ class PrintDialog(QDialog):
 
 
 class TerrainWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "terrain"
+    roiCollection = None  # it has no ROIs
+
     @showsBusyCursor
     def __init__(
         self,
@@ -1630,6 +1638,23 @@ class TerrainWorkspace(QMainWindow):
         )
 
     # --- sessions ------------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self | None:
+        if not images and not state.get("shape"):  # a shape model needs no image
+            logger.warning("A 3D Terrain workspace needs a DEM or a shape; skipped")
+            return None
+        workspace = cls(projectImages, images[0] if images else None)
+        workspace.restoreSessionState(state, images[1:])
+        return workspace
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return []
 
     def sessionImages(self) -> list[VardaRaster]:
         """The images a session must keep for this workspace: the DEM, the

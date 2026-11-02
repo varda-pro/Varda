@@ -26,7 +26,7 @@ from varda.workspaces.general_image_analysis import (
     GeneralImageAnalysisConfig,
     GeneralImageAnalysisWorkflow,
 )
-from varda.workspaces.workspace_kinds import describeWorkspace
+from varda.workspaces.registry import registered
 
 IMAGE_LIST_CONTEXT_MENU_ID = "varda/image_list/context"
 OPEN_GENERAL_ANALYSIS_ID = "varda.image_list.open_general_analysis"
@@ -134,8 +134,8 @@ def removeImages(
     affected = [
         workspace
         for workspace in list(mainGui.childWindows)
-        if (described := describeWorkspace(workspace)) is not None
-        and any(shown in removing for shown in described[1])
+        if (known := registered(workspace)) is not None
+        and any(shown in removing for shown in known.sessionImages())
     ]
     unsaved = [image.name for image in removing if not image.filePath]
     warnings = []
