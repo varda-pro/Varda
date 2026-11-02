@@ -22,15 +22,8 @@ from varda.common.entities import VardaRaster
 from varda.common.parameter import LabeledEnum
 from varda.common.palette import classColor
 from varda.geo.measure import Measurement
+from varda.geo.vector_files import writeVectorFile
 from varda.lines.profile import lineLength, lineMeasurement
-
-EXPORT_FILE_FILTER = "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)"
-_DRIVERS = {
-    ".geojson": "GeoJSON",
-    ".json": "GeoJSON",
-    ".gpkg": "GPKG",
-    ".shp": "ESRI Shapefile",
-}
 
 
 class LineKind(LabeledEnum):
@@ -194,15 +187,7 @@ class LineCollection:
     def toFile(self, path: str | Path, image: VardaRaster) -> None:
         """The lines as a GIS file (see ``toFrame``), with the CRS as WKT in a
         crs column (GeoJSON can record only WGS 84)."""
-        path = Path(path)
-        driver = _DRIVERS.get(path.suffix.lower())
-        if driver is None:
-            raise ValueError(f"Unsupported file type: {path.suffix}")
-        frame = self.toFrame(image)
-        if frame.crs is not None:
-            # GeoJSON can only record WGS 84: Varda's import reads this
-            frame["crs"] = frame.crs.to_wkt()
-        frame.to_file(path, driver=driver)
+        writeVectorFile(self.toFrame(image), path)
 
 
 # Lines that workspaces offer to others, with the image they're drawn on

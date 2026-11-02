@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (
 from varda.common.entities import Color, VardaRaster
 from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.ui import ButtonBuilder, FlowLayout, VBoxBuilder
-from varda.points.point_collection import EXPORT_FILE_FILTER, PointCollection
+from varda.geo.vector_files import EXPORT_FILE_FILTER
+from varda.points.point_collection import PointCollection
 from varda.vector_import import ImportPlan, Target, addToPoints
 from varda.vector_import_dialog import VectorImporter
 
