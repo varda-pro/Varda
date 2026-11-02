@@ -321,65 +321,6 @@ class _ScrollContent(QWidget):
         return self.sizeHint()
 
 
-class VerticalScrollArea(QScrollArea):
-    """A vertical-only scroll area whose width adapts to its content.
-
-    Design goals:
-    - Scrolls vertically when content is taller than the viewport.
-    - Never scrolls horizontally; instead, the scroll area itself expands
-      to match the content's natural width, so the parent layout accommodates it.
-    - Content is never squished below its preferred size on either axis.
-
-    How it works:
-    - setWidgetResizable(True) lets the content grow/shrink with the viewport,
-      but sizes the widget to max(viewport_size, minimumSizeHint). _ScrollContent
-      overrides minimumSizeHint to return sizeHint, so the content is never
-      squished below its natural size.
-    - sizeHint/minimumSizeHint on this ScrollArea forward the content's width
-      to the parent layout, so the scroll area takes up the right amount of
-      horizontal space.
-    - An event filter on _ScrollContent catches LayoutRequest events (fired
-      when widgets are added/removed dynamically) and calls updateGeometry()
-      on the ScrollArea, which notifies the parent layout to re-query the
-      updated width.
-    """
-
-    def __init__(self, contents: QWidget | QLayout, parent: QWidget | None = None):
-        super().__init__(parent)
-        container = _ScrollContent()
-        container.installEventFilter(self)
-        if isinstance(contents, QLayout):
-            container.setLayout(contents)
-        else:
-            inner = QVBoxLayout()
-            inner.setContentsMargins(0, 0, 0, 0)
-            inner.setSpacing(0)
-            inner.addWidget(contents)
-            container.setLayout(inner)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setWidget(container)
-
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self.widget() and event.type() == QEvent.Type.LayoutRequest:
-            self.updateGeometry()
-        return super().eventFilter(obj, event)
-
-    def sizeHint(self) -> QSize:
-        widget = self.widget()
-        if widget is not None:
-            return QSize(widget.sizeHint().width(), super().sizeHint().height())
-        return super().sizeHint()
-
-    def minimumSizeHint(self) -> QSize:
-        widget = self.widget()
-        if widget is not None:
-            return QSize(
-                widget.minimumSizeHint().width(), super().minimumSizeHint().height()
-            )
-        return super().minimumSizeHint()
-
-
 class _PanelContents(QWidget):
     """Holds a ``PanelScrollArea``'s panel. Asked how tall it must be at a
     width, it gives the panel's minimum height there, not its preferred

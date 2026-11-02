@@ -70,7 +70,6 @@ We also try to do as much wiring as possible at this initialization stage, to re
 - **`plotting/`** — Plot widgets (pyqtgraph): pixel spectra (`pixel_spectra_plot.py`), line profiles (`profile_plot.py`), library spectra and spectrum matching, plot export.
 - **`points/`** — Saved pixel points (`point_collection.py`, Qt-free): which pixel of which image and its ground location, exportable to GIS; `point_manager_widget.py` is the GUI.
 - **`catalogs/`** — Find-and-fetch: a mission-agnostic catalog interface (STAC, PDS ODE, footprint files) that lists/searches collections and downloads products. Catalogs register via plugins' `registerCatalogs`. Design: `docs/superpowers/specs/2026-10-15-find-and-fetch-design.md` (not yet on `main`: it's on the unmerged `docs/find-and-fetch-spec` branch).
-- **`metadata_management/`** — `metadata_editor.py`: dialog for editing image metadata after loading.
 - **`optional_features/`** — Processing > Optional Features: install/update/remove the PyTorch runtime (`torch_runtime.py`) and set up external backends (Ames Stereo Pipeline, ISIS).
 - **`all_images_view_list/`** — The project-wide image list (view model, list view, per-image actions, image properties dialog).
 
