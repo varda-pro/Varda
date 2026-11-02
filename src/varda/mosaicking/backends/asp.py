@@ -45,6 +45,8 @@ CONDA_ROOTS = (
     "opt/conda",
 )
 DOWNLOAD_CHUNK = 1 << 20
+# Seconds a stalled connection waits for data before the download fails
+DOWNLOAD_TIMEOUT_S = 60
 VERSION_TIMEOUT_S = 20
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -208,7 +210,9 @@ def downloadAsp(
     context = ssl.create_default_context(cafile=certifi.where())
     try:
         opener = urllib.request.urlopen(
-            release.url, context=context if release.url.startswith("https") else None
+            release.url,
+            context=context if release.url.startswith("https") else None,
+            timeout=DOWNLOAD_TIMEOUT_S,
         )
         with opener as response, open(archive, "wb") as out:
             total = int(response.headers.get("Content-Length") or release.sizeMB * 1e6)
