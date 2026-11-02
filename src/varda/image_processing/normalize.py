@@ -24,7 +24,6 @@ class Normalize:
     }
 
     def __init__(self):
-
         super().__init__()
 
     def execute(self, image, threshold=0.0):

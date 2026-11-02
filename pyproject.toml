@@ -100,6 +100,12 @@ varda = "varda.main:main"
 
 [project.entry-points."varda.plugins"]
 
+[tool.ruff.lint.per-file-ignores]
+# Packages re-export their public names
+"__init__.py" = ["F401", "F403"]
+# Legacy sample plugins (not loaded); docs/plugins/examples are the current ones
+"src/varda/plugins/user_plugins/examples/**" = ["F841"]
+
 [tool.pytest.ini_options]
 pythonpath = ["varda"]
 # Release QA (qa/, docs/developer/release-qa.md) drives the whole app as

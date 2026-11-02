@@ -621,7 +621,7 @@ class Metadata:
         default_factory=lambda: np.zeros(3, dtype=np.uint)
     )
     wavelengths: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    wavelengths_type: Type = float
+    wavelengths_type: type = float
     name: str = ""
     transform: Affine = affine.identity
     crs: CRS | None = None
@@ -820,7 +820,7 @@ class ROI:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     name: str = "Unnamed ROI"
     mode: ROIMode = ROIMode.FREEHAND
-    sourceImage: Image = None
+    sourceImage: VardaRaster | None = None
     points: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))
     geoPoints: Optional[np.ndarray] = None
     color: QColor = field(default_factory=lambda: QColor(255, 0, 0, 128))

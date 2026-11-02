@@ -5,7 +5,9 @@ import numpy as np
 from varda.common.entities import VardaRaster
 from varda.image_rendering.stretch_algorithms import MinMaxStretch
 from varda.image_loading.data_sources import ArrayDataSource
+from varda.common.vec2 import Vec2
 from varda.image_rendering.image_renderer import (
+    ImageRenderer,
     RenderMode,
     RendererSettings,
 )
@@ -57,10 +59,6 @@ def test_settings_defaults_single_band_image(qtbot):
     assert s.rgb.green.get() == 0
     assert s.rgb.blue.get() == 0
     assert s.mono.band.get() == 0
-
-
-from varda.common.vec2 import Vec2
-from varda.image_rendering.image_renderer import ImageRenderer
 
 
 def make_renderer(bands: int = 5) -> ImageRenderer:

@@ -18,7 +18,9 @@ def _skewed(channels=1) -> np.ndarray:
     return data
 
 
-@pytest.mark.parametrize("cls", [HistogramEqualizationStretch, SquareRootStretch, LogStretch])
+@pytest.mark.parametrize(
+    "cls", [HistogramEqualizationStretch, SquareRootStretch, LogStretch]
+)
 @pytest.mark.parametrize("channels", [1, 3])
 def test_output_is_in_0_1_keeps_nan_and_preserves_order(cls, channels):
     data = _skewed(channels)

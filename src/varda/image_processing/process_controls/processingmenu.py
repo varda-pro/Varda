@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessingMenu(QMenu):
-
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app

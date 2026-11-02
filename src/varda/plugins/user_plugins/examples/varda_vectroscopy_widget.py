@@ -42,7 +42,9 @@ class VectroscopyWidget(QWidget):
             # Populate the combobox with image names
             for i, img in enumerate(all_images):
                 name = img.metadata.name or f"Image {i}"
-                self.image_combobox.addItem(name, i)  # Store the image index as user data
+                self.image_combobox.addItem(
+                    name, i
+                )  # Store the image index as user data
 
             # Set the current image as the selected item if it exists
             self.image_combobox.setCurrentIndex(0)

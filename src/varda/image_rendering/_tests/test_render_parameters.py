@@ -1,9 +1,15 @@
 import numpy as np
+import pyqtgraph as pg
 
 from varda.common.entities import VardaRaster
-from varda.image_loading.data_sources import ArrayDataSource
-from varda.image_rendering.render_parameters import BandParameter
 from varda.common.parameter_widgets import parameterWidget
+from varda.common.vec2 import Vec2
+from varda.image_loading.data_sources import ArrayDataSource
+from varda.image_rendering.render_parameters import (
+    BandParameter,
+    ColorMapParameter,
+    StretchParameter,
+)
 
 
 def make_image(bands: int = 5) -> VardaRaster:
@@ -75,11 +81,6 @@ def test_band_parameter_widget_combo_drives_param(qtbot):
     assert p.get() == 3
 
 
-import pyqtgraph as pg
-
-from varda.image_rendering.render_parameters import ColorMapParameter
-
-
 def test_colormap_default_is_a_colormap(qtbot):
     p = ColorMapParameter("Color Map")
     assert isinstance(p.get(), pg.ColorMap)
@@ -104,10 +105,6 @@ def test_colormap_widget_builds(qtbot):
     w = parameterWidget(p)
     qtbot.addWidget(w)
     assert w.gradient is not None
-
-
-from varda.common.vec2 import Vec2
-from varda.image_rendering.render_parameters import StretchParameter
 
 
 def test_stretch_default_is_auto(qtbot):

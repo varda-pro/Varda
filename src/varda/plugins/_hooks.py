@@ -2,7 +2,6 @@
 Hook specifications for plugins to implement.
 """
 
-import functools
 import logging
 
 import pluggy
@@ -41,12 +40,14 @@ def registerDataSources():
     formats Varda can open, offered in File → Import Image(s)…"""
 
 
+# Varda's own wrapper around every plugin's onLoad (this module registers
+# itself as a plugin), so one failing plugin is logged instead of raised
 @hookimpl(wrapper=True)
-def onLoad(app):
+def onLoad(app):  # noqa: F811
     try:
-        logger.info(f"Initializing plugins...")
+        logger.info("Initializing plugins...")
         yield
-        logger.info(f"Plugins initialized successfully!")
+        logger.info("Plugins initialized successfully!")
     except Exception as e:
         logger.error(
             f"One of the plugins failed to initialize! Exception: {e}", exc_info=True

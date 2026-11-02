@@ -17,8 +17,7 @@ class AnotherProcess:
         "A unique parameter ": {
             "type": float,
             "default": 105.0,
-            "description": "A parameter dynamically created for this "
-            "specific process.",
+            "description": "A parameter dynamically created for this specific process.",
         },
         "Another parameter": {
             "type": bool,

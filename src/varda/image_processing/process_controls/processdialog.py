@@ -41,7 +41,9 @@ class ProcessDialog(QDialog):
             # Populate the combobox with image names
             for i, img in enumerate(all_images):
                 name = img.metadata.name or f"Image {i}"
-                self.image_combobox.addItem(name, i)  # Store the image index as user data
+                self.image_combobox.addItem(
+                    name, i
+                )  # Store the image index as user data
 
             # Set the current image as the selected item if it exists
             if self.image:
@@ -71,7 +73,7 @@ class ProcessDialog(QDialog):
             paramName.setText(name)
             paramName.setToolTip(details["description"])
 
-            if details["type"] == float:
+            if details["type"] is float:
                 lineEdit = QtWidgets.QDoubleSpinBox()
                 lineEdit.setValue(details["default"])
                 lineEdit.setDecimals(2)
@@ -80,7 +82,7 @@ class ProcessDialog(QDialog):
                 self.parameter_widgets[name] = lineEdit
                 layout.addRow(paramName, lineEdit)
 
-            elif details["type"] == bool:
+            elif details["type"] is bool:
                 lineEdit = QtWidgets.QCheckBox()
                 lineEdit.setChecked(details["default"])
                 self.parameter_widgets[name] = lineEdit
@@ -139,15 +141,20 @@ class ProcessDialog(QDialog):
             process_instance = process()
 
             # Get the appropriate input data for this process type
-            if hasattr(self.image, 'raster'):
+            if hasattr(self.image, "raster"):
                 input_data = self.image.raster
             else:
-                QMessageBox.critical(self, "Error", "Selected image has no raster data.")
+                QMessageBox.critical(
+                    self, "Error", "Selected image has no raster data."
+                )
                 return
 
             print(f"Input data shape for {process.name}: {input_data.shape}")
 
-            if hasattr(process, 'input_data_type') and process.input_data_type == "current_rgb":
+            if (
+                hasattr(process, "input_data_type")
+                and process.input_data_type == "current_rgb"
+            ):
                 current_band = self.image.band[0]
                 print(
                     f"Using RGB bands: R={current_band.r}, G={current_band.g}, B={current_band.b}"
