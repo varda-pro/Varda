@@ -67,10 +67,13 @@ def test_a_shared_category_stays_until_its_last_plugin_goes(app):
     first = sink.add("a", Contributions(analyses=(_NewCategory,)))
     second = sink.add("b", Contributions(analyses=(_NewCategory,)))
     submenu = categoryMenuId(MenuId.PROCESSING, "My Plugin Tools")
-    count = lambda: sum(
-        getattr(i, "submenu", None) == submenu
-        for i in _menuItems(app, MenuId.PROCESSING)
-    )  # noqa: E731
+
+    def count() -> int:
+        return sum(
+            getattr(i, "submenu", None) == submenu
+            for i in _menuItems(app, MenuId.PROCESSING)
+        )  # noqa: E731
+
     assert count() == 1
     first()
     assert count() == 1

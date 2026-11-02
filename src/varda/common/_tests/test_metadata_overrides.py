@@ -39,6 +39,18 @@ def test_a_no_data_value_masks_reads_and_counts_as_no_data():
     assert changes == [1]
 
 
+def test_a_pixel_spectrum_is_masked_by_the_edited_no_data_value():
+    image = _image()
+    image.setMetadataOverrides({"nodata": -999.0})
+    assert np.isnan(image.getSpectrum(0, 0).values).all()
+    np.testing.assert_array_equal(image.getSpectrum(1, 1).values, [16, 17, 18, 19])
+    image.setMetadataOverrides({"nodata": 17.0})
+    assert np.isnan(image.getSpectrum(1, 1).values[1])
+    assert not np.isnan(image.getSpectrum(0, 0).values).any()  # -999 is a value again
+    with pytest.raises(IndexError):
+        image.getSpectrum(3, 0)
+
+
 def test_wavelengths_units_names_fwhm_and_bad_bands():
     image = _image()
     image.setMetadataOverrides(

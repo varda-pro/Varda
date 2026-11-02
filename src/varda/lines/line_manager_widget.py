@@ -27,7 +27,8 @@ from varda.common.entities import VardaRaster
 from varda.common.parameter_widgets import connectWhileAlive
 from varda.common.ui import FlowLayout, MutedLabel
 from varda.geo.measure import Measurement
-from varda.lines.line_collection import EXPORT_FILE_FILTER, LineCollection, LineKind
+from varda.geo.vector_files import EXPORT_FILE_FILTER
+from varda.lines.line_collection import LineCollection, LineKind
 from varda.lines.profile import PLANAR_METHOD
 from varda.vector_import import ImportPlan, Target, addToLines
 from varda.vector_import_dialog import VectorImporter

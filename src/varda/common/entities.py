@@ -190,7 +190,12 @@ class VardaRaster:
         Returns:
             Spectrum with values and wavelengths.
         """
-        values = self._dataSource.getPixelSpectrum(x, y)
+        if "nodata" in self._overrides:
+            if not (0 <= x < self.width and 0 <= y < self.height):
+                raise IndexError(f"Pixel ({x}, {y}) is outside the image")
+            values = self._readEdited(None, (y, x, 1, 1)).reshape(-1)
+        else:
+            values = self._dataSource.getPixelSpectrum(x, y)
         return Spectrum(
             values=values, wavelengths=self.wavelengths, pixel_coordinates=(x, y)
         )
@@ -616,7 +621,7 @@ class Metadata:
         default_factory=lambda: np.zeros(3, dtype=np.uint)
     )
     wavelengths: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    wavelengths_type: Type = float
+    wavelengths_type: type = float
     name: str = ""
     transform: Affine = affine.identity
     crs: CRS | None = None
@@ -815,7 +820,7 @@ class ROI:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     name: str = "Unnamed ROI"
     mode: ROIMode = ROIMode.FREEHAND
-    sourceImage: Image = None
+    sourceImage: VardaRaster | None = None
     points: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))
     geoPoints: Optional[np.ndarray] = None
     color: QColor = field(default_factory=lambda: QColor(255, 0, 0, 128))

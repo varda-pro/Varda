@@ -139,11 +139,14 @@ Varda](reporting-results.md#plugins-and-kindle-a-feature).
   the image's size, wavelengths and no-data value.
 - **Never sent:** the image's pixels, file paths or ROIs. The checks that run
   the plugin on a crop of your image happen on your computer.
-- **Running the code:** while it's being built, the plugin only runs in a
-  separate Varda process with a time limit, so a broken plugin can't crash
-  Varda. It runs inside Varda only after you click Enable, the same trust step
-  as installing any plugin. The code comes from an AI: read the summary and
-  the warnings first.
+- **Running the code:** while it's being built, the AI runs the plugin and
+  its tests whenever it checks its work, in a separate Varda process with a
+  time limit, so a broken plugin can't crash Varda. That process is not a
+  sandbox: the code runs with your user account's permissions (it can read
+  and write your files and use the network) before you review it. It runs
+  inside Varda only after you click Enable. The code comes from an AI: read
+  the summary and the warnings before you enable it, and only kindle with a
+  provider you trust.
 
 ## Sharing
 

@@ -457,6 +457,8 @@ def test_lines_from_a_file_are_draped_and_come_back_with_the_session(
     ((path, line),) = workspace.lineLayers
     assert line.name == "traverse" and workspace.lineList.count() == 1
     assert not workspace.addLines(str(tmp_path / "missing.gpkg"))  # a message, no crash
+    # the rebuild that follows keeps the message
+    qtbot.waitUntil(lambda: "missing.gpkg" in workspace.status.text(), timeout=10000)
     described = describeWorkspace(workspace)
     assert described is not None
     restored = buildWorkspace(*described, images, workspace.sessionState())

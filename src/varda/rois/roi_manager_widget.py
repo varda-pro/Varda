@@ -10,6 +10,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QLabel,
@@ -23,6 +24,7 @@ from PyQt6.QtWidgets import (
 from shapely.geometry import Polygon
 
 from varda.common.parameter_widgets import connectWhileAlive
+from varda.geo.vector_files import EXPORT_FILE_FILTER
 from varda.image_loading.crism_geometry import (
     ColumnGeometry,
     columnGeometryFor,
@@ -472,13 +474,13 @@ class ROIManagerWidget(QWidget):
         addToROIs(self._collection, plan)
 
     def _exportCollection(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog
-
         path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export ROIs",
-            "",
-            "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)",
+            self, "Export ROIs", "rois.geojson", EXPORT_FILE_FILTER
         )
-        if path:
+        if not path:
+            return
+        try:
             self._collection.toFile(path)
+        except (OSError, ValueError) as error:
+            logger.exception("Exporting ROIs failed")
+            QMessageBox.warning(self, "Export ROIs", str(error))

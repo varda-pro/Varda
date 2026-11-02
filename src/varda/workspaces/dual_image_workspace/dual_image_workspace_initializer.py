@@ -5,7 +5,6 @@ from varda.workspaces.dual_image_workspace.dual_image_workspace import (
     DualImageWorkspaceConfig,
     DualImageWorkspace,
 )
-from varda import log
 from varda.common.ui import VBoxBuilder, HBoxBuilder, ButtonBuilder
 from varda.common.parameter_widgets import groupWidget
 

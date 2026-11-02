@@ -18,7 +18,6 @@ from rasterio.io import MemoryFile
 from exactextract import exact_extract
 from rasterio.features import shapes
 import tempfile
-import tempfile
 import shutil
 import geopandas as gpd
 
@@ -822,7 +821,7 @@ class ProcessingPipeline:
         try:
             FileHandler()
             process = self.config.get_current_process()
-            for _ in tqdm(range(1), desc=f"Processing: {process["name"]}"):
+            for _ in tqdm(range(1), desc=f"Processing: {process['name']}"):
                 param_list = self.config.get_parameters_list()
                 processed_rasters = self.process_parameters(param_list)
                 return self.vectorize(processed_rasters, param_list)
@@ -880,7 +879,7 @@ class ProcessingPipeline:
 
         output_dict = self.config.get_output_path()
         filename = self.config.get_output_filename()
-        save_shapefile(projected_gdf, output_dict, filename, driver=driver)
+        save_shapefile(gdf, output_dict, filename, driver=driver)
         return None
 
     def process_parameters(self, param_list):
@@ -1876,7 +1875,7 @@ def config_stats(stats_list, param_name):
                     f"Invalid percentile format: {stat}. Must be a number followed by 'p'."
                 )
             p = float(stat[:-1])
-            stat_config.append(f"Q=quantile(q={p/100})")
+            stat_config.append(f"Q=quantile(q={p / 100})")
         elif stat in stats_map:
             stat_config.append(stats_map[stat])
         else:

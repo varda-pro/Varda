@@ -7,7 +7,6 @@ none). ``checks.runChecks`` starts it and reads the report."""
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import json
 import sys
@@ -20,9 +19,15 @@ import numpy as np
 from varda.analysis.analysis import Analysis
 from varda.common.entities import VardaRaster
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.plugins.manifest import readManifest
+from varda.plugins.manifest import PluginError, readManifest
+from varda.plugins.plugin_manager import (
+    Contributions,
+    collectContributions,
+    importPlugin,
+    newHookManager,
+)
 
-MODULE_NAME = "varda_plugin_under_check"
+REGISTRATION_HOOKS = ("registerAnalyses", "registerDataSources", "registerCatalogs")
 
 
 def _sampleImages(sample: Path) -> list[tuple[str, VardaRaster]]:
@@ -51,27 +56,26 @@ def _sampleImages(sample: Path) -> list[tuple[str, VardaRaster]]:
     ]
 
 
-def _importPlugin(folder: Path):
+def _load(folder: Path) -> Contributions:
+    """What the plugin adds, imported and collected as Varda loads it when
+    it's enabled, so a plugin that passes here also works there."""
     manifest = readManifest(folder)
-    spec = importlib.util.spec_from_file_location(MODULE_NAME, folder / manifest.entry)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot import {manifest.entry}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[MODULE_NAME] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _registered(module, hookName: str) -> list:
-    hook = getattr(module, hookName, None)
-    if hook is None:
-        return []
-    returned = hook()
-    if returned is None:
-        return []
-    if not isinstance(returned, (list, tuple)):
-        raise TypeError(f"{hookName} must return a list, not {returned!r}")
-    return list(returned)
+    module = importPlugin(manifest, folder)
+    pm = newHookManager()
+    pm.register(module, name=manifest.name)
+    unmarked = [
+        hook
+        for hook in REGISTRATION_HOOKS
+        if callable(getattr(module, hook, None))
+        and pm.parse_hookimpl_opts(module, hook) is None
+    ]
+    if unmarked:
+        raise PluginError(
+            f"{', '.join(unmarked)} isn't marked @hookimpl, so Varda won't call it."
+        )
+    return collectContributions(
+        pm, module, f"{manifest.name} {manifest.version}".strip()
+    )
 
 
 def _run(analysisClass: type[Analysis], label: str, image: VardaRaster) -> dict:
@@ -128,16 +132,9 @@ def _runTests(folder: Path) -> dict:
 def check(folder: Path, sample: Path) -> dict:
     sys.dont_write_bytecode = True  # keep the plugin folder clean
     try:
-        module = _importPlugin(folder)
-        analyses = _registered(module, "registerAnalyses")
-        for item in analyses:
-            if not (isinstance(item, type) and issubclass(item, Analysis)):
-                raise TypeError(
-                    f"registerAnalyses returned {item!r}, not an Analysis subclass"
-                )
-        formats = [
-            str(entry[0]) for entry in _registered(module, "registerDataSources")
-        ]
+        contributions = _load(folder)
+        analyses = contributions.analyses
+        formats = [entry[0] for entry in contributions.dataSources]
     except Exception:
         return {"error": traceback.format_exc(limit=8)}
     images = _sampleImages(sample)

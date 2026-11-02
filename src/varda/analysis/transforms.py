@@ -57,8 +57,8 @@ SELECTION_METADATA_KEY = "componentSelection"
 
 
 def _componentsParameter() -> IntParameter:
-    # Each analysis declares its own copy: ParameterGroup only picks up
-    # Parameters defined directly on the class.
+    # Each analysis declares its own copy, with its own description and in its
+    # place among its parameters (inherited ones come after a class's own).
     return IntParameter(
         "Components",
         10,

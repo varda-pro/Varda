@@ -41,7 +41,9 @@ def test_changing_the_stretch_keeps_the_zoom(view):
     viewBox = _plot(view).getViewBox()
     zoomed = _zoomIn(viewBox)
     lo, hi = zoomed
-    view.imageRenderer.setStretchMinMax(0, lo, (lo + hi) / 2)  # e.g. dragging the region
+    view.imageRenderer.setStretchMinMax(
+        0, lo, (lo + hi) / 2
+    )  # e.g. dragging the region
     assert np.allclose(viewBox.viewRange()[0], zoomed)
     region = view.monoRegion if view.monoRegion is not None else view.rRegion
     assert np.allclose(region.getRegion(), (lo, (lo + hi) / 2))

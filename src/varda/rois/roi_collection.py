@@ -21,6 +21,7 @@ from shapely.geometry.base import BaseGeometry
 from varda.common.entities import ROIMode, Spectrum, VardaROI, VardaRaster, Color
 from varda.geo.equivalence import canTransform
 from varda.geo.transform import transformPoints
+from varda.geo.vector_files import writeVectorFile
 from varda.rois.ratio import computeRatioSpectrum
 from varda.rois.region_statistics import computeRegionStatistics
 
@@ -456,25 +457,12 @@ class ROICollection:
         # Serialize ROIMode enum to string
         gdf["roi_type"] = gdf["roi_type"].apply(lambda m: m.name)
 
-        if driver is None:
-            ext = path.rsplit(".", 1)[-1].lower()
-            driver = {
-                "geojson": "GeoJSON",
-                "gpkg": "GPKG",
-                "shp": "ESRI Shapefile",
-            }.get(ext)
-            if driver is None:
-                raise ValueError(f"Cannot determine driver for extension '.{ext}'")
-
-        if self._crs is not None:
-            gdf["crs"] = self._crs.to_wkt()
         if self._crs is None:
             logger.warning(
                 "Exporting ROIs without CRS — pixel-space geometries have no "
                 "geospatial meaning in the output file."
             )
-
-        gdf.to_file(path, driver=driver)
+        writeVectorFile(gdf, path, driver)
 
     @classmethod
     def fromFile(

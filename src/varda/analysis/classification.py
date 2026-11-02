@@ -65,8 +65,8 @@ def _roiChoiceParameter(
         "name are one class); all of them by default."
     ),
 ) -> MultiChoiceParameter:
-    # Each analysis declares its own copy: ParameterGroup only picks up
-    # Parameters defined directly on the class.
+    # Each analysis declares its own copy, with its own description and in its
+    # place among its parameters (inherited ones come after a class's own).
     return MultiChoiceParameter("ROI classes", description=description)
 
 
@@ -312,8 +312,8 @@ class _PatchClassificationAnalysis(_SupervisedClassification):
     installable = True
     suffix: ClassVar[str] = ""
     modelKey: ClassVar[str] = ""  # the worker's model: "cnn" or "vit"
-    # Declared here, supplied by each subclass (ParameterGroup only picks up
-    # Parameters defined directly on the class).
+    # Declared here, supplied by each subclass, so it sits in its place among
+    # the subclass's own parameters (inherited ones come after them)
     patchSize: IntParameter
     epochs: IntParameter
     learningRate: FloatParameter

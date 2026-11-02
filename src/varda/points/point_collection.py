@@ -17,14 +17,7 @@ from varda.common.entities import Color, VardaRaster
 from varda.geo.describe import describeCrs
 from varda.geo.equivalence import canTransform, sameCrs
 from varda.geo.transform import transformPoints
-
-EXPORT_FILE_FILTER = "GeoJSON (*.geojson);;GeoPackage (*.gpkg);;Shapefile (*.shp)"
-_DRIVERS = {
-    ".geojson": "GeoJSON",
-    ".json": "GeoJSON",
-    ".gpkg": "GPKG",
-    ".shp": "ESRI Shapefile",
-}
+from varda.geo.vector_files import writeVectorFile
 
 
 @attrs.define
@@ -237,13 +230,6 @@ class PointCollection:
         WKT in a crs column (GeoJSON can record only WGS 84)."""
         if not self._points:
             raise ValueError("No points to export.")
-        target = Path(path)
-        if driver is None:
-            driver = _DRIVERS.get(target.suffix.lower())
-            if driver is None:
-                raise ValueError(
-                    f"Cannot determine a GIS format for '{target.suffix}'."
-                )
         points = self.getAllPoints()
         frame = gpd.GeoDataFrame(
             {
@@ -261,11 +247,7 @@ class PointCollection:
             geometry=[p.geometry for p in points],
             crs=self.crs,
         )
-        if self.crs is not None:
-            # GeoJSON can only record WGS 84: Varda's import reads this
-            frame["crs"] = self.crs.to_wkt()
-        frame.to_file(target, driver=driver)
-        return target
+        return writeVectorFile(frame, path, driver)
 
 
 def _converted(

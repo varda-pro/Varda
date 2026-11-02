@@ -16,7 +16,6 @@ def onLoad(app):
 
 
 class MyNewWidget(QWidget):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.initUI()

@@ -2,7 +2,6 @@ from PyQt6.QtWidgets import QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QObject
 
-import varda
 from varda.image_processing.process_controls.processdialog import ProcessDialog
 
 

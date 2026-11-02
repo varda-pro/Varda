@@ -179,8 +179,6 @@ class VardaROIItem(pg.ROI):
     def updateEntityPoints(self):
         """Update the entity's points based on current ROI state"""
         # Convert relative polygon points back to absolute coordinates
-        pos = self.pos()
-        size = self.size()
         newPoints = []
 
         # Skip the last point if it's a duplicate of the first (closing point)

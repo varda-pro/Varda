@@ -473,9 +473,20 @@ class MosaicWorkspace(QMainWindow):
     # --- sessions ----------------------------------------------------------------------------
 
     def sessionState(self) -> dict:
-        return {"recipe": self.project.state()}
+        return {
+            "recipe": self.project.state(),
+            "thresholds": self._thresholds,
+            "alignments": self._alignments,
+            "tools": self._tools,
+        }
 
     def restoreSessionState(self, state: dict) -> None:
+        # JSON makes the image keys strings
+        self._thresholds = {
+            int(k): float(v) for k, v in state.get("thresholds", {}).items()
+        }
+        self._alignments = {int(k): v for k, v in state.get("alignments", {}).items()}
+        self._tools = dict(state.get("tools", {}))
         recipe = state.get("recipe")
         if recipe:
             self.project.restore(recipe)
