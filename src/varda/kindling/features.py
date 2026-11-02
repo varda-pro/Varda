@@ -1,6 +1,6 @@
 """What Varda can already do, for the model to compare a request with: every
 menu command (Varda's own and installed plugins'), the file formats it opens
-and the catalogs Find Data searches. No Qt."""
+and the catalogs Find Data searches."""
 
 from __future__ import annotations
 
@@ -10,9 +10,11 @@ from app_model.types import MenuItem, SubmenuItem
 from varda.catalogs.registry import availableCatalogs
 from varda.image_loading.data_sources.registry import datasource_registry
 
-# Menus a user reaches, by app_model id, with their names
+# Menus a user reaches, by app_model id, with their names (the menu bar's
+# but Debug, then the context menus)
 MENUS = {
     "varda/file": "File",
+    "varda/data": "Data",
     "varda/workspace": "Workspace",
     "varda/view": "View",
     "varda/processing": "Processing",
