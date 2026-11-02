@@ -4,6 +4,36 @@ Notable changes to Varda. Release notes on GitHub are generated from pull
 requests; this file records what users need to know, especially changes that
 can alter results.
 
+## Unreleased
+
+### Fixed
+
+- **A pixel's spectrum honors an edited no-data value.** After setting a
+  no-data value in Image Properties, the Pixel Spectra plot still showed
+  that value at a single pixel (the window mean masked it). **Results
+  change:** single-pixel spectra of such images now show gaps there.
+- **A mosaic keeps its Auto Align details across sessions.** Each image's
+  outlier threshold, how it was matched, and which external tools (Ames
+  Stereo Pipeline, ISIS) the recipe uses were lost when a session was
+  reopened or the workspace duplicated: a refit used the default
+  threshold, and an exported mosaic's provenance left them out.
+- **3D Terrain shows why a drape, overlay or line file failed.** The
+  message was replaced by "Building the surface…" before it could be read;
+  it now stays under the status.
+- **Exporting ROIs reports a failure** (an unknown file type, or a file
+  that can't be written) instead of failing silently.
+- **The Ames Stereo Pipeline download gives up on a stalled connection**
+  after 60 s instead of waiting forever.
+- **Kindle a Feature checks a plugin the way Varda loads it.** A plugin
+  whose registration function wasn't marked `@hookimpl` passed its checks
+  and then added nothing when enabled; the checks now fail and say why.
+  Package plugins and missing requirements are checked as on loading too.
+- **Kindle a Feature knows the Data menu's commands** (Find Data), so it
+  no longer offers to build what's already there.
+- **Kindle a Feature's privacy notes say plainly** that the AI-written
+  plugin and its tests run with your account's permissions while it's
+  being built, before you review it.
+
 ## 0.13.2 (2026-10-26)
 
 ### Fixed
