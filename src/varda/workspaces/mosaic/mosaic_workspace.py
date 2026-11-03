@@ -8,6 +8,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import MutableSequence, Sequence
 from pathlib import Path
+from typing import ClassVar, Self
 
 import numpy as np
 import PyQt6Ads as ads
@@ -30,6 +31,7 @@ from PyQt6.QtWidgets import (
 from varda.analysis.class_tools import classRaster
 from varda.analysis.rasters import bandMetadata
 from varda.common.entities import VardaRaster
+from varda.image_rendering.image_renderer import ImageRenderer
 from varda.common.provenance import makeProvenance, setProvenance
 from varda.common.ui import VardaDockWidget, showsBusyCursor
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -94,6 +96,10 @@ class ExportDialog(QDialog):
 
 
 class MosaicWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "mosaic"
+    roiCollection = None  # it has no ROIs
+
     @showsBusyCursor
     def __init__(
         self,
@@ -471,6 +477,23 @@ class MosaicWorkspace(QMainWindow):
         QMessageBox.warning(self, "Export Mosaic", str(error))
 
     # --- sessions ----------------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self:
+        workspace = cls(images, projectImages)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return list(self.images)
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return []
 
     def sessionState(self) -> dict:
         return {

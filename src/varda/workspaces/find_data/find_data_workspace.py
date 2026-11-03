@@ -4,8 +4,9 @@ the catalogs (``varda.catalogs``, and plugins' ``registerCatalogs``) do."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableSequence
+from collections.abc import Callable, MutableSequence, Sequence
 from datetime import datetime, time, timezone
+from typing import ClassVar, Self
 
 import geopandas as gpd
 import numpy as np
@@ -66,6 +67,7 @@ from varda.catalogs.registry import availableCatalogs
 from varda.catalogs.sources import Source, bodies, sourceKey, sourcesFor
 from varda.catalogs.stac import StacCatalog
 from varda.common.entities import VardaRaster
+from varda.image_rendering.image_renderer import ImageRenderer
 from varda.common.observable_list import ObservableList
 from varda.common.parameter_widgets import groupWidget
 from varda.common.ui import (
@@ -160,6 +162,10 @@ class SelectedFilter(QSortFilterProxyModel):
 
 
 class FindDataWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "find_data"
+    roiCollection = None  # it has no ROIs
+
     def __init__(
         self,
         projectImages: MutableSequence[VardaRaster] | None = None,
@@ -1473,6 +1479,23 @@ class FindDataWorkspace(QMainWindow):
         self.overlayPaths = []
 
     # --- sessions ---------------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self:
+        workspace = cls(projectImages)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return []
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return []
 
     def sessionState(self) -> dict:
         source = self.source()

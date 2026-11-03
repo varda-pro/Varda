@@ -12,6 +12,7 @@ linked by map location: their points are NaN.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import numpy as np
@@ -24,10 +25,22 @@ from varda.geo.equivalence import bodyLabel, canTransform
 from varda.geo.transform import transformPoints
 from varda.common.parameter import LabeledEnum
 
+logger = logging.getLogger(__name__)
+
 
 class Link(LabeledEnum):
     PIXEL = "By pixel"
     MAP = "By map location"
+
+
+def savedLink(state: dict, workspace: str) -> Link | None:
+    """The link a session saved for ``workspace`` (by pixel if none); None,
+    logged, if this Varda doesn't know it."""
+    name = state.get("link", Link.PIXEL.name)
+    if name not in Link.__members__:
+        logger.warning("Unknown link %r in a %s workspace; skipped", name, workspace)
+        return None
+    return Link[name]
 
 
 def linkedPoints(

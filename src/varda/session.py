@@ -18,7 +18,7 @@ import attrs
 from varda.common.entities import VardaRaster
 from varda.common.provenance import CRISM_GEOMETRY_KEYS, CRS_FIX_KEY
 from varda.rois.roi_json import roisToJson
-from varda.workspaces.workspace_kinds import describeWorkspace
+from varda.workspaces.registry import registered
 
 SESSION_SUFFIX = ".varda"
 SESSION_FILE_FILTER = "Varda session (*.varda)"
@@ -75,21 +75,20 @@ def captureSession(
             unsaved.append(image.name)
 
     states = []
-    for workspace in workspaces:
-        described = describeWorkspace(workspace)
-        if described is None:
+    for widget in workspaces:
+        workspace = registered(widget)
+        if workspace is None:
             continue
-        kind, shown = described
+        shown = workspace.sessionImages()
         if any(id(image) not in pathOf for image in shown):
             continue
-        rois = getattr(workspace, "roiCollection", None)
-        sessionState = getattr(workspace, "sessionState", None)
+        rois = workspace.roiCollection
         states.append(
             WorkspaceState(
-                kind,
+                workspace.kind,
                 tuple(pathOf[id(image)] for image in shown),
                 roisToJson(rois) if rois is not None else {},
-                sessionState() if callable(sessionState) else {},
+                workspace.sessionState(),
             )
         )
     edited = {

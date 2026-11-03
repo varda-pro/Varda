@@ -10,7 +10,8 @@ rings its point; picking a library match overlays it on the endmember.
 
 from __future__ import annotations
 
-from collections.abc import MutableSequence
+from collections.abc import MutableSequence, Sequence
+from typing import ClassVar, Self
 
 import json
 from pathlib import Path
@@ -36,6 +37,7 @@ from varda.analysis.linear_algebra import unflatten
 from varda.analysis.spectral_library import LibrarySpectrum, resampleTo
 from varda.branding.loader import RedrawSpinner
 from varda.common.entities import Color, VardaRaster
+from varda.image_rendering.image_renderer import ImageRenderer
 from varda.common.provenance import setProvenance
 from varda.common.ui import VardaDockWidget, showsBusyCursor
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
@@ -67,6 +69,10 @@ _FADED_ALPHA = 0.35
 
 
 class SpectralHourglassWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "hourglass"
+    roiCollection = None  # it has no ROIs
+
     @showsBusyCursor
     def __init__(
         self,
@@ -642,6 +648,23 @@ class SpectralHourglassWorkspace(QMainWindow):
             self._pendingPpi = None
 
     # --- sessions --------------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self:
+        workspace = cls(images[0], projectImages)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return [self.model.image]
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return []
 
     def sessionState(self) -> dict:
         """Settings and endmember classes (results are recomputed on restore)."""

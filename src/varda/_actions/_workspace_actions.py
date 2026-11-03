@@ -22,7 +22,7 @@ from varda.workspaces.linked_images.linked_images_workspace import (
 from varda.workspaces.spectral_hourglass.new_hourglass_dialog import (
     NewSpectralHourglassDialog,
 )
-from varda.workspaces.workspace_kinds import duplicateWorkspace
+from varda.workspaces.registry import duplicateWorkspace
 
 
 def newDualImageWorkspace(images: ProjectImages, mainGui: MainGUI) -> None:

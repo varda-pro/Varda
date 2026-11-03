@@ -10,7 +10,7 @@ from varda.session_restore import SessionRestorer
 from varda.workspaces.spectral_hourglass.hourglass_workspace import (
     SpectralHourglassWorkspace,
 )
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 PATH = "/data/scene.img"
 

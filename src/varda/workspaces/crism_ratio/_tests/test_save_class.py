@@ -22,7 +22,7 @@ from varda.workspaces.crism_ratio.ratio_classes import (
     DENOMINATOR_CLASS_COLOR,
 )
 from varda.workspaces.linked_images.linking import Link
-from varda.workspaces.workspace_kinds import buildWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 SHIFT = Qt.KeyboardModifier.ShiftModifier
 

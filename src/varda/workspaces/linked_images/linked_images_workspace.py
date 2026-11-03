@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import functools
 import math
+import logging
 from collections.abc import MutableSequence, Sequence
+from typing import ClassVar, Self
 
 import numpy as np
 from PyQt6.QtCore import QObject, QPointF, QRect, QRectF, Qt
@@ -66,8 +68,11 @@ from varda.workspaces.linked_images.linking import (
     Link,
     linkedPoints,
     linkWarnings,
+    savedLink,
 )
 from varda.workspaces.linked_images.spectra_panel import LinkedSpectraPanel
+
+logger = logging.getLogger(__name__)
 
 CURSOR_COLOR = QColor("#ffd400")
 
@@ -103,6 +108,10 @@ class ViewGroupLink(QObject):
 
 
 class LinkedImagesWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "linked"
+    roiCollection = None  # it has no ROIs
+
     @showsBusyCursor
     def __init__(
         self,
@@ -343,6 +352,29 @@ class LinkedImagesWorkspace(QMainWindow):
         )
 
     # --- sessions --------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self | None:
+        link = savedLink(state, "Linked Images")
+        if link is None:
+            return None
+        if len(images) < 2:
+            logger.warning("A Linked Images workspace needs two images; skipped")
+            return None
+        workspace = cls(images, projectImages, link)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return list(self.images)
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return list(self.renderers)
 
     def sessionState(self) -> dict:
         return {

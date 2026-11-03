@@ -22,7 +22,7 @@ from varda.workspaces.linked_images.linked_images_workspace import (
     NewLinkedImagesDialog,
 )
 from varda.workspaces.linked_images.linking import Link
-from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 EQC = CRS.from_user_input("+proj=eqc +R=1560800 +units=m +no_defs")  # Europa
 
@@ -130,7 +130,7 @@ def test_the_workspace_comes_back_from_a_session(workspace, products, qtbot):
     workspace.placeCursor(0, 3.5, 6.5)
     workspace.addLine(0, np.array([[1, 1], [9, 9]]), LineKind.STRAIGHT)
     workspace.renderers[1].settings.mono.band.set(4)
-    described = describeWorkspace(workspace)
+    described = (workspace.kind, workspace.sessionImages())
     assert described == ("linked", products)
     restored = buildWorkspace(
         "linked", products, list(products), workspace.sessionState()

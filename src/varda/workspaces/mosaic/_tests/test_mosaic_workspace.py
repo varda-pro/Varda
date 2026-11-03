@@ -15,7 +15,7 @@ from varda.mosaicking.grid import defaultGrid
 from varda.mosaicking.render import Resampling, renderMosaic
 from varda.workspaces.mosaic.mosaic_workspace import MosaicWorkspace
 from varda.workspaces.mosaic.new_mosaic_dialog import NewMosaicDialog
-from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 PIXEL = 18.0
 TRANSFORM = Affine(PIXEL, 0.0, 500000.0, 0.0, -PIXEL, 4000000.0)
@@ -125,7 +125,7 @@ def test_the_recipe_survives_a_session(setup):
     _select(workspace, 1)
     workspace.nudge(-3, 0)
     workspace.project.move(1, -1)
-    kind, images = describeWorkspace(workspace)
+    kind, images = workspace.kind, workspace.sessionImages()
     assert kind == "mosaic"
     restored = buildWorkspace(kind, images, project, workspace.sessionState())
     assert [i.key for i in restored.project.inputs] == [1, 0]

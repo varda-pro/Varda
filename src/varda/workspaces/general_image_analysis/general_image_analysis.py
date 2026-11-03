@@ -7,7 +7,8 @@ ROI drawing, band selection, stretch controls, and metadata management.
 
 import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import MutableSequence, Sequence
+from typing import ClassVar, Self
 
 from PyQt6.QtCore import QPointF, QRect
 from PyQt6.QtWidgets import (
@@ -88,6 +89,9 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
     - Stretch/contrast controls
     - Metadata editing
     """
+
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "general"
 
     @showsBusyCursor
     def __init__(self, config: GeneralImageAnalysisConfig, parent=None):
@@ -427,6 +431,25 @@ class GeneralImageAnalysisWorkflow(QMainWindow):
         )
 
     # --- sessions ---------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self:
+        config = GeneralImageAnalysisConfig(projectImages)
+        config.image.set(images[0])
+        workspace = cls(config)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return [self.config.image.get()]
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return [self.imageRenderer]
 
     def sessionState(self) -> dict:
         return {

@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Callable, MutableSequence, Sequence
+from typing import ClassVar, Self
 
 import numpy as np
 import PyQt6Ads as ads
@@ -118,7 +119,7 @@ from varda.workspaces.crism_ratio.save_dialog import SaveRatioDialog
 from varda.workspaces.crism_ratio.sensor_dialog import SensorGotoDialog, SensorTargets
 from varda.spectral_libraries.spectrum import LibrarySpectrum
 from varda.workspaces.linked_images.linked_images_workspace import ViewGroupLink
-from varda.workspaces.linked_images.linking import Link, linkWarnings
+from varda.workspaces.linked_images.linking import Link, linkWarnings, savedLink
 from varda.workspaces.plot_libraries import plotLibrariesState, restorePlotLibraries
 from varda.workspaces.ratio_explorer import (
     RatioExplorerConfig,
@@ -224,6 +225,9 @@ class _ColumnLock:
 
 
 class CrismRatioWorkspace(QMainWindow):
+    # The Workspace protocol (workspaces/workspace.py)
+    kind: ClassVar[str] = "crism_ratio"
+
     @showsBusyCursor
     def __init__(
         self,
@@ -986,6 +990,31 @@ class CrismRatioWorkspace(QMainWindow):
         )
 
     # --- sessions --------------------------------------------------------------------
+
+    @classmethod
+    def fromSession(
+        cls,
+        images: Sequence[VardaRaster],
+        projectImages: MutableSequence[VardaRaster],
+        state: dict,
+    ) -> Self | None:
+        link = savedLink(state, "CRISM Ratio")
+        if link is None:
+            return None
+        if len(images) != 2:
+            logger.warning(
+                "A CRISM Ratio workspace needs its browse and I/F images; skipped"
+            )
+            return None
+        workspace = cls(images[0], images[1], projectImages, link)
+        workspace.restoreSessionState(state)
+        return workspace
+
+    def sessionImages(self) -> list[VardaRaster]:
+        return [self.browse, self.data]
+
+    def displayRenderers(self) -> list[ImageRenderer]:
+        return [self.browseRenderer, self.dataRenderer]
 
     def sessionState(self) -> dict:
         return {

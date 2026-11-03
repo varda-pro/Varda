@@ -33,7 +33,7 @@ from varda.workspaces.terrain.terrain_workspace import (
     StillDialog,
     TerrainWorkspace,
 )
-from varda.workspaces.workspace_kinds import buildWorkspace, describeWorkspace
+from varda.workspaces.registry import buildWorkspace
 
 TRANSFORM = Affine(20, 0, 0, 0, -20, 0)
 CRS_ = CRS.from_user_input("+proj=eqc +R=3389500 +units=m +no_defs")
@@ -150,9 +150,7 @@ def test_the_workspace_comes_back_from_a_session(workspace, images, qtbot):
     workspace._keepView(
         "Crater", {"position": [0, -1, 1], "target": [0, 0, 0], "fov": 35}
     )
-    described = describeWorkspace(workspace)
-    assert described is not None
-    kind, shown = described
+    kind, shown = workspace.kind, workspace.sessionImages()
     assert kind == "terrain" and shown == [images[0], images[1]]
     restored = buildWorkspace(kind, shown, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
@@ -281,9 +279,7 @@ def test_overlays_come_back_from_a_session(workspace, images, qtbot):
     added = workspace.overlayPanel.add(overlay)
     added.opacity = 0.4
     added.alignment.shift = (12.0, -3.0)
-    described = describeWorkspace(workspace)
-    assert described is not None
-    kind, shown = described
+    kind, shown = workspace.kind, workspace.sessionImages()
     assert shown[-1] is overlay
     restored = buildWorkspace(kind, shown, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
@@ -326,8 +322,7 @@ def test_side_colors_and_edges_are_settings(workspace, qtbot, monkeypatch):
     assert workspace.terrain is not None
     assert np.isfinite(workspace.terrain.heights).all()  # the test DEM is full
 
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(
         *described, workspace.projectImages, workspace.sessionState()
     )
@@ -364,8 +359,7 @@ def test_the_height_unit_is_a_setting_kept_with_the_session(workspace, qtbot):
     assert workspace.settings.heightUnit == "km"
     assert workspace.baseDepth.suffix() == " km"
     assert workspace.sessionState()["settings"]["heightUnit"] == "km"
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(
         *described, workspace.projectImages, workspace.sessionState()
     )
@@ -459,8 +453,7 @@ def test_lines_from_a_file_are_draped_and_come_back_with_the_session(
     assert not workspace.addLines(str(tmp_path / "missing.gpkg"))  # a message, no crash
     # the rebuild that follows keeps the message
     qtbot.waitUntil(lambda: "missing.gpkg" in workspace.status.text(), timeout=10000)
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(*described, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
     qtbot.addWidget(restored)
@@ -530,8 +523,7 @@ def test_an_overlays_display_comes_back_with_the_session(workspace, images, qtbo
     rgb.red.set(5)
     rgb.green.set(2)
     rgb.blue.set(0)
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(*described, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
     qtbot.addWidget(restored)
@@ -562,8 +554,7 @@ def test_lines_drawn_in_another_workspace_are_draped_with_profiles(
     # one line on its own, and the session keeps them without that workspace
     workspace.addWorkspaceLines(images[1], lines, [lines.lines()[1].fid])
     assert len(workspace.lineLayers) == 3
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(*described, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
     qtbot.addWidget(restored)
@@ -625,8 +616,7 @@ def test_an_alignment_matched_on_another_image_moves_the_overlay(qtbot):
     panel.pasteAlignment()
     assert other.alignment.state() == added.alignment.state()
     assert other.alignment is not added.alignment
-    described = describeWorkspace(workspace)
-    assert described is not None
+    described = (workspace.kind, workspace.sessionImages())
     restored = buildWorkspace(*described, images, workspace.sessionState())
     assert isinstance(restored, TerrainWorkspace)
     qtbot.addWidget(restored)
