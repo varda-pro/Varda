@@ -1,5 +1,6 @@
 """Ratio boxes live in I/F cube pixels; a browse view on another grid or map
-projection reaches them through map coordinates, and sensor coordinates (the
+projection reaches them, and ROIs drawn on it reach the cube, through map
+coordinates, and sensor coordinates (the
 detector sample and line of the cube's geometry) through its backplane. No
 Qt."""
 
@@ -9,6 +10,8 @@ import numpy as np
 import numpy.typing as npt
 
 import attrs
+from shapely import segmentize
+from shapely.geometry import Polygon
 
 from varda.common.entities import VardaRaster
 from varda.image_loading.crism_geometry import ColumnGeometry
@@ -36,6 +39,22 @@ def dataToView(
 ) -> np.ndarray:
     """``polygon`` (n, 2) in ``data`` pixels as ``view`` pixel coordinates."""
     return linkedPoints([data, view], 0, polygon, link)[1]
+
+
+def viewShapeToData(
+    view: VardaRaster, data: VardaRaster, link: Link, shape: Polygon
+) -> Polygon | None:
+    """``shape`` drawn on ``view`` (in its CRS coordinates, or pixels without a
+    CRS) as the same place on ``data``, in its CRS coordinates (or pixels);
+    None when it falls on no place of ``data`` (another body). Its edges get
+    a vertex per ``view`` pixel first, so they follow a change of projection."""
+    exterior = np.asarray(shape.exterior.coords)[:, :2]
+    pixels = view.geoToImage(exterior) if view.hasGeospatialData else exterior
+    dense = np.asarray(segmentize(Polygon(pixels), 1.0).exterior.coords)
+    out = linkedPoints([view, data], 0, dense, link)[1]
+    if not np.isfinite(out).all():
+        return None
+    return Polygon(data.imageToGeo(out) if data.hasGeospatialData else out)
 
 
 @attrs.frozen

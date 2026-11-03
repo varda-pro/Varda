@@ -65,6 +65,7 @@ from varda.common.ui import (
     MutedLabel,
     PanelScrollArea,
     VardaDockWidget,
+    addEdgePanel,
     showsBusyCursor,
 )
 from varda.image_loading.crism_geometry import (
@@ -94,15 +95,19 @@ from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import
     RatioSelection,
 )
 from varda.image_rendering.raster_view.viewport_tools.tool_manager import ToolManager
+from varda.image_rendering.raster_view.viewport_tools.viewport_tool import ViewportTool
 from varda.plotting.plot import VardaPlotWidget
 from varda.points.point_collection import PointCollection
 from varda.points.point_manager_widget import PointManagerWidget
 from varda.rois.roi_collection import ROICollection
+from varda.rois.roi_drawing_state import ROIDrawingState
+from varda.rois.roi_drawing_widgets import ROIDrawingController
 from varda.rois.roi_manager_widget import ROIManagerWidget
 from varda.workspaces.crism_ratio.mapping import (
     dataToView,
     imageToSensor,
     sensorToImage,
+    viewShapeToData,
     viewToData,
 )
 from varda.workspaces.crism_ratio.ratio_plots import PlotShape, RatioPlots
@@ -255,11 +260,14 @@ class CrismRatioWorkspace(QMainWindow):
         self.roiCollection = ROICollection.fromImage(data)
         self.pointCollection = PointCollection()
         self.roiPlot = VardaPlotWidget(parent=self)
+        # shape and class of the shapes drawn with Draw ROI under either view
+        self.roiDrawingState = ROIDrawingState(self.roiCollection)
         self.roiManager = ROIManagerWidget(
             self.roiCollection,
             data,
             self.roiPlot,
             parent=self,
+            drawingState=self.roiDrawingState,
             images=projectImages,
         )
         self.pointManager = PointManagerWidget(
@@ -314,6 +322,18 @@ class CrismRatioWorkspace(QMainWindow):
             self._toolManager(0, self.browseView),
             self._toolManager(1, self.dataView),
         ]
+        # shapes drawn on the browse view join the ROIs on the same ground of
+        # the I/F cube
+        self.roiDrawing = ROIDrawingController(
+            self.roiDrawingState,
+            self.toolManagers,
+            parent=self,
+            shapeMappers={
+                self.toolManagers[0]: lambda shape: viewShapeToData(
+                    self.browse, self.data, self.link, shape
+                )
+            },
+        )
         self._arrange()
         self._initLinkNotice()
         for manager in self.toolManagers:
@@ -519,7 +539,7 @@ class CrismRatioWorkspace(QMainWindow):
         manager = ToolManager(
             view,
             self,
-            excludeCategories=("ROI Drawing", "Line Drawing"),
+            excludeCategories=("Line Drawing",),
             excludeTools=(PixelSelectTool, CropTool),
         )
         view.addToolBar(manager.getToolbar())
@@ -637,9 +657,7 @@ class CrismRatioWorkspace(QMainWindow):
         )
         self.roiPlotDock = VardaDockWidget("ROI Plots").withWidget(self.roiPlot)
         for dock in (self.roiDock, self.pointsDock, self.roiPlotDock):
-            self.dockManager.addAutoHideDockWidget(
-                ads.SideBarLocation.SideBarRight, dock
-            )
+            addEdgePanel(self.dockManager, ads.SideBarLocation.SideBarRight, dock)
         # each view's right-click offers its image's display docks, and every
         # dock under Panels: a dock closed by mistake comes back from there
         self.viewportMenu = ViewportContextMenuController(self.roiManager, parent=self)
@@ -730,12 +748,13 @@ class CrismRatioWorkspace(QMainWindow):
 
     # --- the click loop ------------------------------------------------------------
 
-    def _onToolActivated(self, index: int, tool: object) -> None:
+    def _onToolActivated(self, index: int, tool: ViewportTool) -> None:
+        # no hint over the images: the Ratio Explorer's clicks and keys are
+        # behind "?", Draw ROI's are in the ROI Manager (a tool's later
+        # messages, such as a refused click, still show)
+        tool.hideText()
         if not isinstance(tool, RatioExplorerTool):
             return
-        # the clicks and keys are behind "?": no hint over the images (the
-        # tool's later messages, such as a refused click, still show)
-        tool.hideText()
         self.controller.bindTool(tool, self.data)
         if index == 0:  # the browse view: its clicks and boxes go through the link
             tool.setClickMapper(self._browseToData)

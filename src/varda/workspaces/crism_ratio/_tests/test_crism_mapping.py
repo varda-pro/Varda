@@ -3,11 +3,16 @@
 import numpy as np
 from affine import Affine
 from pyproj import CRS, Transformer
+from shapely.geometry import Polygon
 
 from varda.common.entities import VardaRaster
 from varda.geo._tests.fixtures import CRISM_MTRDR_WKT, WGS84, makeImage
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
-from varda.workspaces.crism_ratio.mapping import dataToView, viewToData
+from varda.workspaces.crism_ratio.mapping import (
+    dataToView,
+    viewShapeToData,
+    viewToData,
+)
 from varda.workspaces.linked_images.linking import Link
 from varda.image_loading.crism_geometry import ColumnGeometry
 from varda.workspaces.crism_ratio.mapping import imageToSensor, sensorToImage
@@ -74,6 +79,66 @@ def test_a_browse_view_of_another_body_maps_nowhere():
     earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
     assert viewToData(earth, data, Link.MAP, [[3, 4]]) is None
     assert np.isnan(dataToView(earth, data, Link.MAP, np.array([[3.0, 4.0]]))).all()
+
+
+# --- shapes drawn on the browse view ---------------------------------------------------
+
+
+def _drawn(view, pixels):
+    """A shape drawn on ``view`` over ``pixels``, as the Draw ROI tool gives
+    it: in the view's CRS coordinates."""
+    return Polygon(view.imageToGeo(pixels))
+
+
+def _dataPixels(data, shape):
+    return data.geoToImage(np.asarray(shape.exterior.coords))
+
+
+def test_a_shape_drawn_on_the_browse_view_covers_the_same_ground_on_the_cube():
+    view, data = _views()
+    square = [[6, 8], [9, 8], [9, 11], [6, 11]]  # around browse pixel (7.5, 9.5)
+    shape = viewShapeToData(view, data, Link.MAP, _drawn(view, square))
+    assert shape is not None
+    # the same ground: centered on cube pixel (20.5, 19.5), at half the pixel count
+    pixels = _dataPixels(data, shape)
+    np.testing.assert_allclose(pixels.mean(axis=0), [20.5, 19.5], atol=0.1)
+    np.testing.assert_allclose(np.ptp(pixels, axis=0), [1.5, 1.5], atol=0.05)
+
+
+def test_a_drawn_shape_keeps_a_vertex_per_browse_pixel_across_projections():
+    # a straight edge on one projection is curved on another; the shape's
+    # vertices follow the curve, not the chord between its corners
+    view, data = _views()
+    square = [[0, 0], [40, 0], [40, 30], [0, 30]]
+    shape = viewShapeToData(view, data, Link.MAP, _drawn(view, square))
+    assert shape is not None
+    assert len(shape.exterior.coords) > 100
+
+
+def test_under_a_pixel_link_a_drawn_shape_keeps_its_pixels():
+    view, data = _views()
+    square = [[2, 3], [5, 3], [5, 6], [2, 6]]
+    shape = viewShapeToData(view, data, Link.PIXEL, _drawn(view, square))
+    assert shape is not None
+    pixels = _dataPixels(data, shape)
+    np.testing.assert_allclose(pixels.min(axis=0), [2, 3], atol=1e-9)
+    np.testing.assert_allclose(pixels.max(axis=0), [5, 6], atol=1e-9)
+
+
+def test_on_images_without_a_crs_a_drawn_shape_stays_in_pixels():
+    view = _image(None, None, name="browse")
+    data = _image(None, None, name="iof")
+    square = Polygon([[2, 3], [5, 3], [5, 6], [2, 6]])
+    shape = viewShapeToData(view, data, Link.PIXEL, square)
+    assert shape is not None
+    assert shape.equals(square)
+
+
+def test_a_shape_drawn_on_another_body_maps_nowhere():
+    data = makeImage(CRISM_MTRDR_WKT, centerLonLat=(10.0, 15.0), pixelSize=18.0)
+    earth = makeImage(WGS84, centerLonLat=(10.0, 15.0), pixelSize=0.01)
+    square = [[2, 3], [5, 3], [5, 6], [2, 6]]
+    assert viewShapeToData(earth, data, Link.MAP, _drawn(earth, square)) is None
 
 
 # --- sensor positions ------------------------------------------------------------------
