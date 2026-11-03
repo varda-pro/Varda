@@ -917,6 +917,21 @@ class VardaDockWidget(ads.CDockWidget):
         return self
 
 
+def addEdgePanel(
+    manager: ads.CDockManager, location: ads.SideBarLocation, dock: ads.CDockWidget
+) -> None:
+    """Fold ``dock`` into the ``location`` edge of ``manager``. It slides out
+    at least as wide (on a side) or tall (top or bottom) as its panel needs,
+    where ADS would open it at a fixed size and cut the panel off."""
+    container = manager.addAutoHideDockWidget(location, dock)
+    assert container is not None
+    need = dock.minimumSizeHint()
+    if location in (ads.SideBarLocation.SideBarLeft, ads.SideBarLocation.SideBarRight):
+        container.setSize(max(container.width(), need.width()))
+    else:
+        container.setSize(max(container.height(), need.height()))
+
+
 def showDock(dock: ads.CDockWidget) -> None:
     """Open ``dock`` wherever it lives: back in its place if it was closed,
     slid out if it hides at an edge, brought to the front if it is a tab."""

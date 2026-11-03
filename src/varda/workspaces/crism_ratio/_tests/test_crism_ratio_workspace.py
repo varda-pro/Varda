@@ -10,10 +10,12 @@ from affine import Affine
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtWidgets import QMenu, QMessageBox
 from pyproj import CRS
+from shapely.geometry import Polygon
 
 from varda.common.keys import controlClick
-from varda.common.entities import VardaRaster
+from varda.common.entities import ROIMode, VardaRaster
 from varda.common.layout_audit import assertNothingClipped
+from varda.common.ui import showDock
 from varda.image_loading.crism_geometry import ColumnGeometry
 from varda.image_loading.data_sources.array_data_source import ArrayDataSource
 from varda.image_rendering.raster_view.overlay_handles import PyqtgraphTextOverlay
@@ -25,6 +27,7 @@ from varda.image_rendering.raster_view.pointer_event import (
 from varda.image_rendering.raster_view.viewport_tools.ratio_explorer_tool import (
     RatioExplorerTool,
 )
+from varda.image_rendering.raster_view.viewport_tools.roi_tools import ROIDrawTool
 from varda.rois.region_statistics import boxPolygonPixels, computeRegionStatistics
 from varda.workspaces import ratio_explorer
 from varda.workspaces.crism_ratio import crism_ratio_workspace
@@ -341,6 +344,50 @@ def test_the_managers_start_auto_hidden(qtbot, pixelPair):
     assert workspace.pointsDock.isAutoHide()
 
 
+def drawOn(workspace, index, pixels, image):
+    """Turn on Draw ROI under view ``index`` and finish a rectangle over
+    ``pixels`` of its ``image``."""
+    manager = workspace.toolManagers[index]
+    manager.select(ROIDrawTool)
+    drawTool = manager.activeTool
+    assert isinstance(drawTool, ROIDrawTool)
+    drawTool.sigROIDrawingComplete.emit(
+        {
+            "geometry": Polygon(image.imageToGeo(pixels)),
+            "roiType": ROIMode.RECTANGLE,
+        }
+    )
+
+
+def test_draw_roi_on_the_if_view_adds_the_shape_to_the_roi_manager(qtbot, mapPair):
+    browse, data = mapPair
+    workspace = build(qtbot, browse, data, Link.MAP)
+    drawOn(workspace, 1, [[4, 2], [8, 2], [8, 6], [4, 6]], data)
+    (fid,) = workspace.roiCollection.fids
+    pixels = workspace.roiCollection.getPixelCoordinates(fid)
+    np.testing.assert_allclose(pixels.min(axis=0), [4, 2])
+    np.testing.assert_allclose(pixels.max(axis=0), [8, 6])
+    # the class picker shows under the view being drawn on
+    assert workspace.roiDrawing.classBarVisible(workspace.toolManagers[1])
+
+
+def test_draw_roi_on_the_browse_view_adds_the_same_ground_on_the_if_cube(
+    qtbot, mapPair
+):
+    browse, data = mapPair
+    workspace = build(qtbot, browse, data, Link.MAP)
+    # browse pixels (2..4, 1..3) are I/F pixels (4..8, 2..6): twice the size
+    drawOn(workspace, 0, [[2, 1], [4, 1], [4, 3], [2, 3]], browse)
+    (fid,) = workspace.roiCollection.fids
+    pixels = workspace.roiCollection.getPixelCoordinates(fid)
+    np.testing.assert_allclose(pixels.min(axis=0), [4, 2])
+    np.testing.assert_allclose(pixels.max(axis=0), [8, 6])
+    # back to measuring: the Ratio Explorer is still a click away
+    workspace.toolManagers[0].select(RatioExplorerTool)
+    tool(workspace).onPointerEvent(press(LEFT, 3.5, 2.5))
+    assert tool(workspace).selection.numerator is not None
+
+
 def test_the_session_keeps_the_link_box_size_lock_and_check(
     qtbot, mapPair, withBackplane
 ):
@@ -568,6 +615,20 @@ def test_no_hint_covers_the_images_and_messages_fit_their_view(qtbot, mapPair):
         item.textItem.mapRectToParent(item.textItem.boundingRect())
     )
     assert viewBox.sceneBoundingRect().contains(text)
+
+
+def test_draw_roi_puts_no_hint_over_the_images(qtbot, mapPair):
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
+    for manager in workspace.toolManagers:
+        manager.select(ROIDrawTool)
+        assert manager.activeTool._textOverlay is None
+
+
+def test_the_roi_manager_opens_with_its_drawing_controls_whole(qtbot, mapPair):
+    workspace = shown(qtbot, build(qtbot, mapPair[0], mapPair[1], Link.MAP))
+    showDock(workspace.roiDock)
+    qtbot.wait(50)
+    assertNothingClipped(workspace.roiDock)
 
 
 def _pair_on_map(workspace):

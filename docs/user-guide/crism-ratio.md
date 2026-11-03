@@ -622,6 +622,15 @@ what it saves is ROIs and points.
   edge: click their tabs to open them. Right-click either view for its
   image's **Render Settings** and **Histogram**, and **Panels** for every
   panel of the workspace: one closed by mistake comes back from there.
+- **Draw ROI** in either view's toolbar draws ROIs of your own (freehand,
+  polygon, rectangle or ellipse, picked in the ROI Manager) into the class
+  shown under the view, as in the other workspaces; click the Ratio Explorer
+  button to go back to boxes and keys. The ROIs, like the boxes, are in the
+  I/F cube's coordinates. A shape drawn on the browse view covers the same
+  ground of the cube through the link: a pixel link keeps its pixel
+  coordinates; a map link moves each vertex through map coordinates, with a
+  vertex added every browse pixel along its edges first, so an edge that is
+  straight on the browse projection follows its curve on the cube's.
 
 Each new pair replaces the curves and fits each plot's Y range to them, so
 the new spectra fill the plot. The plots show the whole spectrum, or the

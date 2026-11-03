@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
@@ -23,13 +24,16 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QWidget,
 )
+from shapely.geometry import Polygon
 
 from varda.common.entities import Color, ROIMode
-from varda.common.ui import ElidingComboBox
+from varda.common.ui import ElidingComboBox, FlowLayout
 from varda.image_rendering.raster_view.viewport_tools.roi_tools import ROIDrawTool
 from varda.image_rendering.raster_view.viewport_tools.tool_manager import ToolManager
 from varda.image_rendering.raster_view.viewport_tools.viewport_tool import ViewportTool
 from varda.rois.roi_drawing_state import ROIDrawingState
+
+logger = logging.getLogger(__name__)
 
 SHAPES = {
     ROIMode.FREEHAND: ("Freehand", "Press and drag around the area"),
@@ -115,13 +119,15 @@ class ROIShapePicker(QWidget):
 
 
 class ROIClassPicker(QWidget):
-    """The class the next shapes join, with New Class."""
+    """The class the next shapes join, with New Class. With ``wrap`` (under a
+    narrow view) New Class goes to a second row instead of being cut off."""
 
     def __init__(
         self,
         state: ROIDrawingState,
         label: str = "Class:",
         parent: QWidget | None = None,
+        wrap: bool = False,
     ):
         super().__init__(parent)
         self.state = state
@@ -134,12 +140,18 @@ class ROIClassPicker(QWidget):
         self.newButton = QToolButton()
         self.newButton.setText("New Class")
         self.newButton.setToolTip("Start a new class for the next shapes")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        if label:
-            layout.addWidget(QLabel(label))
-        layout.addWidget(self.classBox, 1)
-        layout.addWidget(self.newButton)
+        labels = [QLabel(label)] if label else []
+        if wrap:
+            flow = FlowLayout(self)
+            for widget in (*labels, self.classBox, self.newButton):
+                flow.addWidget(widget)
+        else:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(0, 0, 0, 0)
+            for widget in labels:
+                row.addWidget(widget)
+            row.addWidget(self.classBox, 1)
+            row.addWidget(self.newButton)
 
         self.newButton.clicked.connect(lambda: state.newClass())
         self.classBox.currentIndexChanged.connect(self._onChosen)
@@ -167,20 +179,25 @@ class ROIClassPicker(QWidget):
 class ROIDrawingController(QObject):
     """Feeds the shared drawing state to the Draw ROI tool of each view, adds
     finished shapes to the active class, and shows a class picker under the
-    view being drawn on."""
+    view being drawn on. A view whose image isn't the collection's maps its
+    shapes into the collection's coordinates through ``shapeMappers`` (None:
+    the shape is on no place of the collection's image)."""
 
     def __init__(
         self,
         state: ROIDrawingState,
         toolManagers: Sequence[ToolManager],
         parent: QObject | None = None,
+        shapeMappers: Mapping[ToolManager, Callable[[Polygon], Polygon | None]]
+        | None = None,
     ):
         super().__init__(parent)
         self.state = state
+        self._shapeMappers = dict(shapeMappers or {})
         self._classBars: dict[ToolManager, ROIClassPicker] = {}
         for manager in toolManagers:
             # Its own row under the view, so a narrow toolbar can't hide it
-            bar = ROIClassPicker(state, label="Drawing into:")
+            bar = ROIClassPicker(state, label="Drawing into:", wrap=True)
             bar.setVisible(False)
             manager.viewport.addToolBar(bar)
             self._classBars[manager] = bar
@@ -200,11 +217,19 @@ class ROIDrawingController(QObject):
         tool.setShape(self.state.shape)
         self.state.sigShapeChanged.connect(tool.setShape)
         tool.sigROIDrawingComplete.connect(
-            lambda result: self.state.addDrawnShape(
-                result["geometry"], result["roiType"]
-            )
+            lambda result: self._addDrawn(manager, result)
         )
         self._classBars[manager].setVisible(True)
+
+    def _addDrawn(self, manager: ToolManager, result: dict) -> None:
+        geometry = result["geometry"]
+        mapper = self._shapeMappers.get(manager)
+        if mapper is not None:
+            geometry = mapper(geometry)
+            if geometry is None:
+                logger.warning("A drawn ROI is on no place of the image; skipped")
+                return
+        self.state.addDrawnShape(geometry, result["roiType"])
 
     def _onDeactivated(self, manager: ToolManager, tool: ViewportTool) -> None:
         if not isinstance(tool, ROIDrawTool):

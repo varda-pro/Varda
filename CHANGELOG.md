@@ -8,6 +8,16 @@ can alter results.
 
 ### Fixed
 
+- **The CRISM Ratio workspace has Draw ROI.** Its ROI Manager showed, but
+  neither view could draw ROIs other than the Ratio Explorer's boxes. Both
+  views now have Draw ROI; a shape drawn on the browse view is added on the
+  same ground of the I/F cube (see the CRISM Ratio guide's Layout).
+- **The CRISM Ratio workspace's ROI Manager opens whole.** Its panel slid
+  out about 100 pixels wide, cutting off its buttons; the Points Manager
+  and ROI Plots panels had the same problem. They now open as wide as
+  they need.
+- **The "Drawing into" row under a narrow view wraps** instead of cutting
+  off New Class (every workspace with Draw ROI).
 - **A pixel's spectrum honors an edited no-data value.** After setting a
   no-data value in Image Properties, the Pixel Spectra plot still showed
   that value at a single pixel (the window mean masked it). **Results
